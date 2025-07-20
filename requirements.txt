@@ -1,0 +1,5 @@
+google-genai
+typer[all] # Includes Rich for better CLI output
+pyyaml
+pydantic
+streamlit
