@@ -19,7 +19,7 @@ class LLMUnexpectedError(LLMProviderError):
     pass
 
 class GeminiProvider:
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite-preview-06-17"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         # Rationale: 'flash-lite' offers the best balance of speed, cost, and capability for this iterative, multi-call process.
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
