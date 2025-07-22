@@ -3,14 +3,14 @@ import streamlit as st
 import os
 from core import run_isal_process
 from rich.console import Console
-import sys # <--- ADDED THIS LINE
+import sys
 from rich.text import Text
 from rich.syntax import Syntax
 import io
 import contextlib
 
 # Redirect rich console output to a string buffer for Streamlit display
-@contextlib.contextmanager
+@contextlib.contextmanager # Corrected line: Removed the duplicate 'contextlib'
 def capture_rich_output():
     buffer = io.StringIO()
     
@@ -48,6 +48,7 @@ st.set_page_config(layout="wide", page_title="Project Chimera Web App")
 
 st.title("Project Chimera: Socratic Self-Debate")
 st.markdown("Run an Iterative Socratic Arbitration Loop (ISAL) using a single LLM with multiple personas.")
+st.markdown("This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project-chimera-core).")
 
 # API Key Input
 api_key = st.text_input(
@@ -56,6 +57,7 @@ api_key = st.text_input(
     help="Your API key will not be stored. For deployed apps, consider using Streamlit Secrets (`st.secrets`).",
     value=os.getenv("GEMINI_API_KEY") # Pre-fill if env var is set
 )
+st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
 
 # Prompt Input
 user_prompt = st.text_area(
