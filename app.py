@@ -1,0 +1,118 @@
+# app.py
+import streamlit as st
+import os
+from core import run_isal_process
+from rich.console import Console
+import sys # <--- ADDED THIS LINE
+from rich.text import Text
+from rich.syntax import Syntax
+import io
+import contextlib
+
+# Redirect rich console output to a string buffer for Streamlit display
+@contextlib.contextmanager
+def capture_rich_output():
+    buffer = io.StringIO()
+    
+    # Temporarily replace sys.stdout to capture print statements
+    old_stdout = sys.stdout
+    sys.stdout = buffer 
+    
+    # Patch the global rich Console instance used by main.py/core.py
+    # This is a workaround to capture output from imported modules that use rich.
+    # A more robust solution for larger projects would be to pass the Console object explicitly.
+    try:
+        from main import console as typer_console_instance
+        old_typer_console_file = typer_console_instance.__dict__['_file']
+        typer_console_instance.__dict__['_file'] = buffer # Redirect rich console output
+        typer_console_instance.force_terminal = True # Ensure colors/formatting are written to buffer
+    except ImportError:
+        # main.py might not be imported if app.py is run directly without main.py being in sys.modules
+        # In this case, rich console output from core.py won't be captured this way.
+        # For simplicity of MVP, we assume main.py's console is the one to patch.
+        pass
+    
+    yield buffer
+    
+    # Restore original stdout and rich console file
+    sys.stdout = old_stdout
+    try:
+        from main import console as typer_console_instance
+        typer_console_instance.__dict__['_file'] = old_typer_console_file
+        typer_console_instance.force_terminal = False # Restore default
+    except ImportError:
+        pass
+
+
+st.set_page_config(layout="wide", page_title="Project Chimera Web App")
+
+st.title("Project Chimera: Socratic Self-Debate")
+st.markdown("Run an Iterative Socratic Arbitration Loop (ISAL) using a single LLM with multiple personas.")
+
+# API Key Input
+api_key = st.text_input(
+    "Enter your Gemini API Key",
+    type="password",
+    help="Your API key will not be stored. For deployed apps, consider using Streamlit Secrets (`st.secrets`).",
+    value=os.getenv("GEMINI_API_KEY") # Pre-fill if env var is set
+)
+
+# Prompt Input
+user_prompt = st.text_area(
+    "Enter your prompt here:",
+    "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
+    height=150
+)
+
+# Configuration Options
+col1, col2 = st.columns(2)
+with col1:
+    max_tokens_budget = st.number_input(
+        "Max Total Tokens Budget:",
+        min_value=1000,
+        max_value=50000, # Set a reasonable upper limit
+        value=10000,
+        step=1000,
+        help="Controls the maximum number of tokens used across all LLM calls to manage cost."
+    )
+with col2:
+    show_intermediate_steps = st.checkbox("Show Intermediate Reasoning Steps", value=True)
+
+if st.button("Run Socratic Debate", type="primary"):
+    if not api_key:
+        st.error("Please enter your Gemini API Key to proceed.")
+    elif not user_prompt.strip():
+        st.error("Please enter a prompt.")
+    else:
+        st.info("Starting Socratic Arbitration Loop... This may take a moment.")
+        
+        # Use the context manager to capture rich output
+        with capture_rich_output() as rich_output_buffer:
+            try:
+                final_answer, intermediate_steps = run_isal_process(
+                    user_prompt, api_key, max_total_tokens_budget=max_tokens_budget
+                )
+                
+                # Display captured console output (e.g., "Running persona: ...")
+                st.subheader("Process Log")
+                st.code(rich_output_buffer.getvalue(), language="text")
+
+                if show_intermediate_steps:
+                    st.subheader("Intermediate Reasoning Steps")
+                    for step_name, content in intermediate_steps.items():
+                        with st.expander(f"### {step_name.replace('_', ' ').title()}"):
+                            # Use Streamlit's markdown or code block for display
+                            # Check for the special token count step
+                            if step_name == "Total_Tokens_Used":
+                                st.write(f"Total tokens consumed: {content}")
+                            elif "Output" in step_name or "Critique" in step_name or "Feedback" in step_name or "[ERROR]" in content:
+                                st.code(content, language="markdown")
+                            else:
+                                st.write(content)
+
+                st.subheader("Final Synthesized Answer")
+                st.markdown(final_answer) # Use markdown for final answer
+                
+            except Exception as e:
+                st.error(f"An unexpected error occurred during the process: {e}")
+                st.code(rich_output_buffer.getvalue(), language="text") # Show logs even on error

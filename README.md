@@ -31,3 +31,15 @@ To see intermediate reasoning steps:
 ```bash
 python main.py "Your prompt goes here." --verbose
 ```
+
+## Usage (Web App - Streamlit)
+
+1.  Set your Gemini API Key as an environment variable (recommended for local development):
+    ```bash
+    export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+    ```
+2.  Run the Streamlit application:
+    ```bash
+    streamlit run app.py
+    ```
+    Then open your web browser to the address provided by Streamlit (usually `http://localhost:8501`).
