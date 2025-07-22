@@ -1,0 +1,6 @@
+.git
+.gitignore
+__pycache__/
+repo_to_single_file.sh
+repo_contents.txt
+# Any other local development files or directories you don't want in the image
