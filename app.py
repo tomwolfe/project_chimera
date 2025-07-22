@@ -48,7 +48,7 @@ st.set_page_config(layout="wide", page_title="Project Chimera Web App")
 
 st.title("Project Chimera: Socratic Self-Debate")
 st.markdown("Run an Iterative Socratic Arbitration Loop (ISAL) using a single LLM with multiple personas.")
-st.markdown("This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project-chimera).")
+st.markdown("This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project_chimera).")
 
 # API Key Input
 api_key = st.text_input(
