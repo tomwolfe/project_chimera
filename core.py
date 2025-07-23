@@ -36,7 +36,8 @@ def load_personas(file_path: str = "personas.yaml") -> List[Persona]:
 def run_isal_process(
     prompt: str,
     api_key: str,
-    max_total_tokens_budget: int = 10000 # Default budget for the entire process
+    max_total_tokens_budget: int = 10000, # Default budget for the entire process
+    streamlit_status=None # Added parameter for Streamlit status updates
 ) -> Tuple[str, Dict[str, str]]:
     """
     Runs the Iterative Socratic Arbitration Loop (ISAL) process.
@@ -49,13 +50,21 @@ def run_isal_process(
     intermediate_steps: Dict[str, str] = {}
     current_thought = prompt # The evolving thought/answer
 
+    # Helper function to update Streamlit status and print to console (for logs)
+    def update_status(message: str, state: str = "running", expanded: bool = True):
+        if streamlit_status:
+            streamlit_status.update(label=message, state=state, expanded=expanded)
+        print(message) # Keep print for rich console capture / CLI output
+
+    update_status("Starting Socratic Arbitration Loop...")
+
     # --- Step 1: Initial Generation (Visionary_Generator) ---
     visionary_persona = next((p for p in personas if p.name == "Visionary_Generator"), None)
     if visionary_persona:
-        print(f"Running persona: {visionary_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
+        update_status(f"Running persona: {visionary_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         if cumulative_token_usage + visionary_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Visionary_Generator_Output"] = "Skipped: Exceeded total token budget."
-            print("Warning: Visionary_Generator skipped due to token budget.")
+            update_status("Warning: Visionary_Generator skipped due to token budget.", state="warning")
         else:
             try:
                 visionary_response, tokens_used = gemini_provider.generate(
@@ -67,12 +76,13 @@ def run_isal_process(
                 intermediate_steps["Visionary_Generator_Output"] = visionary_response
                 cumulative_token_usage += tokens_used
                 current_thought = visionary_response # This becomes the base for critique
+                update_status(f"{visionary_persona.name} completed.", state="running") # Keep running for next step
             except LLMProviderError as e:
                 intermediate_steps["Visionary_Generator_Output"] = f"[ERROR] {type(e).__name__}: {e}"
-                print(f"Error running Visionary_Generator: {e}")
+                update_status(f"Error running {visionary_persona.name}: {e}", state="error")
                 current_thought = prompt # Fallback to original prompt if error
     else:
-        print("Warning: Visionary_Generator persona not found. Skipping initial generation.")
+        update_status("Warning: Visionary_Generator persona not found. Skipping initial generation.", state="warning")
         intermediate_steps["Visionary_Generator_Output"] = "N/A - Persona not found."
         current_thought = prompt # Fallback to original prompt if no generator
 
@@ -80,10 +90,10 @@ def run_isal_process(
     # Only proceed if the previous step was successful (no error message in its output)
     skeptical_persona = next((p for p in personas if p.name == "Skeptical_Generator"), None)
     if skeptical_persona and not intermediate_steps["Visionary_Generator_Output"].startswith("[ERROR]"):
-        print(f"Running persona: {skeptical_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
+        update_status(f"Running persona: {skeptical_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         if cumulative_token_usage + skeptical_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Skeptical_Critique"] = "Skipped: Exceeded total token budget."
-            print("Warning: Skeptical_Generator skipped due to token budget.")
+            update_status("Warning: Skeptical_Generator skipped due to token budget.", state="warning")
         else:
             try:
                 skeptical_critique, tokens_used = gemini_provider.generate(
@@ -94,22 +104,26 @@ def run_isal_process(
                 )
                 intermediate_steps["Skeptical_Critique"] = skeptical_critique
                 cumulative_token_usage += tokens_used
+                update_status(f"{skeptical_persona.name} completed.", state="running")
             except LLMProviderError as e:
                 intermediate_steps["Skeptical_Critique"] = f"[ERROR] {type(e).__name__}: {e}"
-                print(f"Error running Skeptical_Generator: {e}")
+                update_status(f"Error running {skeptical_persona.name}: {e}", state="error")
     else:
         intermediate_steps["Skeptical_Critique"] = "N/A - Persona not found or previous step failed."
+        if skeptical_persona: # Only warn if persona exists but was skipped due to error in previous step
+            update_status("Skeptical_Generator skipped due to previous step error or persona not found.", state="warning")
+
 
     # --- Step 3: Constructive Criticism & Improvement ---
     constructive_persona = next((p for p in personas if p.name == "Constructive_Critic"), None)
     if constructive_persona and not intermediate_steps["Visionary_Generator_Output"].startswith("[ERROR]"):
-        print(f"Running persona: {constructive_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
+        update_status(f"Running persona: {constructive_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         # Combine original thought and skeptical critique for constructive feedback
         combined_input = f"Original Proposal:\n{current_thought}\n\nSkeptical Critique:\n{intermediate_steps.get('Skeptical_Critique', 'No skeptical critique provided.')}\n\nBased on the above, provide specific, actionable improvements to the original proposal."
         
         if cumulative_token_usage + constructive_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Constructive_Feedback"] = "Skipped: Exceeded total token budget."
-            print("Warning: Constructive_Critic skipped due to token budget.")
+            update_status("Warning: Constructive_Critic skipped due to token budget.", state="warning")
         else:
             try:
                 constructive_feedback, tokens_used = gemini_provider.generate(
@@ -120,17 +134,21 @@ def run_isal_process(
                 )
                 intermediate_steps["Constructive_Feedback"] = constructive_feedback
                 cumulative_token_usage += tokens_used
+                update_status(f"{constructive_persona.name} completed.", state="running")
             except LLMProviderError as e:
                 intermediate_steps["Constructive_Feedback"] = f"[ERROR] {type(e).__name__}: {e}"
-                print(f"Error running Constructive_Critic: {e}")
+                update_status(f"Error running {constructive_persona.name}: {e}", state="error")
     else:
         intermediate_steps["Constructive_Feedback"] = "N/A - Persona not found or previous step failed."
+        if constructive_persona:
+            update_status("Constructive_Critic skipped due to previous step error or persona not found.", state="warning")
+
 
     # --- Step 4: Impartial Arbitration/Synthesis ---
     arbitrator_persona = next((p for p in personas if p.name == "Impartial_Arbitrator"), None)
     final_answer = "Error: Arbitration failed." # Default error
     if arbitrator_persona:
-        print(f"Running persona: {arbitrator_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
+        update_status(f"Running persona: {arbitrator_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         # Prepare input for the arbitrator
         arbitration_input = f"""
         Original Prompt: {prompt}
@@ -149,7 +167,7 @@ def run_isal_process(
         if cumulative_token_usage + arbitrator_persona.max_tokens > max_total_tokens_budget:
             final_answer = "Error: Impartial_Arbitrator skipped due to total token budget. Cannot provide final answer."
             intermediate_steps["Arbitrator_Output"] = final_answer
-            print("Error: Impartial_Arbitrator skipped due to token budget.")
+            update_status("Error: Impartial_Arbitrator skipped due to token budget.", state="error")
         else:
             try:
                 final_answer, tokens_used = gemini_provider.generate(
@@ -160,22 +178,25 @@ def run_isal_process(
                 )
                 intermediate_steps["Arbitrator_Output"] = final_answer
                 cumulative_token_usage += tokens_used
+                update_status(f"{arbitrator_persona.name} completed.", state="running")
             except LLMProviderError as e:
                 final_answer = f"[ERROR] {type(e).__name__}: Arbitration failed: {e}"
                 intermediate_steps["Arbitrator_Output"] = final_answer
-                print(f"Error running Impartial_Arbitrator: {e}")
+                update_status(f"Error running {arbitrator_persona.name}: {e}", state="error")
     else:
         intermediate_steps["Arbitrator_Output"] = "N/A - Persona not found."
         final_answer = "Error: Impartial_Arbitrator persona not found."
+        update_status("Impartial_Arbitrator persona not found.", state="error")
+
 
     # --- Step 5: Devil's Advocate (Optional, but good for robustness) ---
     devils_advocate_persona = next((p for p in personas if p.name == "Devils_Advocate"), None)
     # Only run if the final answer itself isn't an error
     if devils_advocate_persona and not final_answer.startswith("[ERROR]"):
-        print(f"Running persona: {devils_advocate_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
+        update_status(f"Running persona: {devils_advocate_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         if cumulative_token_usage + devils_advocate_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Devils_Advocate_Critique"] = "Skipped: Exceeded total token budget."
-            print("Warning: Devils_Advocate skipped due to token budget.")
+            update_status("Warning: Devils_Advocate skipped due to token budget.", state="warning")
         else:
             try:
                 devils_advocate_critique, tokens_used = gemini_provider.generate(
@@ -186,11 +207,16 @@ def run_isal_process(
                 )
                 intermediate_steps["Devils_Advocate_Critique"] = devils_advocate_critique
                 cumulative_token_usage += tokens_used
+                update_status(f"{devils_advocate_persona.name} completed.", state="running")
             except LLMProviderError as e:
                 intermediate_steps["Devils_Advocate_Critique"] = f"[ERROR] {type(e).__name__}: {e}"
-                print(f"Error running Devils_Advocate: {e}")
+                update_status(f"Error running {devils_advocate_persona.name}: {e}", state="error")
     else:
         intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona not found or final answer has errors."
+        if devils_advocate_persona:
+            update_status("Devils_Advocate skipped due to previous step error or persona not found.", state="warning")
+
 
     intermediate_steps["Total_Tokens_Used"] = str(cumulative_token_usage) # Add token count to steps
+    update_status(f"Socratic Arbitration Loop finished. Total tokens used: {cumulative_token_usage}", state="complete", expanded=False)
     return final_answer, intermediate_steps

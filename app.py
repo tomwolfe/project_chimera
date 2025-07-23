@@ -86,35 +86,41 @@ if st.button("Run Socratic Debate", type="primary"):
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
     else:
-        st.info("Starting Socratic Arbitration Loop... This may take a moment.")
-        
-        # Use the context manager to capture rich output
-        with capture_rich_output() as rich_output_buffer:
-            try:
-                final_answer, intermediate_steps = run_isal_process(
-                    user_prompt, api_key, max_total_tokens_budget=max_tokens_budget
-                )
-                
-                # Display captured console output (e.g., "Running persona: ...")
-                st.subheader("Process Log")
-                st.code(rich_output_buffer.getvalue(), language="text")
+        # Use st.status for real-time feedback during the process
+        with st.status("Initializing Socratic Debate...", expanded=True) as status:
+            # Use the context manager to capture rich output for the log display
+            with capture_rich_output() as rich_output_buffer:
+                try:
+                    final_answer, intermediate_steps = run_isal_process(
+                        user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
+                        streamlit_status=status # Pass the status object for granular updates
+                    )
+                    
+                    # Update status to complete after successful execution
+                    status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
 
-                if show_intermediate_steps:
-                    st.subheader("Intermediate Reasoning Steps")
-                    for step_name, content in intermediate_steps.items():
-                        with st.expander(f"### {step_name.replace('_', ' ').title()}"):
-                            # Use Streamlit's markdown or code block for display
-                            # Check for the special token count step
-                            if step_name == "Total_Tokens_Used":
-                                st.write(f"Total tokens consumed: {content}")
-                            elif "Output" in step_name or "Critique" in step_name or "Feedback" in step_name or "[ERROR]" in content:
-                                st.code(content, language="markdown")
-                            else:
-                                st.write(content)
+                    # Display captured console output (e.g., "Running persona: ...")
+                    st.subheader("Process Log")
+                    st.code(rich_output_buffer.getvalue(), language="text")
 
-                st.subheader("Final Synthesized Answer")
-                st.markdown(final_answer) # Use markdown for final answer
-                
-            except Exception as e:
-                st.error(f"An unexpected error occurred during the process: {e}")
-                st.code(rich_output_buffer.getvalue(), language="text") # Show logs even on error
+                    if show_intermediate_steps:
+                        st.subheader("Intermediate Reasoning Steps")
+                        for step_name, content in intermediate_steps.items():
+                            with st.expander(f"### {step_name.replace('_', ' ').title()}"):
+                                # Use Streamlit's markdown or code block for display
+                                # Check for the special token count step
+                                if step_name == "Total_Tokens_Used":
+                                    st.write(f"Total tokens consumed: {content}")
+                                elif "Output" in step_name or "Critique" in step_name or "Feedback" in step_name or "[ERROR]" in content:
+                                    st.code(content, language="markdown")
+                                else:
+                                    st.write(content)
+
+                    st.subheader("Final Synthesized Answer")
+                    st.markdown(final_answer) # Use markdown for final answer
+                    
+                except Exception as e:
+                    # Update status to error if an exception occurs
+                    status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
+                    st.error(f"An unexpected error occurred during the process: {e}")
+                    st.code(rich_output_buffer.getvalue(), language="text") # Show logs even on error
