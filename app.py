@@ -80,6 +80,14 @@ with col1:
 with col2:
     show_intermediate_steps = st.checkbox("Show Intermediate Reasoning Steps", value=True)
 
+# Model Selection
+selected_model = st.selectbox(
+    "Select LLM Model",
+    ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"],
+    index=0, # Default to gemini-2.5-flash-lite
+    help="Choose the Gemini model based on your needs for speed, cost, or capability."
+)
+
 if st.button("Run Socratic Debate", type="primary"):
     if not api_key:
         st.error("Please enter your Gemini API Key to proceed.")
@@ -93,7 +101,8 @@ if st.button("Run Socratic Debate", type="primary"):
                 try:
                     final_answer, intermediate_steps = run_isal_process(
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
-                        streamlit_status=status # Pass the status object for granular updates
+                        streamlit_status=status, # Pass the status object for granular updates
+                        model_name=selected_model # Pass the selected model name
                     )
                     
                     # Update status to complete after successful execution

@@ -36,7 +36,8 @@ def load_personas(file_path: str = "personas.yaml") -> List[Persona]:
 def run_isal_process(
     prompt: str,
     api_key: str,
-    max_total_tokens_budget: int = 10000, # Default budget for the entire process
+    max_total_tokens_budget: int = 10000,  # Default budget for the entire process
+    model_name: str = "gemini-2.5-flash-lite", # New: Model selection parameter
     streamlit_status=None # Added parameter for Streamlit status updates
 ) -> Tuple[str, Dict[str, str]]:
     """
@@ -44,7 +45,7 @@ def run_isal_process(
     Returns the final synthesized answer and a dictionary of intermediate steps.
     """
     personas = load_personas()
-    gemini_provider = GeminiProvider(api_key=api_key)
+    gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name)
     
     cumulative_token_usage = 0
     intermediate_steps: Dict[str, str] = {}
