@@ -78,10 +78,10 @@ def run_isal_process(
                 cumulative_token_usage += tokens_used
                 current_thought = visionary_response # This becomes the base for critique
                 update_status(f"{visionary_persona.name} completed.", state="running") # Keep running for next step
-            except LLMProviderError as e:
+            except LLMProviderError as e: # Catch specific LLM errors
                 intermediate_steps["Visionary_Generator_Output"] = f"[ERROR] {type(e).__name__}: {e}"
                 update_status(f"Error running {visionary_persona.name}: {e}", state="error")
-                current_thought = prompt # Fallback to original prompt if error
+                raise e # Re-raise the specific LLM error for app.py to catch
     else:
         update_status("Warning: Visionary_Generator persona not found. Skipping initial generation.", state="warning")
         intermediate_steps["Visionary_Generator_Output"] = "N/A - Persona not found."
@@ -89,8 +89,8 @@ def run_isal_process(
 
     # --- Step 2: Skeptical Critique ---
     # Only proceed if the previous step was successful (no error message in its output)
-    skeptical_persona = next((p for p in personas if p.name == "Skeptical_Generator"), None)
-    if skeptical_persona and not intermediate_steps["Visionary_Generator_Output"].startswith("[ERROR]"):
+    prev_step_output = intermediate_steps.get("Visionary_Generator_Output", "")
+    if skeptical_persona and not (prev_step_output.startswith("[ERROR]") or prev_step_output.startswith("Skipped:") or prev_step_output.startswith("N/A - Persona not found.")):
         update_status(f"Running persona: {skeptical_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         if cumulative_token_usage + skeptical_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Skeptical_Critique"] = "Skipped: Exceeded total token budget."
@@ -106,18 +106,19 @@ def run_isal_process(
                 intermediate_steps["Skeptical_Critique"] = skeptical_critique
                 cumulative_token_usage += tokens_used
                 update_status(f"{skeptical_persona.name} completed.", state="running")
-            except LLMProviderError as e:
+            except LLMProviderError as e: # Catch specific LLM errors
                 intermediate_steps["Skeptical_Critique"] = f"[ERROR] {type(e).__name__}: {e}"
                 update_status(f"Error running {skeptical_persona.name}: {e}", state="error")
+                raise e # Re-raise the specific LLM error
     else:
-        intermediate_steps["Skeptical_Critique"] = "N/A - Persona not found or previous step failed."
-        if skeptical_persona: # Only warn if persona exists but was skipped due to error in previous step
-            update_status("Skeptical_Generator skipped due to previous step error or persona not found.", state="warning")
+        intermediate_steps["Skeptical_Critique"] = "N/A - Persona not found or previous step was skipped/failed."
+        if skeptical_persona:
+            update_status("Skeptical_Generator skipped due to previous step status or persona not found.", state="warning")
 
 
     # --- Step 3: Constructive Criticism & Improvement ---
-    constructive_persona = next((p for p in personas if p.name == "Constructive_Critic"), None)
-    if constructive_persona and not intermediate_steps["Visionary_Generator_Output"].startswith("[ERROR]"):
+    prev_step_output = intermediate_steps.get("Visionary_Generator_Output", "") # Check Visionary_Generator again as it's the base
+    if constructive_persona and not (prev_step_output.startswith("[ERROR]") or prev_step_output.startswith("Skipped:") or prev_step_output.startswith("N/A - Persona not found.")):
         update_status(f"Running persona: {constructive_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         # Combine original thought and skeptical critique for constructive feedback
         combined_input = f"Original Proposal:\n{current_thought}\n\nSkeptical Critique:\n{intermediate_steps.get('Skeptical_Critique', 'No skeptical critique provided.')}\n\nBased on the above, provide specific, actionable improvements to the original proposal."
@@ -135,14 +136,15 @@ def run_isal_process(
                 )
                 intermediate_steps["Constructive_Feedback"] = constructive_feedback
                 cumulative_token_usage += tokens_used
-                update_status(f"{constructive_persona.name} completed.", state="running")
-            except LLMProviderError as e:
+                update_status(f"{constructive_persona.name} completed.", state="running") # Keep running for next step
+            except LLMProviderError as e: # Catch specific LLM errors
                 intermediate_steps["Constructive_Feedback"] = f"[ERROR] {type(e).__name__}: {e}"
                 update_status(f"Error running {constructive_persona.name}: {e}", state="error")
+                raise e # Re-raise the specific LLM error
     else:
-        intermediate_steps["Constructive_Feedback"] = "N/A - Persona not found or previous step failed."
+        intermediate_steps["Constructive_Feedback"] = "N/A - Persona not found or previous step was skipped/failed."
         if constructive_persona:
-            update_status("Constructive_Critic skipped due to previous step error or persona not found.", state="warning")
+            update_status("Constructive_Critic skipped due to previous step status or persona not found.", state="warning")
 
 
     # --- Step 4: Impartial Arbitration/Synthesis ---
@@ -179,11 +181,12 @@ def run_isal_process(
                 )
                 intermediate_steps["Arbitrator_Output"] = final_answer
                 cumulative_token_usage += tokens_used
-                update_status(f"{arbitrator_persona.name} completed.", state="running")
-            except LLMProviderError as e:
+                update_status(f"{arbitrator_persona.name} completed.", state="running") # Keep running for next step
+            except LLMProviderError as e: # Catch specific LLM errors
                 final_answer = f"[ERROR] {type(e).__name__}: Arbitration failed: {e}"
                 intermediate_steps["Arbitrator_Output"] = final_answer
                 update_status(f"Error running {arbitrator_persona.name}: {e}", state="error")
+                raise e # Re-raise the specific LLM error
     else:
         intermediate_steps["Arbitrator_Output"] = "N/A - Persona not found."
         final_answer = "Error: Impartial_Arbitrator persona not found."
@@ -192,8 +195,8 @@ def run_isal_process(
 
     # --- Step 5: Devil's Advocate (Optional, but good for robustness) ---
     devils_advocate_persona = next((p for p in personas if p.name == "Devils_Advocate"), None)
-    # Only run if the final answer itself isn't an error
-    if devils_advocate_persona and not final_answer.startswith("[ERROR]"):
+    # Only run if the final answer itself isn't an error or was skipped
+    if devils_advocate_persona and not (final_answer.startswith("[ERROR]") or final_answer.startswith("Error: Impartial_Arbitrator skipped")):
         update_status(f"Running persona: {devils_advocate_persona.name} (Tokens used so far: {cumulative_token_usage}/{max_total_tokens_budget})...")
         if cumulative_token_usage + devils_advocate_persona.max_tokens > max_total_tokens_budget:
             intermediate_steps["Devils_Advocate_Critique"] = "Skipped: Exceeded total token budget."
@@ -208,14 +211,15 @@ def run_isal_process(
                 )
                 intermediate_steps["Devils_Advocate_Critique"] = devils_advocate_critique
                 cumulative_token_usage += tokens_used
-                update_status(f"{devils_advocate_persona.name} completed.", state="running")
-            except LLMProviderError as e:
+                update_status(f"{devils_advocate_persona.name} completed.", state="running") # Keep running for next step
+            except LLMProviderError as e: # Catch specific LLM errors
                 intermediate_steps["Devils_Advocate_Critique"] = f"[ERROR] {type(e).__name__}: {e}"
                 update_status(f"Error running {devils_advocate_persona.name}: {e}", state="error")
+                raise e # Re-raise the specific LLM error
     else:
-        intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona not found or final answer has errors."
+        intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona not found or final answer has errors/was skipped."
         if devils_advocate_persona:
-            update_status("Devils_Advocate skipped due to previous step error or persona not found.", state="warning")
+            update_status("Devils_Advocate skipped due to previous step status or persona not found.", state="warning")
 
 
     intermediate_steps["Total_Tokens_Used"] = str(cumulative_token_usage) # Add token count to steps

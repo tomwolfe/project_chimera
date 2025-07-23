@@ -8,9 +8,10 @@ from rich.text import Text
 from rich.syntax import Syntax
 import io
 import contextlib
+from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific exceptions
 
 # Redirect rich console output to a string buffer for Streamlit display
-@contextlib.contextmanager # Corrected line: Removed the duplicate 'contextlib'
+@contextlib.contextmanager
 def capture_rich_output():
     buffer = io.StringIO()
     
@@ -128,6 +129,30 @@ if st.button("Run Socratic Debate", type="primary"):
                     st.subheader("Final Synthesized Answer")
                     st.markdown(final_answer) # Use markdown for final answer
                     
+                except GeminiAPIError as e:
+                    error_message = str(e) # Get the message from the exception object
+                    user_advice = "An issue occurred with the Gemini API."
+                    if "invalid API key" in error_message.lower() or (hasattr(e, 'code') and e.code == 401):
+                        user_advice = "Invalid API Key. Please check your Gemini API key and ensure it is correct."
+                    elif "rate limit" in error_message.lower() or (hasattr(e, 'code') and e.code == 429):
+                        user_advice = "Rate Limit Exceeded. You've made too many requests. Please wait a moment and try again."
+                    elif "quota" in error_message.lower() or (hasattr(e, 'code') and e.code == 403):
+                        user_advice = "Quota Exceeded or Access Denied. Please check your Gemini API quota or permissions."
+                    elif "model" in error_message.lower() and "not found" in error_message.lower():
+                        user_advice = f"Selected model '{selected_model}' not found or not available. Please choose a different model."
+                    
+                    status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
+                    st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    st.code(rich_output_buffer.getvalue(), language="text")
+
+                except LLMUnexpectedError as e:
+                    error_message = str(e)
+                    user_advice = "An unexpected issue occurred with the LLM provider (e.g., network problem, malformed response). Please try again later."
+                    
+                    status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
+                    st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    st.code(rich_output_buffer.getvalue(), language="text")
+
                 except Exception as e:
                     # Update status to error if an exception occurs
                     status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
