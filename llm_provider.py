@@ -51,3 +51,19 @@ class GeminiProvider:
         except Exception as e:
             # Handles other exceptions (e.g., network issues)
             raise LLMUnexpectedError(str(e)) from e
+
+    def count_tokens(self, prompt: str, system_prompt: str) -> int:
+        """
+        Estimates the token count for a given prompt and system prompt.
+        """
+        try:
+            response = self.client.models.count_tokens(
+                model=self.model_name,
+                contents=prompt,
+                system_instruction=system_prompt
+            )
+            return response.total_tokens
+        except Exception as e:
+            # If counting tokens fails, it's likely an API issue (e.g., invalid key)
+            # Re-raise as GeminiAPIError for consistent handling.
+            raise GeminiAPIError(f"Failed to count tokens: {e}") from e

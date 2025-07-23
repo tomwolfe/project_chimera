@@ -2,7 +2,7 @@
 import streamlit as st
 import os
 from core import run_isal_process
-from rich.console import Console
+from core import TokenBudgetExceededError # Import new exception
 import sys
 from rich.text import Text
 from rich.syntax import Syntax
@@ -119,7 +119,10 @@ if st.button("Run Socratic Debate", type="primary"):
                             with st.expander(f"### {step_name.replace('_', ' ').title()}"):
                                 # Use Streamlit's markdown or code block for display
                                 # Check for the special token count step
-                                if step_name == "Total_Tokens_Used":
+                                if step_name.endswith("_Tokens_Used"): # New: Per-step token display
+                                    original_step_name = step_name.replace("_Tokens_Used", "")
+                                    st.write(f"Tokens used for '{original_step_name.replace('_', ' ').title()}': {content}")
+                                elif step_name == "Total_Tokens_Used":
                                     st.write(f"Total tokens consumed: {content}")
                                 elif "Output" in step_name or "Critique" in step_name or "Feedback" in step_name or "[ERROR]" in content:
                                     st.code(content, language="markdown")
@@ -129,6 +132,13 @@ if st.button("Run Socratic Debate", type="primary"):
                     st.subheader("Final Synthesized Answer")
                     st.markdown(final_answer) # Use markdown for final answer
                     
+                except TokenBudgetExceededError as e: # Catch the new specific error
+                    error_message = str(e)
+                    user_advice = "The process was stopped because it would exceed the maximum token budget."
+                    status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
+                    st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    st.code(rich_output_buffer.getvalue(), language="text")
+
                 except GeminiAPIError as e:
                     error_message = str(e) # Get the message from the exception object
                     user_advice = "An issue occurred with the Gemini API."
