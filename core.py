@@ -50,7 +50,6 @@ def run_isal_process(
     Returns the final synthesized answer and a dictionary of intermediate steps.
     """
     personas = load_personas()
-    gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name)
     
     cumulative_token_usage = 0
     intermediate_steps: Dict[str, Any] = {} # Changed to Any
@@ -62,11 +61,14 @@ def run_isal_process(
             streamlit_status.update(label=message, state=state, expanded=expanded)
         print(message) # Keep print for rich console capture / CLI output
 
+    # Initialize GeminiProvider, passing the status update callback
+    gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name, status_callback=update_status)
+    
+    update_status("Starting Socratic Arbitration Loop...")
+
     # Helper to get persona by name
     def get_persona(name):
         return next((p for p in personas if p.name == name), None)
-
-    update_status("Starting Socratic Arbitration Loop...")
 
     # --- Step 1: Initial Generation (Visionary_Generator) ---
     visionary_persona = get_persona("Visionary_Generator")
