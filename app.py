@@ -9,9 +9,12 @@ from rich.syntax import Syntax
 import io
 import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific exceptions
+import re # Added for stripping ANSI codes
+import datetime # Added for timestamp in report
+from typing import Dict, Any # Add this line
 
 # Redirect rich console output to a string buffer for Streamlit display
-@contextlib.contextmanager
+@contextlib.contextmanager # Corrected: lowercase 'm' in contextmanager
 def capture_rich_output():
     buffer = io.StringIO()
     
@@ -43,6 +46,64 @@ def capture_rich_output():
         typer_console_instance.force_terminal = False # Restore default
     except ImportError:
         pass
+
+# Function to strip ANSI escape codes from text
+ansi_escape_re = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+def strip_ansi_codes(text):
+    return ansi_escape_re.sub('', text)
+
+# --- Helper function for Markdown Report Generation ---
+# Moved this function definition here, before it's called in the main Streamlit logic.
+def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any]) -> str:
+    """
+    Generates a comprehensive Markdown report of the Socratic Debate process.
+    """
+    report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    md_content = f"# Project Chimera Socratic Debate Report\n\n"
+    md_content += f"**Date:** {report_date}\n"
+    md_content += f"**Original Prompt:** {user_prompt}\n\n"
+
+    md_content += "---\n\n"
+    md_content += "## Configuration\n\n"
+    md_content += f"*   **Model:** {config_params.get('model_name', 'N/A')}\n"
+    md_content += f"*   **Max Total Tokens Budget:** {config_params.get('max_tokens_budget', 'N/A')}\n"
+    md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n\n"
+
+    md_content += "---\n\n"
+    md_content += "## Process Log\n\n"
+    md_content += "```text\n"
+    md_content += strip_ansi_codes(process_log_output) # Strip ANSI codes for cleaner text file
+    md_content += "\n```\n\n"
+
+    if config_params.get('show_intermediate_steps', True): # Always include in full report if available
+        md_content += "---\n\n"
+        md_content += "## Intermediate Reasoning Steps\n\n"
+        
+        # Create a list of step names to process, excluding token counts and the total
+        step_keys_to_process = [k for k in intermediate_steps.keys() 
+                                if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used"]
+        
+        for step_key in step_keys_to_process:
+            display_name = step_key.replace('_', ' ').title()
+            content = intermediate_steps.get(step_key, "N/A")
+            
+            # Find the corresponding token count
+            token_count_key = f"{step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"
+            tokens_used = intermediate_steps.get(token_count_key, "N/A")
+
+            md_content += f"### {display_name}\n\n"
+            md_content += f"```markdown\n{content}\n```\n"
+            md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
+
+    md_content += "---\n\n"
+    md_content += "## Final Synthesized Answer\n\n"
+    md_content += f"{final_answer}\n\n" # Final answer is already markdown
+
+    md_content += "---\n\n"
+    md_content += "## Summary\n\n"
+    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A')}\n"
+
+    return md_content
 
 
 st.set_page_config(layout="wide", page_title="Project Chimera Web App")
@@ -128,45 +189,93 @@ if st.button("Run Socratic Debate", type="primary"):
         with st.status("Initializing Socratic Debate...", expanded=True) as status:
             # Use the context manager to capture rich output for the log display
             with capture_rich_output() as rich_output_buffer:
+                final_answer = "" # Initialize to empty string
+                intermediate_steps = {} # Initialize to empty dict
+                process_log_output = "" # Initialize process log
+
                 try:
                     final_answer, intermediate_steps = run_isal_process(
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
                         streamlit_status=status, # Pass the status object for granular updates
                         model_name=selected_model # Pass the selected model name
                     )
+                    process_log_output = rich_output_buffer.getvalue()
                     
                     # Update status to complete after successful execution
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
 
                     # Display captured console output (e.g., "Running persona: ...")
                     st.subheader("Process Log")
-                    st.code(rich_output_buffer.getvalue(), language="text")
+                    st.code(strip_ansi_codes(process_log_output), language="text")
 
                     if show_intermediate_steps:
                         st.subheader("Intermediate Reasoning Steps")
-                        for step_name, content in intermediate_steps.items():
-                            with st.expander(f"### {step_name.replace('_', ' ').title()}"):
-                                # Use Streamlit's markdown or code block for display
-                                # Check for the special token count step
-                                if step_name.endswith("_Tokens_Used"): # New: Per-step token display
-                                    original_step_name = step_name.replace("_Tokens_Used", "")
-                                    st.write(f"Tokens used for '{original_step_name.replace('_', ' ').title()}': {content}")
-                                elif step_name == "Total_Tokens_Used":
-                                    st.write(f"Total tokens consumed: {content}")
-                                elif "Output" in step_name or "Critique" in step_name or "Feedback" in step_name or "[ERROR]" in content:
-                                    st.code(content, language="markdown")
-                                else:
-                                    st.write(content)
+                        # Filter out Total_Tokens_Used for this display, it's shown separately
+                        display_steps = {k: v for k, v in intermediate_steps.items() if k != "Total_Tokens_Used"}
+                        
+                        # Group step outputs with their token counts for display
+                        processed_keys = set()
+                        for step_name, content in display_steps.items():
+                            if step_name.endswith("_Tokens_Used") or step_name in processed_keys:
+                                continue
+
+                            # Determine the base name and corresponding token key
+                            base_name = step_name.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
+                            token_key = f"{base_name}_Tokens_Used"
+                            
+                            # Get the content and token count
+                            step_content = content
+                            step_tokens = display_steps.get(token_key, "N/A (not recorded)")
+
+                            with st.expander(f"### {base_name.replace('_', ' ').title()}"):
+                                st.code(step_content, language="markdown")
+                                st.write(f"**Tokens used for this step:** {step_tokens}")
+                            
+                            processed_keys.add(step_name)
+                            processed_keys.add(token_key)
 
                     st.subheader("Final Synthesized Answer")
                     st.markdown(final_answer) # Use markdown for final answer
-                    
+
+                    # --- Export Functionality ---
+                    st.markdown("---")
+                    st.subheader("Export Results")
+
+                    # Generate Markdown for Final Answer
+                    final_answer_md = f"# Final Synthesized Answer\n\n{final_answer}"
+                    st.download_button(
+                        label="Download Final Answer (Markdown)",
+                        data=final_answer_md,
+                        file_name="final_answer.md",
+                        mime="text/markdown"
+                    )
+
+                    # Generate Full Report Markdown
+                    full_report_md = generate_markdown_report(
+                        user_prompt=user_prompt,
+                        final_answer=final_answer,
+                        intermediate_steps=intermediate_steps,
+                        process_log_output=process_log_output,
+                        config_params={
+                            "max_tokens_budget": max_tokens_budget,
+                            "model_name": selected_model,
+                            "show_intermediate_steps": show_intermediate_steps
+                        }
+                    )
+                    st.download_button(
+                        label="Download Full Report (Markdown)",
+                        data=full_report_md,
+                        file_name="socratic_debate_report.md",
+                        mime="text/markdown"
+                    )
+                    st.info("To generate a PDF, download the Markdown report and use your browser's 'Print to PDF' option (usually accessible via Ctrl+P or Cmd+P).")
+
                 except TokenBudgetExceededError as e: # Catch the new specific error
                     error_message = str(e)
                     user_advice = "The process was stopped because it would exceed the maximum token budget."
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
-                    st.code(rich_output_buffer.getvalue(), language="text")
+                    st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except GeminiAPIError as e:
                     error_message = str(e) # Get the message from the exception object
@@ -182,7 +291,7 @@ if st.button("Run Socratic Debate", type="primary"):
                     
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
-                    st.code(rich_output_buffer.getvalue(), language="text")
+                    st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except LLMUnexpectedError as e:
                     error_message = str(e)
@@ -190,10 +299,10 @@ if st.button("Run Socratic Debate", type="primary"):
                     
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
-                    st.code(rich_output_buffer.getvalue(), language="text")
+                    st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except Exception as e:
                     # Update status to error if an exception occurs
                     status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                     st.error(f"An unexpected error occurred during the process: {e}")
-                    st.code(rich_output_buffer.getvalue(), language="text") # Show logs even on error
+                    st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text") # Show logs even on error
