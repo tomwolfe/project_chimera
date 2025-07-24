@@ -60,11 +60,40 @@ api_key = st.text_input(
 )
 st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
 
+# Pre-defined Prompt Templates/Examples
+EXAMPLE_PROMPTS = {
+    "Design a Mars City": "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
+    "Ethical AI Framework": "Develop an ethical framework for an AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
+    "Future of Education": "Describe the future of education in 2050, incorporating AI, virtual reality, and personalized learning paths.",
+    "Climate Change Solution": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
+    "Space Tourism Business Plan": "Outline a business plan for a luxury space tourism company, detailing target audience, unique selling propositions, and operational challenges.",
+}
+
+# Initialize session state for the prompt input if not already present
+if "user_prompt_input" not in st.session_state:
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS["Design a Mars City"] # Default initial prompt
+
+# Callback function to update the prompt text area when an example is selected
+def update_prompt_from_example():
+    selected_example_name = st.session_state.example_selector
+    if selected_example_name:
+        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name]
+
+# Add Example Prompt Selector
+st.selectbox(
+    "Choose an example prompt:",
+    options=[""] + list(EXAMPLE_PROMPTS.keys()), # Add an empty option for "no selection"
+    index=0, # Default to the empty option
+    help="Select a pre-defined prompt to quickly get started or see examples.",
+    key="example_selector", # Key for the selectbox
+    on_change=update_prompt_from_example # Callback to run when selection changes
+)
+
 # Prompt Input
 user_prompt = st.text_area(
     "Enter your prompt here:",
-    "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
-    height=150
+    height=150,
+    key="user_prompt_input" # This key links the widget to the session state variable
 )
 
 # Configuration Options
