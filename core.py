@@ -1,8 +1,8 @@
 # core.py
 import yaml
 from pydantic import BaseModel, Field, ValidationError
-from typing import List, Dict, Tuple, Any, Callable # Added Callable
-from llm_provider import GeminiProvider
+from typing import List, Dict, Tuple, Any, Callable, Optional # Added Optional
+from llm_provider import GeminiProvider # Import GeminiProvider
 from llm_provider import LLMProviderError, GeminiAPIError, LLMUnexpectedError, TOKEN_COSTS_PER_1K_TOKENS # Import custom exceptions and token costs
 
 # --- Custom Exception for Token Budget ---
@@ -44,7 +44,7 @@ class SocraticDebate:
                  api_key: str,
                  max_total_tokens_budget: int,
                  model_name: str,
-                 personas: Dict[str, Persona],
+                 personas: Dict[str, Persona], # Now required in constructor
                  status_callback: Callable = None):
         
         self.initial_prompt = initial_prompt
@@ -61,6 +61,15 @@ class SocraticDebate:
         self.current_thought = initial_prompt # The evolving thought/answer
         self.final_answer = "Process did not complete." # Default until arbitrator runs
 
+    def _get_sanitized_step_output(self, key: str, default_message: str = "No relevant input provided.") -> str:
+        """
+        Retrieves a step's output, sanitizing error/N/A messages for subsequent LLM prompts.
+        Returns a clean default_message if the content indicates an error or was skipped.
+        """
+        content = self.intermediate_steps.get(key) # Get raw content
+        if isinstance(content, str) and ("[ERROR]" in content or "N/A - Persona skipped/failed" in content):
+            return default_message
+        return content if content is not None else default_message # Return original content if valid, else default
     def _update_status(self, message: str, state: str = "running", expanded: bool = True,
                        current_total_tokens: int = 0, current_total_cost: float = 0.0,
                        estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
@@ -196,13 +205,14 @@ class SocraticDebate:
                 raise # Re-raise the original exception
 
         # --- Step 2: Skeptical Critique ---
-        # Only run if Visionary_Generator_Output is not an error/skipped
-        prev_step_output = self.intermediate_steps.get("Visionary_Generator_Output", "")
-        if not (isinstance(prev_step_output, str) and ("[ERROR]" in prev_step_output or "N/A" in prev_step_output)):
+        # Check original output to decide if step should run
+        visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
+        if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
+                visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No initial proposal available.")
                 self._execute_persona_step(
                     persona_name="Skeptical_Generator",
-                    step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities:\n\n{self.current_thought}",
+                    step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities:\n\n{visionary_output_sanitized}",
                     output_key="Skeptical_Critique"
                 )
             except LLMProviderError:
@@ -218,13 +228,15 @@ class SocraticDebate:
 
 
         # --- Step 3: Constructive Criticism & Improvement ---
-        # Only run if Visionary_Generator_Output is not an error/skipped
-        prev_step_output = self.intermediate_steps.get("Visionary_Generator_Output", "")
-        if not (isinstance(prev_step_output, str) and ("[ERROR]" in prev_step_output or "N/A" in prev_step_output)):
+        # Check original output to decide if step should run
+        visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
+        if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
+                visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No original proposal available.")
+                skeptical_critique_sanitized = self._get_sanitized_step_output("Skeptical_Critique", "No skeptical critique provided.")
                 self._execute_persona_step(
                     persona_name="Constructive_Critic",
-                    step_prompt_generator=lambda: f"Original Proposal:\n{self.current_thought}\n\nSkeptical Critique:\n{self.intermediate_steps.get('Skeptical_Critique', 'No skeptical critique provided.')}\n\nBased on the above, provide specific, actionable improvements to the original proposal.",
+                    step_prompt_generator=lambda: f"Original Proposal:\n{visionary_output_sanitized}\n\nSkeptical Critique:\n{skeptical_critique_sanitized}\n\nBased on the above, provide specific, actionable improvements to the original proposal.",
                     output_key="Constructive_Feedback"
                 )
             except LLMProviderError:
@@ -242,19 +254,22 @@ class SocraticDebate:
         # This step should always attempt to run, even if previous steps failed,
         # but its output will reflect the quality of its inputs.
         try:
+            visionary_output_arb = self._get_sanitized_step_output("Visionary_Generator_Output", "N/A")
+            skeptical_critique_arb = self._get_sanitized_step_output("Skeptical_Critique", "N/A")
+            constructive_feedback_arb = self._get_sanitized_step_output("Constructive_Feedback", "N/A")
             self._execute_persona_step(
                 persona_name="Impartial_Arbitrator",
                 step_prompt_generator=lambda: f"""
 Original Prompt: {self.initial_prompt}
 
 Visionary Proposal:
-{self.intermediate_steps.get('Visionary_Generator_Output', 'N/A')}
+{visionary_output_arb}
 
 Skeptical Critique:
-{self.intermediate_steps.get('Skeptical_Critique', 'N/A')}
+{skeptical_critique_arb}
 
 Constructive Feedback:
-{self.intermediate_steps.get('Constructive_Feedback', 'N/A')}
+{constructive_feedback_arb}
 
 Synthesize the above information into a single, balanced, and definitive final answer. Incorporate the best elements from all inputs, address critiques, and propose a refined solution. If any previous step resulted in an error, acknowledge it and try to synthesize based on available information, or state the limitation.
 """,
@@ -270,12 +285,14 @@ Synthesize the above information into a single, balanced, and definitive final a
                 raise # Re-raise the original exception
 
         # --- Step 5: Devil's Advocate (Optional, but good for robustness) ---
-        # Only run if the final answer itself isn't an error or was skipped
-        if not (isinstance(self.final_answer, str) and ("[ERROR]" in self.final_answer or "Error: Arbitration failed" in self.final_answer)):
+        # Check original final answer to decide if step should run
+        final_answer_raw = self.final_answer
+        if not (isinstance(final_answer_raw, str) and ("[ERROR]" in final_answer_raw or "Error: Arbitration failed" in final_answer_raw)):
             try:
+                final_answer_sanitized = self._get_sanitized_step_output("Arbitrator_Output", "No final answer available for critique.")
                 self._execute_persona_step(
                     persona_name="Devils_Advocate",
-                    step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness:\n\n{self.final_answer}",
+                    step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness:\n\n{final_answer_sanitized}",
                     output_key="Devils_Advocate_Critique"
                 )
             except LLMProviderError:
@@ -304,13 +321,17 @@ def run_isal_process(
     api_key: str,
     max_total_tokens_budget: int = 10000,
     model_name: str = "gemini-2.5-flash-lite",
-    streamlit_status_callback=None
+    streamlit_status_callback=None,
+    personas_override: Optional[Dict[str, Persona]] = None # New optional argument
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Runs the Iterative Socratic Arbitration Loop (ISAL) process.
     Returns the final synthesized answer and a dictionary of intermediate steps.
     """
-    personas = load_personas() # Load personas as a dictionary
+    if personas_override:
+        personas = personas_override
+    else:
+        personas = load_personas() # Load personas as a dictionary (for CLI fallback)
     
     debate = SocraticDebate(
         initial_prompt=prompt,

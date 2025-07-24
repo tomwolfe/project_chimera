@@ -112,7 +112,7 @@ class GeminiProvider:
                 output_tokens = response.usage_metadata.candidates_token_count
                 return response.text, input_tokens, output_tokens
             except APIError as e:
-                if e.code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
+                if e.status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time) # Add jitter
                     sleep_time = backoff_time + jitter
@@ -120,7 +120,7 @@ class GeminiProvider:
                     time.sleep(sleep_time)
                 else:
                     # Non-retryable API error or last retry failed
-                    raise GeminiAPIError(e.message, e.code) from e
+                    raise GeminiAPIError(e.text, e.status_code) from e
             except Exception as e:
                 # Catch-all for other unexpected errors (e.g., network issues)
                 if attempt < self.MAX_RETRIES:
@@ -152,14 +152,14 @@ class GeminiProvider:
                 )
                 return response.total_tokens
             except APIError as e:
-                if e.code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
+                if e.status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
                     self._log_status(f"Gemini API Error (Code: {e.code}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise GeminiAPIError(e.message, e.code) from e
+                    raise GeminiAPIError(e.text, e.status_code) from e
             except Exception as e:
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)

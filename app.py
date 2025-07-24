@@ -3,7 +3,7 @@ import streamlit as st
 import os
 from core import run_isal_process
 from core import TokenBudgetExceededError # Import new exception
-import sys
+import sys # Not used directly in app.py, but part of capture_rich_output
 from rich.text import Text
 from rich.syntax import Syntax
 import io
@@ -11,7 +11,7 @@ import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific exceptions
 from llm_provider import GeminiProvider # Import GeminiProvider to access cost calculation
 import re # Added for stripping ANSI codes
-import datetime # Added for timestamp in report
+import datetime # Added for timestamp in report 
 from typing import Dict, Any # Add this line
 
 # Redirect rich console output to a string buffer for Streamlit display
@@ -160,6 +160,10 @@ def reset_app_state():
     st.session_state.intermediate_steps_output = {}
     st.session_state.process_log_output_text = ""
     st.session_state.last_config_params = {}
+    # Reset editable personas to default from file
+    from core import load_personas # Import here to avoid circular dependency at top if not already
+    st.session_state.editable_personas = {p.name: p.model_dump() for p in load_personas().values()} # Load initial personas as dicts for easy editing
+
     # No st.rerun() needed here. Streamlit will rerun automatically after the callback.
 
 # Initialize all session state variables at the top
@@ -188,6 +192,10 @@ if "process_log_output_text" not in st.session_state:
     st.session_state.process_log_output_text = ""
 if "last_config_params" not in st.session_state: # Store config for report generation
     st.session_state.last_config_params = {}
+# New session state for editable personas
+if "editable_personas" not in st.session_state: # Initialize only if not already present
+    from core import load_personas # Import here to avoid circular dependency at top if not already
+    st.session_state.editable_personas = {p.name: p.model_dump() for p in load_personas().values()} # Load initial personas as dicts for easy editing
 
 
 # API Key Input
@@ -263,6 +271,46 @@ selected_model = st.selectbox(
     key="selected_model_selectbox" # Value is implicitly taken from st.session_state.selected_model_selectbox
 )
 
+# --- Persona Configuration UI ---
+st.subheader("Persona Configuration")
+with st.expander("View and Edit Personas"):
+    st.markdown("Adjust the system prompt, temperature, and max tokens for each persona. Changes are temporary for this session.")
+    for persona_name, persona_data in st.session_state.editable_personas.items():
+        with st.container(border=True):
+            st.markdown(f"**Persona: {persona_name}**")
+            
+            # System Prompt
+            # Use a unique key for each text_area based on persona_name
+            st.session_state.editable_personas[persona_name]["system_prompt"] = st.text_area(
+                f"System Prompt for {persona_name}:",
+                value=persona_data["system_prompt"],
+                height=150,
+                key=f"system_prompt_{persona_name}"
+            )
+            
+            # Temperature and Max Tokens
+            col_temp, col_max_tokens = st.columns(2)
+            with col_temp:
+                # Use a unique key for each slider
+                st.session_state.editable_personas[persona_name]["temperature"] = st.slider(
+                    f"Temperature for {persona_name}:",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=persona_data["temperature"],
+                    step=0.05,
+                    key=f"temperature_{persona_name}"
+                )
+            with col_max_tokens:
+                # Use a unique key for each number_input
+                st.session_state.editable_personas[persona_name]["max_tokens"] = st.number_input(
+                    f"Max Tokens for {persona_name}:",
+                    min_value=128, # Reasonable minimum for persona output
+                    max_value=4096, # Reasonable maximum for persona output
+                    value=persona_data["max_tokens"],
+                    step=128,
+                    key=f"max_tokens_{persona_name}"
+                )
+
 # Run and Reset Buttons
 run_col, reset_col = st.columns([0.7, 0.3]) # Adjust column width for buttons
 with run_col:
@@ -287,6 +335,9 @@ if run_button_clicked:
         st.session_state.intermediate_steps_output = {}
         st.session_state.process_log_output_text = ""
         st.session_state.last_config_params = {}
+        
+        # Convert dicts in session_state.editable_personas back to Persona objects for core.py
+        from core import Persona # Import Persona class from core
 
         # Use st.status for real-time feedback during the process
         with st.status("Initializing Socratic Debate...", expanded=True) as status:
@@ -330,7 +381,8 @@ if run_button_clicked:
                     final_answer, intermediate_steps = run_isal_process(
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
                         streamlit_status_callback=streamlit_status_callback, # Pass the callback
-                        model_name=selected_model # Pass the selected model name
+                        model_name=selected_model, # Pass the selected model name
+                        personas_override={name: Persona(**data) for name, data in st.session_state.editable_personas.items()} # Pass the edited personas
                     )
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     st.session_state.final_answer_output = final_answer
