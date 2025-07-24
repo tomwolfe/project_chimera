@@ -11,18 +11,18 @@ import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific exceptions
 from llm_provider import GeminiProvider # Import GeminiProvider to access cost calculation
 import re # Added for stripping ANSI codes
-import datetime # Added for timestamp in report 
+import datetime # Added for timestamp in report
 from typing import Dict, Any # Add this line
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
 def capture_rich_output():
     buffer = io.StringIO()
-    
+
     # Temporarily replace sys.stdout to capture print statements
     old_stdout = sys.stdout
-    sys.stdout = buffer 
-    
+    sys.stdout = buffer
+
     # Patch the global rich Console instance used by main.py/core.py
     # This is a workaround to capture output from imported modules that use rich.
     # A more robust solution for larger projects would be to pass the Console object explicitly.
@@ -36,9 +36,9 @@ def capture_rich_output():
         # In this case, rich console output from core.py won't be captured this way.
         # For simplicity of MVP, we assume main.py's console is the one to patch.
         pass
-    
+
     yield buffer
-    
+
     # Restore original stdout and rich console file
     sys.stdout = old_stdout
     try:
@@ -78,24 +78,24 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     if config_params.get('show_intermediate_steps', True): # Always include in full report if available
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
-        
+
         # Create a list of step names to process, excluding token counts and the total
-        step_keys_to_process = [k for k in intermediate_steps.keys() 
+        step_keys_to_process = [k for k in intermediate_steps.keys()
                                 if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"]
-        
+
         for step_key in step_keys_to_process: # step_key here is the content key
             # Determine the display name for the section
             display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
-            
+
             content = intermediate_steps.get(step_key, "N/A")
-            
+
             # Find the corresponding token count key based on core.py's naming
             token_base_name = step_key
             if step_key.endswith("_Output"):
                 token_base_name = step_key.replace("_Output", "")
             # For Skeptical_Critique, Constructive_Feedback, Devils_Advocate_Critique,
             # the step_key itself is the base for the token key.
-            
+
             token_count_key = f"{token_base_name}_Tokens_Used"
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
@@ -148,12 +148,12 @@ def reset_app_state():
     """Resets all input fields and clears outputs."""
     st.session_state.api_key_input = ""
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS["Design a Mars City"] # Reset to default example
-    st.session_state.max_tokens_budget_input = 10000
+    st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
     # When resetting, set example_selector to the key of the default prompt
-    st.session_state.example_selector = "Design a Mars City" 
-    
+    st.session_state.example_selector = "Design a Mars City"
+
     # Clear all output-related session states
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
@@ -172,7 +172,7 @@ if "api_key_input" not in st.session_state:
 if "user_prompt_input" not in st.session_state:
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS["Design a Mars City"]
 if "max_tokens_budget_input" not in st.session_state:
-    st.session_state.max_tokens_budget_input = 10000
+    st.session_state.max_tokens_budget_input = 1000000
 if "show_intermediate_steps_checkbox" not in st.session_state:
     st.session_state.show_intermediate_steps_checkbox = True
 if "selected_model_selectbox" not in st.session_state:
@@ -278,7 +278,7 @@ with st.expander("View and Edit Personas"):
     for persona_name, persona_data in st.session_state.editable_personas.items():
         with st.container(border=True):
             st.markdown(f"**Persona: {persona_name}**")
-            
+
             # System Prompt
             # Use a unique key for each text_area based on persona_name
             st.session_state.editable_personas[persona_name]["system_prompt"] = st.text_area(
@@ -287,7 +287,7 @@ with st.expander("View and Edit Personas"):
                 height=150,
                 key=f"system_prompt_{persona_name}"
             )
-            
+
             # Temperature and Max Tokens
             col_temp, col_max_tokens = st.columns(2)
             with col_temp:
@@ -323,7 +323,7 @@ if run_button_clicked:
     # Clear any proactive feedback messages when run button is clicked
     api_key_feedback_placeholder.empty()
     max_tokens_feedback_placeholder.empty()
-    
+
     if not api_key.strip():
         st.error("Please enter your Gemini API Key to proceed.")
     elif not user_prompt.strip():
@@ -335,7 +335,7 @@ if run_button_clicked:
         st.session_state.intermediate_steps_output = {}
         st.session_state.process_log_output_text = ""
         st.session_state.last_config_params = {}
-        
+
         # Convert dicts in session_state.editable_personas back to Persona objects for core.py
         from core import Persona # Import Persona class from core
 
@@ -378,7 +378,7 @@ if run_button_clicked:
             # Use the context manager to capture rich output for the log display
             with capture_rich_output() as rich_output_buffer:
                 # Initialize debate_instance before the try block
-                debate_instance = None 
+                debate_instance = None
                 try:
                     # First, get the debate instance
                     from core import SocraticDebate # Import SocraticDebate class
@@ -400,7 +400,7 @@ if run_button_clicked:
                         "show_intermediate_steps": show_intermediate_steps
                     }
                     st.session_state.debate_ran = True
-                    
+
                     # Update status to complete after successful execution
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
                     # Ensure final metrics are displayed
@@ -448,7 +448,7 @@ if run_button_clicked:
                         user_advice = "Quota Exceeded or Access Denied. Please check your Gemini API quota or permissions."
                     elif "model" in error_message.lower() and "not found" in error_message.lower():
                         user_advice = f"Selected model '{selected_model}' not found or not available. Please choose a different model."
-                    
+
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
@@ -466,7 +466,7 @@ if run_button_clicked:
                     st.session_state.debate_ran = True
                     error_message = str(e)
                     user_advice = "An unexpected issue occurred with the LLM provider (e.g., network problem, malformed response). Please try again later."
-                    
+
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
@@ -506,9 +506,9 @@ if st.session_state.debate_ran:
     if st.session_state.show_intermediate_steps_checkbox: # Use session state for checkbox value
         st.subheader("Intermediate Reasoning Steps")
         # Filter out Total_Tokens_Used and Total_Estimated_Cost_USD for this display, it's shown separately
-        display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() 
+        display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items()
                          if k not in ["Total_Tokens_Used", "Total_Estimated_Cost_USD"]}
-        
+
         # Group step outputs with their token counts for display
         processed_keys = set()
         for content_key, content in display_steps.items(): # content_key is like 'Visionary_Generator_Output', 'Skeptical_Critique'
@@ -517,22 +517,22 @@ if st.session_state.debate_ran:
 
             # Determine the display name for the expander
             display_name = content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
-            
+
             # Determine the actual token count key from core.py's naming convention
             # The token key is always the content_key with '_Tokens_Used' appended,
             # UNLESS the content_key itself is a "base" name like 'Visionary_Generator'
             # For consistency, core.py uses the step_name_prefix for the token key.
             # We need to map the content_key back to that step_name_prefix.
-            
+
             token_base_name = content_key
             if content_key.endswith("_Output"): # e.g., Visionary_Generator_Output, Arbitrator_Output
                 # The token key is based on the part before '_Output'
                 token_base_name = content_key.replace("_Output", "")
             # For Skeptical_Critique, Constructive_Feedback, Devils_Advocate_Critique,
             # the content_key itself is the base for the token key.
-            
+
             token_count_key = f"{token_base_name}_Tokens_Used"
-            
+
             # Get the content and token count
             step_content = content
             step_tokens = display_steps.get(token_count_key, "N/A (not recorded)")
@@ -540,7 +540,7 @@ if st.session_state.debate_ran:
             with st.expander(f"### {display_name}"):
                 st.code(step_content, language="markdown")
                 st.write(f"**Tokens used for this step:** {step_tokens}")
-            
+
             processed_keys.add(content_key)
             processed_keys.add(token_count_key)
 
