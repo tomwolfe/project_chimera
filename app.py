@@ -110,8 +110,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A'):,}\n"
-    # Ensure cost is formatted as a string for the report
-    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
+    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n" # Add cost to report
 
     return md_content
 
@@ -130,13 +129,18 @@ EXAMPLE_PROMPTS = {
     "Climate Change Solution": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
     "Space Tourism Business Plan": "Outline a business plan for a luxury space tourism company, detailing target audience, unique selling propositions, and operational challenges.",
     # --- New Example Prompts ---
+    "Future of Work": "Describe the future of work in a world increasingly dominated by automation and AI, considering new job roles, economic models, and the role of human creativity.",
+    "Interstellar Travel Challenges": "Identify and propose solutions for the primary scientific and engineering challenges of achieving interstellar travel within the next 200 years.",
+    "Ethical Considerations of Gene Editing": "Discuss the ethical implications of widespread human gene editing, considering accessibility, unintended consequences, and societal impact.",
+    "Smart City Infrastructure": "Design a smart city infrastructure that leverages IoT, AI, and renewable energy to improve urban living, focusing on sustainability and citizen well-being.",
+    "Personalized Learning Systems": "Develop a concept for a highly personalized learning system that adapts to individual student needs, learning styles, and career aspirations, incorporating AI and adaptive content.",
+    "Global Pandemic Preparedness": "Outline a comprehensive global strategy for preventing and responding to future pandemics, including early warning systems, vaccine development, and equitable distribution.",
+    "Sustainable Food Systems": "Propose innovative solutions for creating sustainable and resilient food systems that can feed a growing global population while minimizing environmental impact.",
+    "AI in Healthcare Diagnostics": "Explore the potential and challenges of integrating AI into medical diagnostics, focusing on accuracy, data privacy, and the role of human practitioners.",
+    "Revitalizing Rural Economies": "Develop a plan to revitalize rural economies in developed countries, considering remote work, local entrepreneurship, and sustainable tourism.",
     "Quantum Computing Impact": "Analyze the potential societal and economic impacts of widespread quantum computing by 2040, including both opportunities and risks.",
     "Personalized Medicine Ethics": "Discuss the ethical implications of highly personalized medicine, considering data privacy, equitable access, and genetic manipulation.",
     "Sustainable Urban Farming": "Detail a comprehensive plan for implementing sustainable urban farming on a large scale in a major metropolitan area, addressing infrastructure, community engagement, and economic viability.",
-    "AI in Creative Arts": "Explore how AI will transform creative industries (e.g., music, visual art, writing) over the next decade, focusing on collaboration between human and AI artists.",
-    "Global Water Crisis Solution": "Propose a multi-faceted, international strategy to address the global water crisis, integrating technological, policy, and behavioral changes.",
-    "Future of Work": "Describe the future of work in a world increasingly dominated by automation and AI, considering new job roles, economic models, and the role of human creativity.",
-    "Interstellar Travel Challenges": "Identify and propose solutions for the primary scientific and engineering challenges of achieving interstellar travel within the next 200 years.",
 }
 
 # --- Reset Function ---
@@ -193,6 +197,13 @@ api_key = st.text_input(
     help="Your API key will not be stored. For deployed apps, consider using Streamlit Secrets (`st.secrets`).",
     key="api_key_input" # Value is implicitly taken from st.session_state.api_key_input
 )
+# Placeholder for API key feedback
+api_key_feedback_placeholder = st.empty()
+if not api_key.strip():
+    api_key_feedback_placeholder.warning("Please enter your Gemini API Key to enable the 'Run Socratic Debate' button.")
+else:
+    api_key_feedback_placeholder.empty() # Clear warning if key is present
+
 st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
 
 
@@ -230,6 +241,13 @@ with col1:
         help="Controls the maximum number of tokens used across all LLM calls to manage cost.",
         key="max_tokens_budget_input" # Value is implicitly taken from st.session_state.max_tokens_budget_input
     )
+# Placeholder for max tokens budget feedback
+max_tokens_feedback_placeholder = st.empty()
+if max_tokens_budget < 5000:
+    max_tokens_feedback_placeholder.info("A budget below 5,000 tokens may result in an incomplete debate due to token limits.")
+else:
+    max_tokens_feedback_placeholder.empty()
+
 with col2:
     show_intermediate_steps = st.checkbox(
         "Show Intermediate Reasoning Steps",
@@ -254,7 +272,11 @@ with reset_col:
 
 
 if run_button_clicked:
-    if not api_key:
+    # Clear any proactive feedback messages when run button is clicked
+    api_key_feedback_placeholder.empty()
+    max_tokens_feedback_placeholder.empty()
+    
+    if not api_key.strip():
         st.error("Please enter your Gemini API Key to proceed.")
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
@@ -289,15 +311,15 @@ if run_button_clicked:
                     budget_remaining = max_tokens_budget - current_total_tokens
                     if estimated_next_step_tokens > budget_remaining:
                         next_step_warning_placeholder.warning(
-                            f"⚠️ Next step ({estimated_next_step_tokens} tokens) "
-                            f"will exceed budget ({budget_remaining} remaining). "
+                            f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
+                            f"will exceed budget ({budget_remaining:,} remaining). "
                             f"Estimated cost: ${estimated_next_step_cost:.4f}"
                         )
                     else:
                         next_step_warning_placeholder.info(
-                            f"Next step estimated: {estimated_next_step_tokens} tokens "
+                            f"Next step estimated: {estimated_next_step_tokens:,} tokens "
                             f"(${(estimated_next_step_cost):.4f}). "
-                            f"Budget remaining: {budget_remaining} tokens."
+                            f"Budget remaining: {budget_remaining:,} tokens."
                         )
                 else:
                     next_step_warning_placeholder.empty() # Clear warning if no next step estimate
