@@ -57,10 +57,18 @@ class GeminiProvider:
         Estimates the token count for a given prompt and system prompt.
         """
         try:
+            # Construct the 'contents' list to accurately represent the input
+            # including the system instruction, as expected by count_tokens for models
+            # that use a chat-like interface or explicit system roles.
+            # The system instruction is typically treated as a 'system' role message.
+            contents_for_counting = [
+                types.Content(role='system', parts=[types.Part(text=system_prompt)]),
+                types.Content(role='user', parts=[types.Part(text=prompt)])
+            ]
+
             response = self.client.models.count_tokens(
                 model=self.model_name,
-                contents=prompt,
-                system_instruction=system_prompt
+                contents=contents_for_counting
             )
             return response.total_tokens
         except Exception as e:
