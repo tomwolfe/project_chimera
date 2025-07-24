@@ -190,6 +190,7 @@ class SocraticDebate:
             # Store the (potentially truncated) response text
             self.intermediate_steps[output_key] = response_text
             self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used_this_step
+            step_output_content = response_text  # Update step_output_content with the actual response
             self.cumulative_token_usage += tokens_used_this_step
             self.cumulative_usd_cost += cost_this_step
             
