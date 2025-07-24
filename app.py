@@ -377,13 +377,20 @@ if run_button_clicked:
 
             # Use the context manager to capture rich output for the log display
             with capture_rich_output() as rich_output_buffer:
+                # Initialize debate_instance before the try block
+                debate_instance = None 
                 try:
-                    final_answer, intermediate_steps = run_isal_process(
+                    # First, get the debate instance
+                    from core import SocraticDebate # Import SocraticDebate class
+                    debate_instance: SocraticDebate = run_isal_process( # <--- CHANGE HERE
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
                         streamlit_status_callback=streamlit_status_callback, # Pass the callback
                         model_name=selected_model, # Pass the selected model name
                         personas_override={name: Persona(**data) for name, data in st.session_state.editable_personas.items()} # Pass the edited personas
                     )
+                    # Then, run the debate process
+                    final_answer, intermediate_steps = debate_instance.run_debate() # <--- CHANGE HERE
+
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     st.session_state.final_answer_output = final_answer
                     st.session_state.intermediate_steps_output = intermediate_steps
@@ -392,7 +399,7 @@ if run_button_clicked:
                         "model_name": selected_model,
                         "show_intermediate_steps": show_intermediate_steps
                     }
-                    st.session_state.debate_ran = True # Set to True only on successful completion
+                    st.session_state.debate_ran = True
                     
                     # Update status to complete after successful execution
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
@@ -406,7 +413,8 @@ if run_button_clicked:
 
                 except TokenBudgetExceededError as e: # Catch the new specific error
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = intermediate_steps # Capture partial steps
+                    # Access intermediate_steps from the debate_instance
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
                     st.session_state.last_config_params = { # Capture config even on error
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -418,12 +426,12 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
 
                 except GeminiAPIError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = intermediate_steps
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -444,12 +452,12 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
 
                 except LLMUnexpectedError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = intermediate_steps
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -462,12 +470,21 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
 
                 except Exception as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = intermediate_steps
+                    # For a generic Exception, ensure debate_instance is available
+                    if debate_instance is not None: # Check if debate_instance was successfully created
+                        st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                        total_tokens_val = debate_instance.intermediate_steps.get("Total_Tokens_Used", 0)
+                        total_cost_val = debate_instance.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+                    else:
+                        st.session_state.intermediate_steps_output = {} # Fallback if debate_instance itself failed to create
+                        total_tokens_val = 0
+                        total_cost_val = 0.0
+
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -478,8 +495,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                     st.error(f"An unexpected error occurred during the process: {e}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{total_tokens_val:,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${total_cost_val:.4f}")
 
 # This block will only render if a debate has been run (successfully or with error)
 if st.session_state.debate_ran:

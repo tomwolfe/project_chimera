@@ -56,14 +56,19 @@ def reason(
                 console.print(f"  [bold yellow]Next Step Estimate:[/bold] {estimated_next_step_tokens} tokens / ${estimated_next_step_cost:.4f} (Budget remaining: {budget_remaining})")
         console.print("-" * 80) # Separator for clarity
 
+    # Initialize debate_instance to None before the try block
+    debate_instance = None 
     try:
         console.print(Panel(Text(f"🤖 Starting Socratic Arbitration Loop (Budget: {max_tokens_budget} tokens)...", justify="center"), style="bold blue"))
         
-        final_answer, intermediate_steps = run_isal_process(
+        # First, get the debate instance
+        debate_instance = run_isal_process(
             prompt, api_key, max_total_tokens_budget=max_tokens_budget,
             model_name=model_name, # Pass model name
             streamlit_status_callback=cli_status_callback # Pass CLI specific callback
         )
+        # Then, run the debate process
+        final_answer, intermediate_steps = debate_instance.run_debate()
         
         if verbose:
             console.print(Panel(Text("--- Intermediate Steps ---", justify="center"), style="bold magenta"))
@@ -82,18 +87,22 @@ def reason(
 
     except TokenBudgetExceededError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-        # Display final cumulative tokens and cost even on error
-        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0) # Already an int
-        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0) # Now a float
+        # Access from debate_instance
+        total_tokens = debate_instance.intermediate_steps.get("Total_Tokens_Used", 0)
+        total_cost = debate_instance.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
         console.print(f"[bold yellow]Process halted due to budget.[/bold yellow]")
         console.print(f"[bold]Final Tokens Used:[/bold] {total_tokens}")
         console.print(f"[bold]Final Estimated Cost:[/bold] {total_cost}")
         raise typer.Exit(code=1)
     except Exception as e:
         console.print(f"[bold red]An unexpected error occurred:[/bold red] {e}")
-        # Display final cumulative tokens and cost even on error
-        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0) # Already an int
-        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0) # Now a float
+        # Access from debate_instance if available, otherwise default
+        if debate_instance is not None:
+            total_tokens = debate_instance.intermediate_steps.get("Total_Tokens_Used", 0)
+            total_cost = debate_instance.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+        else:
+            total_tokens = 0
+            total_cost = 0.0
         console.print(f"[bold]Final Tokens Used:[/bold] {total_tokens}")
         console.print(f"[bold]Final Estimated Cost:[/bold] {total_cost}")
         raise typer.Exit(code=1)

@@ -323,10 +323,10 @@ def run_isal_process(
     model_name: str = "gemini-2.5-flash-lite",
     streamlit_status_callback=None,
     personas_override: Optional[Dict[str, Persona]] = None # New optional argument
-) -> Tuple[str, Dict[str, Any]]:
+) -> 'SocraticDebate': # Changed return type hint to SocraticDebate instance
     """
-    Runs the Iterative Socratic Arbitration Loop (ISAL) process.
-    Returns the final synthesized answer and a dictionary of intermediate steps.
+    Initializes and returns the SocraticDebate instance.
+    The caller is responsible for running the debate and handling exceptions.
     """
     if personas_override:
         personas = personas_override
@@ -342,4 +342,7 @@ def run_isal_process(
         status_callback=streamlit_status_callback
     )
     
-    return debate.run_debate()
+    # Removed the call to debate.run_debate() here.
+    # The caller (app.py or main.py) will now call debate.run_debate()
+    # and handle its return values and exceptions.
+    return debate
