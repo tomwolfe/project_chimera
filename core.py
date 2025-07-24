@@ -389,7 +389,7 @@ def run_isal_process(
             update_status("Devils_Advocate skipped due to previous step status or persona not found.", state="warning")
 
     intermediate_steps["Total_Tokens_Used"] = cumulative_token_usage # Add token count to steps
-    intermediate_steps["Total_Estimated_Cost_USD"] = f"${cumulative_usd_cost:.4f}" # Store as formatted string
+    intermediate_steps["Total_Estimated_Cost_USD"] = cumulative_usd_cost # Store as float
     update_status(f"Socratic Arbitration Loop finished. Total tokens used: {cumulative_token_usage}. Total estimated cost: ${cumulative_usd_cost:.4f}",
                   state="complete", expanded=False,
                   current_total_tokens=cumulative_token_usage,

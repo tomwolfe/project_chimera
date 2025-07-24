@@ -109,8 +109,9 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
 
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
-    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A')}\n"
-    md_content += f"**Total Estimated Cost:** {intermediate_steps.get('Total_Estimated_Cost_USD', 'N/A')}\n" # Add cost to report
+    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A'):,}\n"
+    # Ensure cost is formatted as a string for the report
+    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
 
     return md_content
 
@@ -280,7 +281,7 @@ if run_button_clicked:
                                           current_total_tokens: int = 0, current_total_cost: float = 0.0,
                                           estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
                 status.update(label=message, state=state, expanded=expanded)
-                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens}")
+                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
                 total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
 
                 # Proactive warning for next step
@@ -323,12 +324,10 @@ if run_button_clicked:
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
                     # Ensure final metrics are displayed
                     final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
-                    final_total_cost_str = intermediate_steps.get('Total_Estimated_Cost_USD', "$0.0000")
-                    # Remove '$' for float conversion if needed, but for display, keep as string
-                    final_total_cost = float(final_total_cost_str.replace('$', '')) if isinstance(final_total_cost_str, str) else 0.0
+                    final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
 
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{final_total_cost_str}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
                     next_step_warning_placeholder.empty() # Clear any pending warnings
 
                 except TokenBudgetExceededError as e: # Catch the new specific error
@@ -345,8 +344,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
 
                 except GeminiAPIError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -371,8 +370,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
 
                 except LLMUnexpectedError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -389,8 +388,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
 
                 except Exception as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -405,8 +404,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                     st.error(f"An unexpected error occurred during the process: {e}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
 
 # This block will only render if a debate has been run (successfully or with error)
 if st.session_state.debate_ran:

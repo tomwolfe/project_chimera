@@ -83,8 +83,8 @@ def reason(
     except TokenBudgetExceededError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         # Display final cumulative tokens and cost even on error
-        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
-        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", "$0.0000")
+        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0) # Already an int
+        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0) # Now a float
         console.print(f"[bold yellow]Process halted due to budget.[/bold yellow]")
         console.print(f"[bold]Final Tokens Used:[/bold] {total_tokens}")
         console.print(f"[bold]Final Estimated Cost:[/bold] {total_cost}")
@@ -92,8 +92,8 @@ def reason(
     except Exception as e:
         console.print(f"[bold red]An unexpected error occurred:[/bold red] {e}")
         # Display final cumulative tokens and cost even on error
-        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
-        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", "$0.0000")
+        total_tokens = intermediate_steps.get("Total_Tokens_Used", 0) # Already an int
+        total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0) # Now a float
         console.print(f"[bold]Final Tokens Used:[/bold] {total_tokens}")
         console.print(f"[bold]Final Estimated Cost:[/bold] {total_cost}")
         raise typer.Exit(code=1)
@@ -101,9 +101,9 @@ def reason(
     console.print(Panel(Text("--- Final Synthesized Answer ---", justify="center"), style="bold green"))
     console.print(Syntax(final_answer, "markdown", theme="monokai", line_numbers=False, word_wrap=True))
     
-    total_tokens = intermediate_steps.get("Total_Tokens_Used", "N/A")
-    total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", "N/A")
-    console.print(Panel(Text(f"Total Tokens Consumed: [bold]{total_tokens}[/bold]\nTotal Estimated Cost: [bold]{total_cost}[/bold]", justify="center"), style="bold green"))
+    total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
+    total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+    console.print(Panel(Text(f"Total Tokens Consumed: [bold]{total_tokens:,}[/bold]\nTotal Estimated Cost: [bold]${total_cost:.4f}[/bold]", justify="center"), style="bold green"))
 
 if __name__ == "__main__":
     app()
