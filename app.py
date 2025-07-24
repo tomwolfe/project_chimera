@@ -9,6 +9,7 @@ from rich.syntax import Syntax
 import io
 import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific exceptions
+from llm_provider import GeminiProvider # Import GeminiProvider to access cost calculation
 import re # Added for stripping ANSI codes
 import datetime # Added for timestamp in report
 from typing import Dict, Any # Add this line
@@ -81,7 +82,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
         
         # Create a list of step names to process, excluding token counts and the total
         step_keys_to_process = [k for k in intermediate_steps.keys() 
-                                if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used"]
+                                if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"]
         
         for step_key in step_keys_to_process:
             display_name = step_key.replace('_', ' ').title()
@@ -102,6 +103,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A')}\n"
+    md_content += f"**Total Estimated Cost:** {intermediate_steps.get('Total_Estimated_Cost_USD', 'N/A')}\n" # Add cost to report
 
     return md_content
 
@@ -187,6 +189,40 @@ if st.button("Run Socratic Debate", type="primary"):
     else:
         # Use st.status for real-time feedback during the process
         with st.status("Initializing Socratic Debate...", expanded=True) as status:
+            # Placeholders for real-time metrics
+            st.markdown("---")
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            total_tokens_placeholder = metric_col1.empty()
+            total_cost_placeholder = metric_col2.empty()
+            next_step_warning_placeholder = metric_col3.empty()
+            st.markdown("---")
+
+            # Define the callback function to update Streamlit UI elements
+            def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
+                                          current_total_tokens: int = 0, current_total_cost: float = 0.0,
+                                          estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
+                status.update(label=message, state=state, expanded=expanded)
+                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens}")
+                total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
+
+                # Proactive warning for next step
+                if estimated_next_step_tokens > 0:
+                    budget_remaining = max_tokens_budget - current_total_tokens
+                    if estimated_next_step_tokens > budget_remaining:
+                        next_step_warning_placeholder.warning(
+                            f"⚠️ Next step ({estimated_next_step_tokens} tokens) "
+                            f"will exceed budget ({budget_remaining} remaining). "
+                            f"Estimated cost: ${estimated_next_step_cost:.4f}"
+                        )
+                    else:
+                        next_step_warning_placeholder.info(
+                            f"Next step estimated: {estimated_next_step_tokens} tokens "
+                            f"(${(estimated_next_step_cost):.4f}). "
+                            f"Budget remaining: {budget_remaining} tokens."
+                        )
+                else:
+                    next_step_warning_placeholder.empty() # Clear warning if no next step estimate
+
             # Use the context manager to capture rich output for the log display
             with capture_rich_output() as rich_output_buffer:
                 final_answer = "" # Initialize to empty string
@@ -196,13 +232,22 @@ if st.button("Run Socratic Debate", type="primary"):
                 try:
                     final_answer, intermediate_steps = run_isal_process(
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
-                        streamlit_status=status, # Pass the status object for granular updates
+                        streamlit_status_callback=streamlit_status_callback, # Pass the callback
                         model_name=selected_model # Pass the selected model name
                     )
                     process_log_output = rich_output_buffer.getvalue()
                     
                     # Update status to complete after successful execution
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
+                    # Ensure final metrics are displayed
+                    final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
+                    final_total_cost_str = intermediate_steps.get('Total_Estimated_Cost_USD', "$0.0000")
+                    # Remove '$' for float conversion if needed, but for display, keep as string
+                    final_total_cost = float(final_total_cost_str.replace('$', '')) if isinstance(final_total_cost_str, str) else 0.0
+
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{final_total_cost_str}")
+                    next_step_warning_placeholder.empty() # Clear any pending warnings
 
                     # Display captured console output (e.g., "Running persona: ...")
                     st.subheader("Process Log")
@@ -210,8 +255,9 @@ if st.button("Run Socratic Debate", type="primary"):
 
                     if show_intermediate_steps:
                         st.subheader("Intermediate Reasoning Steps")
-                        # Filter out Total_Tokens_Used for this display, it's shown separately
-                        display_steps = {k: v for k, v in intermediate_steps.items() if k != "Total_Tokens_Used"}
+                        # Filter out Total_Tokens_Used and Total_Estimated_Cost_USD for this display, it's shown separately
+                        display_steps = {k: v for k, v in intermediate_steps.items() 
+                                         if k not in ["Total_Tokens_Used", "Total_Estimated_Cost_USD"]}
                         
                         # Group step outputs with their token counts for display
                         processed_keys = set()
@@ -220,19 +266,19 @@ if st.button("Run Socratic Debate", type="primary"):
                                 continue
 
                             # Determine the base name and corresponding token key
-                            base_name = step_name.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
-                            token_key = f"{base_name}_Tokens_Used"
+                            base_name = step_name.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')
+                            token_count_key = f"{base_name}_Tokens_Used"
                             
                             # Get the content and token count
                             step_content = content
-                            step_tokens = display_steps.get(token_key, "N/A (not recorded)")
+                            step_tokens = display_steps.get(token_count_key, "N/A (not recorded)")
 
                             with st.expander(f"### {base_name.replace('_', ' ').title()}"):
                                 st.code(step_content, language="markdown")
                                 st.write(f"**Tokens used for this step:** {step_tokens}")
                             
                             processed_keys.add(step_name)
-                            processed_keys.add(token_key)
+                            processed_keys.add(token_count_key)
 
                     st.subheader("Final Synthesized Answer")
                     st.markdown(final_answer) # Use markdown for final answer
@@ -275,6 +321,9 @@ if st.button("Run Socratic Debate", type="primary"):
                     user_advice = "The process was stopped because it would exceed the maximum token budget."
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    # Ensure final metrics are displayed even on error
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
                     st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except GeminiAPIError as e:
@@ -291,6 +340,9 @@ if st.button("Run Socratic Debate", type="primary"):
                     
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    # Ensure final metrics are displayed even on error
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
                     st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except LLMUnexpectedError as e:
@@ -299,10 +351,16 @@ if st.button("Run Socratic Debate", type="primary"):
                     
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
+                    # Ensure final metrics are displayed even on error
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
                     st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text")
 
                 except Exception as e:
                     # Update status to error if an exception occurs
                     status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                     st.error(f"An unexpected error occurred during the process: {e}")
+                    # Ensure final metrics are displayed even on error
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0)}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"{intermediate_steps.get('Total_Estimated_Cost_USD', '$0.0000')}")
                     st.code(strip_ansi_codes(rich_output_buffer.getvalue()), language="text") # Show logs even on error

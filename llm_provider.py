@@ -20,6 +20,22 @@ class LLMUnexpectedError(LLMProviderError):
     """Specific exception for unexpected LLM errors."""
     pass
 
+# --- Token Cost Definitions (per 1,000 tokens) ---
+# These are example costs and should be verified against Google's official pricing.
+# As of late 2023/early 2024, Gemini 1.5 Flash is cheaper than 1.5 Pro.
+# The project uses "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash".
+# We'll map "2.5-flash-lite" and "2.5-flash" to 1.5 Flash pricing, and "2.5-pro" to 1.5 Pro pricing.
+TOKEN_COSTS_PER_1K_TOKENS = {
+    "gemini-1.5-flash": { # Used for "gemini-2.5-flash-lite" and "gemini-2.5-flash"
+        "input": 0.00008,
+        "output": 0.00024,
+    },
+    "gemini-1.5-pro": { # Used for "gemini-2.5-pro"
+        "input": 0.0005,
+        "output": 0.0015,
+    }
+}
+
 class GeminiProvider:
     # Retry parameters
     MAX_RETRIES = 5
@@ -34,16 +50,47 @@ class GeminiProvider:
         self.model_name = model_name
         self.status_callback = status_callback # Callback for Streamlit status updates
 
-    def _log_status(self, message: str, state: str = "running", expanded: bool = True):
+    def _log_status(self, message: str, state: str = "running", expanded: bool = True,
+                    current_total_tokens: int = 0, current_total_cost: float = 0.0,
+                    estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
         if self.status_callback:
-            self.status_callback(message, state, expanded)
+            # Pass all relevant metrics to the callback
+            self.status_callback(
+                message=message,
+                state=state,
+                expanded=expanded,
+                current_total_tokens=current_total_tokens,
+                current_total_cost=current_total_cost,
+                estimated_next_step_tokens=estimated_next_step_tokens,
+                estimated_next_step_cost=estimated_next_step_cost
+            )
         else:
             print(f"[LLM Provider] {message}") # Fallback to print if no callback
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> tuple[str, int]:
+    def _get_pricing_model_name(self) -> str:
+        """Maps the user-selected model name to a pricing tier name."""
+        if "flash" in self.model_name:
+            return "gemini-1.5-flash"
+        elif "pro" in self.model_name:
+            return "gemini-1.5-pro"
+        return "gemini-1.5-flash" # Default to flash if unknown
+
+    def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculates the estimated USD cost based on token usage and model pricing."""
+        pricing_model = self._get_pricing_model_name()
+        costs = TOKEN_COSTS_PER_1K_TOKENS.get(pricing_model)
+        if not costs:
+            self._log_status(f"Warning: No pricing information for model '{self.model_name}'. Cost estimation will be $0.", state="warning")
+            return 0.0
+        
+        input_cost = (input_tokens / 1000) * costs["input"]
+        output_cost = (output_tokens / 1000) * costs["output"]
+        return input_cost + output_cost
+
+    def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> tuple[str, int, int]:
         """
         Generates content using the Gemini model.
-        Returns a tuple of (generated_text: str, total_tokens_used: int).
+        Returns a tuple of (generated_text: str, input_tokens_used: int, output_tokens_used: int).
         Raises custom exceptions on error.
         """
         config = types.GenerateContentConfig(
@@ -61,8 +108,9 @@ class GeminiProvider:
                     contents=prompt,
                     config=config
                 )
-                total_tokens = response.usage_metadata.prompt_token_count + response.usage_metadata.candidates_token_count
-                return response.text, total_tokens
+                input_tokens = response.usage_metadata.prompt_token_count
+                output_tokens = response.usage_metadata.candidates_token_count
+                return response.text, input_tokens, output_tokens
             except APIError as e:
                 if e.code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
