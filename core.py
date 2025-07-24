@@ -120,8 +120,16 @@ class SocraticDebate:
                 system_prompt=persona.system_prompt
             )
             estimated_step_output_tokens = persona.max_tokens
-            estimated_step_total_tokens = estimated_input_tokens + estimated_step_output_tokens
-            estimated_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, estimated_step_output_tokens)
+
+            # Calculate the actual max_tokens to request from the LLM,
+            # ensuring it doesn't exceed the overall budget.
+            # It should be no more than persona's configured max_tokens,
+            # AND no more than the remaining budget after input tokens.
+            remaining_budget_for_output = self.max_total_tokens_budget - self.cumulative_token_usage - estimated_input_tokens
+            actual_max_output_tokens_to_request = min(persona.max_tokens, max(0, remaining_budget_for_output))
+
+            estimated_step_total_tokens = estimated_input_tokens + actual_max_output_tokens_to_request
+            estimated_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, actual_max_output_tokens_to_request)
 
             self._update_status(f"Running persona: {persona.name}...",
                                 current_total_tokens=self.cumulative_token_usage,
@@ -142,13 +150,45 @@ class SocraticDebate:
                 prompt=step_prompt,
                 system_prompt=persona.system_prompt,
                 temperature=persona.temperature,
-                max_tokens=persona.max_tokens
+                max_tokens=actual_max_output_tokens_to_request # Use the budget-aware max_tokens
             )
             tokens_used_this_step = input_tokens_used + output_tokens_used
             cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens_used, output_tokens_used)
 
-            step_output_content = response_text
-            self.intermediate_steps[output_key] = step_output_content
+            # Post-generation strict budget check:
+            # If the actual tokens used for this step (input + output) exceed the remaining budget,
+            # it means the LLM generated more than requested or the initial estimate was off.
+            # In this case, we must truncate the response and raise an error.
+            if self.cumulative_token_usage + tokens_used_this_step > self.max_total_tokens_budget:
+                # Calculate the maximum allowed output tokens for this step to stay within budget
+                allowed_tokens_this_step = self.max_total_tokens_budget - self.cumulative_token_usage
+                max_allowed_output_tokens = max(0, allowed_tokens_this_step - input_tokens_used)
+
+                if output_tokens_used > max_allowed_output_tokens:
+                    # Truncate the response_text to approximately fit the allowed tokens.
+                    # This is a heuristic, as tokenization is complex.
+                    approx_chars_per_token = 4 # Common rough estimate for English
+                    truncated_chars = max_allowed_output_tokens * approx_chars_per_token
+                    response_text = response_text[:truncated_chars] + "..." if len(response_text) > truncated_chars else response_text
+
+                    # Adjust reported tokens and cost to reflect the truncation for budget purposes
+                    output_tokens_used = max_allowed_output_tokens
+                    tokens_used_this_step = input_tokens_used + output_tokens_used
+                    cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens_used, output_tokens_used)
+
+                    error_msg = (f"Step '{persona.name}' generated more tokens than budget allowed. "
+                                 f"Response truncated. Actual tokens used for step: {input_tokens_used} input + {output_tokens_used} output. "
+                                 f"Total cumulative tokens: {self.cumulative_token_usage + tokens_used_this_step}. "
+                                 f"Budget: {self.max_total_tokens_budget}. Process stopped.")
+                    self.intermediate_steps[output_key] = f"[TRUNCATED] {response_text}\n\n{error_msg}"
+                    self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used_this_step
+                    self.cumulative_token_usage += tokens_used_this_step # Update with capped value
+                    self.cumulative_usd_cost += cost_this_step # Update with capped value
+                    self._update_status(error_msg, state="error")
+                    raise TokenBudgetExceededError(error_msg)
+
+            # Store the (potentially truncated) response text
+            self.intermediate_steps[output_key] = response_text
             self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used_this_step
             self.cumulative_token_usage += tokens_used_this_step
             self.cumulative_usd_cost += cost_this_step
@@ -183,84 +223,83 @@ class SocraticDebate:
         Returns the final synthesized answer and a dictionary of intermediate steps.
         """
         self._update_status("Starting Socratic Arbitration Loop...",
-                            current_total_tokens=self.cumulative_token_usage, # Initial values are 0
-                            current_total_cost=self.cumulative_usd_cost) # Initial values are 0
+                            current_total_tokens=self.cumulative_token_usage,
+                            current_total_cost=self.cumulative_usd_cost)
 
+        # --- Step 1: Initial Generation (Visionary_Generator) ---
         try:
-            # --- Step 1: Initial Generation (Visionary_Generator) ---
+            self._execute_persona_step(
+                persona_name="Visionary_Generator",
+                step_prompt_generator=lambda: self.initial_prompt,
+                output_key="Visionary_Generator_Output",
+                update_current_thought=True
+            )
+        except LLMProviderError:
+            self.intermediate_steps["Visionary_Generator_Output"] = "N/A - Persona skipped/failed."
+            self.intermediate_steps["Visionary_Generator_Tokens_Used"] = "N/A (Skipped/Failed)"
+            self._update_status("Visionary_Generator skipped/failed, subsequent steps may be affected.", state="warning")
+            # If the first step fails, we might want to stop or continue with a fallback.
+            # For now, we'll let the subsequent steps handle "N/A" inputs.
+            # Re-raise if it's a critical error like budget exceeded or API error
+            if isinstance(self.intermediate_steps.get("Visionary_Generator_Output"), str) and "[ERROR]" in self.intermediate_steps["Visionary_Generator_Output"]:
+                raise # Re-raise the original exception
+
+        # --- Step 2: Skeptical Critique ---
+        # Check original output to decide if step should run
+        visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
+        if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
+                visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No initial proposal available.")
                 self._execute_persona_step(
-                    persona_name="Visionary_Generator",
-                    step_prompt_generator=lambda: self.initial_prompt,
-                    output_key="Visionary_Generator_Output",
-                    update_current_thought=True
+                    persona_name="Skeptical_Generator",
+                    step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities:\n\n{visionary_output_sanitized}",
+                    output_key="Skeptical_Critique"
                 )
             except LLMProviderError:
-                self.intermediate_steps["Visionary_Generator_Output"] = "N/A - Persona skipped/failed."
-                self.intermediate_steps["Visionary_Generator_Tokens_Used"] = "N/A (Skipped/Failed)"
-                self._update_status("Visionary_Generator skipped/failed, subsequent steps may be affected.", state="running") # Changed from "warning"
-                # If the first step fails, we might want to stop or continue with a fallback.
-                # For now, we'll let the subsequent steps handle "N/A" inputs.
-                # Re-raise if it's a critical error like budget exceeded or API error
-                if isinstance(self.intermediate_steps.get("Visionary_Generator_Output"), str) and "[ERROR]" in self.intermediate_steps["Visionary_Generator_Output"]:
+                self.intermediate_steps["Skeptical_Critique"] = "N/A - Persona skipped/failed."
+                self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
+                self._update_status("Skeptical_Generator skipped/failed.", state="warning")
+                if isinstance(self.intermediate_steps.get("Skeptical_Critique"), str) and "[ERROR]" in self.intermediate_steps["Skeptical_Critique"]:
                     raise # Re-raise the original exception
-
-            # --- Step 2: Skeptical Critique ---
-            # Check original output to decide if step should run
-            visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
-            if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
-                try:
-                    visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No initial proposal available.")
-                    self._execute_persona_step(
-                        persona_name="Skeptical_Generator",
-                        step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities:\n\n{visionary_output_sanitized}",
-                        output_key="Skeptical_Critique"
-                    )
-                except LLMProviderError:
-                    self.intermediate_steps["Skeptical_Critique"] = "N/A - Persona skipped/failed."
-                    self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
-                    self._update_status("Skeptical_Generator skipped/failed.", state="running") # Changed from "warning"
-                    if isinstance(self.intermediate_steps.get("Skeptical_Critique"), str) and "[ERROR]" in self.intermediate_steps["Skeptical_Critique"]:
-                        raise # Re-raise the original exception
-            else:
-                self.intermediate_steps["Skeptical_Critique"] = "N/A - Previous step skipped/failed."
-                self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped)"
-                self._update_status("Skeptical_Generator skipped due to previous step status.", state="running") # Changed from "warning"
+        else:
+            self.intermediate_steps["Skeptical_Critique"] = "N/A - Previous step skipped/failed."
+            self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped)"
+            self._update_status("Skeptical_Generator skipped due to previous step status.", state="warning")
 
 
-            # --- Step 3: Constructive Criticism & Improvement ---
-            # Check original output to decide if step should run
-            visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
-            if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
-                try:
-                    visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No original proposal available.")
-                    skeptical_critique_sanitized = self._get_sanitized_step_output("Skeptical_Critique", "No skeptical critique provided.")
-                    self._execute_persona_step(
-                        persona_name="Constructive_Critic",
-                        step_prompt_generator=lambda: f"Original Proposal:\n{visionary_output_sanitized}\n\nSkeptical Critique:\n{skeptical_critique_sanitized}\n\nBased on the above, provide specific, actionable improvements to the original proposal.",
-                        output_key="Constructive_Feedback"
-                    )
-                except LLMProviderError:
-                    self.intermediate_steps["Constructive_Feedback"] = "N/A - Persona skipped/failed."
-                    self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped/Failed)"
-                    self._update_status("Constructive_Critic skipped/failed.", state="running") # Changed from "warning"
-                    if isinstance(self.intermediate_steps.get("Constructive_Feedback"), str) and "[ERROR]" in self.intermediate_steps["Constructive_Feedback"]:
-                        raise # Re-raise the original exception
-            else:
-                self.intermediate_steps["Constructive_Feedback"] = "N/A - Previous step skipped/failed."
-                self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped)"
-                self._update_status("Constructive_Critic skipped due to previous step status.", state="running") # Changed from "warning"
-
-            # --- Step 4: Impartial Arbitration/Synthesis ---
-            # This step should always attempt to run, even if previous steps failed,
-            # but its output will reflect the quality of its inputs.
+        # --- Step 3: Constructive Criticism & Improvement ---
+        # Check original output to decide if step should run
+        visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
+        if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
-                visionary_output_arb = self._get_sanitized_step_output("Visionary_Generator_Output", "N/A")
-                skeptical_critique_arb = self._get_sanitized_step_output("Skeptical_Critique", "N/A")
-                constructive_feedback_arb = self._get_sanitized_step_output("Constructive_Feedback", "N/A")
+                visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No original proposal available.")
+                skeptical_critique_sanitized = self._get_sanitized_step_output("Skeptical_Critique", "No skeptical critique provided.")
                 self._execute_persona_step(
-                    persona_name="Impartial_Arbitrator",
-                    step_prompt_generator=lambda: f"""
+                    persona_name="Constructive_Critic",
+                    step_prompt_generator=lambda: f"Original Proposal:\n{visionary_output_sanitized}\n\nSkeptical Critique:\n{skeptical_critique_sanitized}\n\nBased on the above, provide specific, actionable improvements to the original proposal.",
+                    output_key="Constructive_Feedback"
+                )
+            except LLMProviderError:
+                self.intermediate_steps["Constructive_Feedback"] = "N/A - Persona skipped/failed."
+                self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped/Failed)"
+                self._update_status("Constructive_Critic skipped/failed.", state="warning")
+                if isinstance(self.intermediate_steps.get("Constructive_Feedback"), str) and "[ERROR]" in self.intermediate_steps["Constructive_Feedback"]:
+                    raise # Re-raise the original exception
+        else:
+            self.intermediate_steps["Constructive_Feedback"] = "N/A - Previous step skipped/failed."
+            self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped)"
+            self._update_status("Constructive_Critic skipped due to previous step status.", state="warning")
+
+        # --- Step 4: Impartial Arbitration/Synthesis ---
+        # This step should always attempt to run, even if previous steps failed,
+        # but its output will reflect the quality of its inputs.
+        try:
+            visionary_output_arb = self._get_sanitized_step_output("Visionary_Generator_Output", "N/A")
+            skeptical_critique_arb = self._get_sanitized_step_output("Skeptical_Critique", "N/A")
+            constructive_feedback_arb = self._get_sanitized_step_output("Constructive_Feedback", "N/A")
+            self._execute_persona_step(
+                persona_name="Impartial_Arbitrator",
+                step_prompt_generator=lambda: f"""
 Original Prompt: {self.initial_prompt}
 
 Visionary Proposal:
@@ -274,48 +313,47 @@ Constructive Feedback:
 
 Synthesize the above information into a single, balanced, and definitive final answer. Incorporate the best elements from all inputs, address critiques, and propose a refined solution. If any previous step resulted in an error, acknowledge it and try to synthesize based on available information, or state the limitation.
 """,
-                    output_key="Arbitrator_Output",
-                    is_final_answer_step=True
+                output_key="Arbitrator_Output",
+                is_final_answer_step=True
+            )
+        except LLMProviderError:
+            self.intermediate_steps["Arbitrator_Output"] = "N/A - Persona skipped/failed."
+            self.intermediate_steps["Arbitrator_Output_Tokens_Used"] = "N/A (Skipped/Failed)"
+            self.final_answer = "Error: Arbitration failed or skipped."
+            self._update_status("Impartial_Arbitrator skipped/failed.", state="error")
+            if isinstance(self.intermediate_steps.get("Arbitrator_Output"), str) and "[ERROR]" in self.intermediate_steps["Arbitrator_Output"]:
+                raise # Re-raise the original exception
+
+        # --- Step 5: Devil's Advocate (Optional, but good for robustness) ---
+        # Check original final answer to decide if step should run
+        final_answer_raw = self.final_answer
+        if not (isinstance(final_answer_raw, str) and ("[ERROR]" in final_answer_raw or "Error: Arbitration failed" in final_answer_raw)):
+            try:
+                final_answer_sanitized = self._get_sanitized_step_output("Arbitrator_Output", "No final answer available for critique.")
+                self._execute_persona_step(
+                    persona_name="Devils_Advocate",
+                    step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness:\n\n{final_answer_sanitized}",
+                    output_key="Devils_Advocate_Critique"
                 )
             except LLMProviderError:
-                self.intermediate_steps["Arbitrator_Output"] = "N/A - Persona skipped/failed."
-                self.intermediate_steps["Arbitrator_Output_Tokens_Used"] = "N/A (Skipped/Failed)"
-                self.final_answer = "Error: Arbitration failed or skipped."
-                self._update_status("Impartial_Arbitrator skipped/failed.", state="error")
-                if isinstance(self.intermediate_steps.get("Arbitrator_Output"), str) and "[ERROR]" in self.intermediate_steps["Arbitrator_Output"]:
+                self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona skipped/failed."
+                self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
+                self._update_status("Devils_Advocate skipped/failed.", state="warning")
+                if isinstance(self.intermediate_steps.get("Devils_Advocate_Critique"), str) and "[ERROR]" in self.intermediate_steps["Devils_Advocate_Critique"]:
                     raise # Re-raise the original exception
+        else:
+            self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Final answer has errors/was skipped."
+            self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped)"
+            self._update_status("Devils_Advocate skipped due to final answer status.", state="warning")
 
-            # --- Step 5: Devil's Advocate (Optional, but good for robustness) ---
-            # Check original final answer to decide if step should run
-            final_answer_raw = self.final_answer
-            if not (isinstance(final_answer_raw, str) and ("[ERROR]" in final_answer_raw or "Error: Arbitration failed" in final_answer_raw)):
-                try:
-                    final_answer_sanitized = self._get_sanitized_step_output("Arbitrator_Output", "No final answer available for critique.")
-                    self._execute_persona_step(
-                        persona_name="Devils_Advocate",
-                        step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness:\n\n{final_answer_sanitized}",
-                        output_key="Devils_Advocate_Critique"
-                    )
-                except LLMProviderError:
-                    self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona skipped/failed."
-                    self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
-                    self._update_status("Devils_Advocate skipped/failed.", state="running") # Changed from "warning"
-                    if isinstance(self.intermediate_steps.get("Devils_Advocate_Critique"), str) and "[ERROR]" in self.intermediate_steps["Devils_Advocate_Critique"]:
-                        raise # Re-raise the original exception
-            else:
-                self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Final answer has errors/was skipped."
-                self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped)"
-                self._update_status("Devils_Advocate skipped due to final answer status.", state="running") # Changed from "warning"
-
-        finally: # Ensure these are always set before returning/exiting
-            self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
-            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
-            
-            self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
-                                state="complete", expanded=False, # Use 'complete' state for final update
-                                current_total_tokens=self.cumulative_token_usage,
-                                current_total_cost=self.cumulative_usd_cost)
-            
+        self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
+        self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
+        
+        self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
+                            state="complete", expanded=False,
+                            current_total_tokens=self.cumulative_token_usage,
+                            current_total_cost=self.cumulative_usd_cost)
+        
         return self.final_answer, self.intermediate_steps
 
 def run_isal_process(
@@ -339,7 +377,7 @@ def run_isal_process(
         initial_prompt=prompt,
         api_key=api_key,
         max_total_tokens_budget=max_total_tokens_budget,
-        model_name=model_name, # Pass model name
+        model_name=model_name,
         personas=personas,
         status_callback=streamlit_status_callback
     )
