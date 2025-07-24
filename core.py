@@ -237,7 +237,7 @@ class SocraticDebate:
         except LLMProviderError:
             self.intermediate_steps["Visionary_Generator_Output"] = "N/A - Persona skipped/failed."
             self.intermediate_steps["Visionary_Generator_Tokens_Used"] = "N/A (Skipped/Failed)"
-            self._update_status("Visionary_Generator skipped/failed, subsequent steps may be affected.", state="warning")
+            self._update_status("Visionary_Generator skipped/failed, subsequent steps may be affected.", state="running")
             # If the first step fails, we might want to stop or continue with a fallback.
             # For now, we'll let the subsequent steps handle "N/A" inputs.
             # Re-raise if it's a critical error like budget exceeded or API error
@@ -245,30 +245,30 @@ class SocraticDebate:
                 raise # Re-raise the original exception
 
         # --- Step 2: Skeptical Critique ---
-        # Check original output to decide if step should run
+        # Check original output to decide if step should run.
         visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
         if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
                 visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No initial proposal available.")
                 self._execute_persona_step(
                     persona_name="Skeptical_Generator",
-                    step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities:\n\n{visionary_output_sanitized}",
+                    step_prompt_generator=lambda: f"Critique the following proposal/idea from a highly skeptical, risk-averse perspective. Identify at least three potential failure points or critical vulnerabilities. Focus on fundamental flaws, not minor details:\n\n{visionary_output_sanitized}",
                     output_key="Skeptical_Critique"
                 )
             except LLMProviderError:
                 self.intermediate_steps["Skeptical_Critique"] = "N/A - Persona skipped/failed."
                 self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
-                self._update_status("Skeptical_Generator skipped/failed.", state="warning")
+                self._update_status("Skeptical_Generator skipped/failed.", state="running")
                 if isinstance(self.intermediate_steps.get("Skeptical_Critique"), str) and "[ERROR]" in self.intermediate_steps["Skeptical_Critique"]:
                     raise # Re-raise the original exception
         else:
             self.intermediate_steps["Skeptical_Critique"] = "N/A - Previous step skipped/failed."
             self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped)"
-            self._update_status("Skeptical_Generator skipped due to previous step status.", state="warning")
+            self._update_status("Skeptical_Generator skipped due to previous step status.", state="running")
 
 
         # --- Step 3: Constructive Criticism & Improvement ---
-        # Check original output to decide if step should run
+        # Check original output to decide if step should run.
         visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
         if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
             try:
@@ -282,13 +282,13 @@ class SocraticDebate:
             except LLMProviderError:
                 self.intermediate_steps["Constructive_Feedback"] = "N/A - Persona skipped/failed."
                 self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped/Failed)"
-                self._update_status("Constructive_Critic skipped/failed.", state="warning")
+                self._update_status("Constructive_Critic skipped/failed.", state="running")
                 if isinstance(self.intermediate_steps.get("Constructive_Feedback"), str) and "[ERROR]" in self.intermediate_steps["Constructive_Feedback"]:
                     raise # Re-raise the original exception
         else:
             self.intermediate_steps["Constructive_Feedback"] = "N/A - Previous step skipped/failed."
             self.intermediate_steps["Constructive_Feedback_Tokens_Used"] = "N/A (Skipped)"
-            self._update_status("Constructive_Critic skipped due to previous step status.", state="warning")
+            self._update_status("Constructive_Critic skipped due to previous step status.", state="running")
 
         # --- Step 4: Impartial Arbitration/Synthesis ---
         # This step should always attempt to run, even if previous steps failed,
@@ -320,7 +320,7 @@ Synthesize the above information into a single, balanced, and definitive final a
             self.intermediate_steps["Arbitrator_Output"] = "N/A - Persona skipped/failed."
             self.intermediate_steps["Arbitrator_Output_Tokens_Used"] = "N/A (Skipped/Failed)"
             self.final_answer = "Error: Arbitration failed or skipped."
-            self._update_status("Impartial_Arbitrator skipped/failed.", state="error")
+            self._update_status("Impartial_Arbitrator skipped/failed.", state="error") # Keep as error, as this is critical
             if isinstance(self.intermediate_steps.get("Arbitrator_Output"), str) and "[ERROR]" in self.intermediate_steps["Arbitrator_Output"]:
                 raise # Re-raise the original exception
 
@@ -338,13 +338,13 @@ Synthesize the above information into a single, balanced, and definitive final a
             except LLMProviderError:
                 self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Persona skipped/failed."
                 self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
-                self._update_status("Devils_Advocate skipped/failed.", state="warning")
+                self._update_status("Devils_Advocate skipped/failed.", state="running")
                 if isinstance(self.intermediate_steps.get("Devils_Advocate_Critique"), str) and "[ERROR]" in self.intermediate_steps["Devils_Advocate_Critique"]:
                     raise # Re-raise the original exception
         else:
             self.intermediate_steps["Devils_Advocate_Critique"] = "N/A - Final answer has errors/was skipped."
             self.intermediate_steps["Devils_Advocate_Critique_Tokens_Used"] = "N/A (Skipped)"
-            self._update_status("Devils_Advocate skipped due to final answer status.", state="warning")
+            self._update_status("Devils_Advocate skipped due to final answer status.", state="running")
 
         self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
         self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost

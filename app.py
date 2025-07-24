@@ -244,7 +244,7 @@ with col1:
     max_tokens_budget = st.number_input(
         "Max Total Tokens Budget:",
         min_value=1000,
-        max_value=50000, # Set a reasonable upper limit
+        max_value=1000000, # Set a reasonable upper limit
         step=1000,
         help="Controls the maximum number of tokens used across all LLM calls to manage cost.",
         key="max_tokens_budget_input" # Value is implicitly taken from st.session_state.max_tokens_budget_input

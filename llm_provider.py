@@ -80,7 +80,7 @@ class GeminiProvider:
         pricing_model = self._get_pricing_model_name()
         costs = TOKEN_COSTS_PER_1K_TOKENS.get(pricing_model)
         if not costs:
-            self._log_status(f"Warning: No pricing information for model '{self.model_name}'. Cost estimation will be $0.", state="warning")
+            self._log_status(f"Warning: No pricing information for model '{self.model_name}'. Cost estimation will be $0.", state="running")
             return 0.0
         
         input_cost = (input_tokens / 1000) * costs["input"]
