@@ -8,6 +8,7 @@ A lightweight Python application that runs an **Iterative Socratic Arbitration L
 -   **Configurable Debate Flow:** Personas and their roles are defined in a `personas.yaml` file, allowing for easy customization of the debate participants.
 -   **Cost & Token Tracking:** Monitors and displays total token usage and estimated USD cost for each debate session, helping users manage their LLM budget.
 -   **Real-time Status Updates:** Provides live feedback on the debate progress, including current step, token usage, and estimated cost for the next step.
+-   **Enhanced Robustness:** Improved error handling and graceful recovery for a more stable user experience, especially during API interactions.
 -   **Intermediate Step Visibility:** Option to view the detailed output of each persona's contribution to the debate.
 -   **Comprehensive Reporting:** Generates a full Markdown report of the debate, including prompt, configuration, process log, intermediate steps, and final answer.
 -   **Flexible Deployment:** Usable as a command-line tool or a Streamlit web application.
@@ -85,16 +86,32 @@ The Streamlit web application provides an interactive UI for Project Chimera.
     -   Monitor the "Process Log" and "Intermediate Reasoning Steps" (if enabled) for real-time updates.
     -   Download the "Final Answer" or the "Full Report" in Markdown format.
 
+### Customizing Personas via UI
+
+Project Chimera now allows you to temporarily adjust persona parameters directly within the Streamlit web interface.
+
+-   Navigate to the "Persona Configuration" expander in the web UI.
+-   For each persona, you can modify its:
+    *   **System Prompt:** The core instruction given to the LLM.
+    *   **Temperature:** Controls the randomness of the output (0.0 - 1.0).
+    *   **Max Tokens:** The maximum number of tokens the LLM can generate for this persona's response.
+-   **Important:** Changes made via the UI are temporary for the current session and do not modify the `personas.yaml` file on disk.
+-   This empowers users to customize the debate's behavior without modifying code, significantly increasing flexibility and experimentation.
+
 ## Customizing Personas
 
 The personas used in the Socratic debate are defined in `personas.yaml`. You can modify these to change the behavior of each persona or even add new ones.
+
+For temporary, session-specific adjustments, you can now modify persona parameters directly within the Streamlit web UI under 'Persona Configuration' (see [Usage (Web App - Streamlit)](#usage-web-app---streamlit) section for details).
+
+If you wish to make permanent changes or add entirely new personas to the default configuration, you will need to edit the `personas.yaml` file directly.
 
 -   **`name`**: Unique identifier for the persona.
 -   **`system_prompt`**: The core instruction given to the LLM for this persona.
 -   **`temperature`**: Controls the randomness of the output (0.0 - 1.0). Lower values are more deterministic, higher values are more creative.
 -   **`max_tokens`**: The maximum number of tokens the LLM can generate for this persona's response.
 
-**Example:**
+**Example (`personas.yaml`):**
 ```yaml
 personas:
   - name: "Visionary_Generator"
@@ -103,7 +120,7 @@ personas:
     max_tokens: 2048
 ```
 
-**Note:** If you add new personas, you will need to integrate them into the `run_isal_process` function in `core.py` to include them in the debate flow.
+**Note:** If you add new personas to `personas.yaml`, you will need to integrate them into the `run_isal_process` function in `core.py` to include them in the debate flow.
 
 ## Contributing
 
