@@ -109,7 +109,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
 
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
-    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 'N/A'):,}\n"
+    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"
     md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n" # Add cost to report
 
     return md_content
