@@ -16,6 +16,9 @@ A lightweight Python application that runs an **Iterative Socratic Arbitration L
 
 ## Core Concept: The Iterative Socratic Arbitration Loop (ISAL)
 
+## Documentation
+For a detailed explanation of the project's architecture, components, and workflow, please see the [Implementation Overview](docs/implementation_overview.md).
+
 ## Setup
 
 1.  Clone this repository:
