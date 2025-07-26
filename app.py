@@ -274,6 +274,7 @@ selected_model = st.selectbox(
 # --- Persona Configuration UI ---
 st.subheader("Persona Configuration")
 with st.expander("View and Edit Personas"):
+    persona_config_is_valid = True # Reset validation flag for this run
     st.markdown("Adjust the system prompt, temperature, and max tokens for each persona. Changes are temporary for this session.")
     for persona_name, persona_data in st.session_state.editable_personas.items():
         with st.container(border=True):
@@ -287,6 +288,12 @@ with st.expander("View and Edit Personas"):
                 height=150,
                 key=f"system_prompt_{persona_name}"
             )
+            # Update session state immediately with the value from the widget
+            st.session_state.editable_personas[persona_name]["system_prompt"] = st.session_state[f"system_prompt_{persona_name}"]
+
+            if not st.session_state.editable_personas[persona_name]["system_prompt"].strip():
+                st.error(f"System prompt for '{persona_name}' cannot be empty.")
+                persona_config_is_valid = False
 
             # Temperature and Max Tokens
             col_temp, col_max_tokens = st.columns(2)
@@ -300,6 +307,8 @@ with st.expander("View and Edit Personas"):
                     step=0.05,
                     key=f"temperature_{persona_name}"
                 )
+                # Update session state immediately
+                st.session_state.editable_personas[persona_name]["temperature"] = st.session_state[f"temperature_{persona_name}"]
             with col_max_tokens:
                 # Use a unique key for each number_input
                 st.session_state.editable_personas[persona_name]["max_tokens"] = st.number_input(
@@ -310,6 +319,13 @@ with st.expander("View and Edit Personas"):
                     step=128,
                     key=f"max_tokens_{persona_name}"
                 )
+                # Update session state immediately
+                st.session_state.editable_personas[persona_name]["max_tokens"] = st.session_state[f"max_tokens_{persona_name}"]
+
+            # If any persona has an invalid config, mark the overall config as invalid
+            if not st.session_state.editable_personas[persona_name]["system_prompt"].strip():
+                persona_config_is_valid = False
+
 
 # Run and Reset Buttons
 run_col, reset_col = st.columns([0.7, 0.3]) # Adjust column width for buttons
@@ -328,6 +344,8 @@ if run_button_clicked:
         st.error("Please enter your Gemini API Key to proceed.")
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
+    elif not persona_config_is_valid:
+        st.error("Please correct the errors in the Persona Configuration before running the debate.")
     else:
         # Reset output states at the start of a new run
         st.session_state.debate_ran = False # Set to False initially, then True on success/error
@@ -389,7 +407,7 @@ if run_button_clicked:
                         personas_override={name: Persona(**data) for name, data in st.session_state.editable_personas.items()} # Pass the edited personas
                     )
                     # Then, run the debate process
-                    final_answer, intermediate_steps = debate_instance.run_debate() # <--- CHANGE HERE
+                    final_answer, intermediate_steps = debate_instance.run_debate()
 
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     st.session_state.final_answer_output = final_answer
@@ -414,7 +432,7 @@ if run_button_clicked:
                 except TokenBudgetExceededError as e: # Catch the new specific error
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     # Access intermediate_steps from the debate_instance
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = { # Capture config even on error
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -426,12 +444,12 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
 
                 except GeminiAPIError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -452,12 +470,12 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
 
                 except LLMUnexpectedError as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {} # <--- CHANGE HERE
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
@@ -470,8 +488,8 @@ if run_button_clicked:
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
                     # Ensure final metrics are displayed even on error
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A") # <--- CHANGE HERE
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A") # <--- CHANGE HERE
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
 
                 except Exception as e:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
