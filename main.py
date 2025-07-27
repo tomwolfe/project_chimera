@@ -17,6 +17,7 @@ def reason(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all intermediate reasoning steps."),
     api_key: str = typer.Option(None, "--api-key", "-k", help="Your Gemini API key. Overrides GEMINI_API_KEY environment variable.", envvar="GEMINI_API_KEY"),
     max_tokens_budget: int = typer.Option(10000, "--max-tokens", "-m", help="Maximum total tokens allowed for the entire process to control cost."),
+    domain: str = typer.Option("auto", "--domain", "-d", help="Reasoning domain to use (auto, General, Science, Business, Creative)."),
     model_name: str = typer.Option("gemini-2.5-flash-lite", "--model", "-M", help="The LLM model to use (e.g., gemini-2.5-flash-lite, gemini-2.5-pro).")
 ):
     """
@@ -65,7 +66,10 @@ def reason(
         debate_instance = run_isal_process(
             prompt, api_key, max_total_tokens_budget=max_tokens_budget,
             model_name=model_name, # Pass model name
-            streamlit_status_callback=cli_status_callback # Pass CLI specific callback
+            domain=domain,
+            streamlit_status_callback=cli_status_callback, # Pass CLI specific callback
+            all_personas=None, # Let run_isal_process load them for CLI
+            persona_sets=None # Let run_isal_process load them for CLI
         )
         # Then, run the debate process
         final_answer, intermediate_steps = debate_instance.run_debate()

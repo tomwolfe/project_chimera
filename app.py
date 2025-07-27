@@ -12,7 +12,9 @@ from llm_provider import GeminiAPIError, LLMUnexpectedError # Import specific ex
 from llm_provider import GeminiProvider # Import GeminiProvider to access cost calculation
 import re # Added for stripping ANSI codes
 import datetime # Added for timestamp in report
-from typing import Dict, Any # Add this line
+from typing import Dict, Any, Optional # Add this line
+from collections import defaultdict
+import yaml # Added for persona loading in app.py init
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -67,7 +69,9 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += "## Configuration\n\n"
     md_content += f"*   **Model:** {config_params.get('model_name', 'N/A')}\n"
     md_content += f"*   **Max Total Tokens Budget:** {config_params.get('max_tokens_budget', 'N/A')}\n"
-    md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n\n"
+    md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n"
+    md_content += f"*   **Reasoning Framework:** {config_params.get('domain', 'N/A')}\n\n"
+
 
     md_content += "---\n\n"
     md_content += "## Process Log\n\n"
@@ -151,20 +155,40 @@ def reset_app_state():
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-    # When resetting, set example_selector to the key of the default prompt
+    # When resetting, set example_selector to the key of the default prompt 
     st.session_state.example_selector = "Design a Mars City"
-
+    # Reset to default persona set
+    try:
+        import core
+        _, persona_sets, default_set = core.load_personas()
+        st.session_state.selected_persona_set = default_set
+    except Exception: # Catch broader exceptions during file load
+        st.session_state.selected_persona_set = "General"
+    # Clear custom persona sets
+    st.session_state.custom_persona_sets = {}
+    
     # Clear all output-related session states
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
     st.session_state.intermediate_steps_output = {}
     st.session_state.process_log_output_text = ""
-    st.session_state.last_config_params = {}
+    st.session_state.last_config_params = {} # Clear last config params
     # Reset editable personas to default from file
-    from core import load_personas # Import here to avoid circular dependency at top if not already
-    st.session_state.editable_personas = {p.name: p.model_dump() for p in load_personas().values()} # Load initial personas as dicts for easy editing
+    import core # Import here to avoid circular dependency at top if not already
+    st.session_state.editable_personas = {p.name: p.model_dump() for p in core.load_personas()[0].values()} # Load initial personas as dicts for easy editing
 
-    # No st.rerun() needed here. Streamlit will rerun automatically after the callback.
+    # Initialize domain-related states
+    try:
+        all_personas_from_file, persona_sets, default_set = core.load_personas() # Load all personas and sets
+        st.session_state.available_domains = list(persona_sets.keys())
+        st.session_state.domain = default_set
+    except Exception:
+        st.session_state.available_domains = ["General"]
+        st.session_state.domain = "General"
+    st.session_state.domain_recommendation = ""
+    st.session_state.custom_persona_sets = {}
+    st.session_state.selected_persona_set = st.session_state.domain # Ensure selected_persona_set is consistent
+
 
 # Initialize all session state variables at the top
 if "api_key_input" not in st.session_state:
@@ -184,6 +208,15 @@ if "example_selector" not in st.session_state:
 # New session state variables for outputs and control
 if "debate_ran" not in st.session_state:
     st.session_state.debate_ran = False
+if "available_domains" not in st.session_state:
+    import core # Import core here for initial load
+    try:
+        _, persona_sets, default_set = core.load_personas()
+        st.session_state.available_domains = list(persona_sets.keys())
+        st.session_state.selected_persona_set = default_set
+    except Exception:
+        st.session_state.available_domains = ["General"]
+        st.session_state.selected_persona_set = "General"
 if "final_answer_output" not in st.session_state:
     st.session_state.final_answer_output = ""
 if "intermediate_steps_output" not in st.session_state:
@@ -193,9 +226,11 @@ if "process_log_output_text" not in st.session_state:
 if "last_config_params" not in st.session_state: # Store config for report generation
     st.session_state.last_config_params = {}
 # New session state for editable personas
-if "editable_personas" not in st.session_state: # Initialize only if not already present
-    from core import load_personas # Import here to avoid circular dependency at top if not already
-    st.session_state.editable_personas = {p.name: p.model_dump() for p in load_personas().values()} # Load initial personas as dicts for easy editing
+if "editable_personas" not in st.session_state: # Initialize only if not already present, using core.load_personas()[0] for all personas
+    import core # Import here to avoid circular dependency at top if not already
+    st.session_state.editable_personas = {p.name: p.model_dump() for p in core.load_personas()[0].values()} # Load initial personas as dicts for easy editing
+if "custom_persona_sets" not in st.session_state:
+    st.session_state.custom_persona_sets = {}
 
 
 # API Key Input
@@ -221,6 +256,7 @@ def update_prompt_from_example():
     if selected_example_name:
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name]
 
+
 # Add Example Prompt Selector
 st.selectbox(
     "Choose an example prompt:",
@@ -239,6 +275,116 @@ user_prompt = st.text_area(
 )
 
 # Configuration Options
+st.subheader("Reasoning Framework Selection")
+
+# Domain keyword mapping for prompt analysis
+DOMAIN_KEYWORDS = {
+    "Science": ["scientific", "research", "experiment", "data analysis", "hypothesis", "theory", "biology", "physics", "chemistry", "astronomy", "engineering", "algorithm", "computation", "quantum", "genetics", "ecology", "neuroscience", "medical", "diagnostic", "clinical", "biotech"],
+    "Business": ["business", "market", "strategy", "finance", "investment", "startup", "profit", "revenue", "marketing", "sales", "operations", "management", "economy", "entrepreneurship", "product", "customer", "competitor", "plan", "model", "growth", "tourism"],
+    "Creative": ["creative", "art", "story", "design", "narrative", "fiction", "poetry", "music", "film", "painting", "sculpture", "writing", "imagination", "concept", "aesthetic", "expression", "character", "plot", "world-building"]
+}
+
+def analyze_prompt_for_domain(prompt: str) -> Optional[str]:
+    """Analyzes the prompt to suggest a domain based on keywords."""
+    prompt_lower = prompt.lower()
+    scores = defaultdict(int)
+    
+    for domain, keywords in DOMAIN_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in prompt_lower:
+                scores[domain] += 1
+    
+    if not scores:
+        return None
+    
+    # Get the domain with the highest score
+    suggested_domain = max(scores.items(), key=lambda x: x[1])[0]
+    return suggested_domain if scores[suggested_domain] > 0 else None
+
+def get_domain_recommendation(prompt: str, api_key: str) -> str:
+    """Gets a domain recommendation using both keyword analysis and LLM analysis."""
+    # First try keyword analysis (faster, no API call)
+    keyword_domain = analyze_prompt_for_domain(prompt)
+    
+    # If keyword analysis is inconclusive, use LLM analysis
+    if not keyword_domain or keyword_domain not in st.session_state.available_domains:
+        try:
+            from llm_provider import recommend_domain
+            llm_domain = recommend_domain(prompt, api_key)
+            if llm_domain in st.session_state.available_domains:
+                return llm_domain
+        except Exception: # Catch any error from LLM recommendation
+            pass
+    
+    # Return keyword domain if available and valid
+    if keyword_domain and keyword_domain in st.session_state.available_domains:
+        return keyword_domain
+    
+    return "General"
+
+# Display domain recommendation
+if user_prompt.strip() and api_key.strip():
+    suggested_domain = get_domain_recommendation(user_prompt, api_key)
+    if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
+        st.info(f"💡 Based on your prompt, we recommend using the **'{suggested_domain}'** reasoning framework.")
+        if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
+            st.session_state.selected_persona_set = suggested_domain
+            st.rerun()
+
+# Persona Set Selection
+st.selectbox(
+    "Select Reasoning Framework",
+    options=st.session_state.available_domains + ["Custom"],
+    index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else len(st.session_state.available_domains),
+    help="Choose a domain-specific reasoning framework that best matches your problem type.",
+    key="selected_persona_set"
+)
+
+# Community Persona Sets
+if st.session_state.custom_persona_sets:
+    st.markdown("### Community Frameworks")
+    community_col1, community_col2 = st.columns([3, 1])
+    with community_col1:
+        community_sets = list(st.session_state.custom_persona_sets.keys())
+        selected_community_set = st.selectbox(
+            "Community Frameworks",
+            options=community_sets,
+            help="Choose from community-contributed reasoning frameworks"
+        )
+    with community_col2:
+        if st.button("Apply", type="primary", use_container_width=True):
+            import core
+            from core import Persona
+            # Load the full set of personas from file to ensure all base personas are available
+            all_base_personas, _, _ = core.load_personas()
+            
+            # Merge custom personas with base personas, prioritizing custom ones
+            merged_personas = all_base_personas.copy()
+            for name, data in st.session_state.custom_persona_sets[selected_community_set].items():
+                merged_personas[name] = Persona(**data)
+
+            st.session_state.selected_persona_set = selected_community_set
+            st.session_state.editable_personas = {p.name: p.model_dump() for p in merged_personas.values()}
+            st.success(f"Applied framework: {selected_community_set}")
+            st.rerun()
+
+# Add new community framework
+with st.expander("Contribute Your Framework"):
+    st.markdown("Save your current persona configuration as a reusable framework:")
+    framework_name = st.text_input("Framework Name", help="Name your framework for community sharing")
+    if st.button("Save as Community Framework", type="primary"):
+        if not framework_name:
+            st.error("Please provide a name for your framework")
+        else:
+            import core
+            from core import Persona
+            custom_personas = {name: Persona(**data) for name, data in st.session_state.editable_personas.items()}
+            st.session_state.custom_persona_sets[framework_name] = custom_personas
+            st.success(f"Framework '{framework_name}' saved to community library!")
+            st.info("This framework will only persist for your current session. For permanent contributions, please submit a GitHub pull request.")
+
+st.markdown("---")
+
 col1, col2 = st.columns(2)
 with col1:
     max_tokens_budget = st.number_input(
@@ -276,15 +422,37 @@ st.subheader("Persona Configuration")
 with st.expander("View and Edit Personas"):
     persona_config_is_valid = True # Reset validation flag for this run
     st.markdown("Adjust the system prompt, temperature, and max tokens for each persona. Changes are temporary for this session.")
-    for persona_name, persona_data in st.session_state.editable_personas.items():
+    # If a custom set is selected, load those specific personas for editing
+    if st.session_state.selected_persona_set == "Custom":
+        st.warning("You are in 'Custom' framework mode. Personas displayed below are the ones currently loaded. You can edit them, or save them as a new 'Community Framework'.")
+        personas_to_display = st.session_state.editable_personas
+    else:
+        # Load the specific persona set from file for display/editing
+        import core
+        all_personas_from_file, persona_sets_from_file, _ = core.load_personas()
+        
+        # Get the names of personas in the selected set
+        persona_names_in_set = persona_sets_from_file.get(st.session_state.selected_persona_set, [])
+        
+        # Filter all_personas_from_file to only include those in the selected set
+        personas_to_display = {name: all_personas_from_file[name].model_dump() for name in persona_names_in_set if name in all_personas_from_file}
+        
+        # Update editable_personas session state to reflect the selected set
+        # This ensures that when the user clicks "Run", the correct set is used.
+        st.session_state.editable_personas = personas_to_display
+
+
+    for persona_name, persona_data in personas_to_display.items():
         with st.container(border=True):
             st.markdown(f"**Persona: {persona_name}**")
 
             # System Prompt
             # Use a unique key for each text_area based on persona_name
+            # Ensure the value comes from the session state if it's already there (for edits)
+            current_system_prompt = st.session_state.editable_personas.get(persona_name, {}).get("system_prompt", persona_data["system_prompt"])
             st.session_state.editable_personas[persona_name]["system_prompt"] = st.text_area(
                 f"System Prompt for {persona_name}:",
-                value=persona_data["system_prompt"],
+                value=current_system_prompt,
                 height=150,
                 key=f"system_prompt_{persona_name}"
             )
@@ -299,11 +467,12 @@ with st.expander("View and Edit Personas"):
             col_temp, col_max_tokens = st.columns(2)
             with col_temp:
                 # Use a unique key for each slider
+                current_temperature = st.session_state.editable_personas.get(persona_name, {}).get("temperature", persona_data["temperature"])
                 st.session_state.editable_personas[persona_name]["temperature"] = st.slider(
                     f"Temperature for {persona_name}:",
                     min_value=0.0,
                     max_value=1.0,
-                    value=persona_data["temperature"],
+                    value=current_temperature,
                     step=0.05,
                     key=f"temperature_{persona_name}"
                 )
@@ -311,11 +480,12 @@ with st.expander("View and Edit Personas"):
                 st.session_state.editable_personas[persona_name]["temperature"] = st.session_state[f"temperature_{persona_name}"]
             with col_max_tokens:
                 # Use a unique key for each number_input
+                current_max_tokens = st.session_state.editable_personas.get(persona_name, {}).get("max_tokens", persona_data["max_tokens"])
                 st.session_state.editable_personas[persona_name]["max_tokens"] = st.number_input(
                     f"Max Tokens for {persona_name}:",
                     min_value=128, # Reasonable minimum for persona output
                     max_value=4096, # Reasonable maximum for persona output
-                    value=persona_data["max_tokens"],
+                    value=current_max_tokens,
                     step=128,
                     key=f"max_tokens_{persona_name}"
                 )
@@ -355,7 +525,7 @@ if run_button_clicked:
         st.session_state.last_config_params = {}
 
         # Convert dicts in session_state.editable_personas back to Persona objects for core.py
-        from core import Persona # Import Persona class from core
+        import core # Import Persona class from core
 
         # Use st.status for real-time feedback during the process
         with st.status("Initializing Socratic Debate...", expanded=True) as status:
@@ -400,11 +570,32 @@ if run_button_clicked:
                 try:
                     # First, get the debate instance
                     from core import SocraticDebate # Import SocraticDebate class
+                    
+                    # Determine which personas to use: custom or a predefined set
+                    if st.session_state.selected_persona_set == "Custom":
+                        personas_to_use = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()}
+                        domain_for_report = "Custom"
+                        all_personas_for_core = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()} # If custom, these are the 'all'
+                        persona_sets_for_core = {"Custom": list(personas_to_use.keys())} # Define a custom set for core
+                    else:
+                        # Load all personas and sets from file
+                        all_personas_from_file, persona_sets_from_file, default_set = core.load_personas()
+                        # Get the names of personas in the selected set
+                        persona_names_in_set = persona_sets_from_file.get(st.session_state.selected_persona_set, [])
+                        # Create Persona objects for the selected set (these are the ones to be used in the debate flow)
+                        personas_to_use = {name: all_personas_from_file[name] for name in persona_names_in_set if name in all_personas_from_file}
+                        domain_for_report = st.session_state.selected_persona_set
+                        all_personas_for_core = all_personas_from_file # Pass the full dictionary
+                        persona_sets_for_core = persona_sets_from_file # Pass the full dictionary
+
                     debate_instance: SocraticDebate = run_isal_process( # <--- CHANGE HERE
                         user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
                         streamlit_status_callback=streamlit_status_callback, # Pass the callback
                         model_name=selected_model, # Pass the selected model name
-                        personas_override={name: Persona(**data) for name, data in st.session_state.editable_personas.items()} # Pass the edited personas
+                        domain=domain_for_report, # Pass the selected domain
+                        personas_override=personas_to_use, # Pass the edited/selected personas
+                        all_personas=all_personas_for_core, # Pass all personas to core
+                        persona_sets=persona_sets_for_core # Pass all persona sets to core
                     )
                     # Then, run the debate process
                     final_answer, intermediate_steps = debate_instance.run_debate()
@@ -415,7 +606,8 @@ if run_button_clicked:
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps
+                        "show_intermediate_steps": show_intermediate_steps,
+                        "domain": domain_for_report # Store domain for report
                     }
                     st.session_state.debate_ran = True
 
@@ -436,7 +628,8 @@ if run_button_clicked:
                     st.session_state.last_config_params = { # Capture config even on error
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps
+                        "show_intermediate_steps": show_intermediate_steps,
+                        "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True # Still show error output
                     error_message = str(e)
@@ -453,7 +646,8 @@ if run_button_clicked:
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps
+                        "show_intermediate_steps": show_intermediate_steps,
+                        "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
                     error_message = str(e) # Get the message from the exception object
@@ -479,7 +673,8 @@ if run_button_clicked:
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps
+                        "show_intermediate_steps": show_intermediate_steps,
+                        "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
                     error_message = str(e)
@@ -506,7 +701,8 @@ if run_button_clicked:
                     st.session_state.last_config_params = {
                         "max_tokens_budget": max_tokens_budget,
                         "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps
+                        "show_intermediate_steps": show_intermediate_steps,
+                        "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
                     # Update status to error if an exception occurs

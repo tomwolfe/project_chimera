@@ -171,3 +171,36 @@ class GeminiProvider:
                     raise LLMUnexpectedError(str(e)) from e
         
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
+
+
+def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
+    """Analyzes the prompt and recommends a domain based on content analysis."""
+    provider = GeminiProvider(api_key=api_key, model_name=model_name)
+    try:
+        response, _, _ = provider.generate(
+            prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
+            system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
+            temperature=0.1,
+            max_tokens=20
+        )
+        # Clean and validate the response
+        domain = response.strip().capitalize()
+        valid_domains = ["Science", "Business", "Creative", "General"]
+        
+        # Map common variations to valid domains
+        domain_mapping = {
+            "scientific": "Science",
+            "research": "Science",
+            "tech": "Science",
+            "technology": "Science",
+            "entrepreneurship": "Business",
+            "marketing": "Business",
+            "artistic": "Creative",
+            "art": "Creative"
+        }
+        
+        domain = domain_mapping.get(domain.lower(), domain)
+        return domain if domain in valid_domains else "General"
+    except Exception as e:
+        print(f"Error in domain recommendation: {e}")
+        return "General"
