@@ -2,7 +2,6 @@
 import yaml
 import time
 from rich.console import Console # Import Console
-from collections import defaultdict
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import List, Dict, Tuple, Any, Callable, Optional
 from llm_provider import GeminiProvider
@@ -19,7 +18,7 @@ class Persona(BaseModel):
     system_prompt: str
     temperature: float = Field(..., ge=0.0, le=1.0) # Ensure temperature is between 0 and 1
     max_tokens: int = Field(..., gt=0) # Ensure max_tokens is positive
-
+    description: Optional[str] = None # New field for UI display
 
 # New Pydantic model for the overall configuration structure
 class FullPersonaConfig(BaseModel):
@@ -84,10 +83,10 @@ class SocraticDebate:
     # Fallback personas for critical roles if primary fails
     FALLBACK_PERSONAS = {
         "Visionary_Generator": ["Generalist_Assistant"],
-        "Skeptical_Generator": ["Generalist_Assistant", "Constructive_Critic"],
-        "Constructive_Critic": ["Generalist_Assistant", "Impartial_Arbitrator"],
-        "Impartial_Arbitrator": ["Generalist_Assistant", "Constructive_Critic"],
-        "Devils_Advocate": ["Generalist_Assistant", "Skeptical_Generator"]
+        "Skeptical_Generator": ["Generalist_Assistant"],
+        "Constructive_Critic": ["Generalist_Assistant"],
+        "Impartial_Arbitrator": ["Generalist_Assistant"],
+        "Devils_Advocate": ["Generalist_Assistant"]
     }
 
     def __init__(self,
@@ -578,7 +577,7 @@ def run_isal_process(
     max_total_tokens_budget: int = 10000,
     model_name: str = "gemini-2.5-flash-lite",
     domain: str = "auto",
-    streamlit_status_callback=None,
+    streamlit_status_callback: Callable = None,
     all_personas: Optional[Dict[str, Persona]] = None, # Pass all personas to core
     persona_sets: Optional[Dict[str, List[str]]] = None, # Pass all persona sets to core
     personas_override: Optional[Dict[str, Persona]] = None,

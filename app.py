@@ -3,6 +3,7 @@ import streamlit as st
 import os
 from core import run_isal_process
 from core import TokenBudgetExceededError # Import new exception
+# from core import Persona # Not directly used in app.py, but imported in core
 import sys # Not used directly in app.py, but part of capture_rich_output
 from rich.text import Text
 from rich.syntax import Syntax
@@ -15,7 +16,7 @@ import datetime # Added for timestamp in report
 from typing import Dict, Any, Optional # Add this line
 from collections import defaultdict
 import yaml # Added for persona loading in app.py init
-from rich.console import Console # Import Console
+from rich.console import Console # <<< THIS IMPORT IS NECESSARY AND MUST BE PRESENT
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -25,10 +26,11 @@ def capture_rich_output_and_get_console():
     along with the Console instance used for capturing.
     This avoids patching global state and is more robust.
     """
-    buffer = io.StringIO()
-    # Create a new Console instance that writes to the buffer
-    # force_terminal=True ensures ANSI codes are written, which are then stripped later
-    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
+    # io.StringIO does NOT take an 'encoding' argument. It operates on Unicode strings directly.
+    buffer = io.StringIO() 
+    # Create a new Console instance that writes to the buffer.
+    # Pass encoding="utf-8" to Console to ensure rich handles Unicode correctly when writing to the buffer.
+    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True, encoding="utf-8")
     
     yield buffer, console_instance
     # No explicit restoration needed as this console instance is local to the context manager
@@ -139,7 +141,7 @@ def reset_app_state():
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-    # When resetting, set example_selector to the key of the default prompt 
+    # When resetting, set example_selector to the key of the default prompt
     st.session_state.example_selector = "Design a Mars City"
     # Reset to default persona set
     try:
@@ -150,7 +152,7 @@ def reset_app_state():
         st.session_state.selected_persona_set = "General"
     # Clear custom persona sets
     st.session_state.custom_persona_sets = {}
-    
+
     # Clear all output-related session states
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
@@ -217,22 +219,65 @@ if "custom_persona_sets" not in st.session_state:
     st.session_state.custom_persona_sets = {}
 
 
-# API Key Input
-api_key = st.text_input(
-    "Enter your Gemini API Key",
-    type="password",
-    help="Your API key will not be stored. For deployed apps, consider using Streamlit Secrets (`st.secrets`).",
-    key="api_key_input" # Value is implicitly taken from st.session_state.api_key_input
-)
-# Placeholder for API key feedback
+# --- Sidebar for Configuration ---
+with st.sidebar:
+    st.header("Configuration")
+
+    # API Key Input
+    st.text_input(
+        "Enter your Gemini API Key",
+        type="password",
+        help="Your API key will not be stored. For deployed apps, consider using Streamlit Secrets (`st.secrets`).",
+        key="api_key_input" # Value is implicitly taken from st.session_state.api_key_input
+    )
+    st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
+
+    st.markdown("---")
+
+    # Model Selection
+    st.selectbox(
+        "Select LLM Model",
+        ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"],
+        index=["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"].index(st.session_state.selected_model_selectbox), # Set index based on current model
+        help="Choose the Gemini model based on your needs for speed, cost, or capability.",
+        key="selected_model_selectbox" # Value is implicitly taken from st.session_state.selected_model_selectbox
+    )
+
+    st.markdown("---")
+
+    # Max Tokens Budget
+    st.number_input(
+        "Max Total Tokens Budget:",
+        min_value=1000,
+        max_value=1000000, # Set a reasonable upper limit
+        step=1000,
+        help="Controls the maximum number of tokens used across all LLM calls to manage cost.",
+        key="max_tokens_budget_input" # Value is implicitly taken from st.session_state.max_tokens_budget_input
+    )
+    # Placeholder for max tokens budget feedback
+    max_tokens_feedback_placeholder = st.empty()
+    if st.session_state.max_tokens_budget_input < 5000:
+        max_tokens_feedback_placeholder.info("A budget below 5,000 tokens may result in an incomplete debate due to token limits.")
+    else:
+        max_tokens_feedback_placeholder.empty() # Clear warning if key is present
+
+    st.markdown("---")
+
+    # Show Intermediate Steps Checkbox
+    st.checkbox(
+        "Show Intermediate Reasoning Steps",
+        key="show_intermediate_steps_checkbox" # Value is implicitly taken from st.session_state.show_intermediate_steps_checkbox
+    )
+
+# --- Main Content Area ---
+st.header("Project Setup & Input")
+
+# API Key Feedback (in main area for immediate visibility)
 api_key_feedback_placeholder = st.empty()
-if not api_key.strip():
+if not st.session_state.api_key_input.strip():
     api_key_feedback_placeholder.warning("Please enter your Gemini API Key to enable the 'Run Socratic Debate' button.")
 else:
     api_key_feedback_placeholder.empty() # Clear warning if key is present
-
-st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
-
 
 # Callback function to update the prompt text area when an example is selected
 def update_prompt_from_example():
@@ -240,12 +285,10 @@ def update_prompt_from_example():
     if selected_example_name:
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name]
 
-
 # Add Example Prompt Selector
 st.selectbox(
     "Choose an example prompt:",
     options=[""] + list(EXAMPLE_PROMPTS.keys()), # Add an empty option for "no selection"
-    # Removed 'index' parameter. Streamlit will automatically select based on st.session_state.example_selector
     help="Select a pre-defined prompt to quickly get started or see examples.",
     key="example_selector", # Key for the selectbox
     on_change=update_prompt_from_example # Callback to run when selection changes
@@ -258,7 +301,9 @@ user_prompt = st.text_area(
     key="user_prompt_input" # Value is implicitly taken from st.session_state.user_prompt_input
 )
 
-# Configuration Options
+st.markdown("---") # Divider
+
+# --- Reasoning Framework Selection ---
 st.subheader("Reasoning Framework Selection")
 
 # Domain keyword mapping for prompt analysis
@@ -272,15 +317,15 @@ def analyze_prompt_for_domain(prompt: str) -> Optional[str]:
     """Analyzes the prompt to suggest a domain based on keywords."""
     prompt_lower = prompt.lower()
     scores = defaultdict(int)
-    
+
     for domain, keywords in DOMAIN_KEYWORDS.items():
         for keyword in keywords:
             if keyword in prompt_lower:
                 scores[domain] += 1
-    
+
     if not scores:
         return None
-    
+
     # Get the domain with the highest score
     suggested_domain = max(scores.items(), key=lambda x: x[1])[0]
     return suggested_domain if scores[suggested_domain] > 0 else None
@@ -289,7 +334,7 @@ def get_domain_recommendation(prompt: str, api_key: str) -> str:
     """Gets a domain recommendation using both keyword analysis and LLM analysis."""
     # First try keyword analysis (faster, no API call)
     keyword_domain = analyze_prompt_for_domain(prompt)
-    
+
     # If keyword analysis is inconclusive, use LLM analysis
     if not keyword_domain or keyword_domain not in st.session_state.available_domains:
         try:
@@ -299,16 +344,16 @@ def get_domain_recommendation(prompt: str, api_key: str) -> str:
                 return llm_domain
         except Exception: # Catch any error from LLM recommendation
             pass
-    
+
     # Return keyword domain if available and valid
     if keyword_domain and keyword_domain in st.session_state.available_domains:
         return keyword_domain
-    
+
     return "General"
 
 # Display domain recommendation
-if user_prompt.strip() and api_key.strip():
-    suggested_domain = get_domain_recommendation(user_prompt, api_key)
+if user_prompt.strip() and st.session_state.api_key_input.strip():
+    suggested_domain = get_domain_recommendation(user_prompt, st.session_state.api_key_input)
     if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
         st.info(f"💡 Based on your prompt, we recommend using the **'{suggested_domain}'** reasoning framework.")
         if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
@@ -341,7 +386,7 @@ if st.session_state.custom_persona_sets:
             from core import Persona
             # Load the full set of personas from file to ensure all base personas are available
             all_base_personas, _, _ = core.load_personas()
-            
+
             # Merge custom personas with base personas, prioritizing custom ones
             merged_personas = all_base_personas.copy()
             for name, data in st.session_state.custom_persona_sets[selected_community_set].items():
@@ -369,38 +414,6 @@ with st.expander("Contribute Your Framework"):
 
 st.markdown("---")
 
-col1, col2 = st.columns(2)
-with col1:
-    max_tokens_budget = st.number_input(
-        "Max Total Tokens Budget:",
-        min_value=1000,
-        max_value=1000000, # Set a reasonable upper limit
-        step=1000,
-        help="Controls the maximum number of tokens used across all LLM calls to manage cost.",
-        key="max_tokens_budget_input" # Value is implicitly taken from st.session_state.max_tokens_budget_input
-    )
-# Placeholder for max tokens budget feedback
-max_tokens_feedback_placeholder = st.empty()
-if max_tokens_budget < 5000:
-    max_tokens_feedback_placeholder.info("A budget below 5,000 tokens may result in an incomplete debate due to token limits.")
-else:
-    max_tokens_feedback_placeholder.empty()
-
-with col2:
-    show_intermediate_steps = st.checkbox(
-        "Show Intermediate Reasoning Steps",
-        key="show_intermediate_steps_checkbox" # Value is implicitly taken from st.session_state.show_intermediate_steps_checkbox
-    )
-
-# Model Selection
-selected_model = st.selectbox(
-    "Select LLM Model",
-    ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"],
-    index=["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"].index(st.session_state.selected_model_selectbox), # Set index based on current model
-    help="Choose the Gemini model based on your needs for speed, cost, or capability.",
-    key="selected_model_selectbox" # Value is implicitly taken from st.session_state.selected_model_selectbox
-)
-
 # --- Persona Configuration UI ---
 st.subheader("Persona Configuration")
 with st.expander("View and Edit Personas"):
@@ -414,26 +427,25 @@ with st.expander("View and Edit Personas"):
         # Load the specific persona set from file for display/editing
         import core
         all_personas_from_file, persona_sets_from_file, _ = core.load_personas()
-        
+
         # Get the names of personas in the selected set
         persona_names_in_set = persona_sets_from_file.get(st.session_state.selected_persona_set, [])
-        
+
         # Filter all_personas_from_file to only include those in the selected set
         personas_to_display = {name: all_personas_from_file[name].model_dump() for name in persona_names_in_set if name in all_personas_from_file}
-        
+
         # Update editable_personas session state to reflect the selected set
         # This ensures that when the user clicks "Run", the correct set is used.
         st.session_state.editable_personas = personas_to_display
 
 
     for persona_name, persona_data in personas_to_display.items():
-        with st.container(border=True):
-            st.markdown(f"**Persona: {persona_name}**")
-
+        # Use a nested expander for each persona's details
+        with st.expander(f"**{persona_name}** - {persona_data.get('description', 'No description provided.')}"):
             # System Prompt
-            # Use a unique key for each text_area based on persona_name
             # Ensure the value comes from the session state if it's already there (for edits)
-            current_system_prompt = st.session_state.editable_personas.get(persona_name, {}).get("system_prompt", persona_data["system_prompt"])
+            # Use a unique key for each text_area based on persona_name
+            current_system_prompt = st.session_state.editable_personas.get(persona_name, {}).get("system_prompt", persona_data.get("system_prompt", ""))
             st.session_state.editable_personas[persona_name]["system_prompt"] = st.text_area(
                 f"System Prompt for {persona_name}:",
                 value=current_system_prompt,
@@ -451,7 +463,7 @@ with st.expander("View and Edit Personas"):
             col_temp, col_max_tokens = st.columns(2)
             with col_temp:
                 # Use a unique key for each slider
-                current_temperature = st.session_state.editable_personas.get(persona_name, {}).get("temperature", persona_data["temperature"])
+                current_temperature = st.session_state.editable_personas.get(persona_name, {}).get("temperature", persona_data.get("temperature", 0.5))
                 st.session_state.editable_personas[persona_name]["temperature"] = st.slider(
                     f"Temperature for {persona_name}:",
                     min_value=0.0,
@@ -464,7 +476,7 @@ with st.expander("View and Edit Personas"):
                 st.session_state.editable_personas[persona_name]["temperature"] = st.session_state[f"temperature_{persona_name}"]
             with col_max_tokens:
                 # Use a unique key for each number_input
-                current_max_tokens = st.session_state.editable_personas.get(persona_name, {}).get("max_tokens", persona_data["max_tokens"])
+                current_max_tokens = st.session_state.editable_personas.get(persona_name, {}).get("max_tokens", persona_data.get("max_tokens", 1024))
                 st.session_state.editable_personas[persona_name]["max_tokens"] = st.number_input(
                     f"Max Tokens for {persona_name}:",
                     min_value=128, # Reasonable minimum for persona output
@@ -494,7 +506,7 @@ if run_button_clicked:
     api_key_feedback_placeholder.empty()
     max_tokens_feedback_placeholder.empty()
 
-    if not api_key.strip():
+    if not st.session_state.api_key_input.strip():
         st.error("Please enter your Gemini API Key to proceed.")
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
@@ -531,7 +543,7 @@ if run_button_clicked:
 
                 # Proactive warning for next step
                 if estimated_next_step_tokens > 0:
-                    budget_remaining = max_tokens_budget - current_total_tokens
+                    budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
                     if estimated_next_step_tokens > budget_remaining:
                         next_step_warning_placeholder.warning(
                             f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
@@ -554,7 +566,7 @@ if run_button_clicked:
                 try:
                     # First, get the debate instance
                     from core import SocraticDebate # Import SocraticDebate class
-                    
+
                     # Determine which personas to use: custom or a predefined set
                     if st.session_state.selected_persona_set == "Custom":
                         personas_to_use = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()}
@@ -572,10 +584,10 @@ if run_button_clicked:
                         all_personas_for_core = all_personas_from_file # Pass the full dictionary
                         persona_sets_for_core = persona_sets_from_file # Pass the full dictionary
 
-                    debate_instance: SocraticDebate = run_isal_process( # <--- CHANGE HERE
-                        user_prompt, api_key, max_total_tokens_budget=max_tokens_budget,
+                    debate_instance: SocraticDebate = run_isal_process(
+                        user_prompt, st.session_state.api_key_input, max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         streamlit_status_callback=streamlit_status_callback, # Pass the callback
-                        model_name=selected_model, # Pass the selected model name
+                        model_name=st.session_state.selected_model_selectbox, # Pass the selected model name
                         domain=domain_for_report, # Pass the selected domain
                         personas_override=personas_to_use, # Pass the edited/selected personas
                         all_personas=all_personas_for_core, # Pass all personas to core
@@ -589,9 +601,9 @@ if run_button_clicked:
                     st.session_state.final_answer_output = final_answer
                     st.session_state.intermediate_steps_output = intermediate_steps
                     st.session_state.last_config_params = {
-                        "max_tokens_budget": max_tokens_budget,
-                        "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps,
+                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                        "model_name": st.session_state.selected_model_selectbox,
+                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox, # Corrected reference
                         "domain": domain_for_report # Store domain for report
                     }
                     st.session_state.debate_ran = True
@@ -611,9 +623,9 @@ if run_button_clicked:
                     # Access intermediate_steps from the debate_instance
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = { # Capture config even on error
-                        "max_tokens_budget": max_tokens_budget,
-                        "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps,
+                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                        "model_name": st.session_state.selected_model_selectbox,
+                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox, # Corrected reference
                         "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True # Still show error output
@@ -629,22 +641,22 @@ if run_button_clicked:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = {
-                        "max_tokens_budget": max_tokens_budget,
-                        "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps,
+                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                        "model_name": st.session_state.selected_model_selectbox,
+                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox, # Corrected reference
                         "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
                     error_message = str(e) # Get the message from the exception object
                     user_advice = "An issue occurred with the Gemini API."
-                    if "invalid API key" in error_message.lower() or (hasattr(e, 'code') and e.code == 401):
+                    if e.code == 401 or "invalid API key" in error_message.lower():
                         user_advice = "Invalid API Key. Please check your Gemini API key and ensure it is correct."
-                    elif "rate limit" in error_message.lower() or (hasattr(e, 'code') and e.code == 429):
+                    elif e.code == 429 or "rate limit" in error_message.lower():
                         user_advice = "Rate Limit Exceeded. You've made too many requests. Please wait a moment and try again."
-                    elif "quota" in error_message.lower() or (hasattr(e, 'code') and e.code == 403):
+                    elif e.code == 403 or "quota" in error_message.lower():
                         user_advice = "Quota Exceeded or Access Denied. Please check your Gemini API quota or permissions."
                     elif "model" in error_message.lower() and "not found" in error_message.lower():
-                        user_advice = f"Selected model '{selected_model}' not found or not available. Please choose a different model."
+                        user_advice = f"Selected model '{st.session_state.selected_model_selectbox}' not found or not available. Please choose a different model."
 
                     status.update(label=f"Socratic Debate Failed: {user_advice}", state="error", expanded=True)
                     st.error(f"**Error:** {user_advice}\n\n**Details:** {error_message}")
@@ -656,9 +668,9 @@ if run_button_clicked:
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps if debate_instance else {}
                     st.session_state.last_config_params = {
-                        "max_tokens_budget": max_tokens_budget,
-                        "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps,
+                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                        "model_name": st.session_state.selected_model_selectbox,
+                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox, # Corrected reference
                         "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
@@ -684,9 +696,9 @@ if run_button_clicked:
                         total_cost_val = 0.0
 
                     st.session_state.last_config_params = {
-                        "max_tokens_budget": max_tokens_budget,
-                        "model_name": selected_model,
-                        "show_intermediate_steps": show_intermediate_steps,
+                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                        "model_name": st.session_state.selected_model_selectbox,
+                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox, # Corrected reference
                         "domain": st.session_state.selected_persona_set # Store domain for report
                     }
                     st.session_state.debate_ran = True
@@ -717,28 +729,21 @@ if st.session_state.debate_ran:
             # Determine the display name for the expander
             display_name = content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
 
-            # Determine the actual token count key from core.py's naming convention
-            # The token key is always the content_key with '_Tokens_Used' appended,
-            # UNLESS the content_key itself is a "base" name like 'Visionary_Generator'
-            # For consistency, core.py uses the step_name_prefix for the token key.
-            # We need to map the content_key back to that step_name_prefix.
+            content = intermediate_steps.get(content_key, "N/A")
 
+            # Find the corresponding token count key based on core.py's naming
             token_base_name = content_key
-            if content_key.endswith("_Output"): # e.g., Visionary_Generator_Output, Arbitrator_Output
-                # The token key is based on the part before '_Output'
+            if content_key.endswith("_Output"):
                 token_base_name = content_key.replace("_Output", "")
             # For Skeptical_Critique, Constructive_Feedback, Devils_Advocate_Critique,
             # the content_key itself is the base for the token key.
 
             token_count_key = f"{token_base_name}_Tokens_Used"
-
-            # Get the content and token count
-            step_content = content
-            step_tokens = display_steps.get(token_count_key, "N/A (not recorded)")
+            tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
             with st.expander(f"### {display_name}"):
-                st.code(step_content, language="markdown")
-                st.write(f"**Tokens used for this step:** {step_tokens}")
+                st.code(content, language="markdown")
+                st.write(f"**Tokens used for this step:** {tokens_used}")
 
             processed_keys.add(content_key)
             processed_keys.add(token_count_key)
