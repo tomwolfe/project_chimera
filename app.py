@@ -27,11 +27,11 @@ def capture_rich_output_and_get_console():
     This avoids patching global state and is more robust.
     """
     # io.StringIO does NOT take an 'encoding' argument. It operates on Unicode strings directly.
-    buffer = io.StringIO() 
+    buffer = io.StringIO()
     # Create a new Console instance that writes to the buffer.
     # Pass encoding="utf-8" to Console to ensure rich handles Unicode correctly when writing to the buffer.
     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
-    
+
     yield buffer, console_instance
     # No explicit restoration needed as this console instance is local to the context manager
     # and doesn't patch global rich Console instances or sys.stdout.
@@ -729,7 +729,7 @@ if st.session_state.debate_ran:
             # Determine the display name for the expander
             display_name = content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
 
-            content = intermediate_steps.get(content_key, "N/A")
+            content = st.session_state.intermediate_steps_output.get(content_key, "N/A")
 
             # Find the corresponding token count key based on core.py's naming
             token_base_name = content_key
@@ -739,7 +739,7 @@ if st.session_state.debate_ran:
             # the content_key itself is the base for the token key.
 
             token_count_key = f"{token_base_name}_Tokens_Used"
-            tokens_used = intermediate_steps.get(token_count_key, "N/A")
+            tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
 
             with st.expander(f"### {display_name}"):
                 st.code(content, language="markdown")
