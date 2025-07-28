@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import List, Dict, Tuple, Any, Callable, Optional
+import streamlit as st # Import streamlit for caching decorator
 from llm_provider import GeminiProvider
 from llm_provider import LLMProviderError, GeminiAPIError, LLMUnexpectedError, TOKEN_COSTS_PER_1K_TOKENS # Import custom exceptions and token costs
 
@@ -42,6 +43,7 @@ class FullPersonaConfig(BaseModel):
         return "General" if "General" in self.persona_sets else next(iter(self.persona_sets.keys()))
 
 # --- Core Logic ---
+@st.cache_resource(ttl=3600) # Cache for 1 hour, or until file changes
 def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona], Dict[str, List[str]], str]:
     """
     Loads and validates persona configurations and sets from a YAML file.
@@ -565,7 +567,7 @@ class SocraticDebate:
                 final_answer_sanitized = self._get_sanitized_step_output("Arbitrator_Output", "No final answer available for critique.")
                 self._execute_persona_step(
                     persona_name="Devils_Advocate",
-                    step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness:\n{final_answer_sanitized}",
+                    step_prompt_generator=lambda: f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique:\n{final_answer_sanitized}",
                     output_key="Devils_Advocate_Critique"
                 )
             except LLMProviderError:

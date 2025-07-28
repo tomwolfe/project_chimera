@@ -4,6 +4,8 @@ from google.genai import types
 import time
 import random
 from google.genai.errors import APIError
+import streamlit as st # Import streamlit for caching decorator
+from collections import defaultdict # Import defaultdict for domain recommendation
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -173,6 +175,7 @@ class GeminiProvider:
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
 
 
+@st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, don't show spinner as it's a background recommendation
 def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
     """Analyzes the prompt and recommends a domain based on content analysis."""
     provider = GeminiProvider(api_key=api_key, model_name=model_name)
