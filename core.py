@@ -136,7 +136,13 @@ class SocraticDebate:
                        current_total_tokens: int = 0, current_total_cost: float = 0.0,
                        estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
         """Internal helper to call the external status callback and print to console."""
+        # Always print to the rich console instance for logging to the buffer
+        self.rich_console.print(message)
+        # Explicitly flush the rich console's file buffer to ensure content is written immediately
+        self.rich_console.file.flush()
+
         if self.status_callback:
+            # Also call the external status callback if provided (for Streamlit UI updates)
             self.status_callback(
                 message=message,
                 state=state,
@@ -146,8 +152,6 @@ class SocraticDebate:
                 estimated_next_step_tokens=estimated_next_step_tokens,
                 estimated_next_step_cost=estimated_next_step_cost
             )
-        else:
-            self.rich_console.print(message) # Use the rich console instance
 
     def _get_persona(self, name: str) -> Persona:
         """Retrieves a persona by name."""
