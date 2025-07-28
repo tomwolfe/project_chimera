@@ -122,17 +122,23 @@ class GeminiProvider:
                     time.sleep(sleep_time)
                 else:
                     # Non-retryable API error or last retry failed
-                    raise GeminiAPIError(e.text, e.status_code) from e
+                    # Sanitize error message before raising
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    raise GeminiAPIError(error_msg, e.status_code) from e
             except Exception as e:
                 # Catch-all for other unexpected errors (e.g., network issues)
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    self._log_status(f"Unexpected error: {e}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    # Sanitize error message to handle Unicode characters properly
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise LLMUnexpectedError(str(e)) from e
+                    # Sanitize the final error message before raising
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    raise LLMUnexpectedError(error_msg) from e
         
         # This part should ideally not be reached if exceptions are always re-raised on last attempt
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
@@ -161,16 +167,22 @@ class GeminiProvider:
                     self._log_status(f"Gemini API Error (Code: {e.code}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise GeminiAPIError(e.text, e.status_code) from e
+                    # Sanitize error message before raising
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    raise GeminiAPIError(error_msg, e.status_code) from e
             except Exception as e:
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    self._log_status(f"Unexpected error: {e} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    # Sanitize error message to handle Unicode characters properly
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    self._log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise LLMUnexpectedError(str(e)) from e
+                    # Sanitize the final error message before raising
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    raise LLMUnexpectedError(error_msg) from e
         
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
 
@@ -205,5 +217,7 @@ def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-fl
         domain = domain_mapping.get(domain.lower(), domain)
         return domain if domain in valid_domains else "General"
     except Exception as e:
-        print(f"Error in domain recommendation: {e}")
+        # Sanitize error message before printing
+        error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+        print(f"Error in domain recommendation: {error_msg}")
         return "General"

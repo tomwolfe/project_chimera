@@ -386,10 +386,11 @@ class SocraticDebate:
             except Exception as e:  # Catch any other unexpected errors during step execution
                 if retry_count < self.DEFAULT_MAX_RETRIES - 1:
                     backoff = min(self.MAX_BACKOFF_SECONDS, 2 ** (retry_count + 1))
-                    self._update_status(
-                        f"Unexpected error: {e}. Retrying in {backoff} seconds... (Attempt {retry_count + 1}/{self.DEFAULT_MAX_RETRIES})",
-                        state="warning"
-                    )
+                    # --- APPLYING THE FIX HERE ---
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    self._update_status(f"Unexpected error: {error_msg}. Retrying in {backoff} seconds... (Attempt {retry_count + 1}/{self.DEFAULT_MAX_RETRIES})",
+                                        state="warning")
+                    # --- END OF FIX ---
                     time.sleep(backoff)
                     continue
                 
