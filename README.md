@@ -4,28 +4,30 @@ A lightweight Python application that runs an **Iterative Socratic Arbitration L
 
 ## Features
 
--   **Multi-Persona Socratic Debate:** Employs distinct LLM personas (Visionary, Skeptic, Critic, Arbitrator, Devil's Advocate, plus domain-specific ones) to generate, critique, and synthesize ideas.
+-   **Multi-Persona Socratic Debate:** Employs distinct LLM personas (Visionary, Skeptic, Critic, Arbitrator, Devil's Advocate, plus domain-specific ones and a Generalist Assistant fallback) to generate, critique, and synthesize ideas.
 -   **Reasoning Frameworks:** Select from predefined sets of personas (e.g., General, Science, Business, Creative) to tailor the debate to specific problem domains. Includes an LLM-powered recommendation for the best framework based on your prompt.
 -   **In-UI Persona Configuration:** Temporarily adjust individual persona parameters (system prompt, temperature, max tokens) directly within the Streamlit web interface for session-specific experimentation.
 -   **Community Frameworks:** Save and load custom persona configurations as reusable "Community Frameworks" within your session, facilitating easy sharing and reuse of debate setups.
--   **Cost & Token Tracking:** Monitors and displays total token usage and estimated USD cost for each debate session, helping users manage their LLM budget.
+-   **Cost & Token Tracking:** Monitors and displays total token usage and estimated USD cost for each debate session, including real-time updates and proactive warnings for the next step's estimated cost.
 -   **Real-time Status Updates:** Provides live feedback on the debate progress, including current step, token usage, and estimated cost for the next step.
--   **Enhanced Robustness:** Implemented advanced error handling with retries, persona fallbacks, and graceful degradation of token limits for a more stable and resilient user experience, especially during API interactions.
+-   **Enhanced Robustness:** Implemented advanced error handling with retries, persona fallbacks (e.g., to `Generalist_Assistant`), and graceful degradation of token limits for a more stable and resilient user experience, especially during API interactions.
 -   **Intermediate Step Visibility:** Option to view the detailed output of each persona's contribution to the debate.
--   **Comprehensive Reporting:** Generates a full Markdown report of the debate, including prompt, configuration, process log, intermediate steps, and final answer.
+-   **Comprehensive Reporting:** Generates a full Markdown report of the debate, including prompt, configuration, process log, intermediate steps, and final answer, with options to download.
 -   **Flexible Deployment:** Usable as a command-line tool or a Streamlit web application.
 -   **User-Provided API Key:** Securely handles your Gemini API key, which is provided directly by the user at runtime and is not stored by the application.
 
 ## Core Concept: The Iterative Socratic Arbitration Loop (ISAL)
 
-The ISAL process involves a series of LLM calls where different personas interact to refine an initial prompt. Typically, this involves:
+The ISAL process involves a series of LLM calls where different personas interact to refine an initial prompt. Project Chimera now supports multiple "Reasoning Frameworks," which are curated sets of these personas, allowing the debate to be tailored to specific problem domains.
+
+Typically, the core debate flow involves:
 1.  **Visionary Generator:** Creates an initial, often bold, idea.
 2.  **Skeptical Generator:** Critiques the idea from a risk-averse perspective.
 3.  **Constructive Critic:** Provides actionable improvements based on the critique.
 4.  **Impartial Arbitrator:** Synthesizes all inputs into a final, balanced answer.
 5.  **Devil's Advocate:** Offers a final, sharp critique to expose any remaining fundamental flaws.
 
-This iterative process aims to produce more robust, well-reasoned, and comprehensive outputs than a single LLM query.
+In addition to these core roles, domain-specific personas (e.g., `Scientific_Analyst`, `Business_Strategist`) and a `Generalist_Assistant` for fallbacks are used within selected frameworks to enhance the debate's relevance and robustness. This iterative process aims to produce more robust, well-reasoned, and comprehensive outputs than a single LLM query.
 
 ## Documentation
 For a detailed explanation of the project's architecture, components, and workflow, please see the [Implementation Overview](docs/implementation_overview.md).
@@ -59,30 +61,32 @@ The CLI tool `main.py` allows you to run a Socratic debate directly from your te
 
 2.  **Run the Socratic Arbitration Loop:**
     ```bash
-    python main.py "Your prompt goes here, e.g., Design a sustainable city for 1 million people on Mars."
+    python main.py reason "Your prompt goes here, e.g., Design a sustainable city for 1 million people on Mars."
     ```
 
 3.  **CLI Options:**
     -   `--verbose` or `-v`: Show all intermediate reasoning steps.
         ```bash
-        python main.py "Your prompt goes here." --verbose
+        python main.py reason "Your prompt goes here." --verbose
         ```
     -   `--api-key` or `-k`: Provide your API key directly (overrides environment variable).
         ```bash
-        python main.py "Your prompt goes here." --api-key YOUR_GEMINI_API_KEY
+        python main.py reason "Your prompt goes here." --api-key YOUR_GEMINI_API_KEY
         ```
     -   `--max-tokens` or `-m`: Set a maximum total token budget for the entire process (default: 10000).
         ```bash
-        python main.py "Your prompt goes here." --max-tokens 20000
+        python main.py reason "Your prompt goes here." --max-tokens 20000
         ```
     -   `--model` or `-M`: Specify the Gemini model to use (default: `gemini-2.5-flash-lite`).
         ```bash
-        python main.py "Your prompt goes here." --model gemini-2.5-pro
+        python main.py reason "Your prompt goes here." --model gemini-2.5-pro
         ```
     -   `--domain` or `-d`: Specify a reasoning domain to use (e.g., `General`, `Science`, `Business`, `Creative`). Defaults to `auto` which attempts to recommend one based on the prompt.
         ```bash
-        python main.py "Your prompt goes here." --domain Science
+        python main.py reason "Your prompt goes here." --domain Science
         ```
+
+    The CLI output provides real-time status updates, including current token usage, estimated cost, and proactive warnings about the next step's token consumption relative to the budget.
 
 ## Usage (Web App - Streamlit)
 
@@ -104,7 +108,7 @@ The Streamlit web application provides an interactive UI for Project Chimera.
     -   **Persona Configuration:** Expand the "View and Edit Personas" section to inspect or temporarily modify the parameters of the personas in the currently selected framework.
     -   **Community Frameworks:** In the "Contribute Your Framework" expander, you can save your current persona configuration as a named framework for later use in the session. You can also apply existing community frameworks.
     -   Click "Run Socratic Debate" to start the process.
-    -   Monitor the "Process Log" and "Intermediate Reasoning Steps" (if enabled) for real-time updates.
+    -   Monitor the "Process Log" and "Intermediate Reasoning Steps" (if enabled) for real-time updates and detailed output from each persona.
     -   Download the "Final Answer" or the "Full Report" in Markdown format.
 
 ### In-UI Persona Configuration & Community Frameworks
@@ -189,6 +193,11 @@ personas:
     temperature: 1.0
     max_tokens: 512
 
+  - name: "Generalist_Assistant"
+    system_prompt: "You are a helpful and versatile AI assistant. Provide a concise and accurate response to the user's request, drawing upon general knowledge. If you cannot fulfill the request directly, provide a summary of the situation."
+    temperature: 0.5
+    max_tokens: 1024
+
   # Domain-specific personas
   - name: "Scientific_Analyst"
     system_prompt: "You are a rigorous scientific analyst. Focus on empirical evidence, logical consistency, and testable hypotheses. Identify gaps in data or methodology, and suggest areas for further research. Your critique should be objective and data-driven."
@@ -227,6 +236,7 @@ persona_sets:
     - Skeptical_Generator
     - Constructive_Critic
     - Impartial_Arbitrator
+    - Generalist_Assistant
     - Devils_Advocate
   Science:
     - Scientific_Visionary
