@@ -30,7 +30,7 @@ def capture_rich_output_and_get_console():
     buffer = io.StringIO() 
     # Create a new Console instance that writes to the buffer.
     # Pass encoding="utf-8" to Console to ensure rich handles Unicode correctly when writing to the buffer.
-    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True, encoding="utf-8")
+    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
     
     yield buffer, console_instance
     # No explicit restoration needed as this console instance is local to the context manager
