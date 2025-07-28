@@ -25,6 +25,11 @@ personas:
     temperature: 1.0
     max_tokens: 512
 
+  - name: "Generalist_Assistant"
+    system_prompt: "You are a helpful and versatile AI assistant. Provide a concise and accurate response to the user's request, drawing upon general knowledge. If you cannot fulfill the request directly, provide a summary of the situation."
+    temperature: 0.5
+    max_tokens: 1024
+
   # Domain-specific personas
   - name: "Scientific_Analyst"
     system_prompt: "You are a rigorous scientific analyst. Focus on empirical evidence, logical consistency, and testable hypotheses. Identify gaps in data or methodology, and suggest areas for further research. Your critique should be objective and data-driven."
@@ -63,6 +68,7 @@ persona_sets:
     - Skeptical_Generator
     - Constructive_Critic
     - Impartial_Arbitrator
+    - Generalist_Assistant
     - Devils_Advocate
   Science:
     - Scientific_Visionary

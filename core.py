@@ -1,10 +1,10 @@
 # core.py
 import yaml
 import time
+from rich.console import Console # Import Console
 from collections import defaultdict
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from typing import List, Dict, Tuple, Any, Callable, Optional
-import streamlit as st # Import streamlit for caching decorator
 from llm_provider import GeminiProvider
 from llm_provider import LLMProviderError, GeminiAPIError, LLMUnexpectedError, TOKEN_COSTS_PER_1K_TOKENS # Import custom exceptions and token costs
 
@@ -43,7 +43,6 @@ class FullPersonaConfig(BaseModel):
         return "General" if "General" in self.persona_sets else next(iter(self.persona_sets.keys()))
 
 # --- Core Logic ---
-@st.cache_resource(ttl=3600) # Cache for 1 hour, or until file changes
 def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona], Dict[str, List[str]], str]:
     """
     Loads and validates persona configurations and sets from a YAML file.
@@ -85,10 +84,10 @@ class SocraticDebate:
     # Fallback personas for critical roles if primary fails
     FALLBACK_PERSONAS = {
         "Visionary_Generator": ["Generalist_Assistant"],
-        "Skeptical_Generator": ["Generalist_Assistant"],
-        "Constructive_Critic": ["Generalist_Assistant"],
-        "Impartial_Arbitrator": ["Generalist_Assistant"],
-        "Devils_Advocate": ["Generalist_Assistant"]
+        "Skeptical_Generator": ["Generalist_Assistant", "Constructive_Critic"],
+        "Constructive_Critic": ["Generalist_Assistant", "Impartial_Arbitrator"],
+        "Impartial_Arbitrator": ["Generalist_Assistant", "Constructive_Critic"],
+        "Devils_Advocate": ["Generalist_Assistant", "Skeptical_Generator"]
     }
 
     def __init__(self,
@@ -100,7 +99,8 @@ class SocraticDebate:
                  all_personas: Dict[str, Persona], # All personas loaded from file
                  persona_sets: Dict[str, List[str]], # All persona sets loaded from file
                  domain: str = "General", # Default argument
-                 status_callback: Callable = None): # Default argument
+                 status_callback: Callable = None, # Default argument
+                 rich_console: Optional[Console] = None): # New argument for rich console
         self.initial_prompt = initial_prompt
         self.max_total_tokens_budget = max_total_tokens_budget
         self.model_name = model_name
@@ -113,6 +113,7 @@ class SocraticDebate:
         self.cumulative_token_usage = 0
         self.cumulative_usd_cost = 0.0
         self.intermediate_steps: Dict[str, Any] = {}
+        self.rich_console = rich_console if rich_console else Console() # Use provided or new Console
         # The evolving thought/answer
         # Initialize with the initial prompt, but this will be updated by the Visionary_Generator
         self.current_thought = initial_prompt
@@ -146,7 +147,8 @@ class SocraticDebate:
                 estimated_next_step_tokens=estimated_next_step_tokens,
                 estimated_next_step_cost=estimated_next_step_cost
             )
-        print(message) # Keep print for rich console capture / CLI output
+        else:
+            self.rich_console.print(message) # Use the rich console instance
 
     def _get_persona(self, name: str) -> Persona:
         """Retrieves a persona by name."""
@@ -180,29 +182,56 @@ class SocraticDebate:
         # Generate the prompt for this specific step
         step_prompt = step_prompt_generator()
         
-        # Determine if we're close to budget limit
-        budget_tight = self._is_budget_tight()
+        # Estimate tokens for this step (prompt + max_output_tokens)
+        estimated_input_tokens = self.gemini_provider.count_tokens(
+            prompt=step_prompt,
+            system_prompt=persona.system_prompt
+        )
+        
+        # Calculate the actual max_tokens to request from the LLM,
+        # ensuring it doesn't exceed the overall budget.
+        # It should be no more than persona's configured max_tokens,
+        # AND no more than the remaining budget after input tokens.
+        remaining_budget_for_output = self.max_total_tokens_budget - self.cumulative_token_usage - estimated_input_tokens
+        actual_max_output_tokens_to_request = min(persona.max_tokens, max(0, remaining_budget_for_output))
         
         # Try primary persona with retries
         for retry_count in range(self.DEFAULT_MAX_RETRIES):
             try:
-                # Estimate tokens for this step (prompt + max_output_tokens)
-                estimated_input_tokens = self.gemini_provider.count_tokens(
-                    prompt=step_prompt,
-                    system_prompt=persona.system_prompt
-                )
-                estimated_step_output_tokens = persona.max_tokens
-                # Calculate the actual max_tokens to request from the LLM,
-                # ensuring it doesn't exceed the overall budget.
-                # It should be no more than persona's configured max_tokens,
-                # AND no more than the remaining budget after input tokens.
-                remaining_budget_for_output = self.max_total_tokens_budget - self.cumulative_token_usage - estimated_input_tokens
-                actual_max_output_tokens_to_request = min(persona.max_tokens, max(0, remaining_budget_for_output))
+                # Estimate total tokens for this step with the current max_tokens_to_request
                 estimated_step_total_tokens = estimated_input_tokens + actual_max_output_tokens_to_request
                 estimated_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, actual_max_output_tokens_to_request)
                 
+                # Check if the *original* persona's max_tokens would exceed the budget
+                original_estimated_total_tokens_if_full = estimated_input_tokens + persona.max_tokens
+                if self.cumulative_token_usage + original_estimated_total_tokens_if_full > self.max_total_tokens_budget:
+                    budget_remaining_for_step = self.max_total_tokens_budget - self.cumulative_token_usage
+                    warning_msg = (f"Budget tight for '{persona.name}'. Original max output ({persona.max_tokens} tokens) "
+                                   f"would exceed total budget. Remaining: {budget_remaining_for_step} tokens. "
+                                   f"Attempting with reduced max_tokens={actual_max_output_tokens_to_request}...")
+                    self._update_status(
+                        warning_msg,
+                        state="warning",
+                        current_total_tokens=self.cumulative_token_usage,
+                        current_total_cost=self.cumulative_usd_cost,
+                        estimated_next_step_tokens=estimated_step_total_tokens, # This is the already capped estimate
+                        estimated_next_step_cost=estimated_step_cost
+                    )
+                    if retry_count < self.DEFAULT_MAX_RETRIES - 1:
+                        # If it's not the last retry, we'll try to degrade further in the next iteration
+                        # The actual_max_output_tokens_to_request is already calculated to fit the budget.
+                        pass 
+                    else: # If it's the last retry and still exceeds, then raise
+                        error_msg = (f"Step '{persona.name}' would exceed total token budget even after degradation. "
+                                     f"Estimated {estimated_step_total_tokens} tokens for this step, "
+                                     f"but only {self.max_total_tokens_budget - self.cumulative_token_usage} remaining.")
+                        self.intermediate_steps[output_key] = f"[ERROR] {error_msg}"
+                        self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = "N/A (Budget Exceeded)"
+                        self._update_status(error_msg, state="error")
+                        raise TokenBudgetExceededError(error_msg)
+                
                 # If budget is tight and this is a retry, apply graceful degradation
-                if budget_tight and retry_count > 0:
+                if self._is_budget_tight() and retry_count > 0:
                     # Reduce max_tokens for retry
                     degraded_max_tokens = max(self.MIN_DEGRADED_TOKENS, persona.max_tokens // (self.DEGRADE_FACTOR ** retry_count))
                     actual_max_output_tokens_to_request = min(degraded_max_tokens, max(0, remaining_budget_for_output))
@@ -227,34 +256,6 @@ class SocraticDebate:
                         estimated_next_step_cost=estimated_step_cost
                     )
                 
-                # Check if we're going to exceed budget
-                if self.cumulative_token_usage + estimated_step_total_tokens > self.max_total_tokens_budget:
-                    error_msg = (f"Step '{persona.name}' would exceed total token budget. "
-                                 f"Estimated {estimated_step_total_tokens} tokens for this step, "
-                                 f"but only {self.max_total_tokens_budget - self.cumulative_token_usage} remaining.")
-                    if retry_count < self.DEFAULT_MAX_RETRIES - 1:
-                        # Try with reduced max_tokens
-                        degraded_max_tokens = max(self.MIN_DEGRADED_TOKENS, persona.max_tokens // (self.DEGRADE_FACTOR ** (retry_count + 1)))
-                        actual_max_output_tokens_to_request = min(degraded_max_tokens, max(0, remaining_budget_for_output))
-                        estimated_step_total_tokens = estimated_input_tokens + actual_max_output_tokens_to_request
-                        estimated_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, actual_max_output_tokens_to_request)
-                        
-                        self._update_status(
-                            f"Attempting with reduced max_tokens={actual_max_output_tokens_to_request} to fit budget...",
-                            state="warning",
-                            current_total_tokens=self.cumulative_token_usage,
-                            current_total_cost=self.cumulative_usd_cost,
-                            estimated_next_step_tokens=estimated_step_total_tokens,
-                            estimated_next_step_cost=estimated_step_cost
-                        )
-                        # Continue to try generating with reduced tokens
-                    else:
-                        # Last attempt failed
-                        self.intermediate_steps[output_key] = f"[ERROR] {error_msg}"
-                        self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = "N/A (Budget Exceeded)"
-                        self._update_status(error_msg, state="error")
-                        raise TokenBudgetExceededError(error_msg)
-                
                 response_text, input_tokens_used, output_tokens_used = self.gemini_provider.generate(
                     prompt=step_prompt,
                     system_prompt=persona.system_prompt,
@@ -265,38 +266,13 @@ class SocraticDebate:
                 tokens_used_this_step = input_tokens_used + output_tokens_used
                 cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens_used, output_tokens_used)
                 
-                # Post-generation strict budget check
-                if self.cumulative_token_usage + tokens_used_this_step > self.max_total_tokens_budget:
-                    # Calculate the maximum allowed output tokens for this step to stay within budget
-                    allowed_tokens_this_step = self.max_total_tokens_budget - self.cumulative_token_usage
-                    max_allowed_output_tokens = max(0, allowed_tokens_this_step - input_tokens_used)
-                    if output_tokens_used > max_allowed_output_tokens:
-                        # Truncate the response_text to approximately fit the allowed tokens.
-                        approx_chars_per_token = 4
-                        truncated_chars = max_allowed_output_tokens * approx_chars_per_token
-                        response_text = response_text[:truncated_chars] + "..." if len(response_text) > truncated_chars else response_text
-                        # Adjust reported tokens and cost
-                        output_tokens_used = max_allowed_output_tokens
-                        tokens_used_this_step = input_tokens_used + output_tokens_used
-                        cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens_used, output_tokens_used)
-                        error_msg = (f"Step '{persona.name}' generated more tokens than budget allowed. "
-                                     f"Response truncated. Actual tokens used for step: {input_tokens_used} input + {output_tokens_used} output. "
-                                     f"Total cumulative tokens: {self.cumulative_token_usage + tokens_used_this_step}. "
-                                     f"Budget: {self.max_total_tokens_budget}.")
-                        self.intermediate_steps[output_key] = f"[TRUNCATED] {response_text}\n{error_msg}"
-                        self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used_this_step
-                        self.cumulative_token_usage += tokens_used_this_step
-                        self.cumulative_usd_cost += cost_this_step
-                        self._update_status(error_msg, state="warning")  # Not a full error, just a warning
-                        # Continue with truncated response
-                
                 # If we got here without exceptions, the step succeeded
                 if retry_count > 0:
                     recovery_message = f"[RECOVERED] After {retry_count} retry(ies)"
                     response_text = f"{recovery_message}\n{response_text}"
                     recovered_from_error = True
                 
-                # Store the (potentially truncated) response text
+                # Store the response text
                 self.intermediate_steps[output_key] = response_text
                 self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used_this_step
                 step_output_content = response_text
@@ -360,11 +336,15 @@ class SocraticDebate:
                         )
                         
                         # Use the fallback persona for this step
+                        # Recalculate max_tokens for fallback to ensure it fits budget
+                        remaining_budget_for_fallback = self.max_total_tokens_budget - self.cumulative_token_usage - estimated_input_tokens
+                        fallback_max_tokens_to_request = min(fallback_persona.max_tokens, max(0, remaining_budget_for_fallback))
+                        
                         response_text, input_tokens_used, output_tokens_used = self.gemini_provider.generate(
                             prompt=step_prompt,
                             system_prompt=fallback_persona.system_prompt,
                             temperature=fallback_persona.temperature,
-                            max_tokens=min(fallback_persona.max_tokens, actual_max_output_tokens_to_request)
+                            max_tokens=fallback_max_tokens_to_request
                         )
                         
                         tokens_used_this_step = input_tokens_used + output_tokens_used
@@ -425,11 +405,15 @@ class SocraticDebate:
                         )
                         
                         # Use the fallback persona for this step
+                        # Recalculate max_tokens for fallback to ensure it fits budget
+                        remaining_budget_for_fallback = self.max_total_tokens_budget - self.cumulative_token_usage - estimated_input_tokens
+                        fallback_max_tokens_to_request = min(fallback_persona.max_tokens, max(0, remaining_budget_for_fallback))
+                        
                         response_text, input_tokens_used, output_tokens_used = self.gemini_provider.generate(
                             prompt=step_prompt,
                             system_prompt=fallback_persona.system_prompt,
                             temperature=fallback_persona.temperature,
-                            max_tokens=min(fallback_persona.max_tokens, actual_max_output_tokens_to_request)
+                            max_tokens=fallback_max_tokens_to_request
                         )
                         
                         tokens_used_this_step = input_tokens_used + output_tokens_used
@@ -595,9 +579,10 @@ def run_isal_process(
     model_name: str = "gemini-2.5-flash-lite",
     domain: str = "auto",
     streamlit_status_callback=None,
-    all_personas: Optional[Dict[str, Persona]] = None,
-    persona_sets: Optional[Dict[str, List[str]]] = None,
-    personas_override: Optional[Dict[str, Persona]] = None
+    all_personas: Optional[Dict[str, Persona]] = None, # Pass all personas to core
+    persona_sets: Optional[Dict[str, List[str]]] = None, # Pass all persona sets to core
+    personas_override: Optional[Dict[str, Persona]] = None,
+    rich_console: Optional[Console] = None # New argument for rich console
 ) -> 'SocraticDebate': # Changed return type hint to SocraticDebate instance
     """
     Initializes and returns the SocraticDebate instance.
@@ -634,7 +619,8 @@ def run_isal_process(
         all_personas=all_personas, # Pass the full dictionary of personas
         persona_sets=persona_sets, # Pass the full dictionary of persona sets
         domain=domain,
-        status_callback=streamlit_status_callback
+        status_callback=streamlit_status_callback,
+        rich_console=rich_console # Pass the rich console instance
     )
     # Removed the call to debate.run_debate() here.
     # The caller (app.py or main.py) will now call debate.run_debate()

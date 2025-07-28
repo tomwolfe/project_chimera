@@ -15,40 +15,24 @@ import datetime # Added for timestamp in report
 from typing import Dict, Any, Optional # Add this line
 from collections import defaultdict
 import yaml # Added for persona loading in app.py init
+from rich.console import Console # Import Console
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
-def capture_rich_output():
+def capture_rich_output_and_get_console():
+    """
+    Captures rich console output to a StringIO buffer and returns the buffer
+    along with the Console instance used for capturing.
+    This avoids patching global state and is more robust.
+    """
     buffer = io.StringIO()
-
-    # Temporarily replace sys.stdout to capture print statements
-    old_stdout = sys.stdout
-    sys.stdout = buffer
-
-    # Patch the global rich Console instance used by main.py/core.py
-    # This is a workaround to capture output from imported modules that use rich.
-    # A more robust solution for larger projects would be to pass the Console object explicitly.
-    try:
-        from main import console as typer_console_instance
-        old_typer_console_file = typer_console_instance.__dict__['_file']
-        typer_console_instance.__dict__['_file'] = buffer # Redirect rich console output
-        typer_console_instance.force_terminal = True # Ensure colors/formatting are written to buffer
-    except ImportError:
-        # main.py might not be imported if app.py is run directly without main.py being in sys.modules
-        # In this case, rich console output from core.py won't be captured this way.
-        # For simplicity of MVP, we assume main.py's console is the one to patch.
-        pass
-
-    yield buffer
-
-    # Restore original stdout and rich console file
-    sys.stdout = old_stdout
-    try:
-        from main import console as typer_console_instance
-        typer_console_instance.__dict__['_file'] = old_typer_console_file
-        typer_console_instance.force_terminal = False # Restore default
-    except ImportError:
-        pass
+    # Create a new Console instance that writes to the buffer
+    # force_terminal=True ensures ANSI codes are written, which are then stripped later
+    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
+    
+    yield buffer, console_instance
+    # No explicit restoration needed as this console instance is local to the context manager
+    # and doesn't patch global rich Console instances or sys.stdout.
 
 # Function to strip ANSI escape codes from text
 ansi_escape_re = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -564,7 +548,7 @@ if run_button_clicked:
                     next_step_warning_placeholder.empty() # Clear warning if no next step estimate
 
             # Use the context manager to capture rich output for the log display
-            with capture_rich_output() as rich_output_buffer:
+            with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                 # Initialize debate_instance before the try block
                 debate_instance = None
                 try:
@@ -595,7 +579,8 @@ if run_button_clicked:
                         domain=domain_for_report, # Pass the selected domain
                         personas_override=personas_to_use, # Pass the edited/selected personas
                         all_personas=all_personas_for_core, # Pass all personas to core
-                        persona_sets=persona_sets_for_core # Pass all persona sets to core
+                        persona_sets=persona_sets_for_core, # Pass all persona sets to core
+                        rich_console=rich_console_instance # Pass the rich console instance
                     )
                     # Then, run the debate process
                     final_answer, intermediate_steps = debate_instance.run_debate()
