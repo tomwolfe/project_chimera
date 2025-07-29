@@ -100,7 +100,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"
-    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n" # Add cost to report
+    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
 
     return md_content
 
@@ -281,20 +281,21 @@ if not st.session_state.api_key_input.strip():
 else:
     api_key_feedback_placeholder.empty() # Clear warning if key is present
 
-# Callback function to update the prompt text area when an example is selected
-def update_prompt_from_example():
-    selected_example_name = st.session_state.example_selector
-    if selected_example_name:
-        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name]
-
 # Add Example Prompt Selector
 st.selectbox(
     "Choose an example prompt:",
     options=[""] + list(EXAMPLE_PROMPTS.keys()), # Add an empty option for "no selection"
     help="Select a pre-defined prompt to quickly get started or see examples.",
-    key="example_selector", # Key for the selectbox
-    on_change=update_prompt_from_example # Callback to run when selection changes
+    key="example_selector", # Key for the selectbox, its value is automatically in st.session_state
 )
+
+# --- IMPORTANT FIX: Update user_prompt_input BEFORE the text_area is rendered ---
+# Logic to update the prompt text area based on the selectbox selection
+# This runs on every rerun, BEFORE the st.text_area is instantiated.
+selected_example_name_from_widget = st.session_state.example_selector # Get the current value from session state
+if selected_example_name_from_widget and st.session_state.user_prompt_input != EXAMPLE_PROMPTS.get(selected_example_name_from_widget, ""):
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name_from_widget]
+# --- END IMPORTANT FIX ---
 
 # Prompt Input
 user_prompt = st.text_area(
@@ -302,6 +303,7 @@ user_prompt = st.text_area(
     height=150,
     key="user_prompt_input" # Value is implicitly taken from st.session_state.user_prompt_input
 )
+
 
 st.markdown("---") # Divider
 
