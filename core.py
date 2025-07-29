@@ -3,6 +3,7 @@ import yaml
 import time
 from rich.console import Console # Import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator
+import streamlit as st # <<< Added for caching
 from typing import List, Dict, Tuple, Any, Callable, Optional
 from llm_provider import GeminiProvider
 from llm_provider import LLMProviderError, GeminiAPIError, LLMUnexpectedError, TOKEN_COSTS_PER_1K_TOKENS # Import custom exceptions and token costs
@@ -41,6 +42,8 @@ class FullPersonaConfig(BaseModel):
         """Return the first persona set as default if 'General' doesn't exist"""
         return "General" if "General" in self.persona_sets else next(iter(self.persona_sets.keys()))
 
+# <<< Added @st.cache_resource decorator for performance >>>
+@st.cache_resource
 # --- Core Logic ---
 def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona], Dict[str, List[str]], str]:
     """
@@ -152,6 +155,8 @@ class SocraticDebate:
                 estimated_next_step_tokens=estimated_next_step_tokens,
                 estimated_next_step_cost=estimated_next_step_cost
             )
+        else:
+            print(f"[LLM Provider] {message}") # Fallback to print if no callback
 
     def _get_persona(self, name: str) -> Persona:
         """Retrieves a persona by name."""
@@ -293,8 +298,7 @@ class SocraticDebate:
                     f"{persona.name} completed. Used {tokens_used_this_step} tokens." + 
                     (" [RECOVERED]" if recovered_from_error else ""),
                     current_total_tokens=self.cumulative_token_usage,
-                    current_total_cost=self.cumulative_usd_cost,
-                    estimated_next_step_tokens=0, estimated_next_step_cost=0.0
+                    current_total_cost=self.cumulative_usd_cost
                 )
                 return step_output_content
                 

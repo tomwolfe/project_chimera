@@ -40,7 +40,7 @@ TOKEN_COSTS_PER_1K_TOKENS = {
 
 class GeminiProvider:
     # Retry parameters
-    MAX_RETRIES = 5
+    MAX_RETRIES = 10 # Increased retries for better resilience
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
     MAX_BACKOFF_SECONDS = 60
@@ -118,7 +118,9 @@ class GeminiProvider:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time) # Add jitter
                     sleep_time = backoff_time + jitter
-                    self._log_status(f"Gemini API Error (Code: {e.code}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    # Sanitize error message before logging
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    self._log_status(f"Gemini API Error (Code: {e.code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Non-retryable API error or last retry failed
@@ -158,13 +160,16 @@ class GeminiProvider:
                     model=self.model_name,
                     contents=contents_for_counting
                 )
+                # Removed the problematic time.sleep(0.5) here.
                 return response.total_tokens
             except APIError as e:
                 if e.status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    self._log_status(f"Gemini API Error (Code: {e.code}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    # Sanitize error message before logging
+                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                    self._log_status(f"Gemini API Error (Code: {e.code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Sanitize error message before raising
@@ -187,37 +192,32 @@ class GeminiProvider:
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
 
 
+# The DOMAIN_KEYWORDS are defined in app.py, not here.
+# The recommend_domain function here should only handle the LLM call part.
+
 @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, don't show spinner as it's a background recommendation
 def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
-    """Analyzes the prompt and recommends a domain based on content analysis."""
+    """
+    Analyzes the prompt using the LLM to recommend a domain.
+    Relies on app.py for keyword matching and final validation.
+    """
+    if not prompt or not api_key:
+        return "General" # Cannot recommend without prompt or key
+
     provider = GeminiProvider(api_key=api_key, model_name=model_name)
     try:
+        # The prompt for domain recommendation is now more specific and includes 'Software Engineering'
+        # The actual validation and mapping will happen in app.py's get_domain_recommendation
         response, _, _ = provider.generate(
-            prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
+            prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', 'Software Engineering', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
             system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
             temperature=0.1,
-            max_tokens=20
+            max_tokens=32 # Keep max_tokens low for a single word response
         )
-        # Clean and validate the response
-        domain = response.strip().capitalize()
-        valid_domains = ["Science", "Business", "Creative", "General"]
-        
-        # Map common variations to valid domains
-        domain_mapping = {
-            "scientific": "Science",
-            "research": "Science",
-            "tech": "Science",
-            "technology": "Science",
-            "entrepreneurship": "Business",
-            "marketing": "Business",
-            "artistic": "Creative",
-            "art": "Creative"
-        }
-        
-        domain = domain_mapping.get(domain.lower(), domain)
-        return domain if domain in valid_domains else "General"
+        # Return the raw LLM response; app.py will handle cleaning and validation.
+        return response.strip()
     except Exception as e:
         # Sanitize error message before printing
         error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-        print(f"Error in domain recommendation: {error_msg}")
-        return "General"
+        print(f"Error in domain recommendation LLM call: {error_msg}")
+        return "General" # Fallback to General on error

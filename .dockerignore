@@ -1,6 +1,40 @@
+# Any other local development files or directories you don't want in the image
+
+# Ignore Git-related files
 .git
 .gitignore
+
+# Ignore Python cache and build artifacts
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Ignore development/scripting files not needed in production
 repo_to_single_file.sh
 repo_contents.txt
-# Any other local development files or directories you don't want in the image
+main.py
+LICENSE
+README.md
+
+# Ignore IDE/editor specific files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Ignore local configuration or secrets
+.env
+secrets.toml # If you were using Streamlit secrets locally
+
+# Ignore any other local development files or directories you don't want in the image
+# e.g., data directories, logs, temporary files
+# data/
+# logs/
+# temp/
