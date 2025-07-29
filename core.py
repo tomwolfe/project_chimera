@@ -124,7 +124,7 @@ class SocraticDebate:
         Returns a clean default_message if the content indicates an error or was skipped.
         """
         content = self.intermediate_steps.get(key) # Get raw content
-        if isinstance(content, str) and ("[ERROR]" in content or "N/A - Persona skipped/failed" in content):
+        if isinstance(content, str) and ("[ERROR]" in content or "N/A - Persona skipped/failed" in content or "N/A (Skipped)" in content or "N/A (Skipped/Failed)" in content):
             return default_message
         return content if content is not None else default_message # Return original content if valid, else default
     
@@ -470,6 +470,7 @@ class SocraticDebate:
         self._update_status("Starting Socratic Arbitration Loop...",
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
+        
         # --- Step 1: Initial Generation (Visionary_Generator) ---
         try:
             self._execute_persona_step(
@@ -483,6 +484,7 @@ class SocraticDebate:
             self.intermediate_steps["Visionary_Generator_Tokens_Used"] = "N/A (Skipped/Failed)"
             self._update_status("Visionary_Generator skipped/failed, subsequent steps may be affected.", state="running")
             # If the first step fails, we might want to stop or continue with a fallback.
+            # The current_thought will remain the initial_prompt if Visionary_Generator fails.
             # For now, we'll let the subsequent steps handle "N/A" inputs.
             # Re-raise if it's a critical error like budget exceeded or API error
             if isinstance(self.intermediate_steps.get("Visionary_Generator_Output"), str) and "[ERROR]" in self.intermediate_steps["Visionary_Generator_Output"]:
@@ -509,6 +511,48 @@ class SocraticDebate:
             self.intermediate_steps["Skeptical_Critique_Tokens_Used"] = "N/A (Skipped)"
             self._update_status("Skeptical_Generator skipped due to previous step status.", state="running")
         # --- Step 3: Constructive Criticism & Improvement ---
+        
+        # --- NEW: Dynamic Domain-Specific Critiques/Contributions ---
+        domain_specific_critiques_text = ""
+        core_persona_names = {
+            "Visionary_Generator", "Skeptical_Generator", "Constructive_Critic",
+            "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"
+        }
+
+        # Get the output from the Visionary Generator for domain-specific critique
+        visionary_output_for_domain_critique = self._get_sanitized_step_output("Visionary_Generator_Output", "No initial proposal available.")
+        
+        # Only run domain-specific critiques if Visionary output was successful
+        if not (isinstance(visionary_output_for_domain_critique, str) and ("[ERROR]" in visionary_output_for_domain_critique or "N/A" in visionary_output_for_domain_critique)):
+            # Iterate through the personas *active for the current domain*
+            # and run any that are not part of the core debate flow yet.
+            # These will contribute domain-specific insights.
+            for persona_name, persona_obj in self.personas.items():
+                if persona_name not in core_persona_names:
+                    try:
+                        # Prompt for domain-specific critique, emphasizing its role in synthesis
+                        domain_critique_prompt = (
+                            f"As a {persona_name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
+                            f"Identify specific points of concern, potential risks, or areas for improvement relevant to your domain. "
+                            f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific.\n\n"
+                            f"Proposal:\n{visionary_output_for_domain_critique}"
+                        )
+                        
+                        output_key = f"{persona_name}_Critique"
+                        critique_content = self._execute_persona_step(
+                            persona_name=persona_name,
+                            step_prompt_generator=lambda: domain_critique_prompt,
+                            output_key=output_key
+                        )
+                        # Append to combined critiques for later steps
+                        domain_specific_critiques_text += f"\n{persona_name.replace('_', ' ')} Critique:\n{critique_content}\n"
+                    except LLMProviderError:
+                        self.intermediate_steps[f"{persona_name}_Critique"] = "N/A - Persona skipped/failed."
+                        self.intermediate_steps[f"{persona_name}_Critique_Tokens_Used"] = "N/A (Skipped/Failed)"
+                        self._update_status(f"{persona_name} skipped/failed.", state="running")
+                        if isinstance(self.intermediate_steps.get(f"{persona_name}_Critique"), str) and "[ERROR]" in self.intermediate_steps[f"{persona_name}_Critique"]:
+                            raise # Re-raise the original exception
+
         # Check original output to decide if step should run.
         visionary_output_raw = self.intermediate_steps.get("Visionary_Generator_Output", "")
         if not (isinstance(visionary_output_raw, str) and ("[ERROR]" in visionary_output_raw or "N/A" in visionary_output_raw)):
@@ -516,8 +560,13 @@ class SocraticDebate:
                 visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No original proposal available.")
                 skeptical_critique_sanitized = self._get_sanitized_step_output("Skeptical_Critique", "No skeptical critique provided.")
                 self._execute_persona_step(
-                    persona_name="Constructive_Critic",
-                    step_prompt_generator=lambda: f"Original Proposal:\n{visionary_output_sanitized}\nSkeptical Critique:\n{skeptical_critique_sanitized}\nBased on the above, provide specific, actionable improvements to the original proposal.",
+                    persona_name="Constructive_Critic", # This persona now synthesizes all critiques
+                    step_prompt_generator=lambda: (
+                        f"Original Proposal:\n{visionary_output_sanitized}\n\n"
+                        f"Skeptical Critique:\n{skeptical_critique_sanitized}\n\n"
+                        f"Domain-Specific Critiques:\n{domain_specific_critiques_text}\n\n"
+                        f"Based on all the above inputs, provide specific, actionable improvements to the original proposal. Synthesize the critiques and identify the most promising paths forward."
+                    ),
                     output_key="Constructive_Feedback"
                 )
             except LLMProviderError:
@@ -537,9 +586,16 @@ class SocraticDebate:
             visionary_output_arb = self._get_sanitized_step_output("Visionary_Generator_Output", "N/A")
             skeptical_critique_arb = self._get_sanitized_step_output("Skeptical_Critique", "N/A")
             constructive_feedback_arb = self._get_sanitized_step_output("Constructive_Feedback", "N/A")
-            self._execute_persona_step(
+            self._execute_persona_step( # This persona now refines the synthesis from Constructive_Critic
                 persona_name="Impartial_Arbitrator",
-                step_prompt_generator=lambda: f"""\nOriginal Prompt: {self.initial_prompt}\nVisionary Proposal:\n{visionary_output_arb}\nSkeptical Critique:\n{skeptical_critique_arb}\nConstructive Feedback:\n{constructive_feedback_arb}\nSynthesize the above information into a single, balanced, and definitive final answer. Incorporate the best elements from all inputs, address critiques, and propose a refined solution. If any previous step resulted in an error, acknowledge it and try to synthesize based on available information, or state the limitation.\n""",
+                step_prompt_generator=lambda: (
+                    f"Original Prompt: {self.initial_prompt}\n\n"
+                    f"Visionary Proposal:\n{visionary_output_arb}\n\n"
+                    f"Skeptical Critique:\n{skeptical_critique_arb}\n\n"
+                    f"Domain-Specific Critiques:\n{domain_specific_critiques_text}\n\n"
+                    f"Constructive Feedback (Synthesized Critiques):\n{constructive_feedback_arb}\n\n"
+                    f"Synthesize all the above information into a single, balanced, and definitive final answer. Ensure the answer addresses the core proposal, incorporates the specific insights from the skeptical and domain-specific critiques, and reflects the improvements suggested by the constructive feedback. If any previous step resulted in an error, acknowledge it and try to synthesize based on available information, or state the limitation.\n"
+                ),
                 output_key="Arbitrator_Output",
                 is_final_answer_step=True
             )
@@ -578,6 +634,7 @@ class SocraticDebate:
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
         return self.final_answer, self.intermediate_steps
+
 
 def run_isal_process(
     prompt: str,
@@ -634,3 +691,33 @@ def run_isal_process(
     # and handle its return values and exceptions.
 
     return debate
+
+
+# --- Explanation of the Persona Flow and Changes ---
+#
+# The original `run_debate` method executed a fixed sequence of core personas:
+# 1. Visionary_Generator
+# 2. Skeptical_Generator
+# 3. Constructive_Critic (synthesizing Visionary + Skeptical)
+# 4. Impartial_Arbitrator (synthesizing Visionary + Skeptical + Constructive_Critic)
+# 5. Devils_Advocate (critiquing Impartial_Arbitrator)
+#
+# The problem was that domain-specific personas (like Code_Architect, Security_Auditor, etc.)
+# were loaded into `self.personas` by `run_isal_process` but never invoked within `run_debate`.
+#
+# The fix introduces a new step *after* the Skeptical_Generator and *before* the Constructive_Critic.
+# This new step dynamically iterates through `self.personas` (which contains the personas for the selected domain).
+# For any persona that is *not* a core persona, it executes that persona with a prompt to provide domain-specific critique.
+#
+# The output from these domain-specific critiques is then:
+# a) Stored in `intermediate_steps` (e.g., `Code_Architect_Critique`).
+# b) Accumulated into `domain_specific_critiques_text`.
+#
+# The prompts for `Constructive_Critic` and `Impartial_Arbitrator` are updated to include this `domain_specific_critiques_text`.
+# This ensures that the synthesis steps are aware of and incorporate the specialized feedback from the domain-specific personas,
+# leading to a more relevant and robust final answer for the chosen framework.
+#
+# The `Devils_Advocate` step remains at the end, critiquing the final synthesized answer from the Impartial_Arbitrator.
+#
+# This structure allows for flexible integration of domain-specific expertise into the Socratic debate process.
+#
