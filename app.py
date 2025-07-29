@@ -366,7 +366,7 @@ st.selectbox(
     options=st.session_state.available_domains + ["Custom"],
     index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else len(st.session_state.available_domains),
     help="Choose a domain-specific reasoning framework that best matches your problem type.",
-    key="selected_persona_set"
+    key="selected_persona_set" # This key is used by the selectbox
 )
 
 # Community Persona Sets
@@ -375,27 +375,37 @@ if st.session_state.custom_persona_sets:
     community_col1, community_col2 = st.columns([3, 1])
     with community_col1:
         community_sets = list(st.session_state.custom_persona_sets.keys())
-        selected_community_set = st.selectbox(
+        # Give this selectbox a unique key, different from "selected_persona_set"
+        selected_community_set_key = "community_framework_selector"
+        selected_community_set_name_from_widget = st.selectbox(
             "Community Frameworks",
             options=community_sets,
-            help="Choose from community-contributed reasoning frameworks"
+            help="Choose from community-contributed reasoning frameworks",
+            key=selected_community_set_key
         )
+    
+    # Define the callback function for the "Apply" button
+    def apply_community_framework_callback():
+        # This function will be executed when the "Apply" button is clicked, BEFORE the script reruns.
+        import core
+        from core import Persona
+        # Load the full set of personas from file to ensure all base personas are available
+        all_base_personas, _, _ = core.load_personas()
+
+        # Merge custom personas with base personas, prioritizing custom ones
+        merged_personas = all_base_personas.copy()
+        # Get the selected framework name from the selectbox's session state
+        framework_to_apply = st.session_state[selected_community_set_key]
+        for name, data in st.session_state.custom_persona_sets[framework_to_apply].items():
+            merged_personas[name] = data # 'data' is already a Persona object from how it was saved
+
+        st.session_state.selected_persona_set = framework_to_apply # This update is now safe
+        st.session_state.editable_personas = {p.name: p.model_dump() for p in merged_personas.values()}
+        st.success(f"Applied framework: {framework_to_apply}")
+        # st.rerun() is generally not needed here, Streamlit will rerun after the callback.
+
     with community_col2:
-        if st.button("Apply", type="primary", use_container_width=True):
-            import core
-            from core import Persona
-            # Load the full set of personas from file to ensure all base personas are available
-            all_base_personas, _, _ = core.load_personas()
-
-            # Merge custom personas with base personas, prioritizing custom ones
-            merged_personas = all_base_personas.copy()
-            for name, data in st.session_state.custom_persona_sets[selected_community_set].items():
-                merged_personas[name] = Persona(**data)
-
-            st.session_state.selected_persona_set = selected_community_set
-            st.session_state.editable_personas = {p.name: p.model_dump() for p in merged_personas.values()}
-            st.success(f"Applied framework: {selected_community_set}")
-            st.rerun()
+        st.button("Apply", type="primary", use_container_width=True, on_click=apply_community_framework_callback)
 
 # Add new community framework
 with st.expander("Contribute Your Framework"):
@@ -407,8 +417,10 @@ with st.expander("Contribute Your Framework"):
         else:
             import core
             from core import Persona
-            custom_personas = {name: Persona(**data) for name, data in st.session_state.editable_personas.items()}
-            st.session_state.custom_persona_sets[framework_name] = custom_personas
+            # Create Persona objects from the current editable_personas dictionary
+            custom_personas_to_save = {name: Persona(**data) for name, data in st.session_state.editable_personas.items()}
+            
+            st.session_state.custom_persona_sets[framework_name] = custom_personas_to_save
             st.success(f"Framework '{framework_name}' saved to community library!")
             st.info("This framework will only persist for your current session. For permanent contributions, please submit a GitHub pull request.")
 
@@ -569,9 +581,12 @@ if run_button_clicked:
 
                     # Determine which personas to use: custom or a predefined set
                     if st.session_state.selected_persona_set == "Custom":
-                        personas_to_use = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()}
+                        # If custom, use the editable personas directly. They are already Persona objects.
+                        personas_to_use = {name: persona_obj for name, persona_obj in st.session_state.editable_personas.items()}
                         domain_for_report = "Custom"
-                        all_personas_for_core = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()} # If custom, these are the 'all'
+                        # For core.run_isal_process, we need all personas and sets.
+                        # If custom is selected, we effectively treat the current editable ones as the 'all' for the purpose of this run.
+                        all_personas_for_core = {name: core.Persona(**data) for name, data in st.session_state.editable_personas.items()} # Re-create Persona objects if needed, though they should be objects already
                         persona_sets_for_core = {"Custom": list(personas_to_use.keys())} # Define a custom set for core
                     else:
                         # Load all personas and sets from file
