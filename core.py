@@ -536,9 +536,9 @@ class SocraticDebate:
                     try:
                         # Prompt for domain-specific critique, emphasizing its role in synthesis
                         domain_critique_prompt = (
-                            f"As a {persona_name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
-                            f"Identify specific points of concern, potential risks, or areas for improvement relevant to your domain. "
-                            f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific.\n\n"
+                            f"As a {persona_name.replace('_', ' ')}, analyze the following proposal from your expert perspective. Identify specific points of concern, potential risks, or areas for improvement relevant to your domain. "
+                            f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific. "
+                            f"Present your analysis in a structured format, using clear headings or bullet points for 'Concerns' and 'Recommendations'.\n\n"
                             f"Proposal:\n{visionary_output_for_domain_critique}"
                         )
                         
@@ -563,13 +563,13 @@ class SocraticDebate:
             try:
                 visionary_output_sanitized = self._get_sanitized_step_output("Visionary_Generator_Output", "No original proposal available.")
                 skeptical_critique_sanitized = self._get_sanitized_step_output("Skeptical_Critique", "No skeptical critique provided.")
-                self._execute_persona_step(
-                    persona_name="Constructive_Critic", # This persona now synthesizes all critiques
+                self._execute_persona_step( # This persona now synthesizes all critiques
+                    persona_name="Constructive_Critic", 
                     step_prompt_generator=lambda: (
                         f"Original Proposal:\n{visionary_output_sanitized}\n\n"
                         f"Skeptical Critique:\n{skeptical_critique_sanitized}\n\n"
                         f"Domain-Specific Critiques:\n{domain_specific_critiques_text}\n\n"
-                        f"Based on all the above inputs, provide specific, actionable improvements to the original proposal. Synthesize the critiques and identify the most promising paths forward."
+                        f"Based on all the above inputs, provide specific, actionable improvements to the original proposal. Synthesize the critiques and identify the most promising paths forward. Ensure your output is structured with clear 'Concerns' and 'Recommendations' sections."
                     ),
                     output_key="Constructive_Feedback"
                 )
