@@ -155,10 +155,13 @@ class SocraticDebate:
 
     def _get_persona(self, name: str) -> Persona:
         """Retrieves a persona by name."""
-        # Now use self.all_personas to get any persona by name
-        persona = self.all_personas.get(name)
+        # Prioritize personas from the current domain's set
+        persona = self.personas.get(name)
+        # If not found in the active set, fall back to the global list of all personas
         if not persona:
-            self._update_status(f"Error: Persona '{name}' not found in configuration.", state="error")
+            persona = self.all_personas.get(name)
+        if not persona:
+            self._update_status(f"Error: Persona '{name}' not found in configuration or active set.")
             raise ValueError(f"Persona '{name}' not found in configuration.")
         return persona
 
@@ -457,7 +460,7 @@ class SocraticDebate:
                 raise LLMUnexpectedError(error_msg)  # Wrap in a known exception type
         
         # This point should not be reached if exceptions are properly handled
-        raise LLMUnexpectedError(f"Failed to execute persona step: {persona_name}")
+        raise LLMUnexpectedError(f"Failed to execute persona step: {persona.name}")
 
     def run_debate(self) -> Tuple[str, Dict[str, Any]]:
         """

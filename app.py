@@ -130,7 +130,9 @@ EXAMPLE_PROMPTS = {
     "Revitalizing Rural Economies": "Develop a plan to revitalize rural economies in developed countries, considering remote work, local entrepreneurship, and sustainable tourism.",
     "Quantum Computing Impact": "Analyze the potential societal and economic impacts of widespread quantum computing by 2040, including both opportunities and risks.",
     "Personalized Medicine Ethics": "Discuss the ethical implications of highly personalized medicine, considering data privacy, equitable access, and genetic manipulation.",
-    "Sustainable Urban Farming": "Detail a comprehensive plan for implementing sustainable urban farming on a large scale in a major metropolitan area, addressing infrastructure, community engagement, and economic viability.",
+    "Design a resilient and scalable API gateway": "Design a resilient and scalable API gateway for a cloud-native application, considering authentication, rate limiting, and logging.",
+    "Propose a testing strategy for ML pipeline": "Propose a comprehensive testing strategy for a complex machine learning pipeline, including data validation, model performance, and integration testing.",
+    "Optimize database query performance": "Identify and resolve performance bottlenecks in a complex SQL database query for a large e-commerce platform.",
 }
 
 # --- Reset Function ---
@@ -310,7 +312,8 @@ st.subheader("Reasoning Framework Selection")
 DOMAIN_KEYWORDS = {
     "Science": ["scientific", "research", "experiment", "data analysis", "hypothesis", "theory", "biology", "physics", "chemistry", "astronomy", "engineering", "algorithm", "computation", "quantum", "genetics", "ecology", "neuroscience", "medical", "diagnostic", "clinical", "biotech"],
     "Business": ["business", "market", "strategy", "finance", "investment", "startup", "profit", "revenue", "marketing", "sales", "operations", "management", "economy", "entrepreneurship", "product", "customer", "competitor", "plan", "model", "growth", "tourism"],
-    "Creative": ["creative", "art", "story", "design", "narrative", "fiction", "poetry", "music", "film", "painting", "sculpture", "writing", "imagination", "concept", "aesthetic", "expression", "character", "plot", "world-building"]
+    "Creative": ["creative", "art", "story", "design", "narrative", "fiction", "poetry", "music", "film", "painting", "sculpture", "writing", "imagination", "concept", "aesthetic", "expression", "character", "plot", "world-building"],
+    "Software Engineering": ["code", "architecture", "algorithm", "deployment", "microservices", "API", "database", "security", "testing", "software", "system design", "devops", "cloud", "scalability", "resilience", "performance", "bug", "feature", "pipeline", "infrastructure", "monitoring", "refactoring", "optimization", "programming", "framework", "container", "kubernetes", "CI/CD", "vulnerability", "patch", "agile", "scrum", "technical debt", "clean code", "code review", "design pattern", "distributed system", "concurrency", "data structure", "network", "protocol", "encryption", "authentication", "authorization", "threat model", "risk assessment", "unit test", "integration test", "end-to-end test", "QA", "quality assurance", "release", "production", "staging", "development environment", "IDE", "debugger", "compiler", "build", "deploy", "monitor", "alert", "incident response", "SRE", "reliability engineering", "chaos engineering", "fault injection", "circuit breaker", "load balancer", "CDN", "DNS", "firewall", "VPN", "SSL", "TLS", "OAuth", "JWT", "SAML", "LDAP", "Active Directory", "identity management", "access control list", "role-based access control", "RBAC", "least privilege", "OWASP", "CVE", "CVSS", "SQL injection", "XSS", "CSRF", "SSRF", "RCE"]
 }
 
 def analyze_prompt_for_domain(prompt: str) -> Optional[str]:
