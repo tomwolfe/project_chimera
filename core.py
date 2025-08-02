@@ -333,16 +333,17 @@ class SocraticDebate:
 
 # --- Post-Processing and Validation Functions ---
 
-def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 10) -> Tuple[int, str]:
+def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 10) -> Tuple[int, str, str]: # Added str return type for temp_file_path
     """
     Executes a command in a sandboxed environment using a temporary file.
-    Returns (return_code, stdout_stderr_output).
+    Returns (return_code, stdout_stderr_output, temp_file_path).
     """
-    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py') as temp_file:
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-    
+    temp_file_path = None # Initialize to None
     try:
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py') as temp_file:
+            temp_file.write(content)
+            temp_file_path = temp_file.name # Store the path
+        
         # Replace a placeholder filename with the actual temp file path if present
         cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
@@ -357,13 +358,14 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
             timeout=timeout,
             env={"PYTHONPATH": os.getcwd()} # Ensure Python can find local modules if needed
         )
-        return process.returncode, process.stdout + process.stderr
+        return process.returncode, process.stdout + process.stderr, temp_file_path # Return temp_file_path
     except subprocess.TimeoutExpired:
-        return 1, f"Validation timed out after {timeout} seconds."
+        return 1, f"Validation timed out after {timeout} seconds.", temp_file_path # Return temp_file_path
     except Exception as e:
-        return 1, f"Error running validation command: {e}"
+        return 1, f"Error running validation command: {e}", temp_file_path # Return temp_file_path
     finally:
-        os.remove(temp_file_path) # Clean up the temporary file
+        if temp_file_path and os.path.exists(temp_file_path): # Check if path exists before removing
+            os.remove(temp_file_path) # Clean up the temporary file
 
 def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
     """Parses the structured JSON output from the LLM into a dictionary."""
@@ -480,18 +482,22 @@ def validate_code_output(parsed_data: Dict, original_context: Dict) -> Dict:
             # 1. Syntax Validation (sandboxed)
             # Use py_compile for robust syntax validation
             ast_command = [sys.executable, "-m", "py_compile", "TEMP_FILE_PLACEHOLDER"]
-            ast_returncode, ast_output = _run_validation_in_sandbox(ast_command, content_to_check)
+            # Capture the temp_file_path returned by the sandbox function
+            ast_returncode, ast_output, _ = _run_validation_in_sandbox(ast_command, content_to_check)
             if ast_returncode != 0:
                 report['issues'].append({'type': 'Syntax Error', 'file': file_path, 'message': ast_output.strip()})
             
             # 2. Style Compliance (PEP8) (sandboxed)
             # Use pycodestyle on a temporary file
             pep8_command = [sys.executable, "-m", "pycodestyle", "--format=default", "TEMP_FILE_PLACEHOLDER"]
-            pep8_returncode, pep8_output = _run_validation_in_sandbox(pep8_command, content_to_check)
+            # Capture the temp_file_path returned by the sandbox function
+            pep8_returncode, pep8_output, temp_file_for_pep8 = _run_validation_in_sandbox(pep8_command, content_to_check)
             if pep8_returncode != 0:
                 # Parse pycodestyle output to get individual errors
                 for line in pep8_output.splitlines():
-                    match = re.match(r'TEMP_FILE_PLACEHOLDER:(\d+):\d+: (.+)', line)
+                    # Use the actual temporary file path in the regex, escaping it for special characters
+                    escaped_temp_path = re.escape(temp_file_for_pep8)
+                    match = re.match(rf'{escaped_temp_path}:(\d+):\d+: (.+)', line)
                     if match:
                         report['issues'].append({'type': 'PEP8 Violation', 'file': file_path, 'message': match.group(2), 'line': int(match.group(1))})
                     else:
