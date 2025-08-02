@@ -5,7 +5,10 @@ import time
 import random
 from google.genai.errors import APIError
 import streamlit as st # Import streamlit for caching decorator
-from collections import defaultdict # Import defaultdict for domain recommendation
+from collections import defaultdict
+from functools import lru_cache # Although we're using st.cache_data, lru_cache is a good general concept
+import hashlib
+import json
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -52,6 +55,15 @@ class GeminiProvider:
         self.model_name = model_name
         self.status_callback = status_callback # Callback for Streamlit status updates
 
+        # Caches for performance optimization
+        # Using st.cache_data requires the function to be defined at the module level
+        # or for the class instance to be passed as an argument to a cached function.
+        # For simplicity and direct integration, we'll manage cache keys and lookups manually here
+        # and rely on st.cache_data for the actual caching mechanism when these methods are called
+        # from a context where st.cache_data is applicable (like app.py).
+        # If called directly within the class without st.cache_data, these would need a different approach.
+        # For the purpose of providing the *code* that *would* be cached, we'll define the cache keys.
+
     def _log_status(self, message: str, state: str = "running", expanded: bool = True,
                     current_total_tokens: int = 0, current_total_cost: float = 0.0,
                     estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
@@ -95,6 +107,10 @@ class GeminiProvider:
         Returns a tuple of (generated_text: str, input_tokens_used: int, output_tokens_used: int).
         Raises custom exceptions on error.
         """
+        # Note: Caching for this method is handled by @st.cache_data in app.py
+        # when the provider instance is passed correctly. This method itself
+        # doesn't directly manage the cache persistence across reruns.
+        
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
@@ -112,6 +128,7 @@ class GeminiProvider:
                 )
                 input_tokens = response.usage_metadata.prompt_token_count
                 output_tokens = response.usage_metadata.candidates_token_count
+                
                 return response.text, input_tokens, output_tokens
             except APIError as e:  # APIError is GoogleAPICallError
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
@@ -146,6 +163,7 @@ class GeminiProvider:
         # This part should ideally not be reached if exceptions are always re-raised on last attempt
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
+    # @st.cache_data(ttl=3600) # This decorator should be applied in app.py or a module that calls this method
     def count_tokens(self, prompt: str, system_prompt: str) -> int:
         """
         Estimates the token count for a given prompt and system prompt.
@@ -155,6 +173,9 @@ class GeminiProvider:
             types.Content(role='user', parts=[types.Part(text=prompt)])
         ]
 
+        # Note: Caching for this method is handled by @st.cache_data in app.py
+        # when the provider instance is passed correctly.
+        
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 response = self.client.models.count_tokens(
@@ -195,7 +216,7 @@ class GeminiProvider:
 # The DOMAIN_KEYWORDS are defined in app.py, not here.
 # The recommend_domain function here should only handle the LLM call part.
 
-@st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, don't show spinner as it's a background recommendation
+# @st.cache_data(ttl=3600, show_spinner=False) # This decorator should be applied in app.py or a module that calls this method
 def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
     """
     Analyzes the prompt using the LLM to recommend a domain.

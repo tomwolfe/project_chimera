@@ -1,12 +1,12 @@
 # core.py
 import yaml
 import time
+import hashlib
 import sys # Added import for sys
 import re
 import ast
 import pycodestyle
 import difflib
-import hashlib
 import subprocess
 import tempfile
 import os
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
+# functools.lru_cache is not needed here as we are using Streamlit's caching decorators.
 
 # --- Custom Exception for Token Budget ---
 class TokenBudgetExceededError(LLMProviderError):
@@ -51,6 +52,7 @@ class FullPersonaConfig(BaseModel):
 
 @st.cache_resource
 def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona], Dict[str, List[str]], str]:
+    """Loads persona configurations from a YAML file. Cached using st.cache_resource."""
     try:
         with open(file_path, 'r') as f:
             data = yaml.safe_load(f)
@@ -74,6 +76,7 @@ class SocraticDebate:
                  personas: Dict[str, Persona],
                  all_personas: Dict[str, Persona],
                  persona_sets: Dict[str, List[str]],
+                 gemini_provider: Optional[GeminiProvider] = None, # Allow passing a pre-initialized provider
                  domain: str = "General",
                  status_callback: Callable = None,
                  rich_console: Optional[Console] = None,
@@ -86,7 +89,13 @@ class SocraticDebate:
         self.all_personas = all_personas
         self.persona_sets = persona_sets
         self.status_callback = status_callback
-        self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name, status_callback=self._update_status)
+        
+        # Initialize GeminiProvider if not provided
+        if gemini_provider:
+            self.gemini_provider = gemini_provider
+        else:
+            self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name, status_callback=self._update_status)
+            
         self.cumulative_token_usage = 0
         self.cumulative_usd_cost = 0.0
         self.intermediate_steps: Dict[str, Any] = {}
@@ -96,18 +105,24 @@ class SocraticDebate:
         self.codebase_context = codebase_context
 
     def _update_status(self, message: str, **kwargs):
+        """Helper to print to console and call Streamlit callback."""
         self.rich_console.print(message)
         if self.status_callback:
             self.status_callback(message=message, **kwargs)
 
     def _get_persona(self, name: str) -> Persona:
+        """Retrieves a persona by name, checking both specific and all personas."""
         persona = self.personas.get(name) or self.all_personas.get(name)
         if not persona:
             raise ValueError(f"Persona '{name}' not found.")
         return persona
 
-    def _prioritize_python_code(self, content: str, max_tokens: int) -> str:
-        """Prioritizes imports, class/function definitions for Python code."""
+    @st.cache_data(ttl=3600) # Cache AST-based prioritization to speed up context preparation.
+    def _prioritize_python_code(_self, content: str, max_tokens: int) -> str:
+        """
+        Prioritizes imports, class/function definitions for Python code.
+        Truncates the content to fit within max_tokens.
+        """
         lines = content.splitlines()
         priority_lines = []
         other_lines = []
@@ -119,6 +134,7 @@ class SocraticDebate:
             for node in tree.body:
                 if isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)):
                     start_lineno = node.lineno - 1
+                    # Use end_lineno if available, otherwise assume single line
                     end_lineno = node.end_lineno if hasattr(node, 'end_lineno') else start_lineno + 1
                     for i in range(start_lineno, end_lineno):
                         if i < len(lines):
@@ -133,15 +149,15 @@ class SocraticDebate:
 
         except SyntaxError:
             # Fallback to simple line-by-line if AST parsing fails
-            self.rich_console.print(f"[yellow]Warning: Syntax error in Python context file, falling back to simple truncation.[/yellow]")
-            return self._truncate_text_by_tokens(content, max_tokens)
+            _self._update_status(f"[yellow]Warning: Syntax error in Python context file, falling back to simple truncation.[/yellow]")
+            return _self._truncate_text_by_tokens(content, max_tokens)
 
         # Combine and truncate
         combined_content = "\n".join(priority_lines + other_lines)
-        return self._truncate_text_by_tokens(combined_content, max_tokens)
+        return _self._truncate_text_by_tokens(combined_content, max_tokens)
 
     def _truncate_text_by_tokens(self, text: str, max_tokens: int) -> str:
-        """Truncates text to fit within max_tokens."""
+        """Truncates text to fit within max_tokens using the GeminiProvider's token counting."""
         if not text:
             return ""
         
@@ -160,22 +176,27 @@ class SocraticDebate:
         if len(truncated_text) > target_chars:
             truncated_text = truncated_text[:target_chars]
         
-        # Refine by token count
+        # Refine by token count, ensuring we don't get stuck in an infinite loop
+        # and handle cases where even a single character might be too many tokens.
         while self.gemini_provider.count_tokens(truncated_text, "") > max_tokens and len(truncated_text) > 0:
-            truncated_text = truncated_text[:-max(1, len(truncated_text) // 20)] # Remove 5% or at least 1 char
+            # Remove a portion of the text from the end.
+            # The amount to remove is heuristic; removing 5% or at least 1 char.
+            chars_to_remove = max(1, len(truncated_text) // 20) 
+            truncated_text = truncated_text[:-chars_to_remove]
             if len(truncated_text) == 0:
                 break
         
-        # Add an ellipsis if truncated
+        # Add an ellipsis if truncation actually occurred
         if self.gemini_provider.count_tokens(text, "") > max_tokens:
             return truncated_text.strip() + "\n... (truncated)"
         return truncated_text
 
     def _prepare_context_for_prompt(self) -> str:
+        """Prepares the codebase context, prioritizing Python code and truncating to fit budget."""
         if not self.codebase_context:
             return "No codebase context provided."
 
-        context_budget = self.max_total_tokens_budget * self.CONTEXT_TOKEN_BUDGET_RATIO
+        context_budget = int(self.max_total_tokens_budget * self.CONTEXT_TOKEN_BUDGET_RATIO)
         context_str_parts = []
         current_tokens = 0
 
@@ -190,8 +211,10 @@ class SocraticDebate:
 
             file_content_to_add = ""
             if path.endswith('.py'):
+                # Use the cached version for Python code prioritization and truncation
                 file_content_to_add = self._prioritize_python_code(content, remaining_budget_for_file_content)
             else:
+                # Use the general truncation method for non-Python files
                 file_content_to_add = self._truncate_text_by_tokens(content, remaining_budget_for_file_content)
             
             if not file_content_to_add:
@@ -212,16 +235,22 @@ class SocraticDebate:
         return final_context_string
 
     def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, **kwargs) -> str:
+        """Executes a single persona step, handling token budget and status updates."""
         persona = self._get_persona(persona_name)
         step_prompt = step_prompt_generator()
         
         estimated_input_tokens = self.gemini_provider.count_tokens(prompt=step_prompt, system_prompt=persona.system_prompt)
         remaining_budget = self.max_total_tokens_budget - self.cumulative_token_usage
         
+        # Ensure max_output_for_request is not negative
+        max_output_for_request = max(0, min(persona.max_tokens, remaining_budget - estimated_input_tokens))
+        
+        # Check if the estimated tokens for this step would exceed the budget
+        if estimated_input_tokens + max_output_for_request < estimated_input_tokens: # Overflow check
+             raise TokenBudgetExceededError(f"Estimated tokens for '{persona_name}' calculation overflowed.")
         if estimated_input_tokens >= remaining_budget:
             raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
 
-        max_output_for_request = min(persona.max_tokens, max(0, remaining_budget - estimated_input_tokens))
         
         self._update_status(f"Running persona: {persona.name}...",
                             current_total_tokens=self.cumulative_token_usage,
@@ -241,7 +270,9 @@ class SocraticDebate:
             cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
             
             self.intermediate_steps[output_key] = response_text
-            self.intermediate_steps[f"{output_key.replace('_Output', '')}_Tokens_Used"] = tokens_used
+            # Store token usage for this specific step
+            self.intermediate_steps[f"{output_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"] = tokens_used
+            
             self.cumulative_token_usage += tokens_used
             self.cumulative_usd_cost += cost_this_step
 
@@ -256,9 +287,10 @@ class SocraticDebate:
             error_msg = f"[ERROR] Persona '{persona_name}' failed: {e}"
             self.intermediate_steps[output_key] = error_msg
             self._update_status(error_msg, state="error")
-            raise
+            raise # Re-raise the exception to be caught by the main handler
 
     def run_debate(self) -> Tuple[str, Dict[str, Any]]:
+        """Executes the full Socratic debate loop."""
         self._update_status("Starting Socratic Arbitration Loop...",
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
@@ -282,10 +314,12 @@ class SocraticDebate:
 
         # Step 3: Domain-Specific Critiques
         domain_critiques_text = ""
+        # Define core personas to exclude from domain-specific critiques
         core_personas = {"Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"}
-        domain_experts = [p_name for p_name in self.personas if p_name not in core_personas]
+        # Get names of personas defined in the current domain's set, excluding core ones
+        domain_expert_names = [p_name for p_name in self.personas if p_name not in core_personas]
 
-        for expert_name in domain_experts:
+        for expert_name in domain_expert_names:
             def expert_prompt_gen(name=expert_name, proposal=visionary_output):
                 return (f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
                         f"Identify specific points of concern, risks, or areas for improvement relevant to your domain. "
@@ -333,23 +367,26 @@ class SocraticDebate:
 
 # --- Post-Processing and Validation Functions ---
 
-def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 10) -> Tuple[int, str, str]: # Added str return type for temp_file_path
+@st.cache_data(ttl=3600) # Cache validation to avoid re-running slow subprocesses on every rerun.
+def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 10) -> Tuple[int, str, str]:
     """
     Executes a command in a sandboxed environment using a temporary file.
     Returns (return_code, stdout_stderr_output, temp_file_path).
     """
     temp_file_path = None # Initialize to None
     try:
+        # Create a temporary file to hold the content
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py') as temp_file:
             temp_file.write(content)
-            temp_file_path = temp_file.name # Store the path
+            temp_file_path = temp_file.name # Store the path for later use
         
-        # Replace a placeholder filename with the actual temp file path if present
+        # Replace a placeholder filename with the actual temp file path if present in the command
         cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
-        # Ensure the Python executable is used explicitly
+        # Ensure the Python executable is used explicitly for Python commands
         if cmd_with_file[0] == "python":
             cmd_with_file[0] = sys.executable
+            
         process = subprocess.run(
             cmd_with_file,
             capture_output=True,
@@ -358,15 +395,18 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
             timeout=timeout,
             env={"PYTHONPATH": os.getcwd()} # Ensure Python can find local modules if needed
         )
-        return process.returncode, process.stdout + process.stderr, temp_file_path # Return temp_file_path
+        # Return the return code, combined stdout/stderr, and the path to the temp file
+        return process.returncode, process.stdout + process.stderr, temp_file_path
     except subprocess.TimeoutExpired:
         return 1, f"Validation timed out after {timeout} seconds.", temp_file_path # Return temp_file_path
     except Exception as e:
         return 1, f"Error running validation command: {e}", temp_file_path # Return temp_file_path
     finally:
-        if temp_file_path and os.path.exists(temp_file_path): # Check if path exists before removing
-            os.remove(temp_file_path) # Clean up the temporary file
+        # Clean up the temporary file if it was created
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
+@st.cache_data(ttl=3600) # Cache the parsing of LLM output to speed up UI rerenders.
 def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
     """Parses the structured JSON output from the LLM into a dictionary."""
     # Initialize output structure
@@ -451,6 +491,7 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
     
     return output
 
+@st.cache_data(ttl=3600) # Cache validation report generation.
 def validate_code_output(parsed_data: Dict, original_context: Dict) -> Dict:
     """Validates parsed code for syntax, style, and consistency using sandboxed execution."""
     report = {'issues': [], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
@@ -505,6 +546,7 @@ def validate_code_output(parsed_data: Dict, original_context: Dict) -> Dict:
                 
     return report
 
+@st.cache_data(ttl=3600) # Cache git diff generation.
 def format_git_diff(original_content: str, new_content: str) -> str:
     """Creates a git-style unified diff from original and new content."""
     original_lines = original_content.splitlines(keepends=True)
@@ -529,32 +571,46 @@ def run_isal_process(
     all_personas: Optional[Dict[str, Persona]] = None, # Pass all personas to core
     persona_sets: Optional[Dict[str, List[str]]] = None, # Pass all persona sets to core
     personas_override: Optional[Dict[str, Persona]] = None,
+    gemini_provider: Optional[GeminiProvider] = None, # Allow passing a pre-initialized provider
     rich_console: Optional[Console] = None, # New argument for rich console
     codebase_context: Optional[Dict[str, str]] = None # New argument for codebase context
 ) -> 'SocraticDebate':
     """Initializes and returns the SocraticDebate instance."""
-    if personas_override:
-        personas = personas_override
-        domain = "Custom"
+    
+    # Load personas and sets if not provided (for CLI or initial app load)
+    if all_personas is None or persona_sets is None:
+        all_personas, persona_sets, default_set = load_personas()
     else:
-        # Load personas and sets if not provided (for CLI or initial app load)
-        if all_personas is None or persona_sets is None:
-            all_personas, persona_sets, default_set = load_personas()
-        
-        # Determine domain to use
-        if domain == "auto" and prompt.strip() and api_key.strip(): # Only auto-recommend if prompt and key are present
-            from llm_provider import recommend_domain
-            # Note: recommend_domain in llm_provider.py uses a different prompt than app.py's keyword matching
-            # It makes an LLM call.
-            llm_recommended_domain = recommend_domain(prompt, api_key)
+        # If provided, determine default set from the provided persona_sets
+        default_set = "General" if "General" in persona_sets else next(iter(persona_sets.keys()))
+
+    # Determine domain to use
+    if domain == "auto" and prompt.strip() and api_key.strip(): # Only auto-recommend if prompt and key are present
+        # Note: recommend_domain in llm_provider.py uses a different prompt than app.py's keyword matching
+        # It makes an LLM call.
+        try:
+            # Use the provided gemini_provider or create one if not available
+            provider_for_domain_rec = gemini_provider or GeminiProvider(api_key=api_key, model_name=model_name)
+            llm_recommended_domain = provider_for_domain_rec.recommend_domain(prompt) # Call the method on the provider
+            
             if llm_recommended_domain in persona_sets:
                 domain = llm_recommended_domain
             else:
                 domain = default_set
-        elif domain not in persona_sets:
+        except Exception as e:
+            print(f"Error during domain recommendation: {e}. Falling back to default domain.")
             domain = default_set
-        
-        # Get the personas for the selected domain
+            
+    elif domain not in persona_sets:
+        domain = default_set
+    
+    # Get the personas for the selected domain
+    if personas_override:
+        personas = personas_override
+        # If overriding, domain is effectively custom, but we might still want to use the selected domain name for logging/context
+        # For simplicity, we'll just use the provided personas and keep the domain name as is or set to 'Custom'
+        domain = domain if domain != "auto" else "Custom" # Ensure domain is set if auto was used
+    else:
         personas = {name: all_personas[name] for name in persona_sets[domain]}
 
     # Prepare kwargs for SocraticDebate.__init__
@@ -569,7 +625,8 @@ def run_isal_process(
         'domain': domain,
         'status_callback': streamlit_status_callback,
         'rich_console': rich_console,
-        'codebase_context': codebase_context
+        'codebase_context': codebase_context,
+        'gemini_provider': gemini_provider # Pass the provider if it was initialized
     }
     
     debate = SocraticDebate(**kwargs_for_debate)
