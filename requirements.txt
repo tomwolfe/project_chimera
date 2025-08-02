@@ -3,3 +3,4 @@ typer[all] # Includes Rich for better CLI output
 pyyaml
 pydantic
 streamlit
+pycodestyle
