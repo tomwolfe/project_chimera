@@ -113,20 +113,26 @@ class GeminiProvider:
                 input_tokens = response.usage_metadata.prompt_token_count
                 output_tokens = response.usage_metadata.candidates_token_count
                 return response.text, input_tokens, output_tokens
-            except APIError as e:
-                if e.status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
+            except APIError as e: # APIError is GoogleAPICallError
+                # Attempt to get HTTP status code from the response object if available
+                http_status_code = None
+                if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+                    http_status_code = e.response.status_code
+
+                # Check if it's a retryable HTTP status code
+                if http_status_code is not None and http_status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time) # Add jitter
                     sleep_time = backoff_time + jitter
                     # Sanitize error message before logging
                     error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-                    self._log_status(f"Gemini API Error (Code: {e.code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Non-retryable API error or last retry failed
                     # Sanitize error message before raising
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-                    raise GeminiAPIError(error_msg, e.status_code) from e
+                    # Pass http_status_code if available, otherwise fall back to e.code (gRPC code)
+                    raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
                 # Catch-all for other unexpected errors (e.g., network issues)
                 if attempt < self.MAX_RETRIES:
@@ -162,19 +168,22 @@ class GeminiProvider:
                 )
                 # Removed the problematic time.sleep(0.5) here.
                 return response.total_tokens
-            except APIError as e:
-                if e.status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
+            except APIError as e: # APIError is GoogleAPICallError
+                http_status_code = None
+                if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+                    http_status_code = e.response.status_code
+
+                if http_status_code is not None and http_status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
                     # Sanitize error message before logging
                     error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-                    self._log_status(f"Gemini API Error (Code: {e.code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                    self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Sanitize error message before raising
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-                    raise GeminiAPIError(error_msg, e.status_code) from e
+                    raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
