@@ -9,6 +9,7 @@ import hashlib
 import subprocess
 import tempfile
 import os
+import json # Added import for JSON parsing
 from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator
 import streamlit as st
@@ -305,7 +306,7 @@ class SocraticDebate:
         # Step 5: Final Arbitration
         def arbitrator_prompt_gen():
             return (
-                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your response MUST be structured with 'COMMIT MESSAGE:', 'RATIONALE:', and 'CODE CHANGES:' sections. For 'CODE CHANGES:', use '--- file_path: <path_to_file> ---' delimiters. For new files, use 'ADD:' followed by the complete content. For modifications, use 'MODIFY:' followed by 'FULL_CONTENT:' and the *entire new content* of the file. For removals, use 'REMOVE:' followed by the lines to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n\n"
+                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n\n"
                 f"--- DEBATE SUMMARY ---\n"
                 f"User Prompt: {self.initial_prompt}\n\n"
                 f"Visionary Proposal:\n{visionary_output}\n\n"
@@ -318,7 +319,7 @@ class SocraticDebate:
 
         # Step 6: Devil's Advocate
         def devil_prompt_gen():
-            return f"Critique the following final synthesized answer. Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique:\n{self.final_answer}"
+            return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique:\n{self.final_answer}"
         self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
 
         self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
@@ -361,71 +362,73 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
         os.remove(temp_file_path) # Clean up the temporary file
 
 def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
-    """Parses the structured output from the LLM into a dictionary."""
+    """Parses the structured JSON output from the LLM into a dictionary."""
+    # Initialize output structure
     output = {
         'summary': {'commit_message': '', 'rationale': '', 'conflict_resolution': '', 'unresolved_conflict': ''},
         'changes': {},
         'malformed_blocks': []
     }
     
-    # Extract summary sections
-    commit_match = re.search(r"COMMIT MESSAGE:\s*\n(.*?)\n\n", llm_output, re.DOTALL)
-    if commit_match:
-        output['summary']['commit_message'] = commit_match.group(1).strip()
+    try:
+        json_data = json.loads(llm_output)
+        if not isinstance(json_data, dict):
+            raise ValueError("LLM output is not a JSON object.")
 
-    rationale_match = re.search(r"RATIONALE:\s*\n(.*?)\n\n", llm_output, re.DOTALL)
-    if rationale_match:
-        rationale_content = rationale_match.group(1).strip()
+        # Extract summary fields
+        output['summary']['commit_message'] = json_data.get('COMMIT_MESSAGE', '').strip()
+        rationale_content = json_data.get('RATIONALE', '').strip()
         output['summary']['rationale'] = rationale_content
-        
-        # Extract conflict resolution/unresolved conflict from rationale
-        conflict_res_match = re.search(r"CONFLICT RESOLUTION:\s*(.*?)(?=\nUNRESOLVED CONFLICT:|\n\n|$)", rationale_content, re.DOTALL)
-        if conflict_res_match:
-            output['summary']['conflict_resolution'] = conflict_res_match.group(1).strip()
-        
-        unresolved_conflict_match = re.search(r"UNRESOLVED CONFLICT:\s*(.*?)(?=\n\n|$)", rationale_content, re.DOTALL)
-        if unresolved_conflict_match:
-            output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
 
-    # Regex to find all file blocks
-    file_blocks = re.split(r'(^--- file_path: .*? ---$)', llm_output, flags=re.MULTILINE)
-    
-    # Process blocks, starting from the first delimiter
-    i = 1
-    while i < len(file_blocks):
-        delimiter = file_blocks[i]
-        content = file_blocks[i+1] if i + 1 < len(file_blocks) else ""
-        i += 2
-
-        path_match = re.match(r'--- file_path: (.*?) ---', delimiter)
-        if not path_match:
-            output['malformed_blocks'].append(delimiter + content)
-            continue
-        
-        file_path = path_match.group(1).strip()
-        
-        # Determine change type
-        content_stripped = content.strip()
-        change_type_match = re.match(r'^(ADD|MODIFY|REMOVE):', content_stripped)
-        
-        if not change_type_match:
-            output['malformed_blocks'].append(delimiter + content)
-            continue
+        # Extract conflict resolution/unresolved conflict from rationale within JSON
+        if rationale_content:
+            conflict_res_match = re.search(r"CONFLICT RESOLUTION:\s*(.*?)(?=\nUNRESOLVED CONFLICT:|\n\n|$)", rationale_content, re.DOTALL)
+            if conflict_res_match:
+                output['summary']['conflict_resolution'] = conflict_res_match.group(1).strip()
             
-        change_type = change_type_match.group(1)
-        change_content_raw = content_stripped[len(change_type)+1:].strip()
+            unresolved_conflict_match = re.search(r"UNRESOLVED CONFLICT:\s*(.*?)(?=\n\n|$)", rationale_content, re.DOTALL)
+            if unresolved_conflict_match:
+                output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
 
-        if change_type == 'ADD':
-            output['changes'][file_path] = {'type': 'ADD', 'content': change_content_raw}
-        elif change_type == 'MODIFY':
-            full_content_match = re.match(r'^FULL_CONTENT:\s*\n(.*)', change_content_raw, re.DOTALL)
-            if full_content_match:
-                output['changes'][file_path] = {'type': 'MODIFY', 'new_content': full_content_match.group(1).strip()}
+        # Extract code changes
+        code_changes_list = json_data.get('CODE_CHANGES', [])
+        if not isinstance(code_changes_list, list):
+            output['malformed_blocks'].append(f"CODE_CHANGES is not a list: {code_changes_list}")
+            return output # Exit early if CODE_CHANGES is malformed
+
+        for change_item in code_changes_list:
+            if not isinstance(change_item, dict) or 'file_path' not in change_item or 'action' not in change_item:
+                output['malformed_blocks'].append(f"Malformed change item: {change_item}")
+                continue
+            
+            file_path = change_item['file_path']
+            action = change_item['action']
+
+            if action == 'ADD':
+                if 'full_content' in change_item:
+                    output['changes'][file_path] = {'type': 'ADD', 'content': change_item['full_content'].strip()}
+                else:
+                    output['malformed_blocks'].append(f"ADD action missing 'full_content' for {file_path}: {change_item}")
+            elif action == 'MODIFY':
+                if 'full_content' in change_item:
+                    output['changes'][file_path] = {'type': 'MODIFY', 'new_content': change_item['full_content'].strip()}
+                else:
+                    output['malformed_blocks'].append(f"MODIFY action missing 'full_content' for {file_path}: {change_item}")
+            elif action == 'REMOVE':
+                if 'lines' in change_item and isinstance(change_item['lines'], list):
+                    output['changes'][file_path] = {'type': 'REMOVE', 'lines': change_item['lines']}
+                else:
+                    output['malformed_blocks'].append(f"REMOVE action missing 'lines' or 'lines' not a list for {file_path}: {change_item}")
             else:
-                output['malformed_blocks'].append(delimiter + content) # Malformed MODIFY
-        elif change_type == 'REMOVE':
-            output['changes'][file_path] = {'type': 'REMOVE', 'lines': change_content_raw.splitlines()}
-            
+                output['malformed_blocks'].append(f"Unknown action type '{action}' for {file_path}: {change_item}")
+
+    except json.JSONDecodeError as e:
+        output['malformed_blocks'].append(f"LLM output is not valid JSON: {e}\nRaw output:\n{llm_output}")
+    except ValueError as e:
+        output['malformed_blocks'].append(f"JSON parsing error: {e}\nRaw output:\n{llm_output}")
+    except Exception as e:
+        output['malformed_blocks'].append(f"An unexpected error occurred during parsing: {e}\nRaw output:\n{llm_output}")
+    
     return output
 
 def validate_code_output(parsed_data: Dict, original_context: Dict) -> Dict:
