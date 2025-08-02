@@ -168,9 +168,12 @@ class GeminiProvider:
         """
         Estimates the token count for a given prompt and system prompt.
         """
+        # Concatenate system prompt and user prompt for token counting.
+        # This is a heuristic to estimate tokens when system_instruction is used,
+        # as the count_tokens API does not directly support a system_instruction parameter.
+        full_text_for_counting = f"{system_prompt}\n\n{prompt}"
         contents_for_counting = [
-            types.Content(role='system', parts=[types.Part(text=system_prompt)]),
-            types.Content(role='user', parts=[types.Part(text=prompt)])
+            types.Content(role='user', parts=[types.Part(text=full_text_for_counting)])
         ]
 
         # Note: Caching for this method is handled by @st.cache_data in app.py
@@ -182,7 +185,6 @@ class GeminiProvider:
                     model=self.model_name,
                     contents=contents_for_counting
                 )
-                # Removed the problematic time.sleep(0.5) here.
                 return response.total_tokens
             except APIError as e:  # APIError is GoogleAPICallError
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined

@@ -2,9 +2,6 @@
 import streamlit as st
 import os
 from core import run_isal_process, TokenBudgetExceededError, parse_llm_code_output, validate_code_output, format_git_diff
-import sys
-from rich.text import Text
-from rich.syntax import Syntax
 import io
 import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError
@@ -15,6 +12,7 @@ from typing import Dict, Any, Optional, List
 from collections import defaultdict
 import yaml
 from rich.console import Console
+import core # Moved import to top for standard practice
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -133,18 +131,14 @@ def reset_app_state():
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
     st.session_state.example_selector = "Design a Mars City" # Reset to default example key
 
-    # Re-initialize persona data from file
-    import core
-    try:
-        all_personas, persona_sets, default_set = core.load_personas()
-        st.session_state.all_personas = all_personas
-        st.session_state.persona_sets = persona_sets
-        st.session_state.available_domains = list(persona_sets.keys())
-        st.session_state.selected_persona_set = default_set
-    except Exception as e:
-        st.error(f"Failed to load personas during reset: {e}")
-        st.session_state.all_personas = {}
-        st.session_state.persona_sets = {}
+    # Reset persona selection to default based on already loaded personas
+    # Assumes st.session_state.persona_sets and st.session_state.available_domains are already populated
+    if "persona_sets" in st.session_state and "General" in st.session_state.persona_sets:
+        st.session_state.selected_persona_set = "General"
+    elif "available_domains" in st.session_state and st.session_state.available_domains:
+        st.session_state.selected_persona_set = st.session_state.available_domains[0]
+    else:
+        # Fallback if persona loading failed during initial app startup
         st.session_state.available_domains = ["General"]
         st.session_state.selected_persona_set = "General"
 
@@ -160,7 +154,6 @@ def reset_app_state():
 
 # --- Session State Initialization ---
 # Ensure all persona-related session state is initialized first and robustly
-import core
 if "all_personas" not in st.session_state:
     try:
         all_personas, persona_sets, default_set = core.load_personas()
@@ -338,13 +331,10 @@ with col2:
                     except Exception as e:
                         st.error(f"Error reading {file.name}: {e}")
                 st.session_state.codebase_context = temp_context
-                st.session_state.uploaded_files = uploaded_files # Store the actual uploaded file objects
-                st.success(f"{len(st.session_state.codebase_context)} file(s) loaded for context from uploader.")
-            else:
-                # Files are the same as what's already in session_state.uploaded_files, no need to reprocess.
-                if st.session_state.codebase_context:
-                    st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
-        elif st.session_state.codebase_context:
+                st.session_state.uploaded_files = uploaded_files # Store the actual uploaded file objects for comparison
+                st.toast(f"{len(st.session_state.codebase_context)} file(s) loaded for context.")
+            # else: Files are the same as what's already in session_state.uploaded_files, no need to reprocess.
+        elif st.session_state.codebase_context and not uploaded_files: # Only show if context exists and no new files were uploaded
             # No new files uploaded, but context exists (e.g., from demo load or previous upload)
             st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
         else:
