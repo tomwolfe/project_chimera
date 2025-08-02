@@ -92,7 +92,7 @@ class SocraticDebate:
         self.rich_console = rich_console if rich_console else Console()
         self.current_thought = initial_prompt
         self.final_answer = "Process did not complete."
-        self.codebase_context = codebase_context or {}
+        self.codebase_context = codebase_context
 
     def _update_status(self, message: str, **kwargs):
         self.rich_console.print(message)
@@ -370,8 +370,22 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
         'malformed_blocks': []
     }
     
+    # Pre-process: Remove markdown code block fences if present
+    # This regex looks for ```json or ``` followed by content, and then ```
+    # It's designed to extract the content *between* the fences.
+    json_block_match = re.search(r'```json\s*(.*?)\s*```', llm_output, re.DOTALL)
+    if json_block_match:
+        llm_output_cleaned = json_block_match.group(1).strip()
+    else:
+        # If no ```json block found, try generic ``` block
+        json_block_match = re.search(r'```\s*(.*?)\s*```', llm_output, re.DOTALL)
+        if json_block_match:
+            llm_output_cleaned = json_block_match.group(1).strip()
+        else:
+            llm_output_cleaned = llm_output.strip() # No fences, use as is
+
     try:
-        json_data = json.loads(llm_output)
+        json_data = json.loads(llm_output_cleaned) # Use the cleaned output here
         if not isinstance(json_data, dict):
             raise ValueError("LLM output is not a JSON object.")
 

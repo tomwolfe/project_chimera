@@ -113,7 +113,8 @@ class GeminiProvider:
                 input_tokens = response.usage_metadata.prompt_token_count
                 output_tokens = response.usage_metadata.candidates_token_count
                 return response.text, input_tokens, output_tokens
-            except APIError as e: # APIError is GoogleAPICallError
+            except APIError as e:  # APIError is GoogleAPICallError
+                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
                 # Attempt to get HTTP status code from the response object if available
                 http_status_code = None
                 if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
@@ -122,30 +123,24 @@ class GeminiProvider:
                 # Check if it's a retryable HTTP status code
                 if http_status_code is not None and http_status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
-                    jitter = random.uniform(0, 0.5 * backoff_time) # Add jitter
+                    jitter = random.uniform(0, 0.5 * backoff_time)  # Add jitter
                     sleep_time = backoff_time + jitter
-                    # Sanitize error message before logging
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Non-retryable API error or last retry failed
-                    # Sanitize error message before raising
                     # Pass http_status_code if available, otherwise fall back to e.code (gRPC code)
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
                 # Catch-all for other unexpected errors (e.g., network issues)
+                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # Sanitize error message to handle Unicode characters properly
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    # Sanitize the final error message before raising
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     raise LLMUnexpectedError(error_msg) from e
         
         # This part should ideally not be reached if exceptions are always re-raised on last attempt
@@ -168,7 +163,8 @@ class GeminiProvider:
                 )
                 # Removed the problematic time.sleep(0.5) here.
                 return response.total_tokens
-            except APIError as e: # APIError is GoogleAPICallError
+            except APIError as e:  # APIError is GoogleAPICallError
+                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
                 http_status_code = None
                 if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
                     http_status_code = e.response.status_code
@@ -177,25 +173,20 @@ class GeminiProvider:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # Sanitize error message before logging
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     # Sanitize error message before raising
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
+                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # Sanitize error message to handle Unicode characters properly
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     self._log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    # Sanitize the final error message before raising
-                    error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                     raise LLMUnexpectedError(error_msg) from e
         
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
