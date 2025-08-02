@@ -1,6 +1,7 @@
 # core.py
 import yaml
 import time
+import sys # Added import for sys
 import re
 import ast
 import pycodestyle
@@ -319,7 +320,7 @@ class SocraticDebate:
 
         # Step 6: Devil's Advocate
         def devil_prompt_gen():
-            return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique:\n{self.final_answer}"
+            return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{self.final_answer}"
         self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
 
         self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
@@ -345,6 +346,9 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
         # Replace a placeholder filename with the actual temp file path if present
         cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
+        # Ensure the Python executable is used explicitly
+        if cmd_with_file[0] == "python":
+            cmd_with_file[0] = sys.executable
         process = subprocess.run(
             cmd_with_file,
             capture_output=True,
@@ -474,15 +478,15 @@ def validate_code_output(parsed_data: Dict, original_context: Dict) -> Dict:
 
         if is_python and content_to_check:
             # 1. Syntax Validation (sandboxed)
-            # Use a temporary file for AST parsing
-            ast_command = ["python", "-c", "import ast; import sys; ast.parse(sys.stdin.read())", "TEMP_FILE_PLACEHOLDER"]
+            # Use py_compile for robust syntax validation
+            ast_command = [sys.executable, "-m", "py_compile", "TEMP_FILE_PLACEHOLDER"]
             ast_returncode, ast_output = _run_validation_in_sandbox(ast_command, content_to_check)
             if ast_returncode != 0:
                 report['issues'].append({'type': 'Syntax Error', 'file': file_path, 'message': ast_output.strip()})
             
             # 2. Style Compliance (PEP8) (sandboxed)
             # Use pycodestyle on a temporary file
-            pep8_command = ["python", "-m", "pycodestyle", "--format=default", "TEMP_FILE_PLACEHOLDER"]
+            pep8_command = [sys.executable, "-m", "pycodestyle", "--format=default", "TEMP_FILE_PLACEHOLDER"]
             pep8_returncode, pep8_output = _run_validation_in_sandbox(pep8_command, content_to_check)
             if pep8_returncode != 0:
                 # Parse pycodestyle output to get individual errors
