@@ -204,8 +204,8 @@ if "uploaded_files" not in st.session_state: # Keep track of uploaded files
 # --- Sidebar for Configuration ---
 with st.sidebar:
     st.header("Configuration")
-    # Changed key to avoid conflict with session state variable name
-    st.text_input("Enter your Gemini API Key", type="password", help="Your API key will not be stored.", key="api_key_input_widget")
+    # Ensure the key matches the session state variable used for the API key
+    st.text_input("Enter your Gemini API Key", type="password", help="Your API key will not be stored.", key="api_key_input")
     st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
     st.markdown("---")
     st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"], key="selected_model_selectbox")
