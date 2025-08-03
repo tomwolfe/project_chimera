@@ -416,26 +416,40 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
         'malformed_blocks': [],
     }
     
-    # Pre-process: Remove markdown code block fences if present
-    # This regex looks for ```json or ``` followed by content, and then ```
-    # It's designed to extract the content *between* the fences.
-    json_block_match = re.search(r'```json\s*(.*?)\s*```', llm_output.strip(), re.DOTALL)
+    llm_output_stripped = llm_output.strip()
+    llm_output_cleaned = ""
+
+    # 1. Try to extract content from ```json ... ``` block
+    json_block_match = re.search(r'```json\s*(.*?)\s*```', llm_output_stripped, re.DOTALL)
     if json_block_match:
         llm_output_cleaned = json_block_match.group(1).strip()
     else:
-        # If no ```json block found, try generic ``` block
-        json_block_match = re.search(r'```\s*(.*?)\s*```', llm_output.strip(), re.DOTALL)
-        if json_block_match:
-            llm_output_cleaned = json_block_match.group(1).strip()
+        # 2. Try to extract content from generic ``` ... ``` block
+        generic_block_match = re.search(r'```\s*(.*?)\s*```', llm_output_stripped, re.DOTALL)
+        if generic_block_match:
+            llm_output_cleaned = generic_block_match.group(1).strip()
         else:
-            llm_output_cleaned = llm_output.strip() # No fences, use as is
+            # 3. If no markdown block found, assume the entire output is JSON (or should be)
+            #    Attempt to find the first '{' and last '}' as a fallback for malformed fences or missing fences.
+            first_brace = llm_output_stripped.find('{')
+            last_brace = llm_output_stripped.rfind('}')
+            
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                llm_output_cleaned = llm_output_stripped[first_brace : last_brace + 1]
+                # Add a warning if we had to use this fallback, as it might indicate malformed LLM output
+                # Only add warning if the original output actually contained fences but they weren't matched
+                # or if it didn't contain fences at all.
+                if not (llm_output_stripped.startswith('```') and llm_output_stripped.endswith('```')):
+                     output['malformed_blocks'].append(f"Warning: No markdown code block fences found. Attempting to parse content between first '{{' and last '}}'. Original output:\n{llm_output_stripped}")
+            else:
+                # If no braces or malformed, use the entire stripped output and mark as malformed
+                llm_output_cleaned = llm_output_stripped
+                output['malformed_blocks'].append(f"No valid JSON structure (braces or markdown fences) detected. Attempting to parse raw output. Original output:\n{llm_output_stripped}")
 
-    # --- MODIFICATION START ---
-    # Check if the cleaned output is empty before attempting to parse
+    # Check if the final cleaned output is empty before attempting to parse
     if not llm_output_cleaned:
         output['malformed_blocks'].append(f"LLM output was empty or contained only whitespace after stripping. Original raw output:\n{llm_output}")
         return output # Return early if empty
-    # --- MODIFICATION END ---
 
     try:
         json_data = json.loads(llm_output_cleaned) # Use the cleaned output here
@@ -490,18 +504,11 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
                 output['malformed_blocks'].append(f"Unknown action type '{action}' for {file_path}: {change_item}")
 
     except json.JSONDecodeError as e:
-        # --- MODIFICATION START ---
-        # Report the cleaned output that failed to parse, not the original raw output
         output['malformed_blocks'].append(f"LLM output is not valid JSON: {e}\nRaw output:\n{llm_output_cleaned}")
-        # --- MODIFICATION END ---
     except ValueError as e:
-        # --- MODIFICATION START ---
         output['malformed_blocks'].append(f"JSON parsing error: {e}\nRaw output:\n{llm_output_cleaned}")
-        # --- MODIFICATION END ---
     except Exception as e:
-        # --- MODIFICATION START ---
         output['malformed_blocks'].append(f"An unexpected error occurred during parsing: {e}\nRaw output:\n{llm_output_cleaned}")
-        # --- MODIFICATION END ---
     
     return output
 
