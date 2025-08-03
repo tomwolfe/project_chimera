@@ -31,14 +31,17 @@ def reason(
     # Load codebase context from files
     codebase_context = {}
     if context_files:
-        if len(context_files) > 3:
-            console.print("[bold yellow]Warning:[/bold yellow] More than 3 context files provided. Using the first 3.")
-            context_files = context_files[:3]
+        # --- MODIFICATION START ---
+        # Increased the limit for context files from 3 to 25
+        if len(context_files) > 25:
+            console.print("[bold yellow]Warning:[/bold yellow] More than 25 context files provided. Using the first 25.")
+            context_files = context_files[:25]
+        # --- MODIFICATION END ---
         for file_path in context_files:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     codebase_context[file_path] = f.read()
-                console.print(f"[green]Loaded context from:[/] {file_path}")
+                console.print(f"[green]Loaded context from:[/green] {file_path}")
             except FileNotFoundError:
                 console.print(f"[bold red]Error:[/bold red] Context file not found: {file_path}")
                 raise typer.Exit(code=1)
@@ -54,14 +57,14 @@ def reason(
         elif state == "warning": status_color = "yellow"
         elif state == "complete": status_color = "green"
 
-        console.print(f"[{status_color}]Status:[/{status_color}] {message}")
+        console.print(f"[{status_color}]Status:[/color] {message}")
         console.print(f"  [bold]Tokens Used:[/bold] {current_total_tokens} | [bold]Estimated Cost:[/bold] ${current_total_cost:.4f}")
         if estimated_next_step_tokens > 0:
             budget_remaining = max_tokens_budget - current_total_tokens
             if estimated_next_step_tokens > budget_remaining:
                 console.print(f"  [bold red]WARNING:[/bold red] Next step ({estimated_next_step_tokens} tokens / ${estimated_next_step_cost:.4f}) will exceed budget ({budget_remaining} remaining).")
             else:
-                console.print(f"  [bold yellow]Next Step Estimate:[/bold] {estimated_next_step_tokens} tokens / ${estimated_next_step_cost:.4f} (Budget remaining: {budget_remaining})")
+                console.print(f"  [bold yellow]Next Step Estimate:[/bold yellow] {estimated_next_step_tokens} tokens / ${estimated_next_step_cost:.4f} (Budget remaining: {budget_remaining})")
         console.print("-" * 80)
 
     debate_instance = None

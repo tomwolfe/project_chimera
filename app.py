@@ -290,9 +290,8 @@ with col2:
     st.subheader("Codebase Context (Optional)")
     if st.session_state.selected_persona_set == "Software Engineering":
         # Use a unique key for the file uploader to avoid issues with reruns
-        # Set the value of the uploader based on st.session_state.uploaded_files
         uploaded_files = st.file_uploader(
-            "Upload up to 3 relevant files",
+            "Upload up to 25 relevant files",
             accept_multiple_files=True,
             type=['py', 'js', 'ts', 'html', 'css', 'json', 'yaml', 'md', 'txt', 'java', 'go', 'rb', 'php'],
             help="Provide files for context. The AI will analyze them to generate consistent code.",
@@ -319,9 +318,9 @@ with col2:
             previous_uploaded_file_info = [(f.name, f.size) for f in st.session_state.uploaded_files]
 
             if current_uploaded_file_info != previous_uploaded_file_info:
-                if len(uploaded_files) > 3:
-                    st.warning("Please upload a maximum of 3 files.")
-                    uploaded_files = uploaded_files[:3] # Truncate if too many
+                if len(uploaded_files) > 25:
+                    st.warning("Please upload a maximum of 25 files. Truncating to the first 25.")
+                    uploaded_files = uploaded_files[:25] # Truncate if too many
 
                 temp_context = {}
                 for file in uploaded_files:
