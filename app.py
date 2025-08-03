@@ -125,11 +125,13 @@ if __name__ == '__main__':
 def reset_app_state():
     # Explicitly set all session state variables to their default values
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS["Design a Mars City"]
+    # Default to the first example prompt
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-    st.session_state.example_selector = "Design a Mars City" # Reset to default example key
+    # Reset to the first example key as the default selected example
+    st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
 
     # Reset persona selection to default based on already loaded personas
     # Assumes st.session_state.persona_sets and st.session_state.available_domains are already populated
@@ -166,20 +168,23 @@ if "all_personas" not in st.session_state:
         st.session_state.all_personas = {} # Fallback to empty if load fails
         st.session_state.persona_sets = {}
         st.session_state.available_domains = ["General"]
-        st.session_state.selected_persona_set = "General"
+        st.session_state.selected_persona_set = "General" # Fallback if loading fails
 
 if "api_key_input" not in st.session_state:
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
 if "user_prompt_input" not in st.session_state:
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS["Design a Mars City"]
+    # Default to the first example prompt
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
 if "max_tokens_budget_input" not in st.session_state:
     st.session_state.max_tokens_budget_input = 1000000
 if "show_intermediate_steps_checkbox" not in st.session_state:
     st.session_state.show_intermediate_steps_checkbox = True
 if "selected_model_selectbox" not in st.session_state:
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-if "example_selector" not in st.session_state:
-    st.session_state.example_selector = "Design a Mars City"
+# Initialize selected_example_name to track the currently selected prompt source
+if "selected_example_name" not in st.session_state:
+    # Default to the first example key
+    st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
 if "debate_ran" not in st.session_state:
     st.session_state.debate_ran = False
 if "final_answer_output" not in st.session_state:
@@ -199,7 +204,8 @@ if "uploaded_files" not in st.session_state: # Keep track of uploaded files
 # --- Sidebar for Configuration ---
 with st.sidebar:
     st.header("Configuration")
-    st.text_input("Enter your Gemini API Key", type="password", help="Your API key will not be stored.", key="api_key_input")
+    # Changed key to avoid conflict with session state variable name
+    st.text_input("Enter your Gemini API Key", type="password", help="Your API key will not be stored.", key="api_key_input_widget")
     st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
     st.markdown("---")
     st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"], key="selected_model_selectbox")
@@ -215,39 +221,83 @@ if not st.session_state.api_key_input.strip():
     api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to enable the 'Run' button.")
 
 # --- Prompt Input ---
-selected_example_name_from_widget = st.selectbox(
+CUSTOM_PROMPT_KEY = "Custom Prompt"
+SELECTBOX_PROMPT_OPTIONS = [CUSTOM_PROMPT_KEY] + list(EXAMPLE_PROMPTS.keys())
+
+# Determine the initial index for the selectbox based on the current session state
+current_example_index = 0
+if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(CUSTOM_PROMPT_KEY)
+elif st.session_state.selected_example_name in EXAMPLE_PROMPTS:
+    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
+else: # Fallback if session state somehow got corrupted
+    st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
+    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
+
+# Selectbox for example prompts
+# Use a static key for the widget itself to manage its state independently
+selected_option_from_widget = st.selectbox(
     "Choose an example prompt:",
-    options=list(EXAMPLE_PROMPTS.keys()),
-    index=list(EXAMPLE_PROMPTS.keys()).index(st.session_state.example_selector) if st.session_state.example_selector in EXAMPLE_PROMPTS else 0,
-    key="example_selector",
-    help="Select a pre-defined prompt to quickly get started."
+    options=SELECTBOX_PROMPT_OPTIONS,
+    index=current_example_index,
+    key="example_selector_widget", # Static key for the widget
+    help="Select a pre-defined prompt or choose 'Custom Prompt' to enter your own."
 )
 
-# Logic to update the prompt text area and codebase context based on selectbox selection
-# This runs on every rerun, BEFORE the text_area is instantiated.
-if st.session_state.user_prompt_input != EXAMPLE_PROMPTS.get(selected_example_name_from_widget, ""):
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[selected_example_name_from_widget]
-    
-    # Check if the selected example is a Software Engineering one
-    if selected_example_name_from_widget in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script"]:
-        st.session_state.codebase_context = DEMO_CODEBASE_CONTEXT
-        # Simulate uploaded_files for UI consistency in the file uploader
-        st.session_state.uploaded_files = [
-            type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-            for k, v in DEMO_CODEBASE_CONTEXT.items()
-        ]
-        # Also set the domain to Software Engineering
-        st.session_state.selected_persona_set = "Software Engineering"
+# --- Logic to handle changes in prompt selection or user input ---
+
+# 1. If the selectbox value changed (user selected a different option)
+if selected_option_from_widget != st.session_state.selected_example_name:
+    st.session_state.selected_example_name = selected_option_from_widget # Update our internal state
+
+    if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+        st.session_state.user_prompt_input = "" # Clear prompt for custom input
+        st.session_state.codebase_context = {} # Clear codebase context
+        st.session_state.uploaded_files = [] # Clear uploaded files
+        # Reset persona set if it was Software Engineering and we're moving to custom
+        if st.session_state.selected_persona_set == "Software Engineering":
+            st.session_state.selected_persona_set = "General"
     else:
-        # Clear context if not a SE prompt
-        st.session_state.codebase_context = {}
-        st.session_state.uploaded_files = []
-        # Optionally reset domain to General if not a SE prompt, or let auto-detect handle it
-        if st.session_state.selected_persona_set == "Software Engineering": # Only change if currently SE
-            st.session_state.selected_persona_set = "General" # Default to General
+        # Populate prompt from the selected example
+        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[st.session_state.selected_example_name]
+        
+        # Check if the selected example is a Software Engineering one and update context accordingly
+        if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script"]:
+            st.session_state.codebase_context = DEMO_CODEBASE_CONTEXT
+            # Simulate uploaded_files for UI consistency in the file uploader
+            st.session_state.uploaded_files = [
+                type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
+                for k, v in DEMO_CODEBASE_CONTEXT.items()
+            ]
+            st.session_state.selected_persona_set = "Software Engineering"
+        else:
+            # Clear context if not a SE prompt
+            st.session_state.codebase_context = {}
+            st.session_state.uploaded_files = []
+            # Reset persona set if it was Software Engineering and we're moving to a non-SE example
+            if st.session_state.selected_persona_set == "Software Engineering":
+                st.session_state.selected_persona_set = "General"
+                
+    st.rerun() # Rerun to apply the changes immediately to the text area and context
 
-    # No st.rerun() here, as the text_area will simply display the updated session_state value.
+# 2. If the user typed into the text area, and it's no longer matching the selected example
+# This check should happen AFTER the selectbox change logic.
+# It detects if the user has started typing their own prompt, even if an example was initially selected.
+if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
+    # Get the prompt text corresponding to the currently selected example name from session state
+    current_example_prompt_text = EXAMPLE_PROMPTS.get(st.session_state.selected_example_name, "")
+    
+    # If the user's input in the text area differs from the prompt of the currently selected example
+    if st.session_state.user_prompt_input != current_example_prompt_text:
+        # This implies the user has started typing their own prompt.
+        # Update our internal state to reflect that "Custom Prompt" is now the active selection.
+        st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
+        # No need to clear user_prompt_input here, as it already contains the user's text.
+        # Context/persona resets are handled when "Custom Prompt" is *selected* from the widget,
+        # so we don't need to do that here again. We just need to update the selectbox's visual state.
+        st.rerun() # Rerun to update the selectbox to show "Custom Prompt"
 
+# Text area for the user's prompt. It's bound to st.session_state.user_prompt_input.
 user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input")
 
 
@@ -282,7 +332,7 @@ with col1:
         "Select Framework",
         options=st.session_state.available_domains,
         index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else 0,
-        key="selected_persona_set",
+        key="selected_persona_set_widget", # Renamed key to avoid conflict with session state variable
         help="Choose a domain-specific reasoning framework."
     )
 
@@ -406,8 +456,8 @@ if run_button_clicked:
                 # Capture rich console output for the log display
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                     debate_instance = run_isal_process(
-                        user_prompt, # Pass user_prompt as the first positional argument
-                        api_key=st.session_state.api_key_input,
+                        prompt=user_prompt, # Pass user_prompt as the first positional argument
+                        api_key=st.session_state.api_key_input, # This reads from session state
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         streamlit_status_callback=streamlit_status_callback,
                         model_name=st.session_state.selected_model_selectbox,
