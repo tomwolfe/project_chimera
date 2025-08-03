@@ -13,7 +13,7 @@ import os
 import json # Added import for JSON parsing
 from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator
-import streamlit as st
+import streamlit as st # Uncommented and placed correctly for session_state usage
 from typing import List, Dict, Tuple, Any, Callable, Optional
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
 # functools.lru_cache is not needed here as we are using Streamlit's caching decorators.
@@ -289,8 +289,11 @@ class SocraticDebate:
             self._update_status(error_msg, state="error")
             raise # Re-raise the exception to be caught by the main handler
 
-    def run_debate(self) -> Tuple[str, Dict[str, Any]]:
+    def run_debate(self, max_turns: int = 5) -> Tuple[str, Dict[str, Any]]:
         """Executes the full Socratic debate loop."""
+        if not self.personas:
+            return {"error": "No personas loaded. Cannot run debate."}, {} # Return empty dict for intermediate steps on error
+        
         self._update_status("Starting Socratic Arbitration Loop...",
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
