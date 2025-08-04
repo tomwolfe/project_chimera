@@ -2,7 +2,7 @@
 import yaml
 import time
 import hashlib
-import sys # Added import for sys
+import sys
 import re
 import ast
 import pycodestyle
@@ -10,13 +10,12 @@ import difflib
 import subprocess
 import tempfile
 import os
-import json # Added import for JSON parsing
+import json
 from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator
-import streamlit as st # Uncommented and placed correctly for session_state usage
+import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
-# functools.lru_cache is not needed here as we are using Streamlit's caching decorators.
 
 # --- Custom Exception for Token Budget ---
 class TokenBudgetExceededError(LLMProviderError):
@@ -69,14 +68,14 @@ class SocraticDebate:
     CONTEXT_TOKEN_BUDGET_RATIO = 0.25 # Allocate 25% of total budget for context analysis
 
     def __init__(self,
-                 initial_prompt: str, # Renamed from 'prompt' to 'initial_prompt'
+                 initial_prompt: str,
                  api_key: str,
                  max_total_tokens_budget: int,
                  model_name: str,
                  personas: Dict[str, Persona],
                  all_personas: Dict[str, Persona],
                  persona_sets: Dict[str, List[str]],
-                 gemini_provider: Optional[GeminiProvider] = None, # Allow passing a pre-initialized provider
+                 gemini_provider: Optional[GeminiProvider] = None,
                  domain: str = "General",
                  status_callback: Callable = None,
                  rich_console: Optional[Console] = None,
@@ -90,7 +89,6 @@ class SocraticDebate:
         self.persona_sets = persona_sets
         self.status_callback = status_callback
         
-        # Initialize GeminiProvider if not provided
         if gemini_provider:
             self.gemini_provider = gemini_provider
         else:
@@ -201,7 +199,7 @@ class SocraticDebate:
         current_tokens = 0
 
         for path, content in self.codebase_context.items():
-            header = f"--- file_path: {path} ---\n"
+            header = f"--- file_path: {path} ---\n" # Added newline here
             header_tokens = self.gemini_provider.count_tokens(header, "")
             
             remaining_budget_for_file_content = context_budget - current_tokens - header_tokens
@@ -344,7 +342,7 @@ class SocraticDebate:
         # Step 5: Final Arbitration
         def arbitrator_prompt_gen():
             return (
-                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n\n"
+                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES AND BACKSLASHES WITHIN THE CONTENT ARE PROPERLY ESCAPED AS \\\" AND \\\\\\\\.)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '."
                 f"--- DEBATE SUMMARY ---\n"
                 f"User Prompt: {self.initial_prompt}\n\n"
                 f"Visionary Proposal:\n{visionary_output}\n\n"
@@ -409,6 +407,50 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+def repair_json(json_str: str) -> str:
+    """Attempts to repair JSON strings by escaping quotes in full_content fields and fixing common LLM errors."""
+    repaired_str = json_str
+    
+    # Fix 1: Globally replace single backslashes with double backslashes.
+    # This addresses 'Invalid \escape' errors (e.g., C:\Users) and ensures
+    # that all backslashes are treated as literal or valid escapes by json.loads.
+    # This is safe because json.loads interprets '\\' as '\' and '\\n' as '\n'.
+    repaired_str = repaired_str.replace('\\', '\\\\')
+
+    # Fix 2: Re-encode all string literal contents to handle unescaped quotes and other special characters.
+    # This regex finds all JSON string literals (e.g., "content").
+    # It captures the content inside the quotes.
+    # Then, it uses json.dumps on the captured content to properly escape it,
+    # and removes the outer quotes added by json.dumps before re-inserting.
+    def replace_string_content(match):
+        content = match.group(1) # The content inside the quotes
+        # json.dumps will correctly escape any unescaped quotes or other special chars
+        # within 'content'. We then remove its outer quotes.
+        return '"' + json.dumps(content)[1:-1] + '"'
+
+    # Apply this to all string literals in the JSON string.
+    repaired_str = re.sub(r'"((?:[^"\\]|\\.)*)"', replace_string_content, repaired_str, flags=re.DOTALL)
+    
+    # Fix 3: Additional structural fixes for common LLM JSON errors.
+    # Fix missing commas between JSON objects
+    repaired_str = re.sub(r'}\s*{', '}, {', repaired_str)
+    # Fix missing commas after array elements (e.g., "line1" "line2")
+    repaired_str = re.sub(r'"\s*"', '", "', repaired_str)
+    # Fix missing commas after array elements that are numbers or booleans
+    repaired_str = re.sub(r'(\d|true|false)\s*(?="|\{|\[)', r'\1, ', repaired_str)
+    
+    # Fix for Python keywords that might be concatenated without spaces (e.g., `importos`)
+    # This is applied *after* quote escaping to avoid issues with escaped quotes.
+    repaired_str = re.sub(r'import([a-zA-Z_])', r'import \1', repaired_str)
+    repaired_str = re.sub(r'def([a-zA-Z_])', r'def \1', repaired_str)
+    repaired_str = re.sub(r'class([a-zA-Z_])', r'class \1', repaired_str)
+    repaired_str = re.sub(r'from([a-zA-Z_])', r'from \1', repaired_str)
+    repaired_str = re.sub(r'return([^{(=])', r'return \1', repaired_str)
+    repaired_str = re.sub(r'raise([^{(])', r'raise \1', repaired_str)
+    repaired_str = re.sub(r'assert([^{(])', r'assert \1', repaired_str)
+    
+    return repaired_str
+
 @st.cache_data(ttl=3600) # Cache the parsing of LLM output to speed up UI rerenders.
 def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
     """Parses the structured JSON output from the LLM into a dictionary."""
@@ -432,16 +474,13 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
         if generic_block_match:
             llm_output_cleaned = generic_block_match.group(1).strip()
         else:
-            # 3. If no markdown block found, assume the entire output is JSON (or should be)
-            #    Attempt to find the first '{' and last '}' as a fallback for malformed fences or missing fences.
+            # 3. If no markdown block found, try to find the first '{' and last '}' as a fallback
             first_brace = llm_output_stripped.find('{')
             last_brace = llm_output_stripped.rfind('}')
             
             if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
                 llm_output_cleaned = llm_output_stripped[first_brace : last_brace + 1]
                 # Add a warning if we had to use this fallback, as it might indicate malformed LLM output
-                # Only add warning if the original output actually contained fences but they weren't matched
-                # or if it didn't contain fences at all.
                 if not (llm_output_stripped.startswith('```') and llm_output_stripped.endswith('```')):
                      output['malformed_blocks'].append(f"Warning: No markdown code block fences found. Attempting to parse content between first '{{' and last '}}'. Original output:\n{llm_output_stripped}")
             else:
@@ -455,63 +494,69 @@ def parse_llm_code_output(llm_output: str) -> Dict[str, Any]:
         return output # Return early if empty
 
     try:
-        json_data = json.loads(llm_output_cleaned) # Use the cleaned output here
+        # Attempt to parse the cleaned output
+        json_data = json.loads(llm_output_cleaned)
         if not isinstance(json_data, dict):
             raise ValueError("LLM output is not a JSON object.")
 
-        # Extract summary fields
-        output['summary']['commit_message'] = json_data.get('COMMIT_MESSAGE', '').strip()
-        rationale_content = json_data.get('RATIONALE', '').strip()
-        output['summary']['rationale'] = rationale_content
+    except (json.JSONDecodeError, ValueError) as e:
+        # If parsing fails, attempt to repair the JSON
+        try:
+            repaired_json = repair_json(llm_output_cleaned)
+            json_data = json.loads(repaired_json)
+            if not isinstance(json_data, dict):
+                raise ValueError("LLM output is not a JSON object after heuristic fix.")
+            output['malformed_blocks'].append(f"LLM output was initially malformed but was heuristically fixed. Original error: {e}")
+        except (json.JSONDecodeError, ValueError) as fix_e:
+            output['malformed_blocks'].append(f"LLM output is not valid JSON: {e}\nAttempted heuristic fix failed: {fix_e}\nRaw output:\n{llm_output_cleaned}")
+            return output # Return early if fix also fails
 
-        # Extract conflict resolution/unresolved conflict from rationale within JSON
-        if rationale_content:
-            conflict_res_match = re.search(r"CONFLICT RESOLUTION:\s*(.*?)(?=\nUNRESOLVED CONFLICT:|\n\n|$)", rationale_content, re.DOTALL)
-            if conflict_res_match:
-                output['summary']['conflict_resolution'] = conflict_res_match.group(1).strip()
-            
-            unresolved_conflict_match = re.search(r"UNRESOLVED CONFLICT:\s*(.*?)(?=\n\n|$)", rationale_content, re.DOTALL)
-            if unresolved_conflict_match:
-                output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
+    # Extract summary fields
+    output['summary']['commit_message'] = json_data.get('COMMIT_MESSAGE', '').strip()
+    rationale_content = json_data.get('RATIONALE', '').strip()
+    output['summary']['rationale'] = rationale_content
 
-        # Extract code changes
-        code_changes_list = json_data.get('CODE_CHANGES', [])
-        if not isinstance(code_changes_list, list):
-            output['malformed_blocks'].append(f"CODE_CHANGES is not a list: {code_changes_list}")
-            return output # Exit early if CODE_CHANGES is malformed
+    # Extract conflict resolution/unresolved conflict from rationale within JSON
+    if rationale_content:
+        conflict_res_match = re.search(r"CONFLICT RESOLUTION:\s*(.*?)(?=\nUNRESOLVED CONFLICT:|\n\n|$)", rationale_content, re.DOTALL)
+        if conflict_res_match:
+            output['summary']['conflict_resolution'] = conflict_res_match.group(1).strip()
+        
+        unresolved_conflict_match = re.search(r"UNRESOLVED CONFLICT:\s*(.*?)(?=\n\n|$)", rationale_content, re.DOTALL)
+        if unresolved_conflict_match:
+            output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
 
-        for change_item in code_changes_list:
-            if not isinstance(change_item, dict) or 'file_path' not in change_item or 'action' not in change_item:
-                output['malformed_blocks'].append(f"Malformed change item: {change_item}")
-                continue
-            
-            file_path = change_item['file_path']
-            action = change_item['action']
+    # Extract code changes
+    code_changes_list = json_data.get('CODE_CHANGES', [])
+    if not isinstance(code_changes_list, list):
+        output['malformed_blocks'].append(f"CODE_CHANGES is not a list: {code_changes_list}")
+        return output # Exit early if CODE_CHANGES is malformed
 
-            if action == 'ADD':
-                if 'full_content' in change_item:
-                    output['changes'][file_path] = {'type': 'ADD', 'content': change_item['full_content'].strip()}
-                else:
-                    output['malformed_blocks'].append(f"ADD action missing 'full_content' for {file_path}: {change_item}")
-            elif action == 'MODIFY':
-                if 'full_content' in change_item:
-                    output['changes'][file_path] = {'type': 'MODIFY', 'new_content': change_item['full_content'].strip()}
-                else:
-                    output['malformed_blocks'].append(f"MODIFY action missing 'full_content' for {file_path}: {change_item}")
-            elif action == 'REMOVE':
-                if 'lines' in change_item and isinstance(change_item['lines'], list):
-                    output['changes'][file_path] = {'type': 'REMOVE', 'lines': change_item['lines']}
-                else:
-                    output['malformed_blocks'].append(f"REMOVE action missing 'lines' or 'lines' not a list for {file_path}: {change_item}")
+    for change_item in code_changes_list:
+        if not isinstance(change_item, dict) or 'file_path' not in change_item or 'action' not in change_item:
+            output['malformed_blocks'].append(f"Malformed change item: {change_item}")
+            continue
+        
+        file_path = change_item['file_path']
+        action = change_item['action']
+
+        if action == 'ADD':
+            if 'full_content' in change_item:
+                output['changes'][file_path] = {'type': 'ADD', 'content': change_item['full_content'].strip()}
             else:
-                output['malformed_blocks'].append(f"Unknown action type '{action}' for {file_path}: {change_item}")
-
-    except json.JSONDecodeError as e:
-        output['malformed_blocks'].append(f"LLM output is not valid JSON: {e}\nRaw output:\n{llm_output_cleaned}")
-    except ValueError as e:
-        output['malformed_blocks'].append(f"JSON parsing error: {e}\nRaw output:\n{llm_output_cleaned}")
-    except Exception as e:
-        output['malformed_blocks'].append(f"An unexpected error occurred during parsing: {e}\nRaw output:\n{llm_output_cleaned}")
+                output['malformed_blocks'].append(f"ADD action missing 'full_content' for {file_path}: {change_item}")
+        elif action == 'MODIFY':
+            if 'full_content' in change_item:
+                output['changes'][file_path] = {'type': 'MODIFY', 'new_content': change_item['full_content'].strip()}
+            else:
+                output['malformed_blocks'].append(f"MODIFY action missing 'full_content' for {file_path}: {change_item}")
+        elif action == 'REMOVE':
+            if 'lines' in change_item and isinstance(change_item['lines'], list):
+                output['changes'][file_path] = {'type': 'REMOVE', 'lines': change_item['lines']}
+            else:
+                output['malformed_blocks'].append(f"REMOVE action missing 'lines' or 'lines' not a list for {file_path}: {change_item}")
+        else:
+            output['malformed_blocks'].append(f"Unknown action type '{action}' for {file_path}")
     
     return output
 
@@ -586,18 +631,18 @@ def format_git_diff(original_content: str, new_content: str) -> str:
     return "".join(list(diff)[2:])
 
 def run_isal_process(
-    prompt: str, # This is the argument passed to run_isal_process
+    prompt: str,
     api_key: str,
     max_total_tokens_budget: int = 10000,
     model_name: str = "gemini-2.5-flash-lite",
     domain: str = "auto",
     streamlit_status_callback: Callable = None,
-    all_personas: Optional[Dict[str, Persona]] = None, # Pass all personas to core
-    persona_sets: Optional[Dict[str, List[str]]] = None, # Pass all persona sets to core
+    all_personas: Optional[Dict[str, Persona]] = None,
+    persona_sets: Optional[Dict[str, List[str]]] = None,
     personas_override: Optional[Dict[str, Persona]] = None,
-    gemini_provider: Optional[GeminiProvider] = None, # Allow passing a pre-initialized provider
-    rich_console: Optional[Console] = None, # New argument for rich console
-    codebase_context: Optional[Dict[str, str]] = None # New argument for codebase context
+    gemini_provider: Optional[GeminiProvider] = None,
+    rich_console: Optional[Console] = None,
+    codebase_context: Optional[Dict[str, str]] = None
 ) -> 'SocraticDebate':
     """Initializes and returns the SocraticDebate instance."""
     
@@ -639,7 +684,7 @@ def run_isal_process(
 
     # Prepare kwargs for SocraticDebate.__init__
     kwargs_for_debate = {
-        'initial_prompt': prompt, # Correctly map 'prompt' to 'initial_prompt'
+        'initial_prompt': prompt,
         'api_key': api_key,
         'max_total_tokens_budget': max_total_tokens_budget,
         'model_name': model_name,
@@ -650,7 +695,7 @@ def run_isal_process(
         'status_callback': streamlit_status_callback,
         'rich_console': rich_console,
         'codebase_context': codebase_context,
-        'gemini_provider': gemini_provider # Pass the provider if it was initialized
+        'gemini_provider': gemini_provider
     }
     
     debate = SocraticDebate(**kwargs_for_debate)
