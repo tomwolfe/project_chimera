@@ -91,6 +91,14 @@ def repair_json(json_str: str) -> str:
     repaired_str = re.sub(r'raise([^{(])', r'raise \1', repaired_str)
     repaired_str = re.sub(r'assert([^{(])', r'assert \1', repaired_str)
     
+    # --- START OF MODIFIED SECTION ---
+    # Attempt to fix common escaping issues in JSON strings
+    # Escape unescaped double quotes: find " not preceded by a backslash, replace with \"
+    repaired_str = re.sub(r'(?<!\\)"', r'\\"', repaired_str) 
+    # Escape unescaped backslashes: find \ not preceded by \ and not followed by \, replace with \\
+    repaired_str = re.sub(r'(?<!\\)\\(?!\\)', r'\\\\', repaired_str) 
+    # --- END OF MODIFIED SECTION ---
+    
     return repaired_str
 
 @st.cache_data(ttl=3600) # Cache the parsing of LLM output to speed up UI rerenders.
