@@ -7,6 +7,9 @@ import io
 import contextlib
 from typing import Dict, Any, Optional, List, Tuple
 import jsonschema
+import logging # Added import for logger
+
+logger = logging.getLogger(__name__) # Initialize logger
 
 # Define a custom exception for parsing errors
 class LLMOutputParsingError(Exception):
@@ -29,26 +32,37 @@ LLM_OUTPUT_SCHEMA = {
         "COMMIT_MESSAGE": {"type": "string"},
         "RATIONALE": {"type": "string"},
         "CODE_CHANGES": {
-            "type": "object", # Changed to object (dictionary)
-            "description": "A dictionary where keys are file paths and values describe the changes.",
-            "patternProperties": {
-                "^.*$": { # Matches any file path key
-                    "type": "object",
-                    "properties": {
-                        "file_path": {"type": "string", "minLength": 1}, # This property is now part of the nested object
-                        "action": {"type": "string", "enum": ["ADD", "MODIFY", "REMOVE"]},
-                        "full_content": {"type": "string"}, # For ADD/MODIFY
-                        "lines": {"type": "array", "items": {"type": "string"}} # For REMOVE
+            "type": "array", # Changed from object to array
+            "description": "A list of code changes proposed.",
+            "items": { # Define the structure for each item in the array
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "minLength": 1},
+                    "action": {"type": "string", "enum": ["ADD", "MODIFY", "REMOVE"]},
+                    "full_content": {"type": "string"}, # For ADD/MODIFY
+                    "lines": {"type": "array", "items": {"type": "string"}} # For REMOVE
+                },
+                "required": ["file_path", "action"],
+                # Use 'oneOf' to enforce conditional requirements based on 'action'
+                "oneOf": [
+                    {
+                        "properties": {"action": {"const": "ADD"}, "full_content": {"type": "string"}},
+                        "required": ["full_content"],
+                        "additionalProperties": False
                     },
-                    "required": ["file_path", "action"],
-                    "oneOf": [
-                        {"properties": {"action": {"const": "ADD"}, "full_content": {"type": "string"}}, "required": ["full_content"]},
-                        {"properties": {"action": {"const": "MODIFY"}, "full_content": {"type": "string"}}, "required": ["full_content"]},
-                        {"properties": {"action": {"const": "REMOVE"}, "lines": {"type": "array", "items": {"type": "string"}}}, "required": ["lines"]}
-                    ]
-                }
-            },
-            "additionalProperties": False # Disallow properties not matching the patternProperties
+                    {
+                        "properties": {"action": {"const": "MODIFY"}, "full_content": {"type": "string"}},
+                        "required": ["full_content"],
+                        "additionalProperties": False
+                    },
+                    {
+                        "properties": {"action": {"const": "REMOVE"}, "lines": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["lines"],
+                        "additionalProperties": False
+                    }
+                ],
+                "additionalProperties": False # Disallow other properties within a change item
+            }
         }
     },
     "required": ["COMMIT_MESSAGE", "RATIONALE", "CODE_CHANGES"],
@@ -117,6 +131,7 @@ def _handle_parsing_errors(raw_output: str, context: str = "parsing"):
         try:
             # Validate repair by attempting to load it
             json.loads(repaired_output)
+            logger.warning(f"Successfully repaired JSON for {context}.")
             yield repaired_output # Return repaired string if successful
         except json.JSONDecodeError as repair_e:
             raise LLMOutputParsingError(
@@ -125,16 +140,16 @@ def _handle_parsing_errors(raw_output: str, context: str = "parsing"):
                 f"Raw output snippet: '{raw_output[:200]}...'.") from repair_e
         except Exception as repair_e: # Catch other potential errors during repair validation
              raise LLMOutputParsingError(
-                f"Unexpected error during heuristic repair validation. "
+                f"Unexpected error during heuristic repair validation for {context}. "
                 f"Original error: {e}. Repair error: {repair_e}. "
                 f"Raw output snippet: '{raw_output[:200]}...'.") from repair_e
 
     except ValueError as e: # Handles non-dict JSONs
-         raise LLMOutputParsingError(f"LLM output is not a JSON object: {e}") from e
+         raise LLMOutputParsingError(f"LLM output is not a JSON object for {context}: {e}") from e
     except jsonschema.ValidationError as e:
         # Provide more detailed error information from jsonschema
         error_details = f"Message: {e.message}\nPath: {list(e.path)}\nSchema Path: {list(e.schema_path)}\nValidator: {e.validator} ({e.validator_value})"
-        raise InvalidSchemaError(f"LLM output schema validation failed: {error_details}") from e
+        raise InvalidSchemaError(f"LLM output schema validation failed for {context}: {error_details}") from e
     except PathTraversalError as e:
         raise
     except Exception as e: # Catch any other unexpected errors during initial parsing
@@ -157,7 +172,7 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
     """
     output = {
         'summary': {'commit_message': '', 'rationale': '', 'conflict_resolution': '', 'unresolved_conflict': ''},
-        'changes': {}, # Changed to dictionary keyed by file_path
+        'changes': {}, # This will store the processed changes, keyed by file_path
         'malformed_blocks': [], # Keep for non-critical warnings
     }
 
@@ -198,8 +213,8 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
 
     try:
         # Use the context manager to handle parsing and repair attempts
-        with _handle_parsing_errors(llm_output_cleaned) as processed_output:
-            # processed_output is either the original cleaned output or the repaired version
+        # The context manager will yield the processed_output string
+        with _handle_parsing_errors(llm_output_cleaned, context="main JSON parsing") as processed_output:
             parsed_data = json.loads(processed_output)
 
         # Validate against the schema
@@ -219,14 +234,14 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
         if unresolved_conflict_match:
             output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
 
-        code_changes_dict_from_llm = parsed_data.get('CODE_CHANGES', {})
+        # Expect CODE_CHANGES to be a list now
+        code_changes_list_from_llm = parsed_data.get('CODE_CHANGES', [])
         
         # Sanitize file paths within code changes and structure for app.py
         sanitized_changes_dict = {}
-        for file_path_key, change_item in code_changes_dict_from_llm.items():
+        for change_item in code_changes_list_from_llm:
             try:
-                # The schema expects keys to be file paths, but the LLM might not always provide them correctly.
-                # We'll use the 'file_path' property within the change_item for robustness.
+                # Each item in the list should be an object with file_path, action, etc.
                 file_path = change_item.get('file_path')
                 if not file_path:
                     raise KeyError("Missing 'file_path' property within a CODE_CHANGES item.")
@@ -261,14 +276,14 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
                 sanitized_changes_dict[sanitized_path] = change_data
 
             except KeyError as ke:
-                 output['malformed_blocks'].append(f"Error processing CODE_CHANGES item: {ke}")
+                 output['malformed_blocks'].append(f"Error processing CODE_CHANGES item (missing key): {ke}. Item: {change_item}")
             except PathTraversalError as pte:
                 # Log path traversal attempts as warnings, but don't stop processing
                 output['malformed_blocks'].append(f"Path Traversal Warning: {pte}")
             except Exception as e:
-                 output['malformed_blocks'].append(f"Error processing change item for file '{file_path_key}': {e}")
+                 output['malformed_blocks'].append(f"Error processing change item for file '{change_item.get('file_path', 'N/A')}': {e}. Item: {change_item}")
 
-        output['changes'] = sanitized_changes_dict # Assign the dictionary
+        output['changes'] = sanitized_changes_dict # Assign the processed dictionary
 
     except LLMOutputParsingError as e:
         # Provide more context for parsing errors
