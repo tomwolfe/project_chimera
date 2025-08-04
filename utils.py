@@ -58,24 +58,14 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
             os.remove(temp_file_path)
 
 def repair_json(json_str: str) -> str:
-    """Attempts to repair JSON strings by escaping quotes in full_content fields and fixing common LLM errors."""
+    """Attempts to repair JSON strings by fixing common LLM errors like missing commas or keywords."""
     repaired_str = json_str
     
-    # Fix: Re-encode all string literal contents to handle unescaped quotes and other special characters.
-    # This regex finds all JSON string literals (e.g., "content").
-    # It captures the content inside the quotes.
-    # Then, it uses json.dumps on the captured content to properly escape it,
-    # and removes the outer quotes added by json.dumps before re-inserting.
-    def replace_string_content(match):
-        content = match.group(1) # The content inside the quotes
-        # json.dumps will correctly escape any unescaped quotes or other special chars
-        # within 'content'. We then remove its outer quotes.
-        return '"' + json.dumps(content)[1:-1] + '"'
+    # Note: The LLM is instructed to escape quotes in full_content.
+    # This function focuses on structural JSON fixes and common LLM-introduced syntax errors.
+    # If full_content itself has unescaped quotes, json.loads will fail,
+    # and it will be reported as a malformed block.
 
-    # Apply this to all string literals in the JSON string.
-    # This regex is robust enough to handle already escaped quotes and backslashes.
-    repaired_str = re.sub(r'"((?:[^"\\]|\\.)*)"', replace_string_content, repaired_str, flags=re.DOTALL)
-    
     # Additional structural fixes for common LLM JSON errors.
     # Fix missing commas between JSON objects
     repaired_str = re.sub(r'}\s*{', '}, {', repaired_str)
