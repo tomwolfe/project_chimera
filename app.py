@@ -1,19 +1,46 @@
 # app.py
 import streamlit as st
+import json
 import os
-from core import TokenBudgetExceededError # run_isal_process is now in main.py
 import io
 import contextlib
-from llm_provider import GeminiAPIError, LLMUnexpectedError, GeminiProvider
 import re
 import datetime
 from typing import Dict, Any, Optional, List
-from collections import defaultdict
 import yaml
 from rich.console import Console
+from core import TokenBudgetExceededError, Persona, GeminiProvider # Import Persona and GeminiProvider from core
+from llm_provider import GeminiAPIError, LLMUnexpectedError # Keep these imports
 import core # Moved import to top for standard practice
 from main import run_isal_process # Import run_isal_process from main.py
 from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
+
+# --- Configuration Loading ---
+@st.cache_resource
+def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
+    """Loads configuration from a YAML file."""
+    try:
+        with open(file_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return config
+    except (FileNotFoundError, yaml.YAMLError) as e:
+        st.error(f"Error loading config from {file_path}: {e}")
+        return {} # Return empty dict on error
+
+app_config = load_config()
+DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
+CONTEXT_TOKEN_BUDGET_RATIO = app_config.get("context_token_budget_ratio", 0.25) # Default fallback
+
+# --- Demo Codebase Context Loading ---
+@st.cache_data
+def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json") -> Dict[str, str]:
+    """Loads demo codebase context from a JSON file."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
+        st.error(f"Error loading demo codebase context from {file_path}: {e}")
+        return {}
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -39,7 +66,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += f"*   **Model:** {config_params.get('model_name', 'N/A')}\n"
     md_content += f"*   **Max Total Tokens Budget:** {config_params.get('max_tokens_budget', 'N/A')}\n"
     md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n"
-    md_content += f"*   **Reasoning Framework:** {config_params.get('domain', 'N/A')}\n\n"
+    md_content += f"*   **Reasoning Framework:** {config_params.get('domain', 'N/A')}\n"
 
     md_content += "---\n\n"
     md_content += "## Process Log\n\n"
@@ -85,42 +112,6 @@ EXAMPLE_PROMPTS = {
     "Refactor a Python Function": "Refactor the given Python function to improve its readability and performance. It currently uses a nested loop; see if you can optimize it.",
     "Fix a Bug in a Script": "The provided Python script is supposed to calculate the average of a list of numbers but fails with a `TypeError` if the list contains non-numeric strings. Fix the bug by safely ignoring non-numeric values.",
     "Climate Change Solution": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
-}
-
-# --- Demo Codebase Context for Software Engineering Examples ---
-DEMO_CODEBASE_CONTEXT = {
-    "src/utils/data_processor.py": """
-def process_numbers(numbers):
-    \"\"\"
-    Processes a list of numbers.
-    This function currently calculates the sum.
-    \"\"\"
-    total = 0
-    for num in numbers:
-        total += num
-    return total
-
-def format_string(text):
-    \"\"\"Formats a given string.\"\"\"
-    return text.strip().upper()
-""",
-    "tests/test_data_processor.py": """
-import unittest
-from src.utils.data_processor import process_numbers, format_string
-
-class TestDataProcessor(unittest.TestCase):
-    def test_process_numbers(self):
-        self.assertEqual(process_numbers([1, 2, 3]), 6)
-        self.assertEqual(process_numbers([]), 0)
-        self.assertEqual(process_numbers([-1, 1]), 0)
-
-    def test_format_string(self):
-        self.assertEqual(format_string("  hello world  "), "HELLO WORLD")
-        self.assertEqual(format_string("Python"), "PYTHON")
-
-if __name__ == '__main__':
-    unittest.main()
-"""
 }
 
 def reset_app_state():
@@ -266,11 +257,11 @@ if selected_option_from_widget != st.session_state.selected_example_name:
         
         # Check if the selected example is a Software Engineering one and update context accordingly
         if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script"]:
-            st.session_state.codebase_context = DEMO_CODEBASE_CONTEXT
+            st.session_state.codebase_context = load_demo_codebase_context()
             # Simulate uploaded_files for UI consistency in the file uploader
             st.session_state.uploaded_files = [
                 type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-                for k, v in DEMO_CODEBASE_CONTEXT.items()
+                for k, v in st.session_state.codebase_context.items()
             ]
             st.session_state.selected_persona_set = "Software Engineering"
         else:
@@ -292,16 +283,9 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Reasoning Framework")
-    DOMAIN_KEYWORDS = {
-        "Science": ["scientific", "research", "experiment", "data analysis", "hypothesis", "theory", "biology", "physics", "chemistry", "astronomy", "engineering", "algorithm", "computation", "quantum", "genetics", "ecology", "neuroscience", "medical", "diagnostic", "clinical", "biotech"],
-        "Business": ["business", "market", "strategy", "finance", "investment", "startup", "profit", "revenue", "marketing", "sales", "operations", "management", "economy", "entrepreneurship", "product", "customer", "competitor", "plan", "model", "growth", "tourism"],
-        "Creative": ["creative", "art", "story", "design", "narrative", "fiction", "poetry", "music", "film", "painting", "sculpture", "writing", "imagination", "concept", "aesthetic", "expression", "character", "plot", "world-building"],
-        "Software Engineering": ["code", "implement", "feature", "bug fix", "refactor", "application", "script", "software", "system design", "devops", "API", "database", "security", "testing", "architecture", "pipeline", "infrastructure", "programming", "framework", "container", "kubernetes", "CI/CD", "vulnerability", "patch", "agile", "scrum", "technical debt", "clean code", "code review", "design pattern", "distributed system", "concurrency", "data structure", "network", "protocol", "encryption", "authentication", "authorization", "threat model", "risk assessment", "unit test", "integration test", "end-to-end test", "QA", "quality assurance", "release", "production", "staging", "development environment", "IDE", "debugger", "compiler", "build", "deploy", "monitor", "alert", "incident response", "SRE", "reliability engineering", "chaos engineering", "fault injection", "circuit breaker", "load balancer", "CDN", "DNS", "firewall", "VPN", "SSL", "TLS", "OAuth", "JWT", "SAML", "LDAP", "Active Directory", "identity management", "access control list", "role-based access control", "RBAC", "least privilege", "OWASP", "CVE", "CVSS", "SQL injection", "XSS", "CSRF", "SSRF", "RCE"]
-    }
-
     def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
         prompt_lower = prompt.lower()
-        scores = {domain: sum(1 for keyword in keywords if keyword in prompt_lower) for domain, keywords in DOMAIN_KEYWORDS.items()}
+        scores = {domain: sum(1 for keyword in keywords if keyword in prompt_lower) for domain, keywords in DOMAIN_KEYWORDS.items()} # Use DOMAIN_KEYWORDS from config
         if not any(scores.values()): return None
         return max(scores, key=scores.get)
 
@@ -320,6 +304,12 @@ with col1:
         index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else 0,
         key="selected_persona_set_widget", # Renamed key to avoid conflict with session state variable
         help="Choose a domain-specific reasoning framework."
+    )
+
+    st.subheader("Context Budget")
+    st.slider(
+        "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=CONTEXT_TOKEN_BUDGET_RATIO,
+        step=0.05, key="context_token_budget_ratio_slider", help="Percentage of total token budget allocated to context analysis."
     )
 
 with col2:
@@ -437,7 +427,14 @@ if run_button_clicked:
                 all_personas = st.session_state.all_personas
                 persona_sets = st.session_state.persona_sets
                 domain_for_run = st.session_state.selected_persona_set
-                personas_for_run = {name: all_personas[name] for name in persona_sets[domain_for_run]}
+                personas_for_run = {name: all_personas[name] for name in persona_sets.get(domain_for_run, [])} # Use .get for safety
+
+                # Instantiate GeminiProvider with the correct model name from session state
+                gemini_provider_instance = GeminiProvider(
+                    api_key=st.session_state.api_key_input,
+                    model_name=st.session_state.selected_model_selectbox,
+                    status_callback=streamlit_status_callback
+                )
 
                 # Capture rich console output for the log display
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
@@ -451,8 +448,10 @@ if run_button_clicked:
                         personas_override=personas_for_run,
                         all_personas=all_personas,
                         persona_sets=persona_sets,
+                        gemini_provider=gemini_provider_instance, # Pass the instantiated provider
                         rich_console=rich_console_instance,
-                        codebase_context=st.session_state.get('codebase_context', {})
+                        codebase_context=st.session_state.get('codebase_context', {}),
+                        context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio
                     )
                     
                     final_answer, intermediate_steps = debate_instance.run_debate()
@@ -462,7 +461,7 @@ if run_button_clicked:
                     st.session_state.intermediate_steps_output = intermediate_steps
                     st.session_state.last_config_params = {
                         "max_tokens_budget": st.session_state.max_tokens_budget_input,
-                        "model_name": st.session_state.selected_model_selectbox,
+                        "model_name": st.session_state.selected_model_selectbox, # Model name is correctly captured
                         "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox,
                         "domain": domain_for_run
                     }
@@ -495,7 +494,7 @@ if st.session_state.debate_ran:
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         raw_output = st.session_state.final_answer_output
         parsed_data = parse_llm_code_output(raw_output)
-        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context)
+        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Pass context for validation
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
@@ -589,7 +588,7 @@ if st.session_state.debate_ran:
     full_report_md = generate_markdown_report(
         user_prompt=user_prompt,
         final_answer=st.session_state.final_answer_output,
-        intermediate_steps=st.session_state.intermediate_steps_output,
+        intermediate_steps=st.session_state.intermediate_steps_output, # Pass the intermediate steps
         process_log_output=st.session_state.process_log_output_text,
         config_params=st.session_state.last_config_params
     )

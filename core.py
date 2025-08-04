@@ -65,7 +65,7 @@ def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona],
 class SocraticDebate:
     DEFAULT_MAX_RETRIES = 2
     MAX_BACKOFF_SECONDS = 30
-    CONTEXT_TOKEN_BUDGET_RATIO = 0.25 # Allocate 25% of total budget for context analysis
+    # CONTEXT_TOKEN_BUDGET_RATIO is now passed as an argument during initialization
 
     def __init__(self,
                  initial_prompt: str,
@@ -79,7 +79,8 @@ class SocraticDebate:
                  domain: str = "General",
                  status_callback: Callable = None,
                  rich_console: Optional[Console] = None,
-                 codebase_context: Optional[Dict[str, str]] = None):
+                 codebase_context: Optional[Dict[str, str]] = None,
+                 context_token_budget_ratio: float = 0.25): # Add this parameter
         self.initial_prompt = initial_prompt
         self.max_total_tokens_budget = max_total_tokens_budget
         self.model_name = model_name
@@ -88,6 +89,7 @@ class SocraticDebate:
         self.all_personas = all_personas
         self.persona_sets = persona_sets
         self.status_callback = status_callback
+        self.context_token_budget_ratio = context_token_budget_ratio # Store it
         
         if gemini_provider:
             self.gemini_provider = gemini_provider
@@ -193,7 +195,7 @@ class SocraticDebate:
         if not self.codebase_context:
             return "No codebase context provided."
 
-        context_budget = int(self.max_total_tokens_budget * self.CONTEXT_TOKEN_BUDGET_RATIO)
+        context_budget = int(self.max_total_tokens_budget * self.context_token_budget_ratio)
         context_str_parts = []
         current_tokens = 0
 
@@ -232,7 +234,7 @@ class SocraticDebate:
         self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '')} tokens.")
         return final_context_string
 
-    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, **kwargs) -> str:
+    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, **kwargs) -> str:
         """Executes a single persona step, handling token budget and status updates."""
         persona = self._get_persona(persona_name)
         step_prompt = step_prompt_generator()
@@ -247,45 +249,64 @@ class SocraticDebate:
         if estimated_input_tokens + max_output_for_request < estimated_input_tokens: # Overflow check
              raise TokenBudgetExceededError(f"Estimated tokens for '{persona_name}' calculation overflowed.")
         if estimated_input_tokens >= remaining_budget:
-            raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
-
+             raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
         
-        self._update_status(f"Running persona: {persona.name}...",
-                            current_total_tokens=self.cumulative_token_usage,
-                            current_total_cost=self.cumulative_usd_cost,
-                            estimated_next_step_tokens=estimated_input_tokens + max_output_for_request,
-                            estimated_next_step_cost=self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request))
-        
-        try:
-            response_text, input_tokens, output_tokens = self.gemini_provider.generate(
-                prompt=step_prompt,
-                system_prompt=persona.system_prompt,
-                temperature=persona.temperature,
-                max_tokens=max_output_for_request
-            )
-            
-            tokens_used = input_tokens + output_tokens
-            cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
-            
-            self.intermediate_steps[output_key] = response_text
-            # Store token usage for this specific step
-            self.intermediate_steps[f"{output_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"] = tokens_used
-            
-            self.cumulative_token_usage += tokens_used
-            self.cumulative_usd_cost += cost_this_step
+        for attempt in range(max_retries_on_fail + 1): # +1 for the initial attempt
+            current_persona_name = persona_name
+            current_persona = persona
+            current_step_prompt = step_prompt
+            current_output_key = output_key
 
-            if kwargs.get('update_current_thought'): self.current_thought = response_text
-            if kwargs.get('is_final_answer_step'): self.final_answer = response_text
-            
-            self._update_status(f"{persona.name} completed. Used {tokens_used} tokens.",
+            if attempt > 0: # This is a retry, use fallback
+                current_persona_name = "Generalist_Assistant"
+                if "Generalist_Assistant" not in self.all_personas:
+                    self._update_status(f"[red]Error: Generalist_Assistant not found for fallback. Aborting.[/red]", state="error")
+                    raise ValueError("Generalist_Assistant persona not found for fallback.")
+                current_persona = self._get_persona(current_persona_name)
+                current_step_prompt = (f"The previous attempt to process the following prompt with persona '{persona_name}' failed. "
+                                        f"Please provide a general, concise summary or attempt to answer the original prompt given the context. "
+                                        f"Original prompt:\n{step_prompt}")
+                current_output_key = f"{output_key}_Fallback_Attempt_{attempt}"
+                self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed. Attempting fallback to '{current_persona_name}' (Attempt {attempt}/{max_retries_on_fail}).[/yellow]", state="warning")
+
+            self._update_status(f"Running persona: {current_persona_name}...",
                                 current_total_tokens=self.cumulative_token_usage,
-                                current_total_cost=self.cumulative_usd_cost)
-            return response_text
-        except LLMProviderError as e:
-            error_msg = f"[ERROR] Persona '{persona_name}' failed: {e}"
-            self.intermediate_steps[output_key] = error_msg
-            self._update_status(error_msg, state="error")
-            raise # Re-raise the exception to be caught by the main handler
+                                current_total_cost=self.cumulative_usd_cost,
+                                estimated_next_step_tokens=estimated_input_tokens + max_output_for_request,
+                                estimated_next_step_cost=self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request))
+            
+            try:
+                response_text, input_tokens, output_tokens = self.gemini_provider.generate(
+                    prompt=current_step_prompt,
+                    system_prompt=current_persona.system_prompt,
+                    temperature=current_persona.temperature,
+                    max_tokens=max_output_for_request
+                )
+                
+                tokens_used = input_tokens + output_tokens
+                cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
+                
+                self.intermediate_steps[current_output_key] = response_text
+                # Store token usage for this specific step
+                self.intermediate_steps[f"{current_output_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"] = tokens_used
+                
+                self.cumulative_token_usage += tokens_used
+                self.cumulative_usd_cost += cost_this_step
+
+                if kwargs.get('update_current_thought'): self.current_thought = response_text
+                if kwargs.get('is_final_answer_step'): self.final_answer = response_text
+                
+                self._update_status(f"{current_persona_name} completed. Used {tokens_used} tokens.",
+                                    current_total_tokens=self.cumulative_token_usage,
+                                    current_total_cost=self.cumulative_usd_cost)
+                return response_text
+            except LLMProviderError as e:
+                error_msg = f"[ERROR] Persona '{current_persona_name}' failed: {e}"
+                self.intermediate_steps[current_output_key] = error_msg
+                self._update_status(error_msg, state="error")
+                if attempt == max_retries_on_fail: # If last attempt failed, re-raise
+                    raise # Re-raise the exception to be caught by the main handler
+                # Else, loop for retry
 
     def run_debate(self, max_turns: int = 5) -> Tuple[str, Dict[str, Any]]:
         """Executes the full Socratic debate loop."""
@@ -344,7 +365,7 @@ class SocraticDebate:
         def arbitrator_prompt_gen():
             # Revert the escaping instruction to the more robust version
             return (
-                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES AND BACKSLASHES WITHIN THE CONTENT ARE PROPERLY ESCAPED AS \\\" AND \\\\\\\\.)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '."
+                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '."
                 f"--- DEBATE SUMMARY ---\n"
                 f"User Prompt: {self.initial_prompt}\n\n"
                 f"Visionary Proposal:\n{visionary_output}\n\n"

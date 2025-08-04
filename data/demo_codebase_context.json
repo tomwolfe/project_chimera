@@ -1,0 +1,4 @@
+{
+    "src/utils/data_processor.py": "\ndef process_numbers(numbers):\n    \"\"\"\n    Processes a list of numbers.\n    This function currently calculates the sum.\n    \"\"\"\n    total = 0\n    for num in numbers:\n        total += num\n    return total\n\ndef format_string(text):\n    \"\"\"Formats a given string.\"\"\"\n    return text.strip().upper()\n",
+    "tests/test_data_processor.py": "\nimport unittest\nfrom src.utils.data_processor import process_numbers, format_string\n\nclass TestDataProcessor(unittest.TestCase):\n    def test_process_numbers(self):\n        self.assertEqual(process_numbers([1, 2, 3]), 6)\n        self.assertEqual(process_numbers([]), 0)\n        self.assertEqual(process_numbers([-1, 1]), 0)\n\n    def test_format_string(self):\n        self.assertEqual(format_string(\"  hello world  \"), \"HELLO WORLD\")\n        self.assertEqual(format_string(\"Python\"), \"PYTHON\")\n\nif __name__ == '__main__':\n    unittest.main()\n"
+}

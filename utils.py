@@ -1,3 +1,4 @@
+# utils.py
 import json
 import re
 import subprocess
@@ -32,7 +33,7 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
         cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
         # Ensure the Python executable is used explicitly for Python commands
-        if cmd_with_file[0] == "python":
+        if cmd_with_file[0] == "python" and sys.executable:
             cmd_with_file[0] = sys.executable
             
         process = subprocess.run(
@@ -46,12 +47,14 @@ def _run_validation_in_sandbox(command: List[str], content: str, timeout: int = 
         # Return the return code, combined stdout/stderr, and the path to the temp file
         return process.returncode, process.stdout + process.stderr, temp_file_path
     except subprocess.TimeoutExpired:
-        return 1, f"Validation timed out after {timeout} seconds.", temp_file_path # Return temp_file_path
+        # Ensure temp_file_path is defined before returning
+        return 1, f"Validation timed out after {timeout} seconds.", temp_file_path if 'temp_file_path' in locals() else None
     except Exception as e:
-        return 1, f"Error running validation command: {e}", temp_file_path # Return temp_file_path
+        # Ensure temp_file_path is defined before returning
+        return 1, f"Error running validation command: {e}", temp_file_path if 'temp_file_path' in locals() else None
     finally:
         # Clean up the temporary file if it was created
-        if temp_file_path and os.path.exists(temp_file_path):
+        if 'temp_file_path' in locals() and temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
 def repair_json(json_str: str) -> str:
@@ -90,14 +93,6 @@ def repair_json(json_str: str) -> str:
     repaired_str = re.sub(r'return([^{(=])', r'return \1', repaired_str)
     repaired_str = re.sub(r'raise([^{(])', r'raise \1', repaired_str)
     repaired_str = re.sub(r'assert([^{(])', r'assert \1', repaired_str)
-    
-    # --- START OF MODIFIED SECTION ---
-    # Attempt to fix common escaping issues in JSON strings
-    # Escape unescaped double quotes: find " not preceded by a backslash, replace with \"
-    repaired_str = re.sub(r'(?<!\\)"', r'\\"', repaired_str) 
-    # Escape unescaped backslashes: find \ not preceded by \ and not followed by \, replace with \\
-    repaired_str = re.sub(r'(?<!\\)\\(?!\\)', r'\\\\', repaired_str) 
-    # --- END OF MODIFIED SECTION ---
     
     return repaired_str
 

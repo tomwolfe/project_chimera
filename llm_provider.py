@@ -6,7 +6,6 @@ import random
 from google.genai.errors import APIError
 import streamlit as st # Import streamlit for caching decorator
 from collections import defaultdict
-from functools import lru_cache # Although we're using st.cache_data, lru_cache is a good general concept
 import hashlib
 import json
 import re # Import re for regex operations
@@ -56,20 +55,13 @@ class GeminiProvider:
         self.model_name = model_name
         self.status_callback = status_callback # Callback for Streamlit status updates
 
-        # Caches for performance optimization
-        # Using st.cache_data requires the function to be defined at the module level
-        # or for the class instance to be passed as an argument to a cached function.
-        # For simplicity and direct integration, we'll manage cache keys and lookups manually here
-        # and rely on st.cache_data for the actual caching mechanism when these methods are called
-        # from a context where st.cache_data is applicable (like app.py).
-        # If called directly within the class without st.cache_data, these would need a different approach.
-        # For the purpose of providing the *code* that *would* be cached, we'll define the cache keys.
-
     def _log_status(self, message: str, state: str = "running", expanded: bool = True,
                     current_total_tokens: int = 0, current_total_cost: float = 0.0,
                     estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
         if self.status_callback:
             # Pass all relevant metrics to the callback
+            # Note: The status_callback itself is not part of the cache key for generate/count_tokens.
+            # It's a side effect.
             self.status_callback(
                 message=message,
                 state=state,
@@ -102,16 +94,23 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
+    def __hash__(self):
+        # Hash based on model_name and a hash of the API key (not the key itself)
+        # Use a hash of the API key to avoid exposing it in the hash.
+        return hash((self.model_name, hashlib.sha256(self.client._api_key.encode()).hexdigest()))
+
+    def __eq__(self, other):
+        if not isinstance(other, GeminiProvider):
+            return NotImplemented
+        return self.model_name == other.model_name and self.client._api_key == other.client._api_key
+
+    @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, no spinner as status_callback handles it
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> tuple[str, int, int]:
         """
         Generates content using the Gemini model.
         Returns a tuple of (generated_text: str, input_tokens_used: int, output_tokens_used: int).
         Raises custom exceptions on error.
         """
-        # Note: Caching for this method is handled by @st.cache_data in app.py
-        # when the provider instance is passed correctly. This method itself
-        # doesn't directly manage the cache persistence across reruns.
-        
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
@@ -164,7 +163,7 @@ class GeminiProvider:
         # This part should ideally not be reached if exceptions are always re-raised on last attempt
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    # @st.cache_data(ttl=3600) # This decorator should be applied in app.py or a module that calls this method
+    @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, no spinner
     def count_tokens(self, prompt: str, system_prompt: str) -> int:
         """
         Estimates the token count for a given prompt and system prompt.
@@ -176,9 +175,6 @@ class GeminiProvider:
         contents_for_counting = [
             types.Content(role='user', parts=[types.Part(text=full_text_for_counting)])
         ]
-
-        # Note: Caching for this method is handled by @st.cache_data in app.py
-        # when the provider instance is passed correctly.
         
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -214,7 +210,6 @@ class GeminiProvider:
                     raise LLMUnexpectedError(error_msg) from e
         
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
-
 
 # The DOMAIN_KEYWORDS are defined in app.py, not here.
 # The recommend_domain function here should only handle the LLM call part.

@@ -1,24 +1,13 @@
 # main.py
 import typer
 import os
-# Corrected imports:
-# - run_isal_process is defined in this file (main.py), so it shouldn't be imported from core.
-# - TokenBudgetExceededError is still in core.py.
-# - parse_llm_code_output, validate_code_output, format_git_diff are now in utils.py.
-from core import TokenBudgetExceededError
+from core import TokenBudgetExceededError, SocraticDebate, Persona, FullPersonaConfig, GeminiAPIError, LLMProviderError, LLMUnexpectedError, GeminiProvider
 from utils import parse_llm_code_output, validate_code_output, format_git_diff
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text # Ensure Text is imported
 from rich.syntax import Syntax
 from typing import List, Optional, Callable, Dict # Import Dict here
-
-# --- SocraticDebate related imports (needed for type hinting in run_isal_process) ---
-# These should be imported from core.py
-from core import SocraticDebate, Persona, FullPersonaConfig, GeminiAPIError, LLMProviderError, LLMUnexpectedError, GeminiProvider
-# Also need GeminiProvider for type hinting in run_isal_process, and Callable for the callback, and Dict for type hints.
-from llm_provider import GeminiProvider # Ensure this is imported if not already covered by core
-
 
 app = typer.Typer(help="Project Chimera: Socratic Self-Debate with LLMs for reasoning and code generation.")
 console = Console()
@@ -37,7 +26,8 @@ def run_isal_process(
     personas_override: Optional[Dict[str, Persona]] = None,
     gemini_provider: Optional[GeminiProvider] = None,
     rich_console: Optional[Console] = None,
-    codebase_context: Optional[Dict[str, str]] = None
+    codebase_context: Optional[Dict[str, str]] = None,
+    context_token_budget_ratio: float = 0.25 # Add this parameter
 ) -> 'SocraticDebate':
     """Initializes and returns the SocraticDebate instance."""
     
@@ -77,7 +67,7 @@ def run_isal_process(
         # For simplicity, we'll just use the provided personas and keep the domain name as is or set to 'Custom'
         domain = domain if domain != "auto" else "Custom" # Ensure domain is set if auto was used
     else:
-        personas = {name: all_personas[name] for name in persona_sets[domain]}
+        personas = {name: all_personas[name] for name in persona_sets.get(domain, [])} # Use .get for safety
 
     # Prepare kwargs for SocraticDebate.__init__
     kwargs_for_debate = {
@@ -92,7 +82,8 @@ def run_isal_process(
         'status_callback': streamlit_status_callback,
         'rich_console': rich_console,
         'codebase_context': codebase_context,
-        'gemini_provider': gemini_provider
+        'gemini_provider': gemini_provider,
+        'context_token_budget_ratio': context_token_budget_ratio # Pass it here
     }
     
     debate = SocraticDebate(**kwargs_for_debate)
@@ -105,7 +96,7 @@ def reason(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all intermediate reasoning steps."),
     api_key: str = typer.Option(None, "--api-key", "-k", help="Your Gemini API key.", envvar="GEMINI_API_KEY"),
     max_tokens_budget: int = typer.Option(100000, "--max-tokens", "-m", help="Maximum total tokens for the entire process."),
-    domain: str = typer.Option("auto", "--domain", "-d", help="Reasoning domain (e.g., General, Software Engineering)."),
+    domain: str = typer.Option("auto", "--domain", "-d", help="Reasoning domain (e.g., General, Science, Business, Creative)."),
     model_name: str = typer.Option("gemini-2.5-flash-lite", "--model", "-M", help="The LLM model to use.")
 ):
     """
