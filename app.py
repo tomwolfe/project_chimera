@@ -46,6 +46,7 @@ def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json
 @contextlib.contextmanager
 def capture_rich_output_and_get_console():
     buffer = io.StringIO()
+    # Configure console to capture output, force terminal for ANSI codes, and use soft wrapping
     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
     yield buffer, console_instance
 
@@ -77,14 +78,19 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     if config_params.get('show_intermediate_steps', True):
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
-        step_keys_to_process = [k for k in intermediate_steps.keys()
-                                if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"]
+        # Filter keys to only include actual persona outputs and their token counts
+        step_keys_to_process = sorted([k for k in intermediate_steps.keys()
+                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"],
+                                      key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type
+        
         for step_key in step_keys_to_process:
             display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
             content = intermediate_steps.get(step_key, "N/A")
+            # Find the corresponding token count key
             token_base_name = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
             token_count_key = f"{token_base_name}_Tokens_Used"
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
+            
             md_content += f"### {display_name}\n\n"
             md_content += f"```markdown\n{content}\n```\n"
             md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
@@ -115,7 +121,7 @@ EXAMPLE_PROMPTS = {
 }
 
 def reset_app_state():
-    # Explicitly set all session state variables to their default values
+    """Resets all session state variables to their default values."""
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
     # Default to the first example prompt
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
@@ -125,14 +131,12 @@ def reset_app_state():
     # Reset to the first example key as the default selected example
     st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
 
-    # Reset persona selection to default based on already loaded personas
-    # Assumes st.session_state.persona_sets and st.session_state.available_domains are already populated
+    # Reset persona set to default based on loaded personas
     if "persona_sets" in st.session_state and "General" in st.session_state.persona_sets:
         st.session_state.selected_persona_set = "General"
     elif "available_domains" in st.session_state and st.session_state.available_domains:
         st.session_state.selected_persona_set = st.session_state.available_domains[0]
     else:
-        # Fallback if persona loading failed during initial app startup
         st.session_state.available_domains = ["General"]
         st.session_state.selected_persona_set = "General"
 
@@ -143,9 +147,10 @@ def reset_app_state():
     st.session_state.last_config_params = {}
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = [] # Clear uploaded files
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO # Reset ratio
+    st.session_state.example_selector_widget = st.session_state.selected_example_name # Reset widget state
+    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # Reset widget state
 
-    # Initialize the context token budget ratio session state variable
-    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
     st.rerun() # Rerun to apply changes
 
 # --- Session State Initialization ---
@@ -167,7 +172,6 @@ if "all_personas" not in st.session_state:
 if "api_key_input" not in st.session_state:
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
 if "user_prompt_input" not in st.session_state:
-    # Default to the first example prompt
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
 if "max_tokens_budget_input" not in st.session_state:
     st.session_state.max_tokens_budget_input = 1000000
@@ -175,9 +179,7 @@ if "show_intermediate_steps_checkbox" not in st.session_state:
     st.session_state.show_intermediate_steps_checkbox = True
 if "selected_model_selectbox" not in st.session_state:
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-# Initialize selected_example_name to track the currently selected prompt source
 if "selected_example_name" not in st.session_state:
-    # Default to the first example key
     st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
 if "debate_ran" not in st.session_state:
     st.session_state.debate_ran = False
@@ -193,18 +195,20 @@ if "codebase_context" not in st.session_state:
     st.session_state.codebase_context = {}
 if "uploaded_files" not in st.session_state: # Keep track of uploaded files
     st.session_state.uploaded_files = []
-# Initialize the context token budget ratio session state variable if it doesn't exist
 if "context_token_budget_ratio" not in st.session_state:
     st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
+# Initialize widget state keys if they don't exist
+if "example_selector_widget" not in st.session_state:
+    st.session_state.example_selector_widget = st.session_state.selected_example_name
+if "selected_persona_set_widget" not in st.session_state:
+    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
 
 
 # --- Sidebar for Configuration ---
 with st.sidebar:
     st.header("Configuration")
-    # Ensure the key matches the session state variable used for the API key
     st.text_input("Enter your Gemini API Key", type="password", key="api_key_input", help="Your API key will not be stored.")
     st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
-    # Add a disclaimer about sanitization limitations
     st.markdown("**Security Note:** Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
     st.markdown("---")
     st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"], key="selected_model_selectbox")
@@ -234,7 +238,6 @@ else: # Fallback if session state somehow got corrupted
     current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
 
 # Selectbox for example prompts
-# Use a static key for the widget to manage its state independently
 selected_option_from_widget = st.selectbox(
     "Choose an example prompt:",
     options=SELECTBOX_PROMPT_OPTIONS,
@@ -301,26 +304,26 @@ with col1:
             st.info(f"💡 Recommendation: Use the **'{suggested_domain}'** framework for this prompt.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
                 st.session_state.selected_persona_set = suggested_domain
+                st.session_state.selected_persona_set_widget = suggested_domain # Update widget state too
                 st.rerun() # Rerun to update the selectbox immediately
 
     st.selectbox(
         "Select Framework",
         options=st.session_state.available_domains,
         index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else 0,
-        key="selected_persona_set_widget", # Renamed key to avoid conflict with session state variable
+        key="selected_persona_set_widget", # Use the widget key here
         help="Choose a domain-specific reasoning framework."
     )
 
     st.subheader("Context Budget")
     st.slider(
         "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=st.session_state.context_token_budget_ratio, # Access from session state
-        step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis." # Changed key to match session state variable
+        step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis."
     )
 
 with col2:
     st.subheader("Codebase Context (Optional)")
     if st.session_state.selected_persona_set == "Software Engineering":
-        # Use a unique key for the file uploader to avoid issues with reruns
         uploaded_files = st.file_uploader(
             "Upload up to 25 relevant files",
             accept_multiple_files=True,
@@ -329,20 +332,7 @@ with col2:
             key="code_context_uploader" # Unique key for the uploader
         )
         
-        # Check if the uploaded files have changed since last run OR if demo context was just applied
-        # This logic needs to be careful not to re-process if files are the same.
-        # The `uploaded_files` variable from st.file_uploader will be empty if no files are selected/re-uploaded.
-        # We need to distinguish between "user cleared files" and "no new files uploaded".
-
-        # If files were just loaded from DEMO_CODEBASE_CONTEXT, st.session_state.uploaded_files will be populated.
-        # The uploader widget itself might not reflect this immediately on first rerun after demo load.
-        # We need to ensure the processing happens if the widget *actually* has files, or if session state has files
-        # that the widget isn't yet showing (e.g., from demo context).
-
-        # Heuristic: If uploaded_files (from widget) is not empty, process them.
-        # If uploaded_files is empty, but st.session_state.codebase_context is not,
-        # it means context came from demo or previous upload, and we should keep it.
-        
+        # Logic to handle file uploads and update session state
         if uploaded_files: # User has actively uploaded files
             # Check if the uploaded files have changed since last run
             current_uploaded_file_info = [(f.name, f.size) for f in uploaded_files]
@@ -363,7 +353,6 @@ with col2:
                 st.session_state.codebase_context = temp_context
                 st.session_state.uploaded_files = uploaded_files # Store the actual uploaded file objects for comparison
                 st.toast(f"{len(st.session_state.codebase_context)} file(s) loaded for context.")
-            # else: Files are the same as what's already in session_state.uploaded_files, no need to reprocess.
         elif st.session_state.codebase_context and not uploaded_files: # Only show if context exists and no new files were uploaded
             # No new files uploaded, but context exists (e.g., from demo load or previous upload)
             st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
@@ -456,7 +445,7 @@ if run_button_clicked:
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
                         rich_console=rich_console_instance, # Pass the rich console instance
                         codebase_context=st.session_state.get('codebase_context', {}),
-                        context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio, using the new key
+                        context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio
                     )
                     
                     final_answer, intermediate_steps = debate_instance.run_debate()
@@ -480,12 +469,14 @@ if run_button_clicked:
                     next_step_warning_placeholder.empty()
 
             except (TokenBudgetExceededError, Exception) as e:
+                # Ensure process log is captured even on error
                 st.session_state.process_log_output_text = rich_output_buffer.getvalue() if 'rich_output_buffer' in locals() else ""
                 status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                 st.error(f"**Error:** {e}")
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                # Update metrics even on error if debate_instance exists
                 total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
                 total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
                 next_step_warning_placeholder.empty()
@@ -498,8 +489,9 @@ if st.session_state.debate_ran:
     # Handle Software Engineering output specifically
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         raw_output = st.session_state.final_answer_output
+        # Pass original context to validate_code_output for diffing
         parsed_data = parse_llm_code_output(raw_output)
-        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Pass context for validation
+        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) 
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
@@ -536,20 +528,24 @@ if st.session_state.debate_ran:
 
         # --- Proposed Code Changes ---
         st.subheader("Proposed Code Changes")
-        if not parsed_data['changes'] and not validation_results['malformed_blocks']:
+        if not parsed_data.get('changes') and not validation_results['malformed_blocks']:
             st.info("No code changes were proposed.")
         
-        for file_path, change in parsed_data['changes'].items():
-            with st.expander(f"📄 **{file_path}** (`{change['type']}`)", expanded=True):
-                if change['type'] == 'ADD':
-                    st.code(change['content'], language='python' if file_path.endswith('.py') else 'text')
-                elif change['type'] == 'MODIFY':
-                    original_content = st.session_state.codebase_context.get(file_path, "")
-                    diff_text = format_git_diff(original_content, change['new_content'])
-                    st.code(diff_text, language='diff')
-                elif change['type'] == 'REMOVE':
-                    # For REMOVE, the LLM provides lines to remove. We can display them with '-' prefix.
-                    st.code('\n'.join([f"- {line}" for line in change['lines']]), language='diff')
+        # Iterate over the dictionary of changes
+        for file_path, change in parsed_data.get('changes', {}).items():
+            with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=True):
+                st.write(f"**Action:** {change.get('action')}")
+                st.write(f"**File Path:** {change.get('file_path')}")
+                
+                if change.get('action') in ['ADD', 'MODIFY']:
+                    st.write("**Content:**")
+                    # Display code snippet, limit length for brevity
+                    content_snippet = change.get('content', '')
+                    # Use 'python' as default language, but could be dynamic based on file_path
+                    st.code(content_snippet[:500] + ('...' if len(content_snippet) > 500 else ''), language='python') 
+                elif change.get('action') == 'REMOVE':
+                    st.write("**Lines to Remove:**")
+                    st.write(change.get('lines', []))
         
         # Display malformed blocks as fallbacks
         for block in validation_results['malformed_blocks']:
@@ -566,15 +562,26 @@ if st.session_state.debate_ran:
     with st.expander("Show Intermediate Steps & Process Log"):
         if st.session_state.show_intermediate_steps_checkbox:
             st.subheader("Intermediate Reasoning Steps")
-            display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() if k not in ["Total_Tokens_Used", "Total_Estimated_Cost_USD"]}
-            for content_key, content in display_steps.items():
-                if content_key.endswith("_Tokens_Used"):
-                    continue
-                display_name = content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
-                token_key = f"{content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"
-                tokens_used = st.session_state.intermediate_steps_output.get(token_key, "N/A")
+            # Filter and sort intermediate steps for display
+            display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() 
+                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"}
+            
+            # Sort keys for consistent display order
+            sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type
+
+            for step_key in sorted_step_keys:
+                persona_name = step_key.split('_')[0] # Extract persona name
+                display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
+                content = display_steps.get(step_key, "N/A")
+                
+                # Find the corresponding token count key
+                token_base_name = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
+                token_count_key = f"{token_base_name}_Tokens_Used"
+                tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
+                
                 with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
                     st.markdown(f"```markdown\n{content}\n```")
+        
         st.subheader("Process Log")
         st.code(strip_ansi_codes(st.session_state.process_log_output_text), language="text")
 

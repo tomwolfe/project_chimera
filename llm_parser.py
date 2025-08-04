@@ -1,3 +1,5 @@
+# llm_parser.py
+
 import json
 import re
 import os
@@ -27,18 +29,26 @@ LLM_OUTPUT_SCHEMA = {
         "COMMIT_MESSAGE": {"type": "string"},
         "RATIONALE": {"type": "string"},
         "CODE_CHANGES": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "minLength": 1},
-                    "action": {"type": "string", "enum": ["ADD", "MODIFY", "DELETE"]},
-                    # 'content' is used here as a general key, but the parser will map it
-                    # to 'full_content' or 'lines' based on the 'action'.
-                    "content": {"type": "string"} 
-                },
-                "required": ["file_path", "action", "content"]
-            }
+            "type": "object", # Changed to object (dictionary)
+            "description": "A dictionary where keys are file paths and values describe the changes.",
+            "patternProperties": {
+                "^.*$": { # Matches any file path key
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "minLength": 1}, # This property is now part of the nested object
+                        "action": {"type": "string", "enum": ["ADD", "MODIFY", "REMOVE"]},
+                        "full_content": {"type": "string"}, # For ADD/MODIFY
+                        "lines": {"type": "array", "items": {"type": "string"}} # For REMOVE
+                    },
+                    "required": ["file_path", "action"],
+                    "oneOf": [
+                        {"properties": {"action": {"const": "ADD"}, "full_content": {"type": "string"}}, "required": ["full_content"]},
+                        {"properties": {"action": {"const": "MODIFY"}, "full_content": {"type": "string"}}, "required": ["full_content"]},
+                        {"properties": {"action": {"const": "REMOVE"}, "lines": {"type": "array", "items": {"type": "string"}}}, "required": ["lines"]}
+                    ]
+                }
+            },
+            "additionalProperties": False # Disallow properties not matching the patternProperties
         }
     },
     "required": ["COMMIT_MESSAGE", "RATIONALE", "CODE_CHANGES"],
@@ -59,12 +69,20 @@ def _repair_json_string(json_str: str) -> str:
     repaired_str = re.sub(r'"\s*"', '", "', repaired_str)
     # Fix missing commas after numbers/booleans in arrays
     repaired_str = re.sub(r'(\d|true|false)\s*(?=[\"{\\[\\]])', r'\1, ', repaired_str)
+    
+    # Fix unquoted keys (e.g., {key: "value"} -> {"key": "value"})
+    # This regex looks for a word character sequence followed by a colon, not preceded by a quote.
+    repaired_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', repaired_str)
+    
+    # Fix trailing commas in objects and arrays (e.g., {"key": "value",} -> {"key": "value"})
+    repaired_str = re.sub(r',\s*([\]}])', r'\1', repaired_str)
 
-    # Basic fixes for Python keywords potentially concatenated
-    keywords = ['import', 'def', 'class', 'from', 'return', 'raise', 'assert']
-    for keyword in keywords:
-        # Add space after keyword if followed immediately by an identifier
-        repaired_str = re.sub(rf'{keyword}([a-zA-Z_])', rf'{keyword} \\1', repaired_str)
+    # Attempt to fix incorrectly escaped backslashes (e.g., \\" -> \")
+    # This is tricky and might have false positives, use with caution.
+    # A more robust solution would involve a proper JSON parser that can handle errors.
+    # For now, we'll focus on common LLM output issues.
+    # repaired_str = repaired_str.replace('\\\\"', '\\"') # Example: Fix \\" to \"
+    # repaired_str = repaired_str.replace('\\\\n', '\\n') # Example: Fix \\n to \n
 
     return repaired_str
 
@@ -104,17 +122,19 @@ def _handle_parsing_errors(raw_output: str, context: str = "parsing"):
             raise LLMOutputParsingError(
                 f"Failed to parse LLM output after heuristic repair. "
                 f"Original error: {e}. Repair error: {repair_e}. "
-                f"Raw output snippet: '{raw_output[:100]}...'.") from repair_e
+                f"Raw output snippet: '{raw_output[:200]}...'.") from repair_e
         except Exception as repair_e: # Catch other potential errors during repair validation
              raise LLMOutputParsingError(
                 f"Unexpected error during heuristic repair validation. "
                 f"Original error: {e}. Repair error: {repair_e}. "
-                f"Raw output snippet: '{raw_output[:100]}...'.") from repair_e
+                f"Raw output snippet: '{raw_output[:200]}...'.") from repair_e
 
     except ValueError as e: # Handles non-dict JSONs
          raise LLMOutputParsingError(f"LLM output is not a JSON object: {e}") from e
     except jsonschema.ValidationError as e:
-        raise InvalidSchemaError(f"LLM output schema validation failed: {e.message}") from e
+        # Provide more detailed error information from jsonschema
+        error_details = f"Message: {e.message}\nPath: {list(e.path)}\nSchema Path: {list(e.schema_path)}\nValidator: {e.validator} ({e.validator_value})"
+        raise InvalidSchemaError(f"LLM output schema validation failed: {error_details}") from e
     except PathTraversalError as e:
         raise
     except Exception as e: # Catch any other unexpected errors during initial parsing
@@ -137,7 +157,7 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
     """
     output = {
         'summary': {'commit_message': '', 'rationale': '', 'conflict_resolution': '', 'unresolved_conflict': ''},
-        'changes': [], # Changed to list to match app.py's expectation
+        'changes': {}, # Changed to dictionary keyed by file_path
         'malformed_blocks': [], # Keep for non-critical warnings
     }
 
@@ -199,69 +219,69 @@ def parse_llm_code_output(llm_output: str, base_dir: str = ".") -> Dict[str, Any
         if unresolved_conflict_match:
             output['summary']['unresolved_conflict'] = unresolved_conflict_match.group(1).strip()
 
-        code_changes_list = parsed_data.get('CODE_CHANGES', [])
+        code_changes_dict_from_llm = parsed_data.get('CODE_CHANGES', {})
         
-        # Sanitize file paths within code changes
-        sanitized_changes = []
-        for change_item in code_changes_list:
+        # Sanitize file paths within code changes and structure for app.py
+        sanitized_changes_dict = {}
+        for file_path_key, change_item in code_changes_dict_from_llm.items():
             try:
-                # The schema currently expects 'content', but the arbitrator prompt specifies 'full_content' or 'lines'.
-                # We need to map these correctly.
-                file_path = change_item['file_path']
-                action = change_item['action']
+                # The schema expects keys to be file paths, but the LLM might not always provide them correctly.
+                # We'll use the 'file_path' property within the change_item for robustness.
+                file_path = change_item.get('file_path')
+                if not file_path:
+                    raise KeyError("Missing 'file_path' property within a CODE_CHANGES item.")
                 
-                # Map 'content' from schema to 'full_content' or 'lines' based on action
+                action = change_item.get('action')
+                if not action:
+                    raise KeyError(f"Missing 'action' property for file '{file_path}'.")
+                
+                sanitized_path = _sanitize_file_path(file_path, base_dir)
+                
+                change_data = {
+                    'file_path': sanitized_path,
+                    'action': action,
+                    'type': action # Add 'type' key for app.py display
+                }
+
                 if action in ['ADD', 'MODIFY']:
-                    # The arbitrator prompt specifies 'full_content' for ADD/MODIFY
-                    content_key = 'full_content' if 'full_content' in change_item else 'content' # Fallback to 'content' if 'full_content' is missing
-                    if content_key not in change_item:
-                        raise KeyError(f"'{content_key}' or 'content' missing for {action} action.")
-                    
-                    sanitized_path = _sanitize_file_path(file_path, base_dir)
-                    sanitized_changes.append({
-                        'file_path': sanitized_path,
-                        'action': action,
-                        'content': change_item[content_key] # Use the mapped content key
-                    })
+                    # LLM output should provide 'full_content' as per persona prompt
+                    if 'full_content' not in change_item:
+                        raise KeyError(f"'full_content' missing for {action} action in file '{file_path}'.")
+                    change_data['content'] = change_item['full_content'] # For app.py display
+                    change_data['new_content'] = change_item['full_content'] # For diff generation in app.py
                 elif action == 'REMOVE':
-                    # The arbitrator prompt specifies 'lines' for REMOVE
-                    lines_key = 'lines'
-                    if lines_key not in change_item or not isinstance(change_item[lines_key], list):
-                        raise KeyError(f"'{lines_key}' missing or not a list for REMOVE action.")
-                    
-                    sanitized_path = _sanitize_file_path(file_path, base_dir)
-                    sanitized_changes.append({
-                        'file_path': sanitized_path,
-                        'action': action,
-                        'lines': change_item[lines_key]
-                    })
+                    if 'lines' not in change_item or not isinstance(change_item['lines'], list):
+                        raise KeyError(f"'lines' missing or not a list for REMOVE action in file '{file_path}'.")
+                    change_data['lines'] = change_item['lines']
                 else:
                     # Should not happen due to enum in schema, but good for robustness
-                    output['malformed_blocks'].append(f"Unknown action type '{action}' encountered.")
+                    output['malformed_blocks'].append(f"Unknown action type '{action}' encountered for file '{file_path}'.")
+                
+                # Add to the dictionary, keyed by the sanitized file path
+                sanitized_changes_dict[sanitized_path] = change_data
 
+            except KeyError as ke:
+                 output['malformed_blocks'].append(f"Error processing CODE_CHANGES item: {ke}")
             except PathTraversalError as pte:
                 # Log path traversal attempts as warnings, but don't stop processing
                 output['malformed_blocks'].append(f"Path Traversal Warning: {pte}")
-                # Optionally, skip this change or add it with a flag
-                # For now, we skip adding it to sanitized_changes
-            except KeyError as ke:
-                 output['malformed_blocks'].append(f"Missing required key in CODE_CHANGES item: {ke}")
             except Exception as e:
-                 output['malformed_blocks'].append(f"Error processing change item '{change_item.get('file_path', 'N/A')}': {e}")
+                 output['malformed_blocks'].append(f"Error processing change item for file '{file_path_key}': {e}")
 
-        output['changes'] = sanitized_changes
+        output['changes'] = sanitized_changes_dict # Assign the dictionary
 
     except LLMOutputParsingError as e:
-        output['malformed_blocks'].append(f"Critical Parsing Error: {e}")
-        # Depending on requirements, you might want to re-raise or return partial data
-        # For now, we log it and return the structure with the error message
+        # Provide more context for parsing errors
+        output['malformed_blocks'].append(f"Critical Parsing Error: {e}. "
+                                          f"Raw output snippet: '{llm_output_cleaned[:200]}...'")
     except InvalidSchemaError as e:
+        # Provide more detailed error information from jsonschema
         output['malformed_blocks'].append(f"Schema Validation Error: {e}")
-        # Log schema errors, potentially return partial data or raise
     except PathTraversalError as e:
          output['malformed_blocks'].append(f"Path Traversal Error: {e}")
-         # Log path traversal errors
     except Exception as e: # Catch-all for unexpected errors during the process
-        output['malformed_blocks'].append(f"Unexpected error during parsing: {e}")
+        # Provide more context for unexpected errors
+        output['malformed_blocks'].append(f"Unexpected error during parsing: {e}. "
+                                          f"Raw output snippet: '{llm_output_cleaned[:200]}...'")
 
     return output
