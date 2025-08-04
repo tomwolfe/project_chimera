@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 import os
-from core import run_isal_process, TokenBudgetExceededError, parse_llm_code_output, validate_code_output, format_git_diff
+from core import TokenBudgetExceededError # run_isal_process is now in main.py
 import io
 import contextlib
 from llm_provider import GeminiAPIError, LLMUnexpectedError, GeminiProvider
@@ -12,6 +12,8 @@ from collections import defaultdict
 import yaml
 from rich.console import Console
 import core # Moved import to top for standard practice
+from main import run_isal_process # Import run_isal_process from main.py
+from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -281,23 +283,6 @@ if selected_option_from_widget != st.session_state.selected_example_name:
                 
     st.rerun() # Rerun to apply the changes immediately to the text area and context
 
-# 2. If the user typed into the text area, and it's no longer matching the selected example
-# This check should happen AFTER the selectbox change logic.
-# It detects if the user has started typing their own prompt, even if an example was initially selected.
-if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
-    # Get the prompt text corresponding to the currently selected example name from session state
-    current_example_prompt_text = EXAMPLE_PROMPTS.get(st.session_state.selected_example_name, "")
-    
-    # If the user's input in the text area differs from the prompt of the currently selected example
-    if st.session_state.user_prompt_input != current_example_prompt_text:
-        # This implies the user has started typing their own prompt.
-        # Update our internal state to reflect that "Custom Prompt" is now the active selection.
-        st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
-        # No need to clear user_prompt_input here, as it already contains the user's text.
-        # Context/persona resets are handled when "Custom Prompt" is *selected* from the widget,
-        # so we don't need to do that here again. We just need to update the selectbox's visual state.
-        st.rerun() # Rerun to update the selectbox to show "Custom Prompt"
-
 # Text area for the user's prompt. It's bound to st.session_state.user_prompt_input.
 user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input")
 
@@ -490,21 +475,10 @@ if run_button_clicked:
                     total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
                     next_step_warning_placeholder.empty()
 
-            except (TokenBudgetExceededError, GeminiAPIError, LLMUnexpectedError) as e:
+            except (TokenBudgetExceededError, Exception) as e:
                 st.session_state.process_log_output_text = rich_output_buffer.getvalue() if 'rich_output_buffer' in locals() else ""
                 status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                 st.error(f"**Error:** {e}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
-                total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
-                next_step_warning_placeholder.empty()
-
-            except Exception as e:
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue() if 'rich_output_buffer' in locals() else ""
-                status.update(label=f"An unexpected error occurred: {e}", state="error", expanded=True)
-                st.error(f"An unexpected error occurred: {e}")
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
@@ -523,7 +497,8 @@ if st.session_state.debate_ran:
         parsed_data = parse_llm_code_output(raw_output)
         validation_results = validate_code_output(parsed_data, st.session_state.codebase_context)
 
-        # --- Structured Summary ---\n        st.subheader("Structured Summary")
+        # --- Structured Summary ---
+        st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
@@ -545,7 +520,8 @@ if st.session_state.debate_ran:
             st.markdown("**Unresolved Conflict**")
             st.warning(parsed_data['summary']['unresolved_conflict'])
 
-        # --- Validation Report ---\n        with st.expander("🔍 Validation & Quality Report", expanded=True):
+        # --- Validation Report ---
+        with st.expander("🔍 Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
                 st.success("✅ No syntax, style, or formatting issues detected.")
             else:
@@ -554,7 +530,8 @@ if st.session_state.debate_ran:
                 if validation_results['malformed_blocks']:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
 
-        # --- Proposed Code Changes ---\n        st.subheader("Proposed Code Changes")
+        # --- Proposed Code Changes ---
+        st.subheader("Proposed Code Changes")
         if not parsed_data['changes'] and not validation_results['malformed_blocks']:
             st.info("No code changes were proposed.")
         

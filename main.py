@@ -1,15 +1,102 @@
 # main.py
 import typer
 import os
-from core import run_isal_process, TokenBudgetExceededError, parse_llm_code_output, validate_code_output, format_git_diff
+# Corrected imports:
+# - run_isal_process is defined in this file (main.py), so it shouldn't be imported from core.
+# - TokenBudgetExceededError is still in core.py.
+# - parse_llm_code_output, validate_code_output, format_git_diff are now in utils.py.
+from core import TokenBudgetExceededError
+from utils import parse_llm_code_output, validate_code_output, format_git_diff
 from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
+from rich.text import Text # Ensure Text is imported
 from rich.syntax import Syntax
-from typing import List, Optional
+from typing import List, Optional, Callable, Dict # Import Dict here
+
+# --- SocraticDebate related imports (needed for type hinting in run_isal_process) ---
+# These should be imported from core.py
+from core import SocraticDebate, Persona, FullPersonaConfig, GeminiAPIError, LLMProviderError, LLMUnexpectedError, GeminiProvider
+# Also need GeminiProvider for type hinting in run_isal_process, and Callable for the callback, and Dict for type hints.
+from llm_provider import GeminiProvider # Ensure this is imported if not already covered by core
+
 
 app = typer.Typer(help="Project Chimera: Socratic Self-Debate with LLMs for reasoning and code generation.")
 console = Console()
+
+# --- run_isal_process function definition ---
+# This function is defined here in main.py and is the entry point for both CLI and used by app.py
+def run_isal_process(
+    prompt: str,
+    api_key: str,
+    max_total_tokens_budget: int = 10000,
+    model_name: str = "gemini-2.5-flash-lite",
+    domain: str = "auto",
+    streamlit_status_callback: Callable = None,
+    all_personas: Optional[Dict[str, Persona]] = None,
+    persona_sets: Optional[Dict[str, List[str]]] = None,
+    personas_override: Optional[Dict[str, Persona]] = None,
+    gemini_provider: Optional[GeminiProvider] = None,
+    rich_console: Optional[Console] = None,
+    codebase_context: Optional[Dict[str, str]] = None
+) -> 'SocraticDebate':
+    """Initializes and returns the SocraticDebate instance."""
+    
+    # Load personas and sets if not provided (for CLI or initial app load)
+    if all_personas is None or persona_sets is None:
+        all_personas, persona_sets, default_set = core.load_personas()
+    else:
+        # If provided, determine default set from the provided persona_sets
+        default_set = "General" if "General" in persona_sets else next(iter(persona_sets.keys()))
+
+    # Determine domain to use
+    if domain == "auto" and prompt.strip() and api_key.strip(): # Only auto-recommend if prompt and key are present
+        try:
+            # Use the provided gemini_provider or create one if not available
+            provider_for_domain_rec = gemini_provider or GeminiProvider(api_key=api_key, model_name=model_name)
+            llm_recommended_domain = provider_for_domain_rec.recommend_domain(prompt) # Call the method on the provider
+            
+            if llm_recommended_domain in persona_sets:
+                domain = llm_recommended_domain
+            else:
+                domain = default_set
+        except Exception as e:
+            # Use rich_console if available, otherwise fallback to print
+            if rich_console:
+                rich_console.print(f"[yellow]Error during domain recommendation: {e}. Falling back to default domain.[/yellow]")
+            else:
+                print(f"[yellow]Error during domain recommendation: {e}. Falling back to default domain.[/yellow]")
+            domain = default_set
+            
+    elif domain not in persona_sets:
+        domain = default_set
+    
+    # Get the personas for the selected domain
+    if personas_override:
+        personas = personas_override
+        # If overriding, domain is effectively custom, but we might still want to use the selected domain name for logging/context
+        # For simplicity, we'll just use the provided personas and keep the domain name as is or set to 'Custom'
+        domain = domain if domain != "auto" else "Custom" # Ensure domain is set if auto was used
+    else:
+        personas = {name: all_personas[name] for name in persona_sets[domain]}
+
+    # Prepare kwargs for SocraticDebate.__init__
+    kwargs_for_debate = {
+        'initial_prompt': prompt,
+        'api_key': api_key,
+        'max_total_tokens_budget': max_total_tokens_budget,
+        'model_name': model_name,
+        'personas': personas,
+        'all_personas': all_personas,
+        'persona_sets': persona_sets,
+        'domain': domain,
+        'status_callback': streamlit_status_callback,
+        'rich_console': rich_console,
+        'codebase_context': codebase_context,
+        'gemini_provider': gemini_provider
+    }
+    
+    debate = SocraticDebate(**kwargs_for_debate)
+    return debate
 
 @app.command()
 def reason(
@@ -73,6 +160,7 @@ def reason(
         debate_start_message = f"🤖 Starting Socratic Debate (Framework: {domain}, Budget: {max_tokens_budget} tokens)..."
         console.print(Panel(Text(debate_start_message, justify="center"), style="bold blue"))
         
+        # Call the run_isal_process function defined in this file
         debate_instance = run_isal_process(
             prompt=prompt, api_key=api_key, max_total_tokens_budget=max_tokens_budget,
             model_name=model_name, domain=domain,
@@ -158,7 +246,8 @@ def reason(
 
     total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
     total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
-    console.print(Panel(Text(f"Total Tokens: [bold]{total_tokens:,}[/bold] | Est. Cost: [bold]${total_cost:.4f}[/bold]"), justify="center"), style="bold green"))
+    # Corrected line: Removed the extra closing parenthesis
+    console.print(Panel(Text(f"Total Tokens: [bold]{total_tokens:,}[/bold] | Est. Cost: [bold]${total_cost:.4f}[/bold]"), justify="center"), style="bold green")
 
 if __name__ == "__main__":
     app()
