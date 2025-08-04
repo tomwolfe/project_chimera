@@ -144,6 +144,8 @@ def reset_app_state():
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = [] # Clear uploaded files
 
+    # Initialize the context token budget ratio session state variable
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
     st.rerun() # Rerun to apply changes
 
 # --- Session State Initialization ---
@@ -191,6 +193,9 @@ if "codebase_context" not in st.session_state:
     st.session_state.codebase_context = {}
 if "uploaded_files" not in st.session_state: # Keep track of uploaded files
     st.session_state.uploaded_files = []
+# Initialize the context token budget ratio session state variable if it doesn't exist
+if "context_token_budget_ratio" not in st.session_state:
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
 
 
 # --- Sidebar for Configuration ---
@@ -308,8 +313,8 @@ with col1:
 
     st.subheader("Context Budget")
     st.slider(
-        "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=CONTEXT_TOKEN_BUDGET_RATIO,
-        step=0.05, key="context_token_budget_ratio_slider", help="Percentage of total token budget allocated to context analysis."
+        "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=st.session_state.context_token_budget_ratio, # Access from session state
+        step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis." # Changed key to match session state variable
     )
 
 with col2:
@@ -449,9 +454,9 @@ if run_button_clicked:
                         all_personas=all_personas,
                         persona_sets=persona_sets,
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
-                        rich_console=rich_console_instance,
+                        rich_console=rich_console_instance, # Pass the rich console instance
                         codebase_context=st.session_state.get('codebase_context', {}),
-                        context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio
+                        context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio, using the new key
                     )
                     
                     final_answer, intermediate_steps = debate_instance.run_debate()

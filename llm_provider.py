@@ -164,7 +164,7 @@ class GeminiProvider:
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
     @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, no spinner
-    def count_tokens(self, prompt: str, system_prompt: str) -> int:
+    def count_tokens(self, prompt: str, system_prompt: str) -> int: # Removed underscore from self
         """
         Estimates the token count for a given prompt and system prompt.
         """
