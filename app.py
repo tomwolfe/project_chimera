@@ -4,8 +4,7 @@ import os
 from core import run_isal_process, TokenBudgetExceededError, parse_llm_code_output, validate_code_output, format_git_diff
 import io
 import contextlib
-from llm_provider import GeminiAPIError, LLMUnexpectedError
-from llm_provider import GeminiProvider
+from llm_provider import GeminiAPIError, LLMUnexpectedError, GeminiProvider
 import re
 import datetime
 from typing import Dict, Any, Optional, List
@@ -54,7 +53,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
         for step_key in step_keys_to_process:
             display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
             content = intermediate_steps.get(step_key, "N/A")
-            token_base_name = step_key.replace("_Output", "")
+            token_base_name = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
             token_count_key = f"{token_base_name}_Tokens_Used"
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
             md_content += f"### {display_name}\n\n"
@@ -205,8 +204,10 @@ if "uploaded_files" not in st.session_state: # Keep track of uploaded files
 with st.sidebar:
     st.header("Configuration")
     # Ensure the key matches the session state variable used for the API key
-    st.text_input("Enter your Gemini API Key", type="password", help="Your API key will not be stored.", key="api_key_input")
+    st.text_input("Enter your Gemini API Key", type="password", key="api_key_input", help="Your API key will not be stored.")
     st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
+    # Add a disclaimer about sanitization limitations
+    st.markdown("**Security Note:** Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
     st.markdown("---")
     st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"], key="selected_model_selectbox")
     st.markdown("---")
@@ -235,7 +236,7 @@ else: # Fallback if session state somehow got corrupted
     current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
 
 # Selectbox for example prompts
-# Use a static key for the widget itself to manage its state independently
+# Use a static key for the widget to manage its state independently
 selected_option_from_widget = st.selectbox(
     "Choose an example prompt:",
     options=SELECTBOX_PROMPT_OPTIONS,
@@ -522,8 +523,7 @@ if st.session_state.debate_ran:
         parsed_data = parse_llm_code_output(raw_output)
         validation_results = validate_code_output(parsed_data, st.session_state.codebase_context)
 
-        # --- Structured Summary ---
-        st.subheader("Structured Summary")
+        # --- Structured Summary ---\n        st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
@@ -545,8 +545,7 @@ if st.session_state.debate_ran:
             st.markdown("**Unresolved Conflict**")
             st.warning(parsed_data['summary']['unresolved_conflict'])
 
-        # --- Validation Report ---
-        with st.expander("🔍 Validation & Quality Report", expanded=True):
+        # --- Validation Report ---\n        with st.expander("🔍 Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
                 st.success("✅ No syntax, style, or formatting issues detected.")
             else:
@@ -555,8 +554,7 @@ if st.session_state.debate_ran:
                 if validation_results['malformed_blocks']:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
 
-        # --- Proposed Code Changes ---
-        st.subheader("Proposed Code Changes")
+        # --- Proposed Code Changes ---\n        st.subheader("Proposed Code Changes")
         if not parsed_data['changes'] and not validation_results['malformed_blocks']:
             st.info("No code changes were proposed.")
         
@@ -589,7 +587,8 @@ if st.session_state.debate_ran:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() if k not in ["Total_Tokens_Used", "Total_Estimated_Cost_USD"]}
             for content_key, content in display_steps.items():
-                if content_key.endswith("_Tokens_Used"): continue
+                if content_key.endswith("_Tokens_Used"):
+                    continue
                 display_name = content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
                 token_key = f"{content_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '')}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_key, "N/A")

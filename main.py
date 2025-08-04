@@ -14,7 +14,7 @@ console = Console()
 @app.command()
 def reason(
     prompt: str = typer.Argument(..., help="The initial prompt for the Socratic Arbitration Loop."),
-    context_files: Optional[List[str]] = typer.Option(None, "--context", "-c", help="Path to a relevant file to include as context. Can be used multiple times."),
+    context_files: Optional[List[str]] = typer.Option(None, "--context", "-c", help="Path to a relevant file to include as context. Can be used multiple times. Limit of 25 files applies."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all intermediate reasoning steps."),
     api_key: str = typer.Option(None, "--api-key", "-k", help="Your Gemini API key.", envvar="GEMINI_API_KEY"),
     max_tokens_budget: int = typer.Option(100000, "--max-tokens", "-m", help="Maximum total tokens for the entire process."),
@@ -69,7 +69,9 @@ def reason(
 
     debate_instance = None
     try:
-        console.print(Panel(Text(f"🤖 Starting Socratic Debate (Framework: {domain}, Budget: {max_tokens_budget} tokens)...", justify="center"), style="bold blue"))
+        # Ensure the Text object receives a single string with embedded newlines if needed, not literal \n characters
+        debate_start_message = f"🤖 Starting Socratic Debate (Framework: {domain}, Budget: {max_tokens_budget} tokens)..."
+        console.print(Panel(Text(debate_start_message, justify="center"), style="bold blue"))
         
         debate_instance = run_isal_process(
             prompt=prompt, api_key=api_key, max_total_tokens_budget=max_tokens_budget,
@@ -81,7 +83,7 @@ def reason(
         final_answer, intermediate_steps = debate_instance.run_debate()
         
         # --- Display Results ---
-        console.print(Panel(Text("--- Final Results ---", justify="center"), style="bold green"))
+        console.print(Panel(Text("--- Final Results ---"), justify="center"), style="bold green")
         
         # If Software Engineering, parse and display structured output
         if debate_instance.domain == "Software Engineering":
@@ -133,7 +135,7 @@ def reason(
             console.print(Syntax(final_answer, "markdown", theme="monokai", word_wrap=True))
 
         if verbose:
-            console.print(Panel(Text("--- Intermediate Steps ---", justify="center"), style="bold magenta"))
+            console.print(Panel(Text("--- Intermediate Steps ---"), justify="center"), style="bold magenta")
             step_keys_to_process = [k for k in intermediate_steps.keys() 
                                     if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"]
             
@@ -156,7 +158,7 @@ def reason(
 
     total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
     total_cost = intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
-    console.print(Panel(Text(f"Total Tokens: [bold]{total_tokens:,}[/bold] | Est. Cost: [bold]${total_cost:.4f}[/bold]", justify="center"), style="bold green"))
+    console.print(Panel(Text(f"Total Tokens: [bold]{total_tokens:,}[/bold] | Est. Cost: [bold]${total_cost:.4f}[/bold]"), justify="center"), style="bold green"))
 
 if __name__ == "__main__":
     app()

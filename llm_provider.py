@@ -9,6 +9,7 @@ from collections import defaultdict
 from functools import lru_cache # Although we're using st.cache_data, lru_cache is a good general concept
 import hashlib
 import json
+import re # Import re for regex operations
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
