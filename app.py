@@ -9,10 +9,10 @@ import datetime
 from typing import Dict, Any, Optional, List
 import yaml
 from rich.console import Console
-from core import TokenBudgetExceededError, Persona, GeminiProvider # Import Persona and GeminiProvider from core
+from core import TokenBudgetExceededError, Persona, GeminiProvider, SocraticDebate # Import SocraticDebate
 from llm_provider import GeminiAPIError, LLMUnexpectedError # Keep these imports
 import core # Moved import to top for standard practice
-from main import run_isal_process # Import run_isal_process from main.py
+# from main import run_isal_process # This import is no longer needed if app.py is the main entry point and core.py contains SocraticDebate
 from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
 
 # --- Configuration Loading ---
@@ -432,18 +432,19 @@ if run_button_clicked:
 
                 # Capture rich console output for the log display
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
-                    debate_instance = run_isal_process(
-                        prompt=user_prompt, # Pass user_prompt as the first positional argument
-                        api_key=st.session_state.api_key_input, # This reads from session state
+                    # Instantiate SocraticDebate
+                    debate_instance = SocraticDebate(
+                        initial_prompt=user_prompt,
+                        api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
-                        streamlit_status_callback=streamlit_status_callback,
                         model_name=st.session_state.selected_model_selectbox,
-                        domain=domain_for_run,
-                        personas_override=personas_for_run,
+                        personas=personas_for_run,
                         all_personas=all_personas,
                         persona_sets=persona_sets,
+                        domain=domain_for_run,
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
-                        rich_console=rich_console_instance, # Pass the rich console instance
+                        status_callback=streamlit_status_callback,
+                        rich_console=rich_console_instance,
                         codebase_context=st.session_state.get('codebase_context', {}),
                         context_token_budget_ratio=st.session_state.context_token_budget_ratio # Pass the configurable ratio
                     )
@@ -491,7 +492,7 @@ if st.session_state.debate_ran:
         raw_output = st.session_state.final_answer_output
         # Pass original context to validate_code_output for diffing
         parsed_data = parse_llm_code_output(raw_output)
-        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) 
+        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
@@ -575,8 +576,9 @@ if st.session_state.debate_ran:
                 content = display_steps.get(step_key, "N/A")
                 
                 # Find the corresponding token count key
-                token_base_name = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
-                token_count_key = f"{token_base_name}_Tokens_Used"
+                # FIX: Introduced cleaned_step_key to resolve f-string SyntaxError
+                cleaned_step_key = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
+                token_count_key = f"{cleaned_step_key}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
                 
                 with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
