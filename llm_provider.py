@@ -9,6 +9,7 @@ from collections import defaultdict
 import hashlib
 import json
 import re # Import re for regex operations
+import logging # <-- ADD THIS LINE
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -41,6 +42,8 @@ TOKEN_COSTS_PER_1K_TOKENS = {
     }
 }
 
+logger = logging.getLogger(__name__) # <-- ADD THIS LINE
+
 class GeminiProvider:
     # Retry parameters
     MAX_RETRIES = 10 # Increased retries for better resilience
@@ -72,7 +75,7 @@ class GeminiProvider:
                 estimated_next_step_cost=estimated_next_step_cost
             )
         else:
-            print(f"[LLM Provider] {message}") # Fallback to print if no callback
+            logger.info(f"[LLM Provider] {message}") # Fallback to logger if no callback
 
     def _get_pricing_model_name(self) -> str:
         """Maps the user-selected model name to a pricing tier name."""
@@ -204,7 +207,7 @@ class GeminiProvider:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    _self._log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    _self._log_log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     raise LLMUnexpectedError(error_msg) from e
@@ -235,5 +238,5 @@ class GeminiProvider:
         except Exception as e:
             # Sanitize error message before printing
             error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-            print(f"Error in domain recommendation LLM call: {error_msg}")
+            logger.error(f"Error in domain recommendation LLM call: {error_msg}") # Use logger here
             return "General" # Fallback to General on error

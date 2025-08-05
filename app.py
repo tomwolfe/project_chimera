@@ -29,7 +29,7 @@ def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
 
 app_config = load_config()
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
-CONTEXT_TOKEN_BUDGET_RATIO = app_config.get("context_token_budget_ratio", 0.25) # Default fallback
+CONTEXT_TOKEN_BUGET_RATIO = app_config.get("context_token_budget_ratio", 0.25) # Default fallback
 
 # --- Demo Codebase Context Loading ---
 @st.cache_data
@@ -80,7 +80,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
         md_content += "## Intermediate Reasoning Steps\n\n"
         # Filter keys to only include actual persona outputs and their token counts
         step_keys_to_process = sorted([k for k in intermediate_steps.keys()
-                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"],
+                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"],
                                       key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type
         
         for step_key in step_keys_to_process:
@@ -147,7 +147,7 @@ def reset_app_state():
     st.session_state.last_config_params = {}
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = [] # Clear uploaded files
-    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO # Reset ratio
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUGET_RATIO # Reset ratio
     st.session_state.example_selector_widget = st.session_state.selected_example_name # Reset widget state
     st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # Reset widget state
 
@@ -196,7 +196,7 @@ if "codebase_context" not in st.session_state:
 if "uploaded_files" not in st.session_state: # Keep track of uploaded files
     st.session_state.uploaded_files = []
 if "context_token_budget_ratio" not in st.session_state:
-    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUGET_RATIO
 # Initialize widget state keys if they don't exist
 if "example_selector_widget" not in st.session_state:
     st.session_state.example_selector_widget = st.session_state.selected_example_name
@@ -563,7 +563,7 @@ if st.session_state.debate_ran:
             st.subheader("Intermediate Reasoning Steps")
             # Filter and sort intermediate steps for display
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() 
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD"}
+                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"}
             
             # Sort keys for consistent display order
             sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type

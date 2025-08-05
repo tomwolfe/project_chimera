@@ -161,11 +161,6 @@ class SocraticDebate:
         if not text:
             return ""
         
-        # Estimate tokens for the full text
-        full_text_tokens = self.gemini_provider.count_tokens(text, "")
-        if full_text_tokens <= max_tokens:
-            return text
-
         # Simple iterative truncation from the end
         truncated_text = text
         # Calculate approximate chars per token (e.g., 4 chars/token)

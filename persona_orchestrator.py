@@ -68,6 +68,8 @@ class LLMUnexpectedError(Exception): pass
 llm_provider = MockLLMProvider() # Use actual provider in production
 llm_output_validator = MockLLMOutputValidator() # Use actual validator in production
 
+logger = logging.getLogger(__name__) # <-- ADD THIS LINE
+
 class PersonaOrchestrator:
     def __init__(self, personas_config_path: str = 'personas.yaml'):
         self.personas = self._load_personas(personas_config_path)
@@ -88,16 +90,16 @@ class PersonaOrchestrator:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
                 if config and 'personas' in config:
-                    logging.info(f"Loaded {len(config['personas'])} personas from {config_path}")
+                    logger.info(f"Loaded {len(config['personas'])} personas from {config_path}")
                     return config['personas']
                 else:
-                    logging.error(f"Personas not found or invalid format in {config_path}")
+                    logger.error(f"Personas not found or invalid format in {config_path}")
                     return []
         except FileNotFoundError:
-            logging.error(f"Personas configuration file not found at {config_path}")
+            logger.error(f"Personas configuration file not found at {config_path}")
             return []
         except Exception as e:
-            logging.error(f"Error loading personas from {config_path}: {e}")
+            logger.error(f"Error loading personas from {config_path}: {e}")
             return []
 
     def run_socratic_debate(self, initial_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -108,12 +110,12 @@ class PersonaOrchestrator:
         self.context = initial_context.copy() # Initialize context
         final_synthesized_output = None
 
-        logging.info("Starting Socratic Debate...")
+        logger.info("Starting Socratic Debate...")
 
         for persona_name in self.persona_sequence:
             persona_config = next((p for p in self.personas if p['name'] == persona_name), None)
             if not persona_config:
-                logging.warning(f"Persona '{persona_name}' not found in configuration. Skipping.")
+                logger.warning(f"Persona '{persona_name}' not found in configuration. Skipping.")
                 continue
 
             try:
@@ -131,16 +133,16 @@ class PersonaOrchestrator:
                 if persona_name == "Impartial_Arbitrator":
                     validated_output = self.validator.validate_llm_output(raw_response)
                     final_synthesized_output = validated_output
-                    logging.info(f"Successfully processed and validated output from {persona_name}.")
+                    logger.info(f"Successfully processed and validated output from {persona_name}.")
                     # Optionally break here if Impartial_Arbitrator is the final synthesis step
                     # break 
                 else:
                     # Store intermediate results or update context for next persona
                     self.context[f'{persona_name}_output'] = raw_response
-                    logging.info(f"Processed output from {persona_name}.")
+                    logger.info(f"Processed output from {persona_name}.")
 
             except (LLMOutputParsingError, InvalidSchemaError, PathTraversalError, Exception) as ve: # Catch specific validation errors and general exceptions
-                logging.error(f"Validation or processing failed for {persona_name}: {ve}. Stopping debate.")
+                logger.error(f"Validation or processing failed for {persona_name}: {ve}. Stopping debate.")
                 # Handle validation failure: could retry, use fallback, or stop
                 final_synthesized_output = {
                     "COMMIT_MESSAGE": "Validation Error",
@@ -149,7 +151,7 @@ class PersonaOrchestrator:
                 }
                 break # Stop the debate on critical validation failure
             except Exception as e: # Catch other errors (e.g., network issues, LLM errors)
-                logging.error(f"Error during interaction with {persona_name}: {e}. Stopping debate.")
+                logger.error(f"Error during interaction with {persona_name}: {e}. Stopping debate.")
                 # Handle other errors (e.g., network issues, LLM errors)
                 final_synthesized_output = {
                     "COMMIT_MESSAGE": "Processing Error",
@@ -159,11 +161,11 @@ class PersonaOrchestrator:
                 break # Stop the debate on critical processing error
 
         if final_synthesized_output:
-             logging.info("Socratic Debate finished.")
+             logger.info("Socratic Debate finished.")
              return final_synthesized_output
         else:
              # Handle cases where the debate didn't reach a final output (e.g., sequence incomplete)
-             logging.warning("Socratic Debate did not produce a final synthesized output.")
+             logger.warning("Socratic Debate did not produce a final synthesized output.")
              return {
                  "COMMIT_MESSAGE": "Debate Incomplete",
                  "RATIONALE": "The Socratic debate sequence did not complete successfully.",

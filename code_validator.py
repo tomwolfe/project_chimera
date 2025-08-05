@@ -10,6 +10,7 @@ import tempfile
 import hashlib
 import re
 import contextlib
+import logging # <-- ADD THIS LINE
 
 class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
@@ -42,6 +43,8 @@ def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
         # Clean up the temporary file if it was created
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+logger = logging.getLogger(__name__) # <-- ADD THIS LINE
 
 def validate_code_output(parsed_change: Dict[str, Any], original_content: str = None) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and consistency.
