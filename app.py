@@ -547,6 +547,11 @@ if run_button_clicked:
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    # --- FIX FOR "Malformed Output Detected" ---
+                    # Ensure final_answer is populated with an error message if the debate failed
+                    if not st.session_state.final_answer_output or "Process did not complete" in st.session_state.final_answer_output:
+                        st.session_state.final_answer_output = f"Error during debate: {e}"
+                    # --- END FIX ---
                 # Update metrics even on error if debate_instance exists
                 total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
                 total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
@@ -590,24 +595,28 @@ if st.session_state.debate_ran:
                 parser = None # Ensure parser is None if instantiation fails
 
         validation_results = {'issues': [], 'malformed_blocks': []}
-        parsed_data = {'summary': {}, 'changes': {}} # Default to empty structure
+        parsed_data = {'commit_message': 'Not generated.', 'rationale': 'Not generated.', 'code_changes': []} # Default to empty structure
 
         if parser:
             try:
                 parsed_data = parser.parse_and_validate(raw_output)
                 # Use the existing validate_code_output from utils.py for detailed validation
-                validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
+                # Ensure codebase_context is correctly retrieved from session state
+                validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {})) 
             except (ValueError, RuntimeError) as e:
                 # If parsing fails, capture the error and mark blocks as malformed
+                # The error message from parse_and_validate is already descriptive
                 validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
-                # parsed_data remains default empty structure
+                # parsed_data remains default empty structure, ensuring "Not generated" is shown
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_data.get('summary', {}).get('commit_message', 'Not generated.'), language='text')
+            # --- FIX: Access top-level key directly ---
+            st.code(parsed_data.get('commit_message', 'Not generated.'), language='text')
+            # --- END FIX ---
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -616,14 +625,16 @@ if st.session_state.debate_ran:
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         
         st.markdown("**Rationale**")
-        st.markdown(parsed_data.get('summary', {}).get('rationale', 'Not generated.'))
+        # --- FIX: Access top-level key directly ---
+        st.markdown(parsed_data.get('rationale', 'Not generated.'))
+        # --- END FIX ---
 
-        if parsed_data.get('summary', {}).get('conflict_resolution'):
+        if parsed_data.get('conflict_resolution'):
             st.markdown("**Conflict Resolution**")
-            st.info(parsed_data['summary']['conflict_resolution'])
-        if parsed_data.get('summary', {}).get('unresolved_conflict'):
+            st.info(parsed_data['conflict_resolution'])
+        if parsed_data.get('unresolved_conflict'):
             st.markdown("**Unresolved Conflict**")
-            st.warning(parsed_data['summary']['unresolved_conflict'])
+            st.warning(parsed_data['unresolved_conflict'])
 
         # --- Validation Report ---
         with st.expander("🔍 Validation & Quality Report", expanded=True):
@@ -637,11 +648,11 @@ if st.session_state.debate_ran:
 
         # --- Proposed Code Changes ---
         st.subheader("Proposed Code Changes")
-        if not parsed_data.get('changes') and not validation_results['malformed_blocks']:
+        if not parsed_data.get('code_changes') and not validation_results['malformed_blocks']:
             st.info("No code changes were proposed.")
         
-        # Iterate over the dictionary of changes
-        for file_path, change in parsed_data.get('changes', {}).items():
+        # Iterate over the list of changes
+        for change in parsed_data.get('code_changes', []):
             with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
                 st.write(f"**Action:** {change.get('action')}")
                 st.write(f"**File Path:** {change.get('file_path')}")
@@ -650,7 +661,7 @@ if st.session_state.debate_ran:
                     st.write("**Content:**")
                     # Use 'python' as default language, but could be dynamic based on file_path (e.g., based on extension)
                     # Truncate for display if content is very long
-                    display_content = change.get('content', '')
+                    display_content = change.get('full_content', '')
                     st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python') 
                 elif change.get('action') == 'REMOVE':
                     st.write("**Lines to Remove:**")

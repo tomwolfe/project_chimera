@@ -12,10 +12,9 @@ import tempfile
 import os
 import json
 from rich.console import Console
-from pydantic import BaseModel, Field, ValidationError, model_validator, validator # Added validator
+from pydantic import BaseModel, Field, ValidationError, model_validator, validator
 import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional
-# Assuming llm_provider is in the same directory or accessible via PYTHONPATH
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
 
 # --- Custom Exception for Token Budget ---
@@ -34,7 +33,6 @@ class Persona(BaseModel):
 class FullPersonaConfig(BaseModel):
     personas: List[Persona] = Field(default_factory=list)
     persona_sets: Dict[str, List[str]] = Field(default_factory=lambda: {"General": []})
-    # Add persona_sequence to the config
     persona_sequence: List[str] = Field(default_factory=lambda: [
         "Visionary_Generator",
         "Skeptical_Generator",
@@ -52,7 +50,6 @@ class FullPersonaConfig(BaseModel):
             for p_name in persona_names_in_set:
                 if p_name not in all_persona_names:
                     raise ValueError(f"Persona '{p_name}' referenced in set '{set_name}' not found in 'personas' list.")
-        # Validate persona_sequence references
         for p_name in self.persona_sequence:
             if p_name not in all_persona_names:
                 raise ValueError(f"Persona '{p_name}' in persona_sequence not found in 'personas' list.")
@@ -72,7 +69,6 @@ def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona],
         all_personas_dict = {p.name: p for p in full_config.personas}
         return all_personas_dict, full_config.persona_sets, full_config.persona_sequence, full_config.default_persona_set
     except (FileNotFoundError, ValidationError, yaml.YAMLError) as e:
-        # Log the error and re-raise to be caught by the calling application (e.g., app.py)
         logging.error(f"Error loading personas from {file_path}: {e}")
         raise
 
@@ -88,7 +84,7 @@ class SocraticDebate:
                  personas: Dict[str, Persona],
                  all_personas: Dict[str, Persona],
                  persona_sets: Dict[str, List[str]],
-                 persona_sequence: List[str], # Added persona_sequence parameter
+                 persona_sequence: List[str],
                  gemini_provider: Optional[GeminiProvider] = None,
                  domain: str = "General",
                  status_callback: Callable = None,
@@ -98,18 +94,17 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         self.max_total_tokens_budget = max_total_tokens_budget
         self.model_name = model_name
-        self.personas = personas # Personas for the current domain
+        self.personas = personas
         self.domain = domain
-        self.all_personas = all_personas # All available personas
+        self.all_personas = all_personas
         self.persona_sets = persona_sets
-        self.persona_sequence = persona_sequence # Use the loaded sequence
+        self.persona_sequence = persona_sequence
         self.status_callback = status_callback
         self.context_token_budget_ratio = context_token_budget_ratio
 
         if gemini_provider:
             self.gemini_provider = gemini_provider
         else:
-            # Pass the callback with the underscore prefix to avoid caching issues
             self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name,
                                                   _status_callback=self._update_status)
 
@@ -118,7 +113,7 @@ class SocraticDebate:
         self.intermediate_steps: Dict[str, Any] = {}
         self.rich_console = rich_console if rich_console else Console()
         self.current_thought = initial_prompt
-        self.final_answer = "Process did not complete."
+        self.final_answer = "Process did not complete." # Default value
         self.codebase_context = codebase_context
 
     def _update_status(self, message: str, **kwargs):
@@ -134,8 +129,8 @@ class SocraticDebate:
             raise ValueError(f"Persona '{name}' not found.")
         return persona
 
-    @st.cache_data(ttl=3600) # Cache AST-based prioritization to speed up context preparation.
-    def _prioritize_python_code(_self, content: str, max_tokens: int) -> str: # Use _self for cache decorator
+    @st.cache_data(ttl=3600)
+    def _prioritize_python_code(_self, content: str, max_tokens: int) -> str:
         """
         Prioritizes imports, class/function definitions for Python code.
         Truncates the content to fit within max_tokens.
@@ -163,7 +158,6 @@ class SocraticDebate:
 
         except SyntaxError:
             _self._update_status(f"[yellow]Warning: Syntax error in Python context file, falling back to simple truncation.[/yellow]")
-            # Use the implemented _truncate_text_by_tokens
             return _self._truncate_text_by_tokens(content, max_tokens)
 
         combined_content = "\n".join(priority_lines + other_lines)
@@ -174,31 +168,24 @@ class SocraticDebate:
         if not text:
             return ""
 
-        # Use the GeminiProvider's count_tokens method for accurate token estimation
         current_tokens = self.gemini_provider.count_tokens(text, "")
 
         if current_tokens <= max_tokens:
-            return text # No truncation needed
+            return text
 
-        # Iteratively truncate from the end until within the token limit
-        # Start with a rough character estimate to speed up the process
-        chars_per_token_estimate = 4 # Heuristic
+        chars_per_token_estimate = 4
         target_chars = max_tokens * chars_per_token_estimate
 
         truncated_text = text
         if len(truncated_text) > target_chars:
             truncated_text = truncated_text[:target_chars]
 
-        # Refine by token count, ensuring we don't get stuck in an infinite loop
-        # and handle cases where even a single character might be too many tokens.
         while self.gemini_provider.count_tokens(truncated_text, "") > max_tokens and len(truncated_text) > 0:
-            # Remove a portion of the text from the end. The amount to remove is heuristic; removing 5% or at least 1 char.
             chars_to_remove = max(1, len(truncated_text) // 20)
             truncated_text = truncated_text[:-chars_to_remove]
             if len(truncated_text) == 0:
-                break # Exit loop if text becomes empty
+                break
 
-        # Add an ellipsis if truncation actually occurred
         if self.gemini_provider.count_tokens(text, "") > max_tokens:
             return truncated_text.strip() + "\n... (truncated)"
         return truncated_text
@@ -253,7 +240,6 @@ class SocraticDebate:
         estimated_input_tokens = self.gemini_provider.count_tokens(prompt=step_prompt, system_prompt=persona.system_prompt)
         remaining_budget = self.max_total_tokens_budget - self.cumulative_token_usage
 
-        # Ensure max_output_for_request is not negative and respects remaining budget
         max_output_for_request = max(0, min(persona.max_tokens, remaining_budget - estimated_input_tokens))
 
         if estimated_input_tokens >= remaining_budget:
@@ -277,7 +263,6 @@ class SocraticDebate:
                 current_output_key = f"{output_key}_Fallback_Attempt_{attempt}"
                 self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed. Attempting fallback to '{current_persona_name}' (Attempt {attempt}/{max_retries_on_fail}).[/yellow]", state="warning")
 
-            # Calculate estimated cost for the next step
             estimated_next_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request)
 
             self._update_status(f"Running persona: {current_persona_name}...",
@@ -298,7 +283,6 @@ class SocraticDebate:
                 cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
 
                 self.intermediate_steps[current_output_key] = response_text
-                # Store token usage for this specific step, cleaning up key name
                 cleaned_key_base = current_output_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
                 self.intermediate_steps[f"{cleaned_key_base}_Tokens_Used"] = tokens_used
 
@@ -318,7 +302,7 @@ class SocraticDebate:
                 self._update_status(error_msg, state="error")
                 if attempt == max_retries_on_fail:
                     raise
-            except Exception as e: # Catch other unexpected errors
+            except Exception as e:
                 error_msg = f"[ERROR] Unexpected error during '{current_persona_name}' execution: {e}"
                 self.intermediate_steps[current_output_key] = error_msg
                 self._update_status(error_msg, state="error")
@@ -336,7 +320,6 @@ class SocraticDebate:
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
 
-        # Step 1: Visionary Generation
         context_string = self.prepare_context(self.codebase_context, self.intermediate_steps.get('debate_history', []))
         def visionary_prompt_gen():
             return (f"USER PROMPT: {self.initial_prompt}\n\n"
@@ -347,17 +330,13 @@ class SocraticDebate:
                     "3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
         visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
 
-        # Step 2: Skeptical Critique
         def skeptical_prompt_gen():
             return f"Critique the following proposal from a highly skeptical, risk-averse perspective. Identify potential failure points, architectural flaws, or critical vulnerabilities:\n\n{visionary_output}"
         skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen, "Skeptical_Critique")
 
-        # Step 3: Domain-Specific Critiques
         domain_critiques_text = ""
-        # Iterate through the *loaded* persona_sequence, but only execute if the persona is available in the current domain's set
         for persona_name_in_sequence in self.persona_sequence:
-            if persona_name_in_sequence in self.personas: # Check if persona is available for the current domain
-                # Exclude core personas from this loop, as they are handled separately or implicitly
+            if persona_name_in_sequence in self.personas:
                 if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"]:
                     def expert_prompt_gen(name=persona_name_in_sequence, proposal=visionary_output):
                         return (f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
@@ -369,7 +348,6 @@ class SocraticDebate:
                     critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen, f"{persona_name_in_sequence}_Critique")
                     domain_critiques_text += f"\n\n--- {persona_name_in_sequence.replace('_', ' ')} Critique ---\n{critique}"
 
-        # Step 4: Constructive Synthesis
         def constructive_prompt_gen():
             return (
                 f"Original Proposal:\n{visionary_output}\n\n"
@@ -378,10 +356,7 @@ class SocraticDebate:
                 f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
         constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Feedback")
 
-        # Step 5: Final Arbitration
         def arbitrator_prompt_gen():
-            # This prompt is crucial for generating the JSON output.
-            # It needs to be very specific about the JSON structure and escaping.
             return (
                 f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `full_content` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely."
                 f"--- DEBATE SUMMARY ---\n"
@@ -394,7 +369,6 @@ class SocraticDebate:
             )
         self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Arbitrator_Output", is_final_answer_step=True)
 
-        # Step 6: Devil's Advocate
         def devil_prompt_gen():
             return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{self.final_answer}"
         self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
