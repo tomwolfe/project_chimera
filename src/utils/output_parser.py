@@ -152,9 +152,52 @@ class LLMOutputParser:
                 fallback_output["commit_message"] = parsed.get("COMMIT_MESSAGE", fallback_output["commit_message"])
                 fallback_output["rationale"] = parsed.get("RATIONALE", fallback_output["rationale"])
                 # Try to salvage code_changes if they exist and are list-like
-                if isinstance(parsed.get("CODE_CHANGES"), list):
-                    fallback_output["code_changes"] = parsed.get("CODE_CHANGES")
-            
+                original_code_changes = parsed.get("CODE_CHANGES")
+                if isinstance(original_code_changes, list):
+                    processed_code_changes = []
+                    for index, item in enumerate(original_code_changes):
+                        if isinstance(item, dict):
+                            # It's a dictionary, but might still be invalid according to CodeChange schema.
+                            # Try to validate it as a CodeChange.
+                            try:
+                                valid_item = CodeChange(**item)
+                                processed_code_changes.append(valid_item.dict(by_alias=True))
+                            except ValidationError as inner_val_e:
+                                self.logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
+                                # Add a placeholder for this malformed dictionary item
+                                processed_code_changes.append({
+                                    "FILE_PATH": "malformed_dict_entry",
+                                    "ACTION": "ADD", # Default action for malformed
+                                    "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}",
+                                    "LINES": []
+                                })
+                        else:
+                            # It's not a dictionary (e.g., a string), so create a placeholder.
+                            self.logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
+                            processed_code_changes.append({
+                                "FILE_PATH": "malformed_non_dict_entry",
+                                "ACTION": "ADD", # Default action for malformed
+                                "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}",
+                                "LINES": []
+                            })
+                    fallback_output["code_changes"] = processed_code_changes
+                else:
+                    # CODE_CHANGES was not a list, or was missing.
+                    self.logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing in LLM output.")
+                    # Add a specific malformed block entry for this case.
+                    if "malformed_blocks" not in fallback_output:
+                        fallback_output["malformed_blocks"] = []
+                    fallback_output["malformed_blocks"].append(f"CODE_CHANGES field was not a list or was missing in LLM output. Raw value: {original_code_changes}")
+                    # Ensure code_changes is an empty list if it was malformed.
+                    fallback_output["code_changes"] = []
+
+            # Add the original raw output to malformed_blocks for debugging, if not already handled.
+            if "malformed_blocks" not in fallback_output:
+                fallback_output["malformed_blocks"] = []
+            # Ensure the raw output is captured if it wasn't already part of a specific malformed_blocks entry.
+            if not any(raw_output[:50] in block for block in fallback_output["malformed_blocks"]):
+                fallback_output["malformed_blocks"].append(f"Original raw output that caused schema validation failure:\n{raw_output}")
+
             return fallback_output
 
     def _attempt_json_recovery(self, json_str: str) -> str:
