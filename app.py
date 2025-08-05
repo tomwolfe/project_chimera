@@ -167,6 +167,51 @@ def reset_app_state():
 
     st.rerun() # Rerun to apply changes
 
+# --- Streamlit Status Callback ---
+# Moved outside the run_button_clicked block to avoid redefinition
+def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
+                              current_total_tokens: int = 0, current_total_cost: float = 0.0,
+                              estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
+    """Callback function to update Streamlit status elements."""
+    # Access status and placeholders via st.session_state if they are managed there,
+    # or ensure they are accessible in this scope.
+    # For simplicity, assuming they are accessible in the scope where this callback is used.
+    # A more robust approach might involve passing these elements as arguments or managing them in session state.
+    
+    # Access status object from session state if it's managed there
+    status = st.session_state.get("current_status_object") 
+    if status:
+        status.update(label=message, state=state, expanded=expanded)
+    
+    # Update metrics using placeholders stored in session state
+    total_tokens_placeholder = st.session_state.get("total_tokens_placeholder")
+    total_cost_placeholder = st.session_state.get("total_cost_placeholder")
+    next_step_warning_placeholder = st.session_state.get("next_step_warning_placeholder")
+
+    if total_tokens_placeholder:
+        total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
+    if total_cost_placeholder:
+        total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
+
+    if next_step_warning_placeholder:
+        if estimated_next_step_tokens > 0:
+            budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
+            if estimated_next_step_tokens > budget_remaining:
+                next_step_warning_placeholder.warning(
+                    f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
+                    f"will exceed budget ({budget_remaining:,} remaining). "
+                    f"Estimated cost: ${estimated_next_step_cost:.4f}"
+                )
+            else:
+                next_step_warning_placeholder.info(
+                    f"Next step estimated: {estimated_next_step_tokens:,} tokens "
+                    f"(${(estimated_next_step_cost):.4f}). "
+                    f"Budget remaining: {budget_remaining:,} tokens."
+                )
+        else:
+            next_step_warning_placeholder.empty()
+
+
 # --- Session State Initialization ---
 # Ensure all persona-related session state is initialized first and robustly
 if "all_personas" not in st.session_state:
@@ -401,37 +446,20 @@ if run_button_clicked:
     else:
         st.session_state.debate_ran = False
         with st.status("Initializing Socratic Debate...", expanded=True) as status:
+            # Store the status object in session state for the callback
+            st.session_state.current_status_object = status
+            
             # Placeholders for real-time metrics
             st.markdown("---")
             metric_col1, metric_col2, metric_col3 = st.columns(3)
-            total_tokens_placeholder = metric_col1.empty()
-            total_cost_placeholder = metric_col2.empty()
-            next_step_warning_placeholder = metric_col3.empty()
+            st.session_state.total_tokens_placeholder = metric_col1.empty()
+            st.session_state.total_cost_placeholder = metric_col2.empty()
+            st.session_state.next_step_warning_placeholder = metric_col3.empty()
             st.markdown("---")
 
-            def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
-                                          current_total_tokens: int = 0, current_total_cost: float = 0.0,
-                                          estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
-                status.update(label=message, state=state, expanded=expanded)
-                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
-                total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
-
-                if estimated_next_step_tokens > 0:
-                    budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
-                    if estimated_next_step_tokens > budget_remaining:
-                        next_step_warning_placeholder.warning(
-                            f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
-                            f"will exceed budget ({budget_remaining:,} remaining). "
-                            f"Estimated cost: ${estimated_next_step_cost:.4f}"
-                        )
-                    else:
-                        next_step_warning_placeholder.info(
-                            f"Next step estimated: {estimated_next_step_tokens:,} tokens "
-                            f"(${(estimated_next_step_cost):.4f}). "
-                            f"Budget remaining: {budget_remaining:,} tokens."
-                        )
-                else:
-                    next_step_warning_placeholder.empty()
+            # Initialize instances to None before the try block
+            gemini_provider_instance = None
+            parser = None
 
             debate_instance = None
             try:
@@ -443,8 +471,8 @@ if run_button_clicked:
                 # Instantiate GeminiProvider with the correct model name from session state
                 gemini_provider_instance = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
-                    model_name=st.session_state.selected_model_selectbox,
-                    _status_callback=streamlit_status_callback # Corrected parameter name
+                    model_name=st.session_state.selected_model_selectbox, # Use the selected model name
+                    _status_callback=streamlit_status_callback # Pass the callback function
                 )
 
                 # Capture rich console output for the log display
@@ -481,11 +509,10 @@ if run_button_clicked:
                     st.session_state.debate_ran = True
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
 
-                    final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
-                    final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
-                    total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
-                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
-                    next_step_warning_placeholder.empty()
+                    # Update metrics one last time to show final values
+                    st.session_state.total_tokens_placeholder.metric("Total Tokens Used", f"{intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    st.session_state.total_cost_placeholder.metric("Estimated Cost (USD)", f"${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                    st.session_state.next_step_warning_placeholder.empty()
 
             except (core.TokenBudgetExceededError, Exception) as e: # Use core.TokenBudgetExceededError
                 # Ensure process log is captured even on error
@@ -500,173 +527,175 @@ if run_button_clicked:
                     if not st.session_state.final_answer_output or "Process did not complete" in st.session_state.final_answer_output:
                         st.session_state.final_answer_output = f"Error during debate: {e}"
                     # --- END FIX ---
-                # Update metrics even on error if debate_instance exists
-                total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}" if debate_instance else "N/A")
-                total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}" if debate_instance else "N/A")
-                next_step_warning_placeholder.empty()
+                
+                # Update metrics even on error if debate_instance exists and has intermediate steps
+                if debate_instance and debate_instance.intermediate_steps:
+                    st.session_state.total_tokens_placeholder.metric("Total Tokens Used", f"{debate_instance.intermediate_steps.get('Total_Tokens_Used', 0):,}")
+                    st.session_state.total_cost_placeholder.metric("Estimated Cost (USD)", f"${debate_instance.intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}")
+                else:
+                    # If debate_instance or its steps are not available, clear metrics
+                    st.session_state.total_tokens_placeholder.empty()
+                    st.session_state.total_cost_placeholder.empty()
 
-# --- Results Display ---
-if st.session_state.debate_ran:
-    st.markdown("---")
-    st.header("Results")
+                st.session_state.next_step_warning_placeholder.empty()
 
-    # Handle Software Engineering output specifically
-    if st.session_state.last_config_params.get("domain") == "Software Engineering":
-        raw_output = st.session_state.final_answer_output
-        
-        # Use the imported LLMOutputParser for parsing and validation
-        parser = None
-        if 'gemini_provider_instance' in locals() and gemini_provider_instance:
-            parser = LLMOutputParser(gemini_provider_instance)
-        else:
-            # Fallback if gemini_provider_instance wasn't created (e.g., due to an earlier error)
-            try:
-                fallback_provider = core.GeminiProvider( # Use core.GeminiProvider
-                    api_key=st.session_state.api_key_input,
-                    model_name=st.session_state.selected_model_selectbox,
-                    _status_callback=None # No status callback for parser instantiation if not running debate
+                # Attempt to create a fallback parser if gemini_provider_instance was created
+                if gemini_provider_instance:
+                    try:
+                        parser = LLMOutputParser(gemini_provider_instance)
+                    except Exception as parse_e:
+                        st.error(f"Could not instantiate LLMOutputParser for fallback: {parse_e}")
+            # --- Results Display ---
+            if st.session_state.debate_ran:
+                st.markdown("---")
+                st.header("Results")
+
+                # Handle Software Engineering output specifically
+                if st.session_state.last_config_params.get("domain") == "Software Engineering":
+                    # Ensure parser is available for Software Engineering domain
+                    raw_output = st.session_state.final_answer_output
+                    if parser: # Check if parser was successfully initialized
+                        try:
+                            parsed_data = parser.parse_and_validate(raw_output)
+                            # Use the imported validate_code_output_batch from utils.py for detailed validation
+                            validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
+                        except (ValueError, RuntimeError) as e:
+                            # If parsing fails, capture the error and mark blocks as malformed
+                            validation_results = {'issues': [], 'malformed_blocks': [f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}"]}
+                            # parsed_data remains default empty structure, ensuring "Not generated" is shown
+                            parsed_data = {
+                                "commit_message": "Not generated.",
+                                "rationale": "Not generated.",
+                                "code_changes": [],
+                                "conflict_resolution": None,
+                                "unresolved_conflict": None
+                            }
+                    else:
+                        # If parser is still None, it means it failed to initialize earlier.
+                        validation_results = {'issues': [], 'malformed_blocks': ["LLMOutputParser could not be initialized. Cannot validate code changes."]}
+                        parsed_data = {
+                            "commit_message": "Parsing Failed",
+                            "rationale": "LLMOutputParser could not be initialized. Cannot validate code changes.",
+                            "code_changes": [],
+                            "conflict_resolution": None,
+                            "unresolved_conflict": None
+                        }
+                    
+                    # --- Structured Summary ---
+                    st.subheader("Structured Summary")
+                    summary_col1, summary_col2 = st.columns(2)
+                    with summary_col1:
+                        st.markdown("**Commit Message Suggestion**")
+                        st.code(parsed_data.get('commit_message', 'Not generated.'), language='text')
+                    with summary_col2:
+                        st.markdown("**Token Usage**")
+                        total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                        total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+                        st.metric("Total Tokens Consumed", f"{total_tokens:,}")
+                        st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
+                    
+                    st.markdown("**Rationale**")
+                    st.markdown(parsed_data.get('rationale', 'Not generated.'))
+
+                    if parsed_data.get('conflict_resolution'):
+                        st.markdown("**Conflict Resolution**")
+                        st.info(parsed_data['conflict_resolution'])
+                    if parsed_data.get('unresolved_conflict'):
+                        st.markdown("**Unresolved Conflict**")
+                        st.warning(parsed_data['unresolved_conflict'])
+
+                    # --- Validation Report ---
+                    with st.expander("🔍 Validation & Quality Report", expanded=True):
+                        if not validation_results.get('issues') and not validation_results.get('malformed_blocks'):
+                            st.success("✅ No syntax, style, or formatting issues detected.")
+                        else:
+                            for issue in validation_results.get('issues', []):
+                                st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
+                            if validation_results.get('malformed_blocks'):
+                                st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
+
+                    # --- Proposed Code Changes ---
+                    st.subheader("Proposed Code Changes")
+                    if not parsed_data.get('code_changes') and not validation_results.get('malformed_blocks'):
+                        st.info("No code changes were proposed.")
+                    
+                    # Iterate over the list of changes
+                    for change in parsed_data.get('code_changes', []):
+                        with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
+                            st.write(f"**Action:** {change.get('action')}")
+                            st.write(f"**File Path:** {change.get('file_path')}")
+                            
+                            if change.get('action') in ['ADD', 'MODIFY']:
+                                st.write("**Content:**") # Changed from st.write to st.code for better display
+                                # Use 'python' as default language, but could be dynamic based on file_path (e.g., based on extension)
+                                # Truncate for display if content is very long
+                                display_content = change.get('full_content', '')
+                                st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python') 
+                            elif change.get('action') == 'REMOVE':
+                                st.write("**Lines to Remove:**")
+                                st.write(change.get('lines', []))
+                    
+                    # Display malformed blocks as fallbacks if any were detected
+                    for block in validation_results.get('malformed_blocks', []): # Use .get for safety
+                        with st.expander(f"📄 **Unknown File (Malformed Block)**", expanded=True):
+                            st.error("This block was malformed and could not be parsed correctly. Raw output is shown below.")
+                            st.code(block, language='text')
+
+                # Handle all other frameworks
+                else:
+                    st.subheader("Final Synthesized Answer")
+                    st.markdown(st.session_state.final_answer_output)
+
+                # --- Intermediate Steps & Log ---
+                with st.expander("Show Intermediate Steps & Process Log"):
+                    if st.session_state.show_intermediate_steps_checkbox:
+                        st.subheader("Intermediate Reasoning Steps")
+                        # Filter and sort intermediate steps for display
+                        display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() 
+                                         if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"}
+                        
+                        # Sort keys for consistent display order
+                        sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type
+
+                        for step_key in sorted_step_keys:
+                            persona_name = step_key.split('_')[0] # Extract persona name
+                            display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
+                            content = display_steps.get(step_key, "N/A")
+                            
+                            # Find the corresponding token count key
+                            cleaned_step_key = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
+                            token_count_key = f"{cleaned_step_key}_Tokens_Used"
+                            tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
+                            
+                            with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
+                                st.markdown(f"```markdown\n{content}\n```")
+                    
+                    st.subheader("Process Log")
+                    st.code(strip_ansi_codes(st.session_state.process_log_output_text), language="text")
+
+                # --- Export Functionality ---
+                st.markdown("---")
+                st.subheader("Export Results")
+
+                final_answer_md = f"# Final Synthesized Answer\n\n{st.session_state.final_answer_output}"
+                st.download_button(
+                    label="Download Final Answer (Markdown)",
+                    data=final_answer_md,
+                    file_name="final_answer.md",
+                    mime="text/markdown"
                 )
-                parser = LLMOutputParser(fallback_provider)
-                st.warning("Re-instantiated GeminiProvider for parsing as the original instance was not available.")
-            except Exception as e:
-                st.error(f"Could not instantiate LLMOutputParser due to missing provider: {e}")
-                parser = None # Ensure parser is None if instantiation fails
 
-        validation_results = {'issues': [], 'malformed_blocks': []}
-        # Default to empty structure if parsing fails or is skipped
-        parsed_data = {
-            "commit_message": "Not generated.",
-            "rationale": "Not generated.",
-            "code_changes": [],
-            "conflict_resolution": None,
-            "unresolved_conflict": None
-        }
-
-        if parser:
-            try:
-                parsed_data = parser.parse_and_validate(raw_output)
-                # Use the imported validate_code_output_batch from utils.py for detailed validation
-                validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
-            except (ValueError, RuntimeError) as e:
-                # If parsing fails, capture the error and mark blocks as malformed
-                validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
-                # parsed_data remains default empty structure, ensuring "Not generated" is shown
-
-        # --- Structured Summary ---
-        st.subheader("Structured Summary")
-        summary_col1, summary_col2 = st.columns(2)
-        with summary_col1:
-            st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_data.get('commit_message', 'Not generated.'), language='text')
-        with summary_col2:
-            st.markdown("**Token Usage**")
-            total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            st.metric("Total Tokens Consumed", f"{total_tokens:,}")
-            st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
-        
-        st.markdown("**Rationale**")
-        st.markdown(parsed_data.get('rationale', 'Not generated.'))
-
-        if parsed_data.get('conflict_resolution'):
-            st.markdown("**Conflict Resolution**")
-            st.info(parsed_data['conflict_resolution'])
-        if parsed_data.get('unresolved_conflict'):
-            st.markdown("**Unresolved Conflict**")
-            st.warning(parsed_data['unresolved_conflict'])
-
-        # --- Validation Report ---
-        with st.expander("🔍 Validation & Quality Report", expanded=True):
-            if not validation_results['issues'] and not validation_results['malformed_blocks']:
-                st.success("✅ No syntax, style, or formatting issues detected.")
-            else:
-                for issue in validation_results['issues']:
-                    st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
-                if validation_results['malformed_blocks']:
-                     st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
-
-        # --- Proposed Code Changes ---
-        st.subheader("Proposed Code Changes")
-        if not parsed_data.get('code_changes') and not validation_results['malformed_blocks']:
-            st.info("No code changes were proposed.")
-        
-        # Iterate over the list of changes
-        for change in parsed_data.get('code_changes', []):
-            with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
-                st.write(f"**Action:** {change.get('action')}")
-                st.write(f"**File Path:** {change.get('file_path')}")
-                
-                if change.get('action') in ['ADD', 'MODIFY']:
-                    st.write("**Content:**")
-                    # Use 'python' as default language, but could be dynamic based on file_path (e.g., based on extension)
-                    # Truncate for display if content is very long
-                    display_content = change.get('full_content', '')
-                    st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python') 
-                elif change.get('action') == 'REMOVE':
-                    st.write("**Lines to Remove:**")
-                    st.write(change.get('lines', []))
-        
-        # Display malformed blocks as fallbacks if any were detected
-        for block in validation_results['malformed_blocks']:
-            with st.expander(f"📄 **Unknown File (Malformed Block)**", expanded=True):
-                st.error("This block was malformed and could not be parsed correctly. Raw output is shown below.")
-                st.code(block, language='text')
-
-    # Handle all other frameworks
-    else:
-        st.subheader("Final Synthesized Answer")
-        st.markdown(st.session_state.final_answer_output)
-
-    # --- Intermediate Steps & Log ---
-    with st.expander("Show Intermediate Steps & Process Log"):
-        if st.session_state.show_intermediate_steps_checkbox:
-            st.subheader("Intermediate Reasoning Steps")
-            # Filter and sort intermediate steps for display
-            display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items() 
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"}
-            
-            # Sort keys for consistent display order
-            sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x)) # Sort by persona name, then type
-
-            for step_key in sorted_step_keys:
-                persona_name = step_key.split('_')[0] # Extract persona name
-                display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
-                content = display_steps.get(step_key, "N/A")
-                
-                # Find the corresponding token count key
-                cleaned_step_key = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
-                token_count_key = f"{cleaned_step_key}_Tokens_Used"
-                tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
-                
-                with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
-                    st.markdown(f"```markdown\n{content}\n```")
-        
-        st.subheader("Process Log")
-        st.code(strip_ansi_codes(st.session_state.process_log_output_text), language="text")
-
-    # --- Export Functionality ---
-    st.markdown("---")
-    st.subheader("Export Results")
-
-    final_answer_md = f"# Final Synthesized Answer\n\n{st.session_state.final_answer_output}"
-    st.download_button(
-        label="Download Final Answer (Markdown)",
-        data=final_answer_md,
-        file_name="final_answer.md",
-        mime="text/markdown"
-    )
-
-    full_report_md = generate_markdown_report(
-        user_prompt=user_prompt,
-        final_answer=st.session_state.final_answer_output,
-        intermediate_steps=st.session_state.intermediate_steps_output, # Pass the intermediate steps
-        process_log_output=st.session_state.process_log_output_text,
-        config_params=st.session_state.last_config_params
-    )
-    st.download_button(
-        label="Download Full Report (Markdown)",
-        data=full_report_md,
-        file_name="socratic_debate_report.md",
-        mime="text/markdown"
-    )
-    st.info("To generate a PDF, download the Markdown report and use your browser's 'Print to PDF' option (usually accessible via Ctrl+P or Cmd+P).")
+                full_report_md = generate_markdown_report(
+                    user_prompt=user_prompt,
+                    final_answer=st.session_state.final_answer_output,
+                    intermediate_steps=st.session_state.intermediate_steps_output, # Pass the intermediate steps
+                    process_log_output=st.session_state.process_log_output_text,
+                    config_params=st.session_state.last_config_params
+                )
+                st.download_button(
+                    label="Download Full Report (Markdown)",
+                    data=full_report_md,
+                    file_name="socratic_debate_report.md",
+                    mime="text/markdown"
+                )
+                st.info("To generate a PDF, download the Markdown report and use your browser's 'Print to PDF' option (usually accessible via Ctrl+P or Cmd+P).")

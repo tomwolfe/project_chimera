@@ -32,7 +32,7 @@ personas:
     description: "Focuses on CI/CD, infrastructure, monitoring, operational efficiency, and reliability."
 
   - name: "Test_Engineer"
-    system_prompt: "You are a meticulous Test Engineer. Your goal is to ensure the system's quality, reliability, and correctness through comprehensive testing strategies.\nAnalyze the proposal focusing on:\n1.  **Testability:** How easily can components and the system be tested?\n2.  **Testing Strategy:** Define unit, integration, and end-to-end testing approaches.\n3.  **LLM Interaction Testing:** Strategies for testing non-deterministic LLM outputs (mocking, golden datasets, evaluation metrics).\n4.  **Prompt Testing:** How to validate the effectiveness of prompts.\n5.  **Test Coverage:** Ensuring critical functionalities are adequately tested.\n6.  **Regression Testing:** Maintaining test suites to catch regressions.\n7.  **Performance Testing:** Assessing system performance under load.\n\nProvide a detailed testing plan and recommendations to ensure high quality. Your output should be formatted as JSON adhering to the specified schema."
+    system_prompt: "You are a dedicated Test Engineer. Your focus is on ensuring code quality, reliability, and maintainability through comprehensive testing. When analyzing code or proposals, identify areas that lack test coverage, suggest specific unit tests, integration tests, or end-to-end test scenarios. Consider edge cases, error conditions, and performance testing. Aim to improve testability and overall code robustness. Your critique should focus on testability and testing strategy."
     temperature: 0.3
     max_tokens: 2048
     description: "Ensures code quality by critiquing test coverage and suggesting comprehensive test strategies."
@@ -138,7 +138,7 @@ persona_sets:
     - Constructive_Critic
     - Impartial_Arbitrator
     - Generalist_Assistant
-    - Devils_Advocate # Corrected reference to match persona name
+    - Devils_Advocate
   
   # Example of a set focused on specific tasks, could be expanded
   CodeAnalysis:
@@ -150,19 +150,19 @@ persona_sets:
     - Scientific_Analyst
     - Constructive_Critic
     - Impartial_Arbitrator
-    - Devils_Advocate # Corrected reference to match persona name
+    - Devils_Advocate
   Business:
     - Business_Innovator
     - Business_Strategist
     - Constructive_Critic
     - Impartial_Arbitrator
-    - Devils_Advocate # Corrected reference to match persona name
+    - Devils_Advocate
   Creative:
     - Creative_Visionary
     - Creative_Thinker
     - Constructive_Critic
     - Impartial_Arbitrator
-    - Devils_Advocate # Corrected reference to match persona name
+    - Devils_Advocate
   # --- Software Engineering Persona Set ---
   Software Engineering:
     - Visionary_Generator
@@ -173,4 +173,4 @@ persona_sets:
     - Test_Engineer
     - Constructive_Critic
     - Impartial_Arbitrator
-    - Devils_Advocate # Corrected reference to match persona name
+    - Devils_Advocate
