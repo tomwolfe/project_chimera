@@ -12,6 +12,21 @@ import logging
 from rich.console import Console
 import core # Moved import to top for standard practice.
 from src.utils import LLMOutputParser, validate_code_output_batch, format_git_diff # Import the robust LLMOutputParser and validate_code_output_batch
+from pydantic import BaseModel, Field, validator # Import Pydantic models for framework structure validation
+
+# --- Pydantic Models for Schema Validation (kept for data structure validation) ---
+class PersonaConfig(BaseModel):
+    name: str
+    description: Optional[str] = None
+    system_prompt: str
+    temperature: float = Field(..., ge=0.0, le=1.0)
+    max_tokens: int = Field(..., gt=0)
+
+class ReasoningFrameworkConfig(BaseModel):
+    framework_name: str
+    personas: Dict[str, PersonaConfig]
+    persona_sets: Dict[str, List[str]]
+    version: int = 1 # Application's current framework schema version
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -145,10 +160,8 @@ def reset_app_state():
     # Reset to the first example key as the default selected example
     st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
 
-    # Reset persona set to default based on loaded personas
-    if "persona_sets" in st.session_state and "General" in st.session_state.persona_sets:
-        st.session_state.selected_persona_set = "General"
-    elif "available_domains" in st.session_state and st.session_state.available_domains:
+    # Reset to default persona set based on loaded personas
+    if "available_domains" in st.session_state and st.session_state.available_domains:
         st.session_state.selected_persona_set = st.session_state.available_domains[0]
     else:
         st.session_state.available_domains = ["General"]
@@ -168,15 +181,132 @@ def reset_app_state():
     st.rerun() # Rerun to apply changes
 
 # --- Session State Initialization ---
-# Ensure all persona-related session state is initialized first and robustly
-if "all_personas" not in st.session_state:
-    # Load personas, persona sets, persona sequence, and the default persona set name
+
+# --- Custom Framework File Management ---
+CUSTOM_FRAMEWORKS_DIR = "custom_frameworks"
+
+def ensure_custom_frameworks_dir():
+    """Ensures the directory for custom frameworks exists."""
+    if not os.path.exists(CUSTOM_FRAMEWORKS_DIR):
+        try:
+            os.makedirs(CUSTOM_FRAMEWORKS_DIR)
+            st.toast(f"Created directory for custom frameworks: '{CUSTOM_FRAMEWORKS_DIR}'")
+        except OSError as e:
+            st.error(f"Error creating custom frameworks directory: {e}")
+
+def sanitize_framework_filename(name: str) -> str:
+    """Sanitizes a framework name to be used as a valid filename."""
+    # Remove characters not allowed in typical filenames or database identifiers
+    sanitized = re.sub(r'[<>:"/\\|?*\s]+', '_', name) # Replace spaces and invalid chars with underscore
+    sanitized = re.sub(r'^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$', '', sanitized) # Trim leading/trailing underscores
+    if not sanitized: # Ensure name is not empty after sanitization
+        sanitized = "unnamed_framework"
+    return sanitized
+
+def get_saved_custom_framework_names() -> List[str]:
+    """Loads and returns the names of all custom frameworks saved as JSON files."""
+    ensure_custom_frameworks_dir() # Ensure directory exists before trying to list
+    framework_names = []
     try:
-        all_personas, persona_sets, persona_sequence, default_persona_set_name = core.load_personas()
-        st.session_state.all_personas = all_personas
-        st.session_state.persona_sets = persona_sets
-        st.session_state.persona_sequence = persona_sequence # Store the loaded persona sequence
-        st.session_state.available_domains = list(persona_sets.keys())
+        for filename in os.listdir(CUSTOM_FRAMEWORKS_DIR):
+            if filename.endswith(".json"):
+                # Remove the .json extension to get the framework name
+                framework_names.append(os.path.splitext(filename)[0])
+        return sorted(framework_names)
+    except OSError as e:
+        st.error(f"Error listing custom frameworks: {e}")
+        return []
+
+def load_custom_framework_config(name: str) -> Optional[Dict[str, Any]]:
+    """Loads a specific custom framework configuration from a JSON file."""
+    filename = f"{sanitize_framework_filename(name)}.json"
+    filepath = os.path.join(CUSTOM_FRAMEWORKS_DIR, filename)
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+        return config_data
+    except FileNotFoundError:
+        st.error(f"Custom framework '{name}' not found at '{filepath}'.")
+        return None
+    except json.JSONDecodeError:
+        st.error(f"Error decoding JSON for custom framework '{name}' from '{filepath}'. File may be corrupted.")
+        return None
+    except OSError as e:
+        st.error(f"Error reading custom framework file '{filepath}': {e}")
+        return None
+
+def save_current_framework_to_file(name: str):
+    """Saves the current framework configuration (personas, persona_sets) to a JSON file."""
+    if not name:
+        st.warning("Please enter a name for the framework before saving.")
+        return
+
+    framework_name_sanitized = sanitize_framework_filename(name)
+    if not framework_name_sanitized:
+        st.error("Invalid framework name provided after sanitization.")
+        return
+
+    # Prepare data to save. Use Pydantic models for validation before saving.
+    try:
+        # Reconstruct the current state into the Pydantic model for validation
+        current_personas_dict = {p_name: p.model_dump() for p_name, p in st.session_state.all_personas.items() if p_name in st.session_state.personas}
+        current_persona_sets_dict = {set_name: members for set_name, members in st.session_state.persona_sets.items() if set_name in st.session_state.available_domains}
+        
+        # Create a temporary config object to validate structure
+        temp_config_validation = ReasoningFrameworkConfig(
+            framework_name=name, # Use original name for display/storage
+            personas={p_name: PersonaConfig(**p_data) for p_name, p_data in current_personas_dict.items()},
+            persona_sets=current_persona_sets_dict,
+            version=1 # Current schema version
+        )
+        
+        config_to_save = temp_config_validation.model_dump() # Use validated data
+        
+    except ValidationError as e:
+        st.error(f"Cannot save framework: Invalid data structure. {e}")
+        return
+    except Exception as e:
+        st.error(f"An unexpected error occurred preparing framework data for saving: {e}")
+        return
+
+    filename = f"{framework_name_sanitized}.json"
+    filepath = os.path.join(CUSTOM_FRAMEWORKS_DIR, filename)
+
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(config_to_save, f, indent=2)
+        st.success(f"Framework '{name}' saved successfully to '{filepath}'!")
+        # Update session state to reflect the newly saved framework if it's not already there
+        if framework_name_sanitized not in st.session_state.all_custom_frameworks_data:
+             st.session_state.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
+        else: # Overwriting existing
+             st.session_state.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
+
+    except OSError as e:
+        st.error(f"Error saving framework '{name}' to '{filepath}': {e}")
+    except Exception as e:
+        st.error(f"An unexpected error occurred while saving framework '{name}': {e}")
+
+# --- Initialize Custom Frameworks Storage ---
+if 'all_custom_frameworks_data' not in st.session_state:
+    ensure_custom_frameworks_dir() # Ensure directory exists on first run
+    st.session_state.all_custom_frameworks_data = {}
+    # Load frameworks from files on startup
+    saved_names = get_saved_custom_framework_names()
+    for name in saved_names:
+        config = load_custom_framework_config(name)
+        if config:
+            st.session_state.all_custom_frameworks_data[name] = config
+
+# Load personas, persona sets, persona sequence, and the default persona set name
+if "all_personas" not in st.session_state:
+    try:
+        all_personas_from_yaml, persona_sets_from_yaml, persona_sequence_from_yaml, default_persona_set_name = core.load_personas()
+        st.session_state.all_personas = all_personas_from_yaml
+        st.session_state.persona_sets = persona_sets_from_yaml
+        st.session_state.persona_sequence = persona_sequence_from_yaml
+        st.session_state.available_domains = list(persona_sets_from_yaml.keys())
         st.session_state.selected_persona_set = default_persona_set_name # Use the actual default persona set name
     except Exception as e:
         st.error(f"Failed to load personas from personas.yaml: {e}")
@@ -308,6 +438,7 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Reasoning Framework")
+    
     def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
         prompt_lower = prompt.lower()
         scores = {domain: sum(1 for keyword in keywords if keyword in prompt_lower) for domain, keywords in DOMAIN_KEYWORDS.items()} # Use DOMAIN_KEYWORDS from config
@@ -324,13 +455,130 @@ with col1:
                 st.session_state.selected_persona_set_widget = suggested_domain # Update widget state too
                 st.rerun() # Rerun to update the selectbox immediately
 
-    st.selectbox(
+    # Combine default/loaded domains with custom framework names
+    available_framework_options = st.session_state.available_domains + list(st.session_state.all_custom_frameworks_data.keys())
+    # Ensure unique options and maintain order if possible, or just sort
+    unique_framework_options = sorted(list(set(available_framework_options)))
+
+    # Determine the current index for the selectbox
+    current_framework_selection = st.session_state.selected_persona_set
+    if current_framework_selection not in unique_framework_options:
+        # If the current selection is no longer available (e.g., deleted), default to first available
+        current_framework_selection = unique_framework_options[0] if unique_framework_options else "General"
+        st.session_state.selected_persona_set = current_framework_selection # Update session state
+
+    selected_framework_for_widget = st.selectbox(
         "Select Framework",
-        options=st.session_state.available_domains,
-        index=st.session_state.available_domains.index(st.session_state.selected_persona_set) if st.session_state.selected_persona_set in st.session_state.available_domains else 0,
+        options=unique_framework_options,
+        index=unique_framework_options.index(current_framework_selection) if current_framework_selection in unique_framework_options else 0,
         key="selected_persona_set_widget", # Use the widget key here
-        help="Choose a domain-specific reasoning framework."
+        help="Choose a domain-specific reasoning framework or a custom saved framework."
     )
+    # Update session state if the selectbox value changes
+    if selected_framework_for_widget != st.session_state.selected_persona_set:
+        st.session_state.selected_persona_set = selected_framework_for_widget
+        st.rerun() # Rerun to update loaded personas if a new framework is selected
+
+    # Logic to load personas based on selected_persona_set
+    if st.session_state.selected_persona_set:
+        # Check if the selected framework is a custom one
+        if st.session_state.selected_persona_set in st.session_state.all_custom_frameworks_data:
+            custom_data = st.session_state.all_custom_frameworks_data[st.session_state.selected_persona_set]
+            try:
+                # Reconstruct Persona objects from saved dicts
+                st.session_state.personas = {name: PersonaConfig(**data) for name, data in custom_data.get('personas', {}).items()}
+                # Update persona sets for the selected framework if it exists in the custom data
+                if st.session_state.selected_persona_set in custom_data.get('persona_sets', {}):
+                    st.session_state.persona_sets[st.session_state.selected_persona_set] = custom_data['persona_sets'][st.session_state.selected_persona_set]
+                else: # If the custom framework doesn't explicitly define its sets, use a default or clear
+                    st.session_state.persona_sets[st.session_state.selected_persona_set] = [] # Or a default set if appropriate
+
+                # Update available_domains if a new custom framework adds new sets (though typically custom frameworks use existing sets)
+                # For simplicity, we assume custom frameworks primarily define personas and might reference existing sets.
+                
+            except ValidationError as e:
+                st.error(f"Error loading custom framework '{st.session_state.selected_persona_set}': Invalid persona data. {e}")
+                st.session_state.personas = {} # Clear personas on error
+            except Exception as e:
+                st.error(f"An unexpected error occurred loading custom framework '{st.session_state.selected_persona_set}': {e}")
+                st.session_state.personas = {} # Clear personas on error
+        
+        elif st.session_state.selected_persona_set in st.session_state.persona_sets:
+            # Load personas for a default/built-in framework
+            current_domain_persona_names = st.session_state.persona_sets.get(st.session_state.selected_persona_set, [])
+            st.session_state.personas = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
+        else:
+            st.warning(f"Selected framework '{st.session_state.selected_persona_set}' has no associated personas defined.")
+            st.session_state.personas = {}
+
+
+    # --- Save Current Framework ---
+    st.subheader("Save Current Framework")
+    new_framework_name_input = st.text_input("Enter a name for your current framework:", key='save_framework_input')
+    if st.button("Save Current Framework") and new_framework_name_input:
+        save_current_framework_to_file(new_framework_name_input)
+        # Rerun to update the framework selectbox with the new custom framework name
+        st.rerun()
+
+    # --- Load Framework ---
+    st.subheader("Load Framework")
+    # Get available custom framework names
+    custom_framework_names = list(st.session_state.all_custom_frameworks_data.keys())
+    
+    # Combine default/loaded domains with custom framework names for the selectbox
+    all_available_frameworks_for_load = [""] + st.session_state.available_domains + custom_framework_names
+    # Ensure unique options and sort them
+    unique_framework_options_for_load = sorted(list(set(all_available_frameworks_for_load)))
+    
+    # Determine the initial index for the selectbox
+    current_selection_for_load = "" # Default to empty if nothing is selected or loaded
+    if st.session_state.selected_persona_set in unique_framework_options_for_load:
+        current_selection_for_load = st.session_state.selected_persona_set
+    elif st.session_state.selected_persona_set in st.session_state.all_custom_frameworks_data: # If it's a custom one not in default list
+        current_selection_for_load = st.session_state.selected_persona_set
+    
+    selected_framework_to_load = st.selectbox(
+        "Select a framework to load:",
+        options=unique_framework_options_for_load,
+        index=unique_framework_options_for_load.index(current_selection_for_load) if current_selection_for_load in unique_framework_options_for_load else 0,
+        key='load_framework_select'
+    )
+
+    if st.button("Load Selected Framework") and selected_framework_to_load:
+        if selected_framework_to_load in st.session_state.all_custom_frameworks_data:
+            # Load custom framework from session state (which was populated from files)
+            loaded_config_data = st.session_state.all_custom_frameworks_data[selected_framework_to_load]
+            
+            try:
+                # Update session state with loaded personas and sets
+                st.session_state.personas = {name: PersonaConfig(**data) for name, data in loaded_config_data.get('personas', {}).items()}
+                
+                # Update persona sets for the selected framework if it exists in the custom data
+                if st.session_state.selected_persona_set in loaded_config_data.get('persona_sets', {}):
+                     st.session_state.persona_sets[st.session_state.selected_persona_set] = loaded_config_data['persona_sets'][st.session_state.selected_persona_set]
+                else: # If the custom framework doesn't explicitly define its sets, use a default or clear
+                    st.session_state.persona_sets[st.session_state.selected_persona_set] = [] # Or a default set if appropriate
+
+                st.session_state.current_framework_name = selected_framework_to_load
+                st.session_state.selected_persona_set = selected_framework_to_load # Update the main selection
+                st.success(f"Loaded custom framework: '{selected_framework_to_load}'")
+                st.rerun() # Rerun to reflect changes in UI (e.g., persona editor)
+            except ValidationError as e:
+                st.error(f"Error loading custom framework '{selected_framework_to_load}': Invalid persona data. {e}")
+                st.session_state.personas = {} # Clear personas on error
+            except Exception as e:
+                st.error(f"An unexpected error occurred loading custom framework '{selected_framework_to_load}': {e}")
+                st.session_state.personas = {} # Clear personas on error
+
+        elif selected_framework_to_load in st.session_state.available_domains:
+            # Load default framework
+            st.session_state.selected_persona_set = selected_framework_to_load
+            # The logic to update st.session_state.personas based on selected_persona_set should handle this
+            st.success(f"Loaded default framework: '{selected_framework_to_load}'")
+            st.rerun()
+        else:
+            st.error(f"Framework '{selected_framework_to_load}' not found.")
+
 
     st.subheader("Context Budget")
     st.slider(
@@ -438,7 +686,24 @@ if run_button_clicked:
                 all_personas = st.session_state.all_personas
                 persona_sets = st.session_state.persona_sets
                 domain_for_run = st.session_state.selected_persona_set
-                personas_for_run = {name: all_personas[name] for name in persona_sets.get(domain_for_run, [])} # Use .get for safety
+                
+                # Ensure personas_for_run is correctly populated based on the selected domain/framework
+                if domain_for_run in st.session_state.all_custom_frameworks_data:
+                    # Load personas from custom framework data
+                    custom_data = st.session_state.all_custom_frameworks_data[domain_for_run]
+                    current_personas_in_framework = {name: PersonaConfig(**data) for name, data in custom_data.get('personas', {}).items()}
+                    # Use the persona names defined in the custom framework's persona_sets for the actual run
+                    personas_for_run_names = custom_data.get('persona_sets', {}).get(domain_for_run, [])
+                    personas_for_run = {name: current_personas_in_framework[name] for name in personas_for_run_names if name in current_personas_in_framework}
+                elif domain_for_run in persona_sets:
+                    # Load personas for built-in frameworks
+                    current_domain_persona_names = persona_sets.get(domain_for_run, [])
+                    personas_for_run = {name: all_personas[name] for name in current_domain_persona_names if name in all_personas}
+                else:
+                    personas_for_run = {} # No personas found for the selected domain
+
+                if not personas_for_run:
+                    raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
 
                 # Instantiate GeminiProvider with the correct model name from session state
                 gemini_provider_instance = core.GeminiProvider( # Use core.GeminiProvider
@@ -455,10 +720,10 @@ if run_button_clicked:
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
-                        personas=personas_for_run,
-                        all_personas=all_personas,
+                        personas=personas_for_run, # Use the filtered personas for the run
+                        all_personas=all_personas, # Pass all loaded personas for fallback/reference
                         persona_sequence=st.session_state.persona_sequence, # Pass the loaded persona sequence
-                        persona_sets=persona_sets,
+                        persona_sets=persona_sets, # Pass all persona sets
                         domain=domain_for_run,
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
                         status_callback=streamlit_status_callback,
