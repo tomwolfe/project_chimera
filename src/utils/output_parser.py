@@ -86,8 +86,7 @@ class LLMOutputParser:
         try:
             # Regex to find JSON within ```json ... ``` or ``` ... ``` blocks.
             # This prioritizes ```json blocks but falls back to generic ``` blocks.
-            # It's designed to be relatively robust but might miss highly malformed blocks.
-            match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL) # Added re.DOTALL
+            match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL)
             
             if match_json_block:
                 extracted_json_block = match_json_block.group(1) or match_json_block.group(2)
@@ -95,21 +94,35 @@ class LLMOutputParser:
             else:
                 self.logger.warning("No markdown JSON block found. Attempting to parse entire output as JSON.")
                 # Fallback: If no markdown block is found, attempt to parse the entire raw output.
-                # This is less reliable and potentially riskier if the output isn't JSON.
                 extracted_json_block = raw_output
 
             if not extracted_json_block or not extracted_json_block.strip():
                 self.logger.error("No JSON content found or extracted after attempting markdown parsing.")
                 raise ValueError("No JSON content found in the LLM output.")
 
-            # Attempt to parse the extracted content as JSON
+            # --- NEW CHECK ---
+            # Ensure the extracted block looks like a JSON object or array before proceeding.
+            # This helps filter out plain text that might have been mistakenly captured,
+            # preventing errors in normalization or json.loads.
+            cleaned_block_for_check = extracted_json_block.strip()
+            if not (cleaned_block_for_check.startswith('{') and cleaned_block_for_check.endswith('}')) and \
+               not (cleaned_block_for_check.startswith('[') and cleaned_block_for_check.endswith(']')):
+                self.logger.error(f"Extracted content does not appear to be valid JSON structure (missing {{}} or []). Content: {cleaned_block_for_check[:200]}...")
+                raise ValueError("Extracted content does not appear to be valid JSON structure.")
+            # --- END NEW CHECK ---
+
+            # Attempt to normalize potential formatting issues before parsing
+            normalized_json_str = self.normalize_json_string(extracted_json_block)
+            self.logger.debug(f"Normalized JSON string: {normalized_json_str[:200]}...")
+
+            # Parse the normalized content as JSON
             try:
-                parsed_json_data = json.loads(extracted_json_block)
-                self.logger.info("Successfully parsed JSON content.")
+                parsed_json_data = json.loads(normalized_json_str)
+                self.logger.info("Successfully parsed normalized JSON content.")
             except json.JSONDecodeError as e:
-                self.logger.error(f"Failed to decode JSON: {e}. Raw extracted content: {extracted_json_block[:200]}...")
+                self.logger.error(f"Failed to decode JSON after normalization: {e}. Problematic content snippet: {normalized_json_str[:200]}...")
                 # Provide more context in the error message for debugging
-                raise ValueError(f"Malformed JSON received from LLM: {e}") from e
+                raise ValueError(f"Malformed JSON received from LLM even after normalization: {e}") from e
 
             # Validate the parsed JSON data against the LLMOutput Pydantic model
             try:
@@ -118,12 +131,12 @@ class LLMOutputParser:
                 # Return as a dictionary for broader compatibility, as the Pydantic model itself is validated
                 return validated_output.dict(by_alias=True)
             except ValidationError as e:
-                self.logger.error(f"Pydantic validation failed: {e}")
+                self.logger.error(f"Pydantic validation failed: {e}. Problematic data snippet: {parsed_json_data}")
                 # Raise a specific error indicating schema violation
                 raise ValueError(f"LLM output schema validation failed: {e}") from e
 
         except ValueError as e:
-            # Catch ValueErrors raised from JSON parsing or Pydantic validation
+            # Catch ValueErrors raised from JSON parsing, Pydantic validation, or structural checks
             self.logger.error(f"Error during LLM output processing: {e}")
             # Re-raise to allow higher levels to handle the failure
             raise
@@ -132,6 +145,37 @@ class LLMOutputParser:
             self.logger.exception(f"An unexpected error occurred in parse_and_validate: {e}")
             # Provide a generic but informative error message for unexpected issues
             raise RuntimeError(f"An unexpected error occurred while processing LLM output: {e}") from e
+
+    def normalize_json_string(self, json_string: str) -> str:
+        """Attempts to normalize common LLM-generated JSON formatting issues."""
+        normalized = json_string
+
+        # 1. Escape newline characters (\n) within string values to be valid JSON.
+        # This regex looks for a newline that is NOT already preceded by a backslash.
+        # We replace it with \\n. The lookbehind `(?<!\\)` ensures we don't escape already escaped newlines.
+        normalized = re.sub(r'(?<!\\)\n', r'\\n', normalized)
+        
+        # 2. Replace common incorrect quote escaping with correct \"
+        # This regex looks for a quote that might be escaped incorrectly or is simply unescaped.
+        # It aims to replace sequences like `\"` or `\\\"` within string literals with `\\\\\\\"`.
+        # The lookbehind `(?<!\\\\)` ensures we don't escape already escaped quotes.
+        # The replacement `\\\\\\\"` correctly becomes `\"` in the final JSON string.
+        normalized = re.sub(r'(?<!\\\\)\"', r'\\\\\\\"', normalized)
+        
+        # 3. Remove extraneous whitespace around colons and commas for compactness
+        normalized = re.sub(r'\s*:\s*', ':', normalized)
+        normalized = re.sub(r'\s*,\s*', ',', normalized)
+
+        # 4. Handle trailing commas in objects and arrays (common LLM error)
+        # Remove comma before closing brace '}'
+        normalized = re.sub(r',\s*}', '}', normalized)
+        # Remove comma before closing bracket ']'
+        normalized = re.sub(r',\s*]', ']', normalized)
+        
+        # Note: Fixing missing commas between elements or unquoted keys with regex is highly fragile
+        # and prone to errors, so we defer those to the LLM prompt and rely on Pydantic for strict validation.
+
+        return normalized
 
     # The validate_code_output_batch function is not provided, 
     # but its integration point would be here or called after parse_and_validate.
