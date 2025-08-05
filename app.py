@@ -9,6 +9,8 @@ import datetime
 from typing import Dict, Any, Optional, List
 import yaml
 from rich.console import Console
+import logging # <-- ADDED: This import was missing and caused the NameError
+
 # Import necessary components from local modules
 from core import TokenBudgetExceededError, Persona, GeminiProvider, SocraticDebate
 from llm_provider import GeminiAPIError, LLMUnexpectedError
@@ -75,7 +77,7 @@ class LLMOutputParser:
     """Handles parsing and validation of LLM-generated structured output."""
     def __init__(self, llm_provider: GeminiProvider):
         self.llm_provider = llm_provider
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__) # This line now works because 'logging' is imported
 
     def parse_and_validate(self, raw_output: str) -> Dict[str, Any]:
         """Parses raw LLM output, validates JSON structure, and handles escaping."""
@@ -557,19 +559,44 @@ if st.session_state.debate_ran:
         
         # Use the new LLMOutputParser for parsing and validation
         # Instantiate parser with the provider used for the debate
-        parser = LLMOutputParser(gemini_provider_instance) # Use the instance created during run
+        # Ensure gemini_provider_instance is accessible here, or re-instantiate if necessary
+        # For simplicity, we assume it's available in the scope. If not, it needs to be passed or recreated.
+        # A safer approach might be to pass it from the 'try' block or ensure it's stored in session state.
+        # For now, assuming gemini_provider_instance is still valid or accessible.
+        # If gemini_provider_instance is not defined here, it means the 'try' block failed before its creation.
+        # In that case, we should handle it.
         
+        parser = None
+        if 'gemini_provider_instance' in locals() and gemini_provider_instance:
+            parser = LLMOutputParser(gemini_provider_instance)
+        else:
+            # Fallback if gemini_provider_instance wasn't created (e.g., due to an earlier error)
+            # This might require a dummy provider or re-instantiation with API key from session state
+            try:
+                fallback_provider = GeminiProvider(
+                    api_key=st.session_state.api_key_input,
+                    model_name=st.session_state.selected_model_selectbox,
+                    status_callback=None # No status callback for parser instantiation if not running debate
+                )
+                parser = LLMOutputParser(fallback_provider)
+                st.warning("Re-instantiated GeminiProvider for parsing as the original instance was not available.")
+            except Exception as e:
+                st.error(f"Could not instantiate LLMOutputParser due to missing provider: {e}")
+                # Handle this case gracefully, perhaps by skipping the parsing section
+                parser = None # Ensure parser is None if instantiation fails
+
         validation_results = {'issues': [], 'malformed_blocks': []}
-        parsed_data = {}
-        try:
-            parsed_data = parser.parse_and_validate(raw_output)
-            # Use the existing validate_code_output from utils.py for detailed validation
-            validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
-        except (ValueError, RuntimeError) as e:
-            # If parsing fails, capture the error and mark blocks as malformed
-            validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
-            # Attempt to extract any partial data if possible, or just use empty structure
-            parsed_data = {'summary': {}, 'changes': {}} # Default to empty structure
+        parsed_data = {'summary': {}, 'changes': {}} # Default to empty structure
+
+        if parser:
+            try:
+                parsed_data = parser.parse_and_validate(raw_output)
+                # Use the existing validate_code_output from utils.py for detailed validation
+                validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
+            except (ValueError, RuntimeError) as e:
+                # If parsing fails, capture the error and mark blocks as malformed
+                validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
+                # parsed_data remains default empty structure
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
