@@ -109,7 +109,9 @@ class SocraticDebate:
         if gemini_provider:
             self.gemini_provider = gemini_provider
         else:
-            self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name, status_callback=self._update_status)
+            # Pass the callback with the underscore prefix to avoid caching issues
+            self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name,
+                                                  _status_callback=self._update_status)
 
         self.cumulative_token_usage = 0
         self.cumulative_usd_cost = 0.0

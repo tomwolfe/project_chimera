@@ -496,7 +496,7 @@ if run_button_clicked:
                 gemini_provider_instance = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
                     model_name=st.session_state.selected_model_selectbox,
-                    status_callback=streamlit_status_callback
+                    _status_callback=streamlit_status_callback # Corrected parameter name
                 )
 
                 # Capture rich console output for the log display
@@ -580,7 +580,7 @@ if st.session_state.debate_ran:
                 fallback_provider = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
                     model_name=st.session_state.selected_model_selectbox,
-                    status_callback=None # No status callback for parser instantiation if not running debate
+                    _status_callback=None # No status callback for parser instantiation if not running debate
                 )
                 parser = LLMOutputParser(fallback_provider)
                 st.warning("Re-instantiated GeminiProvider for parsing as the original instance was not available.")

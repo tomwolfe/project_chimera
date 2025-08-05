@@ -47,14 +47,15 @@ class GeminiProvider:
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
-    MAX_BACKOFF_SECONDS = 60
+    MAX_BACKOFF_SECONDS = 60 # Maximum backoff time in seconds
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", status_callback=None):
+    # Renamed status_callback to _status_callback to prevent hashing issues with Streamlit's cache_resource
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", _status_callback=None):
         # Store these as instance attributes, but they are also used for caching.
         self._api_key = api_key # Store API key for hashing/equality
         self.model_name = model_name
-        self.status_callback = status_callback
+        self._status_callback = _status_callback # Use the renamed parameter
         self.client = genai.Client(api_key=self._api_key) # Initialize client here
 
     # Define __hash__ and __eq__ for caching to work correctly
@@ -70,8 +71,9 @@ class GeminiProvider:
     def _log_status(self, message: str, state: str = "running", expanded: bool = True,
                     current_total_tokens: int = 0, current_total_cost: float = 0.0,
                     estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
-        if self.status_callback:
-            self.status_callback(
+        # Use the renamed internal attribute
+        if self._status_callback:
+            self._status_callback(
                 message=message,
                 state=state,
                 expanded=expanded,
