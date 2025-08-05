@@ -222,16 +222,19 @@ def reset_app_state():
 # --- Session State Initialization ---
 # Ensure all persona-related session state is initialized first and robustly
 if "all_personas" not in st.session_state:
+    # Load personas, persona sets, persona sequence, and the default persona set name
     try:
-        all_personas, persona_sets, default_set = core.load_personas()
+        all_personas, persona_sets, persona_sequence, default_persona_set_name = core.load_personas()
         st.session_state.all_personas = all_personas
         st.session_state.persona_sets = persona_sets
+        st.session_state.persona_sequence = persona_sequence # Store the loaded persona sequence
         st.session_state.available_domains = list(persona_sets.keys())
-        st.session_state.selected_persona_set = default_set
+        st.session_state.selected_persona_set = default_persona_set_name # Use the actual default persona set name
     except Exception as e:
         st.error(f"Failed to load personas from personas.yaml: {e}")
         st.session_state.all_personas = {} # Fallback to empty if load fails
         st.session_state.persona_sets = {}
+        st.session_state.persona_sequence = [] # Fallback for sequence
         st.session_state.available_domains = ["General"]
         st.session_state.selected_persona_set = "General" # Fallback if loading fails
 
@@ -506,6 +509,7 @@ if run_button_clicked:
                         model_name=st.session_state.selected_model_selectbox,
                         personas=personas_for_run,
                         all_personas=all_personas,
+                        persona_sequence=st.session_state.persona_sequence, # Pass the loaded persona sequence
                         persona_sets=persona_sets,
                         domain=domain_for_run,
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
