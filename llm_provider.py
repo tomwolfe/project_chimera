@@ -103,7 +103,7 @@ class GeminiProvider:
         return hash((self.model_name, hashlib.sha256(self.client._api_key.encode()).hexdigest()))
 
     def __eq__(self, other):
-        if not isinstance(other, GeminiProvider):
+        if not isinstance(other, GeminiProvider): # Ensure comparison is with another GeminiProvider instance
             return NotImplemented
         return self.model_name == other.model_name and self.client._api_key == other.client._api_key
 
@@ -127,7 +127,7 @@ class GeminiProvider:
                 response = _self.client.models.generate_content(
                     model=_self.model_name,
                     contents=prompt,
-                    config=config
+                    config=config # Pass the configuration object
                 )
                 input_tokens = response.usage_metadata.prompt_token_count
                 output_tokens = response.usage_metadata.candidates_token_count
@@ -135,7 +135,7 @@ class GeminiProvider:
                 return response.text, input_tokens, output_tokens
             except APIError as e:  # APIError is GoogleAPICallError
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
-                # Attempt to get HTTP status code from the response object if available
+                # Attempt to get HTTP status code from the response object if available, otherwise use gRPC status code
                 http_status_code = None
                 if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
                     http_status_code = e.response.status_code
@@ -153,7 +153,7 @@ class GeminiProvider:
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
                 # Catch-all for other unexpected errors (e.g., network issues)
-                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
+                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined and safe
                 if attempt < _self.MAX_RETRIES:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
@@ -166,7 +166,7 @@ class GeminiProvider:
         # This part should ideally not be reached if exceptions are always re-raised on last attempt
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, no spinner
+    @st.cache_data(ttl=3600, show_spinner=False) # Cache for 1 hour, no spinner as status_callback handles it. Note: This method is called by core.py, so caching here might not be effective if core.py doesn't pass the cached instance.
     def count_tokens(_self, prompt: str, system_prompt: str) -> int: # Changed self to _self
         """
         Estimates the token count for a given prompt and system prompt.
@@ -184,7 +184,7 @@ class GeminiProvider:
                 response = _self.client.models.count_tokens(
                     model=_self.model_name,
                     contents=contents_for_counting
-                )
+                ) # Call count_tokens on the client
                 return response.total_tokens
             except APIError as e:  # APIError is GoogleAPICallError
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
@@ -192,6 +192,7 @@ class GeminiProvider:
                 if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
                     http_status_code = e.response.status_code
 
+                # Check if it's a retryable HTTP status code
                 if http_status_code is not None and http_status_code in _self.RETRYABLE_HTTP_CODES and attempt < _self.MAX_RETRIES:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
@@ -199,21 +200,23 @@ class GeminiProvider:
                     _self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    # Sanitize error message before raising
+                    # Non-retryable API error or last retry failed
+                    # Pass http_status_code if available, otherwise fall back to e.code (gRPC code)
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else e.code) from e
             except Exception as e:
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8') # Ensure error_msg is always defined
-                if attempt < _self.MAX_RETRIES:
+                if attempt < _self.MAX_RETRIES: # Check if retries are still available
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    _self._log_log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    _self._log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
                     raise LLMUnexpectedError(error_msg) from e
         
+        # This part should ideally not be reached if exceptions are always re-raised on last attempt
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
-
+        
     # @st.cache_data(ttl=3600, show_spinner=False) # This decorator should be applied in app.py or a module that calls this method
     def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
         """
@@ -231,7 +234,7 @@ class GeminiProvider:
                 prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', 'Software Engineering', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
                 system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
                 temperature=0.1,
-                max_tokens=32 # Keep max_tokens low for a single word response
+                max_tokens=32 # Keep max_tokens low for a single word response, ensuring efficiency
             )
             # Return the raw LLM response; app.py will handle cleaning and validation.
             return response.strip()

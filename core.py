@@ -15,7 +15,7 @@ from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator
 import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional
-from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
+from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError # <-- ADDED: Ensure GeminiProvider is imported correctly
 
 # --- Custom Exception for Token Budget ---
 class TokenBudgetExceededError(LLMProviderError):
@@ -118,7 +118,7 @@ class SocraticDebate:
         return persona
 
     @st.cache_data(ttl=3600) # Cache AST-based prioritization to speed up context preparation.
-    def _prioritize_python_code(_self, content: str, max_tokens: int) -> str:
+    def _prioritize_python_code(_self, content: str, max_tokens: int) -> str: # Use _self for cache decorator
         """
         Prioritizes imports, class/function definitions for Python code.
         Truncates the content to fit within max_tokens.
@@ -159,7 +159,7 @@ class SocraticDebate:
     def _truncate_text_by_tokens(self, text: str, max_tokens: int) -> str:
         """Truncates text to fit within max_tokens using the GeminiProvider's token counting."""
         if not text:
-            return ""
+            return "" # Return empty string if input text is empty
         
         # Simple iterative truncation from the end
         truncated_text = text
@@ -178,7 +178,7 @@ class SocraticDebate:
             chars_to_remove = max(1, len(truncated_text) // 20) 
             truncated_text = truncated_text[:-chars_to_remove]
             if len(truncated_text) == 0:
-                break
+                break # Exit loop if text becomes empty
         
         # Add an ellipsis if truncation actually occurred
         if self.gemini_provider.count_tokens(text, "") > max_tokens:
@@ -199,7 +199,7 @@ class SocraticDebate:
             header_tokens = self.gemini_provider.count_tokens(header, "")
             
             remaining_budget_for_file_content = context_budget - current_tokens - header_tokens
-            if remaining_budget_for_file_content <= 0:
+            if remaining_budget_for_file_content <= 0: # Check if budget is already exhausted
                 self._update_status(f"Skipping file '{path}' due to context token budget.")
                 break
 
@@ -224,7 +224,7 @@ class SocraticDebate:
 
             context_str_parts.append(full_file_block)
             current_tokens += file_block_tokens
-
+            
         final_context_string = "".join(context_str_parts)
         self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '')} tokens.")
         return final_context_string
@@ -243,7 +243,7 @@ class SocraticDebate:
         # Check if the estimated tokens for this step would exceed the budget
         if estimated_input_tokens + max_output_for_request < estimated_input_tokens: # Overflow check
              raise TokenBudgetExceededError(f"Estimated tokens for '{persona_name}' calculation overflowed.")
-        if estimated_input_tokens >= remaining_budget:
+        if estimated_input_tokens >= remaining_budget: # Ensure prompt itself doesn't exceed budget
              raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
         
         for attempt in range(max_retries_on_fail + 1): # +1 for the initial attempt
@@ -294,7 +294,7 @@ class SocraticDebate:
                 self._update_status(f"{current_persona_name} completed. Used {tokens_used} tokens.",
                                     current_total_tokens=self.cumulative_token_usage,
                                     current_total_cost=self.cumulative_usd_cost)
-                return response_text
+                return response_text # Return the successful response
             except LLMProviderError as e:
                 error_msg = f"[ERROR] Persona '{current_persona_name}' failed: {e}"
                 self.intermediate_steps[current_output_key] = error_msg
@@ -302,7 +302,7 @@ class SocraticDebate:
                 if attempt == max_retries_on_fail: # If last attempt failed, re-raise
                     raise # Re-raise the exception to be caught by the main handler
                 # Else, loop for retry
-
+                
     def run_debate(self, max_turns: int = 5) -> Tuple[str, Dict[str, Any]]:
         """Executes the full Socratic debate loop."""
         if not self.personas:
@@ -319,8 +319,8 @@ class SocraticDebate:
                     f"CODEBASE CONTEXT:\n{context_string}\n\n"
                     f"INSTRUCTIONS:\n"
                     "1. **Analyze the provided codebase context thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic.\n"
-                    "2. **Based on your analysis and the user prompt, propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
-                    "3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.**")
+                    "2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
+                    "3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
         
         visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
 
@@ -360,11 +360,11 @@ class SocraticDebate:
         def arbitrator_prompt_gen():
             # Revert the escaping instruction to the more robust version
             return (
-                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '. If a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '."
+                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `full_content` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely."
                 f"--- DEBATE SUMMARY ---\n"
                 f"User Prompt: {self.initial_prompt}\n\n"
                 f"Visionary Proposal:\n{visionary_output}\n\n"
-                f"Skeptical Critique:\n{skeptical_critique}\n"
+                f"Skeptical Critique:\n{skeptical_critique}\n" # Added newline for clarity
                 f"{domain_critiques_text}\n\n"
                 f"Constructive Feedback:\n{constructive_feedback}\n\n"
                 f"--- END DEBATE ---"
@@ -383,3 +383,16 @@ class SocraticDebate:
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
         return self.final_answer, self.intermediate_steps
+
+# --- Example Usage (e.g., in app.py) ---
+# if __name__ == "__main__":
+#     # Load initial context (e.g., from user input, files)
+#     initial_context = {
+#         "user_prompt": "Refactor this code.",
+#         "codebase": {"file1.py": "def func(): pass"}
+#     }
+#
+#     orchestrator = PersonaOrchestrator()
+#     result = orchestrator.run_socratic_debate(initial_context)
+#
+#     print("Final Result:", json.dumps(result, indent=2))

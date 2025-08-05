@@ -8,12 +8,8 @@ import re
 import datetime
 from typing import Dict, Any, Optional, List
 import yaml
+import logging # <-- ADDED: This import was suggested by the LLM for the LLMOutputParser
 from rich.console import Console
-import logging # <-- ADDED: This import was missing and caused the NameError
-
-# Import necessary components from local modules
-from core import TokenBudgetExceededError, Persona, GeminiProvider, SocraticDebate
-from llm_provider import GeminiAPIError, LLMUnexpectedError
 import core # Moved import to top for standard practice
 from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
 
@@ -28,13 +24,14 @@ def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
         return config
     except FileNotFoundError:
         st.error(f"Configuration file not found at '{file_path}'. Please ensure it exists.")
-        return {} # Return empty dict on error
+        # Removed: return {} # Return empty dict on error - this would hide the error message
     except yaml.YAMLError as e:
         st.error(f"Error parsing configuration file '{file_path}'. Please check its format: {e}")
-        return {}
+        # Removed: return {}
     except IOError as e:
         st.error(f"IO error reading configuration file '{file_path}'. Check permissions: {e}")
-        return {}
+        # Removed: return {}
+    return {} # Explicitly return empty dict if any error occurs
 
 app_config = load_config()
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
@@ -58,24 +55,27 @@ def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json
         return {}
 
 # Redirect rich console output to a string buffer for Streamlit display
+# Configure console to capture output, force terminal for ANSI codes, and use soft wrapping
 @contextlib.contextmanager
 def capture_rich_output_and_get_console():
     """Captures rich output (like Streamlit elements) and returns the captured content."""
     buffer = io.StringIO()
-    # Configure console to capture output, force terminal for ANSI codes, and use soft wrapping
+    # Use a specific console instance for capturing, ensuring it's configured correctly
+    # force_terminal=True helps ensure ANSI codes are generated for rich formatting
+    # soft_wrap=True prevents lines from being cut off prematurely
     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
     yield buffer, console_instance # Provide the buffer and console instance to the 'with' block
     # Cleanup is implicitly handled by the context manager exiting
 
-# Function to strip ANSI escape codes from text
+# Helper function to strip ANSI escape codes from text
 ansi_escape_re = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def strip_ansi_codes(text):
     return ansi_escape_re.sub('', text)
 
-# --- LLM Output Parsing Class (New Component) ---
+# --- LLM Output Parsing Class ---
 class LLMOutputParser:
     """Handles parsing and validation of LLM-generated structured output."""
-    def __init__(self, llm_provider: GeminiProvider):
+    def __init__(self, llm_provider: core.GeminiProvider): # Use core.GeminiProvider for type hinting
         self.llm_provider = llm_provider
         self.logger = logging.getLogger(self.__class__.__name__) # This line now works because 'logging' is imported
 
@@ -86,7 +86,7 @@ class LLMOutputParser:
             parsed_json = json.loads(raw_output)
             self.logger.info("Successfully parsed LLM output as JSON.")
 
-            # Basic validation of expected structure (e.g., presence of COMMIT_MESSAGE, RATIONALE, CODE_CHANGES)
+            # Basic validation of expected top-level keys
             if not all(k in parsed_json for k in ["COMMIT_MESSAGE", "RATIONALE", "CODE_CHANGES"]):
                 self.logger.warning("Parsed JSON missing expected top-level keys.")
                 # Decide how to handle: raise error, return partial, etc.
@@ -104,7 +104,7 @@ class LLMOutputParser:
                         raise ValueError("Invalid item in CODE_CHANGES: missing required keys.")
                     if change["action"] in ["ADD", "MODIFY"] and "full_content" not in change:
                         self.logger.error(f"Missing 'full_content' for ADD/MODIFY action: {change}")
-                        raise ValueError("Missing 'full_content' for ADD/MODIFY action.")
+                        raise ValueError(f"Missing 'full_content' for ADD/MODIFY action in change: {change}")
                     if change["action"] == "REMOVE" and "lines" not in change:
                         self.logger.error(f"Missing 'lines' for REMOVE action: {change}")
                         raise ValueError("Missing 'lines' for REMOVE action.")
@@ -124,7 +124,7 @@ class LLMOutputParser:
 # --- Helper function for Markdown Report Generation ---
 def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any]) -> str:
     report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    md_content = f"# Project Chimera Socratic Debate Report\n\n"
+    md_content = f"# Project Chimera Socratic Debate Report\n\n" # Added newline for spacing
     md_content += f"**Date:** {report_date}\n"
     md_content += f"**Original Prompt:** {user_prompt}\n\n"
 
@@ -140,7 +140,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += "```text\n"
     md_content += strip_ansi_codes(process_log_output)
     md_content += "\n```\n\n"
-
+    
     if config_params.get('show_intermediate_steps', True):
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
@@ -170,7 +170,7 @@ def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_s
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"
     md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
 
-    return md_content
+    return md_content # Return the generated markdown content
 
 st.set_page_config(layout="wide", page_title="Project Chimera Web App")
 
@@ -490,7 +490,7 @@ if run_button_clicked:
                 personas_for_run = {name: all_personas[name] for name in persona_sets.get(domain_for_run, [])} # Use .get for safety
 
                 # Instantiate GeminiProvider with the correct model name from session state
-                gemini_provider_instance = GeminiProvider(
+                gemini_provider_instance = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
                     model_name=st.session_state.selected_model_selectbox,
                     status_callback=streamlit_status_callback
@@ -499,7 +499,7 @@ if run_button_clicked:
                 # Capture rich console output for the log display
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                     # Instantiate SocraticDebate
-                    debate_instance = SocraticDebate(
+                    debate_instance = core.SocraticDebate( # Use core.SocraticDebate
                         initial_prompt=user_prompt,
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
@@ -535,7 +535,7 @@ if run_button_clicked:
                     total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
                     next_step_warning_placeholder.empty()
 
-            except (TokenBudgetExceededError, Exception) as e:
+            except (core.TokenBudgetExceededError, Exception) as e: # Use core.TokenBudgetExceededError
                 # Ensure process log is captured even on error
                 st.session_state.process_log_output_text = rich_output_buffer.getvalue() if 'rich_output_buffer' in locals() else ""
                 status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
@@ -573,7 +573,7 @@ if st.session_state.debate_ran:
             # Fallback if gemini_provider_instance wasn't created (e.g., due to an earlier error)
             # This might require a dummy provider or re-instantiation with API key from session state
             try:
-                fallback_provider = GeminiProvider(
+                fallback_provider = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
                     model_name=st.session_state.selected_model_selectbox,
                     status_callback=None # No status callback for parser instantiation if not running debate
@@ -638,13 +638,13 @@ if st.session_state.debate_ran:
         
         # Iterate over the dictionary of changes
         for file_path, change in parsed_data.get('changes', {}).items():
-            with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=True):
+            with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
                 st.write(f"**Action:** {change.get('action')}")
                 st.write(f"**File Path:** {change.get('file_path')}")
                 
                 if change.get('action') in ['ADD', 'MODIFY']:
                     st.write("**Content:**")
-                    # Use 'python' as default language, but could be dynamic based on file_path
+                    # Use 'python' as default language, but could be dynamic based on file_path (e.g., based on extension)
                     # Truncate for display if content is very long
                     display_content = change.get('content', '')
                     st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python') 
@@ -652,7 +652,7 @@ if st.session_state.debate_ran:
                     st.write("**Lines to Remove:**")
                     st.write(change.get('lines', []))
         
-        # Display malformed blocks as fallbacks
+        # Display malformed blocks as fallbacks if any were detected
         for block in validation_results['malformed_blocks']:
             with st.expander(f"📄 **Unknown File (Malformed Block)**", expanded=True):
                 st.error("This block was malformed and could not be parsed correctly. Raw output is shown below.")
