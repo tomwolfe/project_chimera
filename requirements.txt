@@ -1,7 +1,17 @@
+# requirements.txt
+streamlit
 google-genai
 typer[all] # Includes Rich for better CLI output
 pyyaml
 pydantic
-streamlit
-pycodestyle
 jsonschema
+
+# Add linters and formatters for development/pre-commit
+black
+ruff
+
+# Add testing libraries
+pytest
+
+# Keep existing dependencies if any were missed in the original file
+# (Assuming the original requirements.txt was minimal and these are additions)

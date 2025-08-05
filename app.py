@@ -9,23 +9,30 @@ import datetime
 from typing import Dict, Any, Optional, List
 import yaml
 from rich.console import Console
-from core import TokenBudgetExceededError, Persona, GeminiProvider, SocraticDebate # Import SocraticDebate
-from llm_provider import GeminiAPIError, LLMUnexpectedError # Keep these imports
+# Import necessary components from local modules
+from core import TokenBudgetExceededError, Persona, GeminiProvider, SocraticDebate
+from llm_provider import GeminiAPIError, LLMUnexpectedError
 import core # Moved import to top for standard practice
-# from main import run_isal_process # This import is no longer needed if app.py is the main entry point and core.py contains SocraticDebate
 from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
 
 # --- Configuration Loading ---
 @st.cache_resource
 def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
-    """Loads configuration from a YAML file."""
+    """Loads configuration from a YAML file with enhanced error handling."""
     try:
         with open(file_path, 'r') as f:
             config = yaml.safe_load(f)
+        st.success(f"Configuration loaded successfully from {file_path}.") # User feedback
         return config
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        st.error(f"Error loading config from {file_path}: {e}")
+    except FileNotFoundError:
+        st.error(f"Configuration file not found at '{file_path}'. Please ensure it exists.")
         return {} # Return empty dict on error
+    except yaml.YAMLError as e:
+        st.error(f"Error parsing configuration file '{file_path}'. Please check its format: {e}")
+        return {}
+    except IOError as e:
+        st.error(f"IO error reading configuration file '{file_path}'. Check permissions: {e}")
+        return {}
 
 app_config = load_config()
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
@@ -34,26 +41,83 @@ CONTEXT_TOKEN_BUGET_RATIO = app_config.get("context_token_budget_ratio", 0.25) #
 # --- Demo Codebase Context Loading ---
 @st.cache_data
 def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json") -> Dict[str, str]:
-    """Loads demo codebase context from a JSON file."""
+    """Loads demo codebase context from a JSON file with enhanced error handling."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
-        st.error(f"Error loading demo codebase context from {file_path}: {e}")
+    except FileNotFoundError:
+        st.error(f"Demo context file not found at '{file_path}'.")
+        return {}
+    except json.JSONDecodeError as e:
+        st.error(f"Error decoding JSON from '{file_path}'. Please check its format: {e}")
+        return {}
+    except IOError as e:
+        st.error(f"IO error reading demo context file '{file_path}'. Check permissions: {e}")
         return {}
 
 # Redirect rich console output to a string buffer for Streamlit display
 @contextlib.contextmanager
 def capture_rich_output_and_get_console():
+    """Captures rich output (like Streamlit elements) and returns the captured content."""
     buffer = io.StringIO()
     # Configure console to capture output, force terminal for ANSI codes, and use soft wrapping
     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
-    yield buffer, console_instance
+    yield buffer, console_instance # Provide the buffer and console instance to the 'with' block
+    # Cleanup is implicitly handled by the context manager exiting
 
 # Function to strip ANSI escape codes from text
 ansi_escape_re = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def strip_ansi_codes(text):
     return ansi_escape_re.sub('', text)
+
+# --- LLM Output Parsing Class (New Component) ---
+class LLMOutputParser:
+    """Handles parsing and validation of LLM-generated structured output."""
+    def __init__(self, llm_provider: GeminiProvider):
+        self.llm_provider = llm_provider
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def parse_and_validate(self, raw_output: str) -> Dict[str, Any]:
+        """Parses raw LLM output, validates JSON structure, and handles escaping."""
+        try:
+            # Attempt to parse JSON
+            parsed_json = json.loads(raw_output)
+            self.logger.info("Successfully parsed LLM output as JSON.")
+
+            # Basic validation of expected structure (e.g., presence of COMMIT_MESSAGE, RATIONALE, CODE_CHANGES)
+            if not all(k in parsed_json for k in ["COMMIT_MESSAGE", "RATIONALE", "CODE_CHANGES"]):
+                self.logger.warning("Parsed JSON missing expected top-level keys.")
+                # Decide how to handle: raise error, return partial, etc.
+                # For now, we'll proceed but log a warning.
+
+            # Validate CODE_CHANGES structure if present
+            if "CODE_CHANGES" in parsed_json:
+                if not isinstance(parsed_json["CODE_CHANGES"], list):
+                    self.logger.error("CODE_CHANGES is not a list.")
+                    raise ValueError("Invalid CODE_CHANGES format: must be a list.")
+                
+                for change in parsed_json["CODE_CHANGES"]:
+                    if not isinstance(change, dict) or not all(k in change for k in ["file_path", "action"]):
+                        self.logger.error(f"Invalid change item format: {change}")
+                        raise ValueError("Invalid item in CODE_CHANGES: missing required keys.")
+                    if change["action"] in ["ADD", "MODIFY"] and "full_content" not in change:
+                        self.logger.error(f"Missing 'full_content' for ADD/MODIFY action: {change}")
+                        raise ValueError("Missing 'full_content' for ADD/MODIFY action.")
+                    if change["action"] == "REMOVE" and "lines" not in change:
+                        self.logger.error(f"Missing 'lines' for REMOVE action: {change}")
+                        raise ValueError("Missing 'lines' for REMOVE action.")
+
+            return parsed_json
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to decode JSON: {e}. Raw output:\n{raw_output[:500]}...")
+            raise ValueError(f"LLM output is not valid JSON. Error: {e}") from e
+        except ValueError as e:
+            self.logger.error(f"JSON structure validation failed: {e}")
+            raise e
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred during LLM output parsing: {e}")
+            raise RuntimeError(f"Failed to process LLM output: {e}") from e
 
 # --- Helper function for Markdown Report Generation ---
 def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any]) -> str:
@@ -490,16 +554,29 @@ if st.session_state.debate_ran:
     # Handle Software Engineering output specifically
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         raw_output = st.session_state.final_answer_output
-        # Pass original context to validate_code_output for diffing
-        parsed_data = parse_llm_code_output(raw_output)
-        validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
+        
+        # Use the new LLMOutputParser for parsing and validation
+        # Instantiate parser with the provider used for the debate
+        parser = LLMOutputParser(gemini_provider_instance) # Use the instance created during run
+        
+        validation_results = {'issues': [], 'malformed_blocks': []}
+        parsed_data = {}
+        try:
+            parsed_data = parser.parse_and_validate(raw_output)
+            # Use the existing validate_code_output from utils.py for detailed validation
+            validation_results = validate_code_output(parsed_data, st.session_state.codebase_context) # Use session state for context
+        except (ValueError, RuntimeError) as e:
+            # If parsing fails, capture the error and mark blocks as malformed
+            validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
+            # Attempt to extract any partial data if possible, or just use empty structure
+            parsed_data = {'summary': {}, 'changes': {}} # Default to empty structure
 
         # --- Structured Summary ---
         st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_data['summary'].get('commit_message', 'Not generated.'), language='text')
+            st.code(parsed_data.get('summary', {}).get('commit_message', 'Not generated.'), language='text')
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -508,12 +585,12 @@ if st.session_state.debate_ran:
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         
         st.markdown("**Rationale**")
-        st.markdown(parsed_data['summary'].get('rationale', 'Not generated.'))
+        st.markdown(parsed_data.get('summary', {}).get('rationale', 'Not generated.'))
 
-        if parsed_data['summary'].get('conflict_resolution'):
+        if parsed_data.get('summary', {}).get('conflict_resolution'):
             st.markdown("**Conflict Resolution**")
             st.info(parsed_data['summary']['conflict_resolution'])
-        if parsed_data['summary'].get('unresolved_conflict'):
+        if parsed_data.get('summary', {}).get('unresolved_conflict'):
             st.markdown("**Unresolved Conflict**")
             st.warning(parsed_data['summary']['unresolved_conflict'])
 
@@ -541,7 +618,9 @@ if st.session_state.debate_ran:
                 if change.get('action') in ['ADD', 'MODIFY']:
                     st.write("**Content:**")
                     # Use 'python' as default language, but could be dynamic based on file_path
-                    st.code(change.get('content', '')[:500] + ('...' if len(change.get('content', '')) > 500 else ''), language='python') 
+                    # Truncate for display if content is very long
+                    display_content = change.get('content', '')
+                    st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python') 
                 elif change.get('action') == 'REMOVE':
                     st.write("**Lines to Remove:**")
                     st.write(change.get('lines', []))
@@ -574,7 +653,6 @@ if st.session_state.debate_ran:
                 content = display_steps.get(step_key, "N/A")
                 
                 # Find the corresponding token count key
-                # FIX: Introduced cleaned_step_key to resolve f-string SyntaxError
                 cleaned_step_key = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
                 token_count_key = f"{cleaned_step_key}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
