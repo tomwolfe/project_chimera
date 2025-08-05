@@ -15,7 +15,11 @@ from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator, validator
 import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional
+
+# Import LLMProvider and LLMOutputParser
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
+from src.utils.output_parser import LLMOutputParser
+from src.utils.code_validator import validate_code_output_batch # Import the batch validation function
 
 # --- Custom Exception for Token Budget ---
 class TokenBudgetExceededError(LLMProviderError):
@@ -60,7 +64,7 @@ class FullPersonaConfig(BaseModel):
         return "General" if "General" in self.persona_sets else next(iter(self.persona_sets.keys()))
 
 @st.cache_resource
-def load_personas(file_path: str = "personas.yaml") -> Tuple[Dict[str, Persona], Dict[str, List[str]], List[str], str]:
+def load_personas(file_path: str = 'personas.yaml') -> Tuple[Dict[str, Persona], Dict[str, List[str]], List[str], str]:
     """Loads persona configurations from a YAML file. Cached using st.cache_resource."""
     try:
         with open(file_path, 'r') as f:
@@ -106,7 +110,10 @@ class SocraticDebate:
             self.gemini_provider = gemini_provider
         else:
             self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name,
-                                                  _status_callback=self._update_status)
+                                                  _status_callback=self._update_status) # Use internal callback
+
+        # Initialize LLMOutputParser
+        self.parser = LLMOutputParser(self.gemini_provider)
 
         self.cumulative_token_usage = 0
         self.cumulative_usd_cost = 0.0
@@ -232,8 +239,80 @@ class SocraticDebate:
         self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '')} tokens.")
         return final_context_string
 
-    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, **kwargs) -> str:
-        """Executes a single persona step, handling token budget and status updates."""
+    def _analyze_codebase_context(self) -> Dict[str, Any]:
+        """
+        Analyzes the codebase context using a dedicated persona.
+        CRE_001: Introduce a 'Context Analysis' step using a dedicated persona.
+        """
+        if not self.codebase_context:
+            self._update_status("[yellow]No codebase context provided for analysis.[/yellow]")
+            return self._get_default_analysis_summary()
+
+        # Check if Context_Aware_Assistant persona is available
+        if "Context_Aware_Assistant" not in self.personas and "Context_Aware_Assistant" not in self.all_personas:
+            self._update_status("[yellow]Context_Aware_Assistant persona not found. Skipping context analysis.[/yellow]")
+            return self._get_default_analysis_summary()
+
+        self._update_status("Analyzing codebase context with Context_Aware_Assistant...")
+
+        # Prepare the context string for the analysis persona
+        context_string_for_analysis = self.prepare_context(self.codebase_context, []) # Use context preparation logic
+
+        def analysis_prompt_gen():
+            return (
+                f"Analyze the following codebase context and provide a structured summary. "
+                f"Focus on identifying key modules, potential security concerns, architectural patterns, and performance bottlenecks.\n\n"
+                f"CODEBASE CONTEXT:\n{context_string_for_analysis}\n\n"
+                f"Provide your analysis as a JSON object with the following keys: "
+                f"'key_modules' (list of strings), 'security_concerns' (list of strings), "
+                f"'architectural_patterns' (list of strings), 'performance_bottlenecks' (list of strings)."
+            )
+
+        analysis_output_key = "Context_Analysis_Output"
+        try:
+            # Execute the persona step. We expect a string response which is JSON.
+            raw_analysis_response = self._execute_persona_step(
+                "Context_Aware_Assistant",
+                analysis_prompt_gen,
+                analysis_output_key,
+                update_current_thought=False, # This step doesn't update the main thought flow
+                is_final_answer_step=False
+            )
+
+            # Parse the JSON response from the analysis persona
+            analysis_summary = {}
+            if raw_analysis_response:
+                try:
+                    # Attempt to parse the response as JSON.
+                    # We don't use LLMOutputParser here as the output is not a CODE_CHANGES structure.
+                    analysis_summary = json.loads(raw_analysis_response)
+                    self._update_status("Codebase context analysis successful.")
+                except json.JSONDecodeError:
+                    self._update_status(f"[yellow]Warning: Failed to parse context analysis response as JSON. Using default summary.[/yellow]")
+                    analysis_summary = self._get_default_analysis_summary()
+                except Exception as e:
+                    self._update_status(f"[yellow]Warning: Unexpected error parsing context analysis response: {e}. Using default summary.[/yellow]")
+                    analysis_summary = self._get_default_analysis_summary()
+            else:
+                self._update_status("[yellow]Context analysis persona returned empty response. Using default summary.[/yellow]")
+                analysis_summary = self._get_default_analysis_summary()
+
+            # REF_005: Validate the analysis summary structure
+            if not self._validate_analysis_summary(analysis_summary):
+                self._update_status("[yellow]Codebase analysis summary validation failed. Using default context.[/yellow]")
+                return self._get_default_analysis_summary()
+
+            return analysis_summary
+
+        except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
+            # Catch errors during the analysis persona step
+            error_message = f"[ERROR] Context analysis failed: {e}"
+            self.intermediate_steps[f"{analysis_output_key}_Error"] = error_message
+            self._update_status(error_message, state="error")
+            return self._get_default_analysis_summary()
+
+    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False) -> str:
+        """Executes a single persona step, handling token budget, status updates, and parsing/validation errors."""
         persona = self._get_persona(persona_name)
         step_prompt = step_prompt_generator()
 
@@ -265,14 +344,14 @@ class SocraticDebate:
 
             estimated_next_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request)
 
-            self._update_status(f"Running persona: {current_persona_name}...",
+            self._update_status(f"Running persona: {current_persona_name} (Input: {estimated_input_tokens} tokens, Output: {max_output_for_request} tokens)...",
                                 current_total_tokens=self.cumulative_token_usage,
                                 current_total_cost=self.cumulative_usd_cost,
                                 estimated_next_step_tokens=estimated_input_tokens + max_output_for_request,
                                 estimated_next_step_cost=estimated_next_step_cost)
 
             try:
-                response_text, input_tokens, output_tokens = self.gemini_provider.generate(
+                raw_response_text, input_tokens, output_tokens = self.gemini_provider.generate(
                     prompt=current_step_prompt,
                     system_prompt=current_persona.system_prompt,
                     temperature=current_persona.temperature,
@@ -282,20 +361,77 @@ class SocraticDebate:
                 tokens_used = input_tokens + output_tokens
                 cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
 
-                self.intermediate_steps[current_output_key] = response_text
-                cleaned_key_base = current_output_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
-                self.intermediate_steps[f"{cleaned_key_base}_Tokens_Used"] = tokens_used
+                parsed_data = None
+                if raw_response_text:
+                    try:
+                        # Use the LLMOutputParser to parse and validate the raw response
+                        parsed_data = self.parser.parse_and_validate(raw_response_text)
+
+                        # Check if the parser returned malformed_blocks (indicating parsing/validation failure)
+                        if "malformed_blocks" in parsed_data:
+                            malformed_blocks = parsed_data["malformed_blocks"]
+                            error_message = f"LLM output parsing/validation failed for persona '{current_persona_name}'.\n" + "\n".join(malformed_blocks)
+                            self.intermediate_steps[f"{current_output_key}_Error"] = error_message
+                            self._update_status(error_message, state="error")
+                            # If parsing/validation fails, we cannot proceed with storing valid data.
+                            # Raise an error to be caught by the outer handler.
+                            raise LLMProviderError(f"Failed to parse/validate LLM output from {current_persona_name}.")
+
+                        # If parsing and initial validation are successful, proceed to code validation
+                        code_changes_list = parsed_data.get('code_changes', [])
+                        original_context_for_validation = self.codebase_context
+
+                        # Perform batch validation on the extracted code changes
+                        validation_report = validate_code_output_batch(code_changes_list, original_context_for_validation)
+
+                        # Aggregate all validation issues
+                        all_issues = []
+                        for file_issues in validation_report.values():
+                            all_issues.extend(file_issues)
+
+                        if all_issues:
+                            validation_error_message = "Code validation issues found:\n"
+                            for issue in all_issues:
+                                validation_error_message += f"- [{issue.get('type', 'Unknown')}] in {issue.get('file', 'N/A')} (Line {issue.get('line', 'N/A')}): {issue.get('message', '')}\n"
+                            self.intermediate_steps[f"{current_output_key}_Validation_Issues"] = validation_error_message
+                            self._update_status(f"[yellow]Warning: Code validation issues found for {current_persona_name}. Check intermediate steps for details.[/yellow]", state="warning")
+
+                        # Store the parsed and validated data (even if it has validation issues)
+                        self.intermediate_steps[current_output_key] = parsed_data
+
+                    except (LLMProviderError, ValueError, RuntimeError) as parse_err:
+                        # Catch errors from parser or validation steps
+                        error_message = f"[ERROR] Processing LLM output for '{current_persona_name}' failed: {parse_err}"
+                        self.intermediate_steps[f"{current_output_key}_Error"] = error_message
+                        self._update_status(error_message, state="error")
+                        if attempt == max_retries_on_fail:
+                            raise # Re-raise if max retries reached
+                        continue # Try next attempt
+                    except Exception as e:
+                        # Catch any other unexpected errors during parsing/validation
+                        error_message = f"[ERROR] Unexpected error processing LLM output for '{current_persona_name}': {e}"
+                        self.intermediate_steps[f"{current_output_key}_Error"] = error_message
+                        self._update_status(error_message, state="error")
+                        if attempt == max_retries_on_fail:
+                            raise # Re-raise if max retries reached
+                        continue # Try next attempt
+                else:
+                    # Handle cases where raw_response_text is empty or None
+                    self.intermediate_steps[current_output_key] = "[INFO] LLM returned empty response."
+                    tokens_used = input_tokens # Only input tokens were used
+                    cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, 0)
 
                 self.cumulative_token_usage += tokens_used
                 self.cumulative_usd_cost += cost_this_step
 
-                if kwargs.get('update_current_thought'): self.current_thought = response_text
-                if kwargs.get('is_final_answer_step'): self.final_answer = response_text
+                if update_current_thought: self.current_thought = raw_response_text # Use raw response for thought if not parsed
+                if is_final_answer_step: self.final_answer = raw_response_text # Store raw response as final answer if it's the last step
 
                 self._update_status(f"{current_persona_name} completed. Used {tokens_used} tokens.",
                                     current_total_tokens=self.cumulative_token_usage,
                                     current_total_cost=self.cumulative_usd_cost)
-                return response_text
+                return raw_response_text # Return raw response if parsing failed or was not the final step
+
             except LLMProviderError as e:
                 error_msg = f"[ERROR] Persona '{current_persona_name}' failed: {e}"
                 self.intermediate_steps[current_output_key] = error_msg
@@ -325,58 +461,95 @@ class SocraticDebate:
             return (f"USER PROMPT: {self.initial_prompt}\n\n"
                     f"CODEBASE CONTEXT:\n{context_string}\n\n"
                     f"INSTRUCTIONS:\n"
-                    "1. **Analyze the provided codebase context thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic.\n"
-                    "2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
-                    "3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
-        visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
+                    f"1. **Analyze the provided codebase context thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic.\n"
+                    f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
+                    f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
 
-        def skeptical_prompt_gen():
-            return f"Critique the following proposal from a highly skeptical, risk-averse perspective. Identify potential failure points, architectural flaws, or critical vulnerabilities:\n\n{visionary_output}"
-        skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen, "Skeptical_Critique")
+        try:
+            visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
 
-        domain_critiques_text = ""
-        for persona_name_in_sequence in self.persona_sequence:
-            if persona_name_in_sequence in self.personas:
-                if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"]:
-                    def expert_prompt_gen(name=persona_name_in_sequence, proposal=visionary_output):
-                        return (f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
+            def skeptical_prompt_gen():
+                return f"Critique the following proposal from a highly skeptical, risk-averse perspective. Identify potential failure points, architectural flaws, or critical vulnerabilities:\n\n{visionary_output}"
+            skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen, "Skeptical_Critique")
+
+            domain_critiques_text = ""
+            for persona_name_in_sequence in self.persona_sequence:
+                if persona_name_in_sequence in self.personas:
+                    if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"]:
+                        def expert_prompt_gen(name=persona_name_in_sequence, proposal=visionary_output):
+                            return (
+                                f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
                                 f"Identify specific points of concern, risks, or areas for improvement relevant to your domain. "
                                 f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific. "
                                 f"Present your analysis in a structured format, using clear headings or bullet points for 'Concerns' and 'Recommendations'.\n\n"
                                 f"Proposal:\n{proposal}")
 
-                    critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen, f"{persona_name_in_sequence}_Critique")
-                    domain_critiques_text += f"\n\n--- {persona_name_in_sequence.replace('_', ' ')} Critique ---\n{critique}"
+                        critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen, f"{persona_name_in_sequence}_Critique")
+                        domain_critiques_text += f"\n\n--- {persona_name_in_sequence.replace('_', ' ')} Critique ---\n{critique}"
 
-        def constructive_prompt_gen():
-            return (
-                f"Original Proposal:\n{visionary_output}\n\n"
-                f"--- Skeptical Critique ---\n{skeptical_critique}\n"
-                f"{domain_critiques_text}\n\n"
-                f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
-        constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Feedback")
+            def constructive_prompt_gen():
+                return (
+                    f"Original Proposal:\n{visionary_output}\n\n"
+                    f"--- Skeptical Critique ---\n{skeptical_critique}\n"
+                    f"{domain_critiques_text}\n\n"
+                    f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
+            constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
 
-        def arbitrator_prompt_gen():
-            return (
-                f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, representing the entire new file content or modified file content. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `full_content` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely."
-                f"*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `full_content`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
-                f"User Prompt: {self.initial_prompt}\n\n"
-                f"Visionary Proposal:\n{visionary_output}\n\n"
-                f"Skeptical Critique:\n{skeptical_critique}\n"
-                f"{domain_critiques_text}\n\n"
-                f"Constructive Feedback:\n{constructive_feedback}\n\n"
-                f"--- END DEBATE ---"
-            )
-        self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Arbitrator_Output", is_final_answer_step=True)
+            def arbitrator_prompt_gen():
+                return (
+                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\"\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `full_content` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `full_content`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
+                    f"User Prompt: {self.initial_prompt}\n\n"
+                    f"Visionary Proposal:\n{visionary_output}\n\n"
+                    f"Skeptical Critique:\n{skeptical_critique}\n"
+                    f"{domain_critiques_text}\n\n"
+                    f"Constructive Feedback:\n{constructive_feedback}\n\n"
+                    f"--- END DEBATE ---"
+                )
+            arbitrator_raw_response = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True)
 
-        def devil_prompt_gen():
-            return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{self.final_answer}"
-        self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
+            def devil_prompt_gen():
+                return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{self.final_answer}"
+            self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
 
-        self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
-        self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
-        self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
-                            state="complete", expanded=False,
-                            current_total_tokens=self.cumulative_token_usage,
-                            current_total_cost=self.cumulative_usd_cost)
-        return self.final_answer, self.intermediate_steps
+            self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
+            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
+            self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
+                                state="complete", expanded=False,
+                                current_total_tokens=self.cumulative_token_usage,
+                                current_total_cost=self.cumulative_usd_cost)
+            return self.final_answer, self.intermediate_steps
+
+        except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
+            # Catch specific errors related to LLM calls, parsing, validation, or general exceptions
+            error_msg = f"[ERROR] Socratic Debate failed: {e}"
+            self.intermediate_steps["Debate_Error"] = error_msg
+            self._update_status(error_msg, state="error")
+            # Ensure final_answer reflects the error
+            self.final_answer = f"Socratic Debate failed: {e}"
+            # Update metrics even on error if possible
+            self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
+            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
+            raise # Re-raise the exception to be caught by the caller (e.g., Streamlit app)
+
+    def _validate_analysis_summary(self, summary: Dict[str, Any]) -> bool:
+        """REF_005: Validate the structure and content of the analysis summary."""
+        required_keys = ["key_modules", "security_concerns", "architectural_patterns", "performance_bottlenecks"]
+        if not isinstance(summary, dict):
+            return False
+        if not all(key in summary for key in required_keys):
+            return False
+        if not isinstance(summary["key_modules"], list) or \
+           not isinstance(summary["security_concerns"], list) or \
+           not isinstance(summary["architectural_patterns"], list) or \
+           not isinstance(summary["performance_bottlenecks"], list):
+            return False
+        return True
+
+    def _get_default_analysis_summary(self) -> Dict[str, Any]:
+        """Provides a default summary if validation fails or analysis is skipped."""
+        return {
+            "key_modules": [],
+            "security_concerns": [],
+            "architectural_patterns": [],
+            "performance_bottlenecks": []
+        }

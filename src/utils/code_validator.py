@@ -12,6 +12,7 @@ import re
 import contextlib
 import logging
 from pathlib import Path
+import ast # Import ast for AST-based checks
 
 logger = logging.getLogger(__name__)
 
@@ -21,36 +22,30 @@ class CodeValidationError(Exception):
 
 # --- Helper function to find project root ---
 def find_project_root(start_path: Path = None) -> Path:
+    """Finds the project root directory by searching for known markers.
+    Starts from the directory of the current file and traverses upwards.
     """
-    Finds the project root by searching upwards for a marker file (e.g., config.yaml, .git, pyproject.toml).
-    Defaults to the current working directory if no root is found.
-    """
+    # Start search from the directory of this file (src/utils)
     if start_path is None:
-        # Start search from the directory of this file
         start_path = Path(__file__).resolve().parent
 
-    current_path = start_path
-    # Search upwards for a marker file
+    current_dir = start_path
+    # Traverse upwards to find the project root
     for _ in range(10): # Limit search depth to prevent infinite loops
-        if (current_path / "config.yaml").exists() or \
-           (current_path / ".git").exists() or \
-           (current_path / "pyproject.toml").exists():
-            logger.debug(f"Project root found at: {current_path}")
-            return current_path
+        if (current_dir / "config.yaml").exists() or \
+           (current_dir / ".git").exists() or \
+           (current_dir / "pyproject.toml").exists():
+            logger.debug(f"Project root identified at: {current_dir}")
+            return current_dir
         
-        # Move up one directory
-        parent_path = current_path.parent
-        if parent_path == current_path: # Reached filesystem root
+        parent_path = current_dir.parent
+        if parent_path == current_dir: # Reached filesystem root
             break
-        current_path = parent_path
+        current_dir = parent_path
     
-    # Fallback: If no marker found, assume the current working directory is the root.
-    # This is common for Streamlit apps launched from the project root.
-    logger.warning(
-        "Project root marker file (config.yaml, .git, pyproject.toml) not found. "
-        "Falling back to current working directory."
-    )
-    return Path(".").resolve()
+    # Fallback if no markers are found after reaching the filesystem root
+    logger.warning("Project root markers not found. Falling back to current working directory.")
+    return Path('.').resolve()
 
 # --- Define PROJECT_ROOT dynamically ---
 # This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root
@@ -70,7 +65,7 @@ def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
         # Create a temporary file to hold the content.
         # delete=False is used because the file needs to exist when the subprocess runs.
         # We manage cleanup manually in the finally block.
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py', encoding='utf-8') as temp_file:
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=False) as temp_file:
             temp_file.write(content)
             temp_file_path = temp_file.name # Store the path for later use
         
@@ -199,16 +194,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     return issues
 
 def validate_code_output(parsed_change: Dict[str, Any], original_content: str = None) -> Dict[str, Any]:
-    """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security.
-
-    Args:
-        parsed_change: A dictionary representing a single code change from parse_llm_code_output.
-                       Expected keys: 'file_path', 'action', 'full_content' (for ADD/MODIFY) or 'lines' (for REMOVE).
-        original_content: The original content of the file if the action is 'MODIFY' or 'REMOVE'.
-
-    Returns:
-        A dictionary containing validation results, including issues.
-    """
+    """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get('file_path')
     action = parsed_change.get('action')
     content_to_check = ""
@@ -227,6 +213,98 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         if is_python:
             issues.extend(_run_pycodestyle(content_to_check, file_path_str))
             issues.extend(_run_bandit(content_to_check, file_path_str))
+            # Add AST-based security checks
+            try:
+                tree = ast.parse(content_to_check)
+                
+                # Visitor pattern to traverse the AST
+                class SecurityPatternVisitor(ast.NodeVisitor):
+                    def __init__(self, filename):
+                        self.filename = filename
+                        self.issues = []
+
+                    def visit_Call(self, node):
+                        # Check for eval() and exec()
+                        if isinstance(node.func, ast.Name):
+                            if node.func.id == 'eval':
+                                self.issues.append({
+                                    'type': 'Security Vulnerability (AST)',
+                                    'file': self.filename,
+                                    'line': node.lineno,
+                                    'message': "Use of eval() is discouraged due to security risks."
+                                })
+                            elif node.func.id == 'exec':
+                                self.issues.append({
+                                    'type': 'Security Vulnerability (AST)',
+                                    'file': self.filename,
+                                    'line': node.lineno,
+                                    'message': "Use of exec() is discouraged due to security risks."
+                                })
+                        
+                        # Check for subprocess.run with shell=True
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess' and node.func.attr == 'run':
+                            for keyword in node.keywords:
+                                if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                                    self.issues.append({
+                                        'type': 'Security Vulnerability (AST)',
+                                        'file': self.filename,
+                                        'line': node.lineno,
+                                        'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."
+                                    })
+                        
+                        # Check for pickle.load
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.id == 'pickle' and node.func.attr == 'load':
+                            self.issues.append({
+                                'type': 'Security Vulnerability (AST)',
+                                'file': self.filename,
+                                'line': node.lineno,
+                                'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code."
+                            })
+                        
+                        # Check for os.system
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os' and node.func.attr == 'system':
+                            self.issues.append({
+                                'type': 'Security Vulnerability (AST)',
+                                'file': self.filename,
+                                'line': node.lineno,
+                                'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False."
+                            })
+                        
+                        # Check for XML External Entity (XXE) vulnerability in ElementTree
+                        # Example: ET.fromstring(xml_string, parser=None)
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'ET' and node.func.attr == 'fromstring':
+                             # Check if parser=None is explicitly passed
+                             has_parser_none = False
+                             for keyword in node.keywords:
+                                 if keyword.arg == 'parser' and isinstance(keyword.value, ast.Constant) and keyword.value.value is None:
+                                     has_parser_none = True
+                                     break
+                             if has_parser_none:
+                                 self.issues.append({
+                                     'type': 'Security Vulnerability (AST)',
+                                     'file': self.filename,
+                                     'line': node.lineno,
+                                     'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."
+                                 })
+
+                        self.generic_visit(node) # Continue visiting child nodes
+
+                visitor = SecurityPatternVisitor(file_path_str)
+                visitor.visit(tree)
+                issues.extend(visitor.issues)
+
+            except SyntaxError as se:
+                # Capture specific syntax error details for better reporting.
+                issues.append({
+                    'type': 'Syntax Error',
+                    'file': file_path_str,
+                    'line': se.lineno, # Line number of the syntax error
+                    'column': se.offset, # Column number of the syntax error
+                    'message': f"Invalid Python syntax: {se.msg}"
+                })
+            except Exception as e:
+                logger.error(f"Error during AST analysis for {file_path_str}: {e}")
+                issues.append({'type': 'Validation Tool Error', 'file': file_path_str, 'message': f'Failed during AST analysis: {e}'})
 
     elif action == 'MODIFY':
         content_to_check = parsed_change.get('full_content', '')
@@ -240,11 +318,87 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
             if is_python:
                 issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
+                # Add AST-based security checks
+                try:
+                    tree = ast.parse(content_to_check)
+                    class SecurityPatternVisitor(ast.NodeVisitor):
+                        def __init__(self, filename):
+                            self.filename = filename
+                            self.issues = []
+                        def visit_Call(self, node):
+                            if isinstance(node.func, ast.Name):
+                                if node.func.id == 'eval':
+                                    self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of eval() is discouraged due to security risks."}) 
+                                elif node.func.id == 'exec':
+                                    self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of exec() is discouraged due to security risks."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess' and node.func.attr == 'run':
+                                for keyword in node.keywords:
+                                    if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                                        self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'pickle' and node.func.attr == 'load':
+                                self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os' and node.func.attr == 'system':
+                                self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'ET' and node.func.attr == 'fromstring':
+                                 has_parser_none = False
+                                 for keyword in node.keywords:
+                                     if keyword.arg == 'parser' and isinstance(keyword.value, ast.Constant) and keyword.value.value is None:
+                                         has_parser_none = True
+                                         break
+                                 if has_parser_none:
+                                     self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."})
+                            self.generic_visit(node)
+                    visitor = SecurityPatternVisitor(file_path_str)
+                    visitor.visit(tree)
+                    issues.extend(visitor.issues)
+                except SyntaxError as se:
+                    issues.append({'type': 'Syntax Error', 'file': file_path_str, 'line': se.lineno, 'column': se.offset, 'message': f"Invalid Python syntax: {se.msg}"})
+                except Exception as e:
+                    logger.error(f"Error during AST analysis for {file_path_str}: {e}")
+                    issues.append({'type': 'Validation Tool Error', 'file': file_path_str, 'message': f'Failed during AST analysis: {e}'})
         else:
             # If original content is not provided for MODIFY, we can still validate the new content
             if is_python:
                 issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
+                # Add AST-based security checks (duplicate logic for brevity, could be refactored)
+                try:
+                    tree = ast.parse(content_to_check)
+                    class SecurityPatternVisitor(ast.NodeVisitor):
+                        def __init__(self, filename):
+                            self.filename = filename
+                            self.issues = []
+                        def visit_Call(self, node):
+                            if isinstance(node.func, ast.Name):
+                                if node.func.id == 'eval':
+                                    self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of eval() is discouraged due to security risks."}) 
+                                elif node.func.id == 'exec':
+                                    self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of exec() is discouraged due to security risks."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess' and node.func.attr == 'run':
+                                for keyword in node.keywords:
+                                    if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                                        self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'pickle' and node.func.attr == 'load':
+                                self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os' and node.func.attr == 'system':
+                                self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False."})
+                            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'ET' and node.func.attr == 'fromstring':
+                                 has_parser_none = False
+                                 for keyword in node.keywords:
+                                     if keyword.arg == 'parser' and isinstance(keyword.value, ast.Constant) and keyword.value.value is None:
+                                         has_parser_none = True
+                                         break
+                                 if has_parser_none:
+                                     self.issues.append({'type': 'Security Vulnerability (AST)', 'file': self.filename, 'line': node.lineno, 'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."})
+                            self.generic_visit(node)
+                    visitor = SecurityPatternVisitor(file_path_str)
+                    visitor.visit(tree)
+                    issues.extend(visitor.issues)
+                except SyntaxError as se:
+                    issues.append({'type': 'Syntax Error', 'file': file_path_str, 'line': se.lineno, 'column': se.offset, 'message': f"Invalid Python syntax: {se.msg}"})
+                except Exception as e:
+                    logger.error(f"Error during AST analysis for {file_path_str}: {e}")
+                    issues.append({'type': 'Validation Tool Error', 'file': file_path_str, 'message': f'Failed during AST analysis: {e}'})
 
     elif action == 'REMOVE':
         # For REMOVE actions, we primarily check if the lines intended for removal exist.
@@ -273,51 +427,39 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         # Return early for REMOVE action as there's no code content to validate for syntax/style
         return {'issues': issues} 
 
-    # Add a general syntax check for Python files if content is available and action is ADD/MODIFY
-    if is_python and (action == 'ADD' or action == 'MODIFY') and content_to_check:
-        try:
-            # Use compile() for a quick syntax check. It raises SyntaxError on failure.
-            compile(content_to_check, file_path_str, 'exec')
-        except SyntaxError as se:
-            # Capture specific syntax error details for better reporting.
-            issues.append({
-                'type': 'Syntax Error',
-                'file': file_path_str,
-                'line': se.lineno, # Line number of the syntax error
-                'column': se.offset, # Column number of the syntax error
-                'message': f"Invalid Python syntax: {se.msg}"
-            })
-        except Exception as e:
-             # Catch any other unexpected errors during compilation.
-             issues.append({'type': 'Syntax Error', 'file': file_path_str, 'message': f'Error during compilation: {e}'})
-
     return {'issues': issues}
 
+# The main validation function that orchestrates checks for all changes
 def validate_code_output_batch(parsed_changes: List[Dict[str, Any]], original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
-    """Validates a batch of code changes.
-
-    Args:
-        parsed_changes: A list of dictionaries, where each dictionary represents a code change.
-        original_contents: A dictionary mapping file paths to their original content.
-
-    Returns:
-        A dictionary where keys are file paths and values are lists of validation issues for that file.
+    """Validates a batch of code changes and aggregates issues per file. 
+    This function is called after parse_and_validate has succeeded.
     """
     if original_contents is None:
         original_contents = {}
     all_validation_results = {}
-    for change in parsed_changes:
-        file_path = change.get('file_path')
+    for i, change_entry in enumerate(parsed_changes):
+        file_path = change_entry.get('file_path')
         if file_path:
-            original_content = original_contents.get(file_path)
-            validation_result = validate_code_output(change, original_content)
-            # Store issues per file path
-            all_validation_results[file_path] = validation_result.get('issues', [])
+            try:
+                # validate_code_output expects a single change dict and original content (if available)
+                # We pass original_contents which maps file_path to its content.
+                original_content = original_contents.get(file_path)
+                validation_result = validate_code_output(change_entry, original_content)
+                
+                # Store issues per file path
+                all_validation_results[file_path] = validation_result.get('issues', [])
+                logger.debug(f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues.")
+            except Exception as e:
+                logger.error(f"Error during validation of change entry {i} for file {file_path}: {e}")
+                # Add an error issue if validation itself fails
+                if file_path not in all_validation_results:
+                    all_validation_results[file_path] = []
+                all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})
         else:
-            # Handle changes without file_path if necessary, though ideally all should have one.
-            # For now, we'll just log a warning if a change lacks a file_path.
-            logger.warning(f"Encountered a code change without a 'file_path': {change}. Skipping validation for this item.")
+            # Handle changes without file_path if necessary
+            logger.warning(f"Encountered a code change without a 'file_path' in output {i}. Skipping validation for this item.")
             # Optionally, add a generic issue for the batch if such items are critical.
             # all_validation_results['<unspecified_file>'] = [{'type': 'Validation Error', 'message': 'Change item missing file_path'}]
             
+    logger.info(f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files.")
     return all_validation_results

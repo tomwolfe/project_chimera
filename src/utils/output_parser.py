@@ -6,7 +6,7 @@ from typing import Dict, Any, List
 from pathlib import Path
 from pydantic import BaseModel, Field, validator, model_validator
 
-# Import the centralized path utility functions - CHANGED FROM 'utils.path_utils'
+# Import the centralized path utility functions
 from src.utils.path_utils import sanitize_and_validate_file_path
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class CodeChange(BaseModel):
     @validator('file_path', pre=True)
     def validate_file_path(cls, v):
         """Validates file path to prevent traversal and ensure it's within the project's src directory."""
-        # The sanitize_and_validate_file_path function handles empty checks, 
+        # The sanitize_and_validate_file_path function handles empty checks,
         # character sanitization, absolute path prevention, and containment within PROJECT_BASE_DIR.
         # It also ensures the path is within the project's base directory.
         return sanitize_and_validate_file_path(v)
@@ -61,7 +61,7 @@ class LLMOutput(BaseModel):
     def check_code_changes_content(self) -> 'LLMOutput':
         """Ensures that required content fields within CodeChange are present based on action."""
         for i, change in enumerate(self.code_changes):
-            # Pydantic's model_validator on CodeChange already handles this, 
+            # Pydantic's model_validator on CodeChange already handles this,
             # but this provides an extra layer of validation at the LLMOutput level
             # and allows for more specific error messages referencing the index.
             if change.action in ["ADD", "MODIFY"] and not change.full_content:
@@ -87,7 +87,7 @@ class LLMOutputParser:
             # Regex to find JSON within ```json ... ``` or ``` ... ``` blocks.
             # This prioritizes ```json blocks but falls back to generic ``` blocks.
             match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL)
-            
+
             if match_json_block:
                 extracted_json_block = match_json_block.group(1) or match_json_block.group(2)
                 self.logger.info("Extracted JSON block from markdown.")
@@ -98,7 +98,8 @@ class LLMOutputParser:
 
             if not extracted_json_block or not extracted_json_block.strip():
                 self.logger.error("No JSON content found or extracted after attempting markdown parsing.")
-                raise ValueError("No JSON content found in the LLM output.")
+                # Return a structured error indicating the problem
+                return {"malformed_blocks": ["Error: No JSON content found or extracted from LLM output."]}
 
             # --- NEW CHECK ---
             # Ensure the extracted block looks like a JSON object or array before proceeding.
@@ -108,7 +109,8 @@ class LLMOutputParser:
             if not (cleaned_block_for_check.startswith('{') and cleaned_block_for_check.endswith('}')) and \
                not (cleaned_block_for_check.startswith('[') and cleaned_block_for_check.endswith(']')):
                 self.logger.error(f"Extracted content does not appear to be valid JSON structure (missing {{}} or []). Content: {cleaned_block_for_check[:200]}...")
-                raise ValueError("Extracted content does not appear to be valid JSON structure.")
+                # Return a structured error indicating the structural issue
+                return {"malformed_blocks": [f"Error: Extracted content does not appear to be valid JSON structure. Content snippet: {cleaned_block_for_check[:200]}..."]}
             # --- END NEW CHECK ---
 
             # Attempt to normalize potential formatting issues before parsing
@@ -121,8 +123,8 @@ class LLMOutputParser:
                 self.logger.info("Successfully parsed normalized JSON content.")
             except json.JSONDecodeError as e:
                 self.logger.error(f"Failed to decode JSON after normalization: {e}. Problematic content snippet: {normalized_json_str[:200]}...")
-                # Provide more context in the error message for debugging
-                raise ValueError(f"Malformed JSON received from LLM even after normalization: {e}") from e
+                # Return a structured error indicating JSON decoding failure
+                return {"malformed_blocks": [f"Error: Malformed JSON received from LLM even after normalization: {e}. Snippet: {normalized_json_str[:200]}..."]}
 
             # Validate the parsed JSON data against the LLMOutput Pydantic model
             try:
@@ -132,19 +134,23 @@ class LLMOutputParser:
                 return validated_output.dict(by_alias=True)
             except ValidationError as e:
                 self.logger.error(f"Pydantic validation failed: {e}. Problematic data snippet: {parsed_json_data}")
-                # Raise a specific error indicating schema violation
-                raise ValueError(f"LLM output schema validation failed: {e}") from e
+                # Extract detailed error information for better debugging
+                detailed_errors = []
+                for error in e.errors():
+                    loc = " -> ".join(map(str, error['loc']))
+                    detailed_errors.append(f"Field '{loc}': {error['msg']} (Type: {error['type']})")
 
-        except ValueError as e:
-            # Catch ValueErrors raised from JSON parsing, Pydantic validation, or structural checks
-            self.logger.error(f"Error during LLM output processing: {e}")
-            # Re-raise to allow higher levels to handle the failure
-            raise
-        except Exception as e:
-            # Catch any other unexpected errors during the process
+                error_message = "LLM output schema validation failed:\n" + "\n".join(detailed_errors)
+                # Return a structured error indicating schema validation failure
+                return {"malformed_blocks": [error_message]}
+
+        except ValueError as e: # Catch ValueErrors from initial checks
+            self.logger.error(f"Error during LLM output processing (ValueError): {e}")
+            return {"malformed_blocks": [f"Error: {e}"]}
+        except Exception as e: # Catch any other unexpected errors during the process
             self.logger.exception(f"An unexpected error occurred in parse_and_validate: {e}")
-            # Provide a generic but informative error message for unexpected issues
-            raise RuntimeError(f"An unexpected error occurred while processing LLM output: {e}") from e
+            # Return a structured error for unexpected issues
+            return {"malformed_blocks": [f"An unexpected error occurred while processing LLM output: {e}"]}
 
     def normalize_json_string(self, json_string: str) -> str:
         """Attempts to normalize common LLM-generated JSON formatting issues."""
@@ -154,14 +160,12 @@ class LLMOutputParser:
         # This regex looks for a newline that is NOT already preceded by a backslash.
         # We replace it with \\n. The lookbehind `(?<!\\)` ensures we don't escape already escaped newlines.
         normalized = re.sub(r'(?<!\\)\n', r'\\n', normalized)
-        
-        # 2. Replace common incorrect quote escaping with correct \"
-        # This regex looks for a quote that might be escaped incorrectly or is simply unescaped.
-        # It aims to replace sequences like `\"` or `\\\"` within string literals with `\\\\\\\"`.
-        # The lookbehind `(?<!\\\\)` ensures we don't escape already escaped quotes.
-        # The replacement `\\\\\\\"` correctly becomes `\"` in the final JSON string.
+
+        # 2. Escape double quotes within string values to be valid JSON.
+        # This regex looks for a double quote that is NOT already preceded by a backslash.
+        # We replace it with \\\\\". The lookbehind `(?<!\\\\)` ensures we don't escape already escaped quotes.
         normalized = re.sub(r'(?<!\\\\)\"', r'\\\\\\\"', normalized)
-        
+
         # 3. Remove extraneous whitespace around colons and commas for compactness
         normalized = re.sub(r'\s*:\s*', ':', normalized)
         normalized = re.sub(r'\s*,\s*', ',', normalized)
@@ -171,35 +175,43 @@ class LLMOutputParser:
         normalized = re.sub(r',\s*}', '}', normalized)
         # Remove comma before closing bracket ']'
         normalized = re.sub(r',\s*]', ']', normalized)
-        
+
         # Note: Fixing missing commas between elements or unquoted keys with regex is highly fragile
         # and prone to errors, so we defer those to the LLM prompt and rely on Pydantic for strict validation.
 
         return normalized
 
-    # The validate_code_output_batch function is not provided, 
-    # but its integration point would be here or called after parse_and_validate.
-    # Enhancements would focus on robust error handling, type checking, and potentially 
-    # batching logic for efficiency if applicable.
-    def validate_code_output_batch(self, outputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Placeholder for batch validation logic. 
-        Actual implementation needs to be provided.
-        Focus on robust error handling and type checking.
+    def validate_code_output_batch(self, outputs: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Validates a batch of code changes and aggregates issues per file.
+        This function is called after parse_and_validate has succeeded.
         """
-        self.logger.info(f"Starting batch validation for {len(outputs)} outputs.")
-        # Example: Iterate and apply individual validation or batch checks
-        validated_outputs = []
-        for i, output in enumerate(outputs):
-            try:
-                # Assuming each 'output' is already parsed and validated by parse_and_validate
-                # This function might perform additional checks on the list of CodeChanges, etc.
-                # For now, we'll just pass through validated outputs.
-                # A real implementation might re-validate or perform cross-output checks.
-                validated_outputs.append(output)
-                self.logger.debug(f"Output {i} passed batch validation.")
-            except Exception as e:
-                self.logger.error(f"Batch validation failed for output {i}: {e}")
-                # Decide on a strategy: skip, log, or raise?
-                # For now, we log and skip.
-        self.logger.info(f"Batch validation completed. {len(validated_outputs)} outputs passed.")
-        return validated_outputs
+        self.logger.info(f"Starting batch validation for {len(outputs)} code change entries.")
+        all_validation_results = {}
+        for i, change_entry in enumerate(outputs):
+            file_path = change_entry.get('file_path')
+            if file_path:
+                try:
+                    # validate_code_output expects a single change dict and original content (if available)
+                    # We pass original_contents which maps file_path to its content.
+                    original_content = None # Placeholder: original_contents are not directly passed to this parser method.
+                    # If original_contents were needed for REMOVE/MODIFY checks, they'd need to be passed here.
+                    # For now, we rely on the validator's internal checks or assume it doesn't need original content.
+                    validation_result = validate_code_output(change_entry, original_content=original_content)
+
+                    # Store issues per file path
+                    all_validation_results[file_path] = validation_result.get('issues', [])
+                    self.logger.debug(f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues.")
+                except Exception as e:
+                    self.logger.error(f"Error during validation of change entry {i} for file {file_path}: {e}")
+                    # Add an error issue if validation itself fails
+                    if file_path not in all_validation_results:
+                        all_validation_results[file_path] = []
+                    all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})
+            else:
+                # Handle changes without file_path if necessary
+                self.logger.warning(f"Encountered a code change without a 'file_path' in output {i}. Skipping validation for this item.")
+                # Optionally, add a generic issue for the batch if such items are critical.
+                # all_validation_results['<unspecified_file>'] = [{'type': 'Validation Error', 'message': 'Change item missing file_path'}]
+
+        self.logger.info(f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files.")
+        return all_validation_results
