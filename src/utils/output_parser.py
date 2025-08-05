@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from typing import Dict, Any, List
-from pydantic import BaseModel, Field, ValidationError, validator # Import pydantic components
+from pydantic import BaseModel, Field, ValidationError, validator
 
 # Define Pydantic models for better validation
 class CodeChange(BaseModel):

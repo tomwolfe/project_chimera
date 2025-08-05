@@ -1,4 +1,4 @@
-# code_validator.py
+# src/utils/code_validator.py
 
 import pycodestyle
 import io
@@ -10,13 +10,45 @@ import tempfile
 import hashlib
 import re
 import contextlib
-import logging # <-- ADD THIS LINE
+import logging
+from pathlib import Path # Ensure Path is imported
 
 class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
     pass
 
-# Helper function to run validators in a sandboxed environment
+# --- Helper function to find project root ---
+def find_project_root(start_path: Path = None) -> Path:
+    """
+    Finds the project root by searching upwards for a marker file (e.g., config.yaml, .git).
+    Defaults to the current working directory if no root is found.
+    """
+    if start_path is None:
+        # Start search from the directory of this file
+        start_path = Path(__file__).resolve().parent
+
+    current_path = start_path
+    # Search upwards for a marker file
+    for _ in range(10): # Limit search depth to prevent infinite loops
+        if (current_path / "config.yaml").exists() or \
+           (current_path / ".git").exists() or \
+           (current_path / "pyproject.toml").exists():
+            return current_path
+        
+        # Move up one directory
+        parent_path = current_path.parent
+        if parent_path == current_path: # Reached filesystem root
+            break
+        current_path = parent_path
+    
+    # Fallback: If no marker found, assume the current working directory is the root.
+    # This is common for Streamlit apps launched from the project root.
+    return Path(".").resolve()
+
+# --- Define PROJECT_ROOT dynamically ---
+PROJECT_ROOT = find_project_root()
+
+# --- Sandbox Execution Helper ---
 @contextlib.contextmanager
 def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
     """
@@ -32,7 +64,7 @@ def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
         
         # Replace a placeholder filename with the actual temp file path if present in the command
         # This allows commands like `python -m pycodestyle TEMP_FILE_PLACEHOLDER`
-        cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_path) for arg in command]
+        cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
         # Ensure the Python executable is used explicitly for Python commands
         if cmd_with_file[0] == "python" and sys.executable:
@@ -51,7 +83,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
 
     Args:
         parsed_change: A dictionary representing a single code change from parse_llm_code_output.
-                       Expected keys: 'file_path', 'action', 'content' (for ADD/MODIFY) or 'lines' (for REMOVE).
+                       Expected keys: 'file_path', 'action', 'full_content' (for ADD/MODIFY) or 'lines' (for REMOVE).
         original_content: The original content of the file if the action is 'MODIFY' or 'REMOVE'.
 
     Returns:
@@ -68,12 +100,12 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
     is_python = file_path.endswith('.py')
 
     if action == 'ADD':
-        content_to_check = parsed_change.get('content', '')
+        content_to_check = parsed_change.get('full_content', '') # CORRECTED: Use 'full_content'
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path, 'message': f"New file SHA256: {checksum}"})
 
     elif action == 'MODIFY':
-        content_to_check = parsed_change.get('content', '') # 'content' here is the new_content from the LLM output
+        content_to_check = parsed_change.get('full_content', '') # CORRECTED: Use 'full_content'
         checksum_new = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path, 'message': f"Modified file (new content) SHA256: {checksum_new}"})
         
@@ -166,10 +198,9 @@ def validate_code_output_batch(parsed_data: Dict, original_context: Dict) -> Dic
     """Validates all proposed code changes in a batch."""
     report = {'issues': [], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
 
-    # FIX: Iterate over the values of the 'changes' dictionary, not the keys.
-    # The 'changes' dictionary is structured as {file_path: change_dict}.
-    # We need to process each change_dict.
-    for change_item in parsed_data.get('changes', {}).values():
+    # FIX: Iterate over the values of the 'code_changes' list, not the keys.
+    # The 'code_changes' key in parsed_data is a list of dictionaries.
+    for change_item in parsed_data.get('code_changes', []): # Iterate over the list of changes
         file_path = change_item.get('file_path')
         original_content = original_context.get(file_path, "") if file_path else ""
         

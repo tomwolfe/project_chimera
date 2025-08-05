@@ -8,10 +8,10 @@ import re
 import datetime
 from typing import Dict, Any, Optional, List
 import yaml
-import logging # <-- ADDED: This import was suggested by the LLM for the LLMOutputParser
+import logging
 from rich.console import Console
 import core # Moved import to top for standard practice
-from utils import parse_llm_code_output, validate_code_output, format_git_diff # Import from new utils.py
+from utils import LLMOutputParser, validate_code_output_batch, format_git_diff # Import the robust LLMOutputParser and validate_code_output_batch
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -24,13 +24,10 @@ def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
         return config
     except FileNotFoundError:
         st.error(f"Configuration file not found at '{file_path}'. Please ensure it exists.")
-        # Removed: return {} # Return empty dict on error - this would hide the error message
     except yaml.YAMLError as e:
         st.error(f"Error parsing configuration file '{file_path}'. Please check its format: {e}")
-        # Removed: return {}
     except IOError as e:
         st.error(f"IO error reading configuration file '{file_path}'. Check permissions: {e}")
-        # Removed: return {}
     return {} # Explicitly return empty dict if any error occurs
 
 app_config = load_config()
@@ -71,55 +68,6 @@ def capture_rich_output_and_get_console():
 ansi_escape_re = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 def strip_ansi_codes(text):
     return ansi_escape_re.sub('', text)
-
-# --- LLM Output Parsing Class ---
-class LLMOutputParser:
-    """Handles parsing and validation of LLM-generated structured output."""
-    def __init__(self, llm_provider: core.GeminiProvider): # Use core.GeminiProvider for type hinting
-        self.llm_provider = llm_provider
-        self.logger = logging.getLogger(self.__class__.__name__) # This line now works because 'logging' is imported
-
-    def parse_and_validate(self, raw_output: str) -> Dict[str, Any]:
-        """Parses raw LLM output, validates JSON structure, and handles escaping."""
-        try:
-            # Attempt to parse JSON
-            parsed_json = json.loads(raw_output)
-            self.logger.info("Successfully parsed LLM output as JSON.")
-
-            # Basic validation of expected top-level keys
-            if not all(k in parsed_json for k in ["COMMIT_MESSAGE", "RATIONALE", "CODE_CHANGES"]):
-                self.logger.warning("Parsed JSON missing expected top-level keys.")
-                # Decide how to handle: raise error, return partial, etc.
-                # For now, we'll proceed but log a warning.
-
-            # Validate CODE_CHANGES structure if present
-            if "CODE_CHANGES" in parsed_json:
-                if not isinstance(parsed_json["CODE_CHANGES"], list):
-                    self.logger.error("CODE_CHANGES is not a list.")
-                    raise ValueError("Invalid CODE_CHANGES format: must be a list.")
-                
-                for change in parsed_json["CODE_CHANGES"]:
-                    if not isinstance(change, dict) or not all(k in change for k in ["file_path", "action"]):
-                        self.logger.error(f"Invalid change item format: {change}")
-                        raise ValueError("Invalid item in CODE_CHANGES: missing required keys.")
-                    if change["action"] in ["ADD", "MODIFY"] and "full_content" not in change:
-                        self.logger.error(f"Missing 'full_content' for ADD/MODIFY action: {change}")
-                        raise ValueError(f"Missing 'full_content' for ADD/MODIFY action in change: {change}")
-                    if change["action"] == "REMOVE" and "lines" not in change:
-                        self.logger.error(f"Missing 'lines' for REMOVE action: {change}")
-                        raise ValueError("Missing 'lines' for REMOVE action.")
-
-            return parsed_json
-
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Failed to decode JSON: {e}. Raw output:\n{raw_output[:500]}...")
-            raise ValueError(f"LLM output is not valid JSON. Error: {e}") from e
-        except ValueError as e:
-            self.logger.error(f"JSON structure validation failed: {e}")
-            raise e
-        except Exception as e:
-            self.logger.error(f"An unexpected error occurred during LLM output parsing: {e}")
-            raise RuntimeError(f"Failed to process LLM output: {e}") from e
 
 # --- Helper function for Markdown Report Generation ---
 def generate_markdown_report(user_prompt: str, final_answer: str, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any]) -> str:
@@ -566,21 +514,12 @@ if st.session_state.debate_ran:
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         raw_output = st.session_state.final_answer_output
         
-        # Use the new LLMOutputParser for parsing and validation
-        # Instantiate parser with the provider used for the debate
-        # Ensure gemini_provider_instance is accessible here, or re-instantiate if necessary
-        # For simplicity, we assume it's available in the scope. If not, it needs to be passed or recreated.
-        # A safer approach might be to pass it from the 'try' block or ensure it's stored in session state.
-        # For now, assuming gemini_provider_instance is still valid or accessible.
-        # If gemini_provider_instance is not defined here, it means the 'try' block failed before its creation.
-        # In that case, we should handle it.
-        
+        # Use the imported LLMOutputParser for parsing and validation
         parser = None
         if 'gemini_provider_instance' in locals() and gemini_provider_instance:
             parser = LLMOutputParser(gemini_provider_instance)
         else:
             # Fallback if gemini_provider_instance wasn't created (e.g., due to an earlier error)
-            # This might require a dummy provider or re-instantiation with API key from session state
             try:
                 fallback_provider = core.GeminiProvider( # Use core.GeminiProvider
                     api_key=st.session_state.api_key_input,
@@ -591,21 +530,25 @@ if st.session_state.debate_ran:
                 st.warning("Re-instantiated GeminiProvider for parsing as the original instance was not available.")
             except Exception as e:
                 st.error(f"Could not instantiate LLMOutputParser due to missing provider: {e}")
-                # Handle this case gracefully, perhaps by skipping the parsing section
                 parser = None # Ensure parser is None if instantiation fails
 
         validation_results = {'issues': [], 'malformed_blocks': []}
-        parsed_data = {'commit_message': 'Not generated.', 'rationale': 'Not generated.', 'code_changes': []} # Default to empty structure
+        # Default to empty structure if parsing fails or is skipped
+        parsed_data = {
+            "commit_message": "Not generated.",
+            "rationale": "Not generated.",
+            "code_changes": [],
+            "conflict_resolution": None,
+            "unresolved_conflict": None
+        }
 
         if parser:
             try:
                 parsed_data = parser.parse_and_validate(raw_output)
-                # Use the existing validate_code_output from utils.py for detailed validation
-                # Ensure codebase_context is correctly retrieved from session state
-                validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {})) 
+                # Use the imported validate_code_output_batch from utils.py for detailed validation
+                validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
             except (ValueError, RuntimeError) as e:
                 # If parsing fails, capture the error and mark blocks as malformed
-                # The error message from parse_and_validate is already descriptive
                 validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
                 # parsed_data remains default empty structure, ensuring "Not generated" is shown
 
@@ -614,9 +557,7 @@ if st.session_state.debate_ran:
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            # --- FIX: Access top-level key directly ---
             st.code(parsed_data.get('commit_message', 'Not generated.'), language='text')
-            # --- END FIX ---
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -625,9 +566,7 @@ if st.session_state.debate_ran:
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         
         st.markdown("**Rationale**")
-        # --- FIX: Access top-level key directly ---
         st.markdown(parsed_data.get('rationale', 'Not generated.'))
-        # --- END FIX ---
 
         if parsed_data.get('conflict_resolution'):
             st.markdown("**Conflict Resolution**")
