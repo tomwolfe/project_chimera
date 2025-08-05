@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Dict, Any, List
 from pathlib import Path
-from pydantic import BaseModel, Field, ValidationError, validator, model_validator
+from pydantic import BaseModel, Field, validator, model_validator
 
 # Import the centralized path utility functions - CHANGED FROM 'utils.path_utils'
 from src.utils.path_utils import sanitize_and_validate_file_path
