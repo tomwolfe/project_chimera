@@ -211,32 +211,29 @@ class GeminiProvider:
         
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
 
-# The DOMAIN_KEYWORDS are defined in app.py, not here.
-# The recommend_domain function here should only handle the LLM call part.
+    # @st.cache_data(ttl=3600, show_spinner=False) # This decorator should be applied in app.py or a module that calls this method
+    def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
+        """
+        Analyzes the prompt using the LLM to recommend a domain.
+        Relies on app.py for keyword matching and final validation.
+        """
+        if not prompt or not api_key:
+            return "General" # Cannot recommend without prompt or key
 
-# @st.cache_data(ttl=3600, show_spinner=False) # This decorator should be applied in app.py or a module that calls this method
-def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
-    """
-    Analyzes the prompt using the LLM to recommend a domain.
-    Relies on app.py for keyword matching and final validation.
-    """
-    if not prompt or not api_key:
-        return "General" # Cannot recommend without prompt or key
-
-    provider = GeminiProvider(api_key=api_key, model_name=model_name)
-    try:
-        # The prompt for domain recommendation is now more specific and includes 'Software Engineering'
-        # The actual validation and mapping will happen in app.py's get_domain_recommendation
-        response, _, _ = provider.generate(
-            prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', 'Software Engineering', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
-            system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
-            temperature=0.1,
-            max_tokens=32 # Keep max_tokens low for a single word response
-        )
-        # Return the raw LLM response; app.py will handle cleaning and validation.
-        return response.strip()
-    except Exception as e:
-        # Sanitize error message before printing
-        error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-        print(f"Error in domain recommendation LLM call: {error_msg}")
-        return "General" # Fallback to General on error
+        provider = GeminiProvider(api_key=api_key, model_name=model_name)
+        try:
+            # The prompt for domain recommendation is now more specific and includes 'Software Engineering'
+            # The actual validation and mapping will happen in app.py's get_domain_recommendation
+            response, _, _ = provider.generate(
+                prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', 'Software Engineering', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
+                system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
+                temperature=0.1,
+                max_tokens=32 # Keep max_tokens low for a single word response
+            )
+            # Return the raw LLM response; app.py will handle cleaning and validation.
+            return response.strip()
+        except Exception as e:
+            # Sanitize error message before printing
+            error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+            print(f"Error in domain recommendation LLM call: {error_msg}")
+            return "General" # Fallback to General on error

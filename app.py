@@ -540,10 +540,8 @@ if st.session_state.debate_ran:
                 
                 if change.get('action') in ['ADD', 'MODIFY']:
                     st.write("**Content:**")
-                    # Display code snippet, limit length for brevity
-                    content_snippet = change.get('content', '')
                     # Use 'python' as default language, but could be dynamic based on file_path
-                    st.code(content_snippet[:500] + ('...' if len(content_snippet) > 500 else ''), language='python') 
+                    st.code(change.get('content', '')[:500] + ('...' if len(change.get('content', '')) > 500 else ''), language='python') 
                 elif change.get('action') == 'REMOVE':
                     st.write("**Lines to Remove:**")
                     st.write(change.get('lines', []))
