@@ -11,7 +11,9 @@ import hashlib
 import re
 import contextlib
 import logging
-from pathlib import Path # Ensure Path is imported
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
@@ -20,7 +22,7 @@ class CodeValidationError(Exception):
 # --- Helper function to find project root ---
 def find_project_root(start_path: Path = None) -> Path:
     """
-    Finds the project root by searching upwards for a marker file (e.g., config.yaml, .git).
+    Finds the project root by searching upwards for a marker file (e.g., config.yaml, .git, pyproject.toml).
     Defaults to the current working directory if no root is found.
     """
     if start_path is None:
@@ -33,6 +35,7 @@ def find_project_root(start_path: Path = None) -> Path:
         if (current_path / "config.yaml").exists() or \
            (current_path / ".git").exists() or \
            (current_path / "pyproject.toml").exists():
+            logger.debug(f"Project root found at: {current_path}")
             return current_path
         
         # Move up one directory
@@ -43,9 +46,15 @@ def find_project_root(start_path: Path = None) -> Path:
     
     # Fallback: If no marker found, assume the current working directory is the root.
     # This is common for Streamlit apps launched from the project root.
+    logger.warning(
+        "Project root marker file (config.yaml, .git, pyproject.toml) not found. "
+        "Falling back to current working directory."
+    )
     return Path(".").resolve()
 
 # --- Define PROJECT_ROOT dynamically ---
+# This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root
+# if needed, though in this implementation, we use temporary files directly.
 PROJECT_ROOT = find_project_root()
 
 # --- Sandbox Execution Helper ---
@@ -54,32 +63,143 @@ def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
     """
     Executes a command in a sandboxed environment using a temporary file.
     Yields the command to execute and the temporary file path.
+    This helper is crucial for safely passing code content to external tools.
     """
     temp_file_path = None
     try:
-        # Create a temporary file to hold the content
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py') as temp_file:
+        # Create a temporary file to hold the content.
+        # delete=False is used because the file needs to exist when the subprocess runs.
+        # We manage cleanup manually in the finally block.
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.py', encoding='utf-8') as temp_file:
             temp_file.write(content)
             temp_file_path = temp_file.name # Store the path for later use
         
-        # Replace a placeholder filename with the actual temp file path if present in the command
-        # This allows commands like `python -m pycodestyle TEMP_FILE_PLACEHOLDER`
+        # Replace a placeholder filename (if used in the command) with the actual temp file path.
+        # This allows commands like `python -m pycodestyle TEMP_FILE_PLACEHOLDER` to work.
         cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
         
-        # Ensure the Python executable is used explicitly for Python commands
+        # Ensure the correct Python executable is used, especially in virtual environments.
         if cmd_with_file[0] == "python" and sys.executable:
             cmd_with_file[0] = sys.executable
             
         yield cmd_with_file, temp_file_path
     finally:
-        # Clean up the temporary file if it was created
+        # Clean up the temporary file if it was created and still exists.
         if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+            try:
+                os.remove(temp_file_path)
+            except OSError as e:
+                logger.error(f"Error removing temporary file {temp_file_path}: {e}")
 
-logger = logging.getLogger(__name__) # <-- ADD THIS LINE
+def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
+    """Runs pycodestyle on the given content using its library API."""
+    issues = []
+    try:
+        # Use StyleGuide for checking code. quiet=True suppresses non-error messages.
+        style_guide = pycodestyle.StyleGuide(quiet=True, format='default')
+        
+        # pycodestyle's check_files expects file paths. We simulate this using a temporary file.
+        # delete=True ensures the file is cleaned up automatically after use.
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=True) as temp_file:
+            temp_file.write(content)
+            temp_file.flush() # Ensure content is written before pycodestyle reads it
+            
+            # pycodestyle.check_files expects a list of filenames.
+            report = style_guide.check_files([temp_file.name])
+            
+            # Process the report. Each line typically contains: filename:line:col: code message
+            for line in report.splitlines():
+                # Regex to parse pycodestyle output format, capturing line, col, code, and message.
+                match = re.match(r"^[^:]+:(?P<line>\d+):(?P<col>\d+): (?P<code>\w+) (?P<message>.*)", line)
+                if match:
+                    issues.append({
+                        'type': 'PEP8 Violation',
+                        'file': filename, # Use the original filename for reporting
+                        'line': int(match.group('line')),
+                        'column': int(match.group('col')),
+                        'code': match.group('code'),
+                        'message': match.group('message').strip()
+                    })
+    except Exception as e:
+        logger.error(f"Error running pycodestyle on {filename}: {e}")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run pycodestyle: {e}'})
+    return issues
+
+def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
+    """Runs Bandit security analysis on the given content via subprocess."""
+    issues = []
+    # Bandit typically analyzes files, so we use a temporary file.
+    # Using delete=True for automatic cleanup.
+    try:
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=True) as temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            
+            # Construct the Bandit command safely.
+            # Use sys.executable to ensure the correct Python interpreter is used.
+            # Pass the temporary file path to Bandit.
+            command = [
+                sys.executable,
+                "-m", "bandit",
+                "-q",  # Quiet mode
+                "-f", "json", # Output format
+                # "-c", "/dev/null", # Use default config, or specify a config file if needed
+                temp_file.name
+            ]
+            
+            # Execute Bandit using subprocess with shell=False for security.
+            process = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False, # Don't raise exception on non-zero exit codes
+                shell=False, # Crucial for security
+                timeout=30 # Add a timeout to prevent hanging
+            )
+
+            # Bandit returns 0 if no issues, 1 if issues are found, >1 for errors.
+            if process.returncode not in (0, 1): 
+                logger.error(f"Bandit execution failed for {filename} with return code {process.returncode}. Stderr: {process.stderr}")
+                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed: {process.stderr}'})
+            else:
+                try:
+                    # Parse the JSON output.
+                    bandit_results = process.stdout.strip()
+                    if bandit_results:
+                        import json
+                        data = json.loads(bandit_results)
+                        for issue in data.get('results', []):
+                            # Filter out 'info' level issues if desired, or include all.
+                            # For security analysis, 'info' might be relevant too, but typically warnings/errors are prioritized.
+                            if issue['level'] != 'info': # Example: only include non-info issues
+                                issues.append({
+                                    'type': 'Bandit Security Issue',
+                                    'file': filename,
+                                    'line': issue.get('line_number'), # Bandit provides line numbers
+                                    'code': issue.get('test_id'),
+                                    'message': f"[{issue.get('severity')}] {issue.get('description')}"
+                                })
+                except json.JSONDecodeError as jde:
+                    logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {process.stdout}")
+                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
+                except Exception as e:
+                    logger.error(f"Unexpected error processing Bandit output for {filename}: {e}")
+                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
+
+    except FileNotFoundError:
+        logger.error("Bandit command not found. Ensure Bandit is installed and in the PATH.")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit executable not found. Please install Bandit.'})
+    except subprocess.TimeoutExpired:
+        logger.error(f"Bandit execution timed out for {filename}.")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'})
+    except Exception as e:
+        logger.error(f"Unexpected error running Bandit on {filename}: {e}")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})
+        
+    return issues
 
 def validate_code_output(parsed_change: Dict[str, Any], original_content: str = None) -> Dict[str, Any]:
-    """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and consistency.
+    """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security.
 
     Args:
         parsed_change: A dictionary representing a single code change from parse_llm_code_output.
@@ -87,124 +207,117 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         original_content: The original content of the file if the action is 'MODIFY' or 'REMOVE'.
 
     Returns:
-        A dictionary containing validation results, including issues and malformed blocks.
+        A dictionary containing validation results, including issues.
     """
-    file_path = parsed_change.get('file_path')
+    file_path_str = parsed_change.get('file_path')
     action = parsed_change.get('action')
     content_to_check = ""
     issues = []
 
-    if not file_path or not action:
-        return {'issues': [{'type': 'Validation Error', 'file': file_path or 'N/A', 'message': 'Missing file_path or action in parsed change.'}]}
-
-    is_python = file_path.endswith('.py')
+    if not file_path_str or not action:
+        return {'issues': [{'type': 'Validation Error', 'file': file_path_str or 'N/A', 'message': 'Missing file_path or action in parsed change.'}]}
+    
+    file_path = Path(file_path_str)
+    is_python = file_path.suffix.lower() == '.py'
 
     if action == 'ADD':
         content_to_check = parsed_change.get('full_content', '')
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
-        issues.append({'type': 'Content Integrity', 'file': file_path, 'message': f"New file SHA256: {checksum}"})
+        issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"New file SHA256: {checksum}"})
+        if is_python:
+            issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+            issues.extend(_run_bandit(content_to_check, file_path_str))
 
     elif action == 'MODIFY':
         content_to_check = parsed_change.get('full_content', '')
         checksum_new = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
-        issues.append({'type': 'Content Integrity', 'file': file_path, 'message': f"Modified file (new content) SHA256: {checksum_new}"})
+        issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"Modified file (new content) SHA256: {checksum_new}"})
         
-        # Optional: Compare with original content if available to ensure diff logic is sound
-        if original_content:
+        if original_content is not None:
             original_checksum = hashlib.sha256(original_content.encode('utf-8')).hexdigest()
             if checksum_new == original_checksum:
-                issues.append({'type': 'No Change Detected', 'file': file_path, 'message': 'New content is identical to original.'})
+                issues.append({'type': 'No Change Detected', 'file': file_path_str, 'message': 'New content is identical to original.'})
+            if is_python:
+                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+                issues.extend(_run_bandit(content_to_check, file_path_str))
+        else:
+            # If original content is not provided for MODIFY, we can still validate the new content
+            if is_python:
+                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+                issues.extend(_run_bandit(content_to_check, file_path_str))
 
     elif action == 'REMOVE':
-        # No content to check for syntax/style for REMOVE, but can check if lines exist in original
-        if original_content:
+        # For REMOVE actions, we primarily check if the lines intended for removal exist.
+        # This is a heuristic and might not catch all semantic issues.
+        if original_content is not None:
             original_lines = original_content.splitlines()
             lines_to_remove = parsed_change.get('lines', [])
-            for line_to_remove in lines_to_remove:
-                # This check might be too strict if the LLM slightly modifies a line before removing it.
-                # A better check might be to see if the *intent* of removal is valid.
-                # For now, we stick to the exact line check.
-                if line_to_remove not in original_lines:
-                    issues.append({'type': 'Diff Inconsistency', 'file': file_path, 'message': f"Line to remove '{line_to_remove}' not found in original file.", 'line': 'N/A'})
+            # Use a set for efficient lookup
+            original_lines_set = set(original_lines)
+            
+            for line_content_to_remove in lines_to_remove:
+                # Check if the line (or a close approximation) exists in the original content.
+                # This check is inherently fuzzy. A more robust approach would involve diffing.
+                # For now, we check for exact matches, but log a warning if not found.
+                if line_content_to_remove not in original_lines_set:
+                    # This is a potential issue: the LLM wants to remove a line that doesn't seem to exist.
+                    # It might be a slight modification before removal, or an error.
+                    # We'll flag it but not necessarily fail validation unless it's critical.
+                    issues.append({
+                        'type': 'Potential Removal Mismatch',
+                        'file': file_path_str,
+                        'message': f"Line intended for removal not found exactly in original content: '{line_content_to_remove[:80]}'"
+                    })
         else:
-            issues.append({'type': 'Missing Context', 'file': file_path, 'message': 'Original content not provided for REMOVE action validation.'})
-        # Return early for REMOVE action as there's no code content to validate
+            issues.append({'type': 'Validation Warning', 'file': file_path_str, 'message': 'Original content not provided for REMOVE action validation.'})
+        # Return early for REMOVE action as there's no code content to validate for syntax/style
         return {'issues': issues} 
 
-    if is_python and content_to_check:
-        # 1. Syntax Validation (sandboxed)
-        # Use compileall for robust syntax validation
-        # The '-o' flag for compileall is for output directory, which we don't need here.
-        # We just need to check if it compiles.
-        # Using TEMP_FILE_PLACEHOLDER requires the command to be processed to replace it.
-        ast_command = [sys.executable, "-m", "compileall", "-q", "TEMP_FILE_PLACEHOLDER"] 
+    # Add a general syntax check for Python files if content is available and action is ADD/MODIFY
+    if is_python and (action == 'ADD' or action == 'MODIFY') and content_to_check:
         try:
-            with _sandbox_execution(ast_command, content_to_check) as (cmd, temp_path):
-                # Ensure the command uses the actual temporary file path
-                final_cmd = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_path) for arg in cmd]
-                process = subprocess.run(
-                    final_cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False, # Don't raise CalledProcessError for non-zero exit codes
-                    timeout=10,
-                    env={"PYTHONPATH": os.getcwd()} # Ensure Python can find local modules if needed
-                )
-                if process.returncode != 0:
-                    # py_compile errors are usually in stdout or stderr
-                    error_output = process.stdout + process.stderr
-                    issues.append({'type': 'Syntax Error', 'file': file_path, 'message': error_output.strip()})
-        except subprocess.TimeoutExpired:
-            issues.append({'type': 'Syntax Error', 'file': file_path, 'message': "Syntax validation timed out."})
+            # Use compile() for a quick syntax check. It raises SyntaxError on failure.
+            compile(content_to_check, file_path_str, 'exec')
+        except SyntaxError as se:
+            # Capture specific syntax error details for better reporting.
+            issues.append({
+                'type': 'Syntax Error',
+                'file': file_path_str,
+                'line': se.lineno, # Line number of the syntax error
+                'column': se.offset, # Column number of the syntax error
+                'message': f"Invalid Python syntax: {se.msg}"
+            })
         except Exception as e:
-            issues.append({'type': 'Syntax Error', 'file': file_path, 'message': f"Error running syntax validation: {e}"})
-        
-        # 2. Style Compliance (PEP8) (sandboxed)
-        # Use pycodestyle on a temporary file
-        pep8_command = [sys.executable, "-m", "pycodestyle", "--format=default", "TEMP_FILE_PLACEHOLDER"]
-        try:
-            with _sandbox_execution(pep8_command, content_to_check) as (cmd, temp_path):
-                # Ensure the command uses the actual temporary file path
-                final_cmd = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_path) for arg in cmd]
-                process = subprocess.run(
-                    final_cmd,
-                    capture_output=True,
-                    text=True,
-                    check=False, # Don't raise CalledProcessError for non-zero exit codes
-                    timeout=10,
-                    env={"PYTHONPATH": os.getcwd()} # Ensure Python can find local modules if needed
-                )
-                if process.returncode != 0:
-                    # Parse pycodestyle output to get individual errors
-                    for line in process.stdout.splitlines():
-                        # pycodestyle output format: <filename>:<line>:<col>: <message>
-                        # We need to use the actual temp_path for matching, escaping any special regex chars in it.
-                        escaped_temp_path = re.escape(temp_path)
-                        match = re.match(rf'{escaped_temp_path}:(\d+):(\d+): (.*)', line)
-                        if match:
-                            issues.append({'type': 'PEP8 Violation', 'file': file_path, 'message': match.group(3), 'line': int(match.group(1)), 'column': int(match.group(2))})
-                        else:
-                            # If the format doesn't match, log the raw line as a general PEP8 issue
-                            issues.append({'type': 'PEP8 Violation', 'file': file_path, 'message': line.strip()})
-        except subprocess.TimeoutExpired:
-            issues.append({'type': 'PEP8 Violation', 'file': file_path, 'message': "Style validation timed out."})
-        except Exception as e:
-            issues.append({'type': 'PEP8 Violation', 'file': file_path, 'message': f"Error running style validation: {e}"})
-            
+             # Catch any other unexpected errors during compilation.
+             issues.append({'type': 'Syntax Error', 'file': file_path_str, 'message': f'Error during compilation: {e}'})
+
     return {'issues': issues}
 
-# The main validation function that orchestrates checks for all changes
-def validate_code_output_batch(parsed_data: Dict, original_context: Dict) -> Dict:
-    """Validates all proposed code changes in a batch."""
-    report = {'issues': [], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+def validate_code_output_batch(parsed_changes: List[Dict[str, Any]], original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Validates a batch of code changes.
 
-    # FIX: Iterate over the values of the 'code_changes' list, not the keys.
-    # The 'code_changes' key in parsed_data is a list of dictionaries.
-    for change_item in parsed_data.get('code_changes', []): # Iterate over the list of changes
-        file_path = change_item.get('file_path')
-        original_content = original_context.get(file_path, "") if file_path else ""
-        
-        validation_result = validate_code_output(change_item, original_content)
-        report['issues'].extend(validation_result.get('issues', []))
-        
-    return report
+    Args:
+        parsed_changes: A list of dictionaries, where each dictionary represents a code change.
+        original_contents: A dictionary mapping file paths to their original content.
+
+    Returns:
+        A dictionary where keys are file paths and values are lists of validation issues for that file.
+    """
+    if original_contents is None:
+        original_contents = {}
+    all_validation_results = {}
+    for change in parsed_changes:
+        file_path = change.get('file_path')
+        if file_path:
+            original_content = original_contents.get(file_path)
+            validation_result = validate_code_output(change, original_content)
+            # Store issues per file path
+            all_validation_results[file_path] = validation_result.get('issues', [])
+        else:
+            # Handle changes without file_path if necessary, though ideally all should have one.
+            # For now, we'll just log a warning if a change lacks a file_path.
+            logger.warning(f"Encountered a code change without a 'file_path': {change}. Skipping validation for this item.")
+            # Optionally, add a generic issue for the batch if such items are critical.
+            # all_validation_results['<unspecified_file>'] = [{'type': 'Validation Error', 'message': 'Change item missing file_path'}]
+            
+    return all_validation_results
