@@ -6,11 +6,10 @@ from typing import Dict, Any, List
 from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError, validator, model_validator
 
-# Define a base directory for safety. Adjust this path as needed for your project structure.
-# For example, if your project root is where app.py is, and src is a subdirectory.
-# If BASE_PROJECT_DIR is meant to be the root of the repository, adjust accordingly.
-# For now, assuming 'src' is the intended safe directory for code changes.
-BASE_PROJECT_DIR = Path("./src").resolve()
+# Import the centralized path utility functions - CHANGED FROM 'utils.path_utils'
+from src.utils.path_utils import sanitize_and_validate_file_path
+
+logger = logging.getLogger(__name__)
 
 class CodeChange(BaseModel):
     file_path: str
@@ -18,133 +17,145 @@ class CodeChange(BaseModel):
     full_content: str | None = Field(None, alias="full_content") # Optional for REMOVE
     lines: List[str] | None = None # Optional for ADD/MODIFY
 
-    @validator('file_path')
+    @validator('file_path', pre=True)
     def validate_file_path(cls, v):
         """Validates file path to prevent traversal and ensure it's within the project's src directory."""
-        try:
-            # Normalize path and resolve against a base directory
-            # This prevents traversal like '../../etc/passwd'
-            normalized_path = Path(v).resolve()
-            
-            # Ensure the path is within the allowed base directory
-            # This check will raise ValueError if normalized_path is not a subdirectory of base_dir
-            normalized_path.relative_to(BASE_PROJECT_DIR)
-
-            # Basic check for potentially malicious characters. Less critical after path normalization,
-            # but can still catch unusual filenames or prevent specific OS-level issues.
-            if re.search(r'[<>:"|?*]', v):
-                 raise ValueError("Invalid file_path: contains forbidden characters.")
-
-            return str(normalized_path) # Return the validated and normalized path
-        except ValueError as e:
-            # Catch errors from relative_to or Path operations
-            raise ValueError(f"Invalid file_path '{v}': {e}") from e
-        except Exception as e: # Catch any other unexpected errors during path processing
-            raise ValueError(f"Error validating file_path '{v}': {e}") from e
+        # The sanitize_and_validate_file_path function handles empty checks, 
+        # character sanitization, absolute path prevention, and containment within PROJECT_BASE_DIR.
+        # It also ensures the path is within the project's base directory.
+        return sanitize_and_validate_file_path(v)
 
     @validator('action')
     def validate_action(cls, v):
+        """Validates the action type."""
         valid_actions = ["ADD", "MODIFY", "REMOVE"]
         if v not in valid_actions:
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
         return v
 
+    # Model validator to check content requirements based on action
+    @model_validator(mode='after')
+    def check_content_based_on_action(self) -> 'CodeChange': # Changed return type hint
+        """Ensures that full_content is provided for ADD/MODIFY and lines for REMOVE."""
+        if self.action in ["ADD", "MODIFY"] and not self.full_content:
+            raise ValueError(
+                f"full_content is required for action '{self.action}' on file '{self.file_path}'.")
+        # For REMOVE action, 'lines' should be provided, even if it's an empty list.
+        if self.action == "REMOVE" and self.lines is None:
+             raise ValueError(
+                 f"lines must be provided (can be an empty list) for action 'REMOVE' on file '{self.file_path}'.")
+        # Ensure 'lines' is a list if provided for REMOVE action
+        if self.action == "REMOVE" and self.lines is not None and not isinstance(self.lines, list):
+             raise ValueError(f"lines must be a list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__}.")
+        return self
+
 class LLMOutput(BaseModel):
     commit_message: str = Field(alias="COMMIT_MESSAGE")
     rationale: str = Field(alias="RATIONALE")
     code_changes: List[CodeChange] = Field(alias="CODE_CHANGES")
-    # Optional fields for conflict resolution
+    # These fields are optional as per the schema, but their presence/absence should be handled.
     conflict_resolution: str | None = Field(None, alias="CONFLICT_RESOLUTION")
     unresolved_conflict: str | None = Field(None, alias="UNRESOLVED_CONFLICT")
 
     @model_validator(mode='after')
     def check_code_changes_content(self) -> 'LLMOutput':
-        """Validates that full_content is present for ADD/MODIFY and lines for REMOVE."""
-        for change in self.code_changes:
+        """Ensures that required content fields within CodeChange are present based on action."""
+        for i, change in enumerate(self.code_changes):
+            # Pydantic's model_validator on CodeChange already handles this, 
+            # but this provides an extra layer of validation at the LLMOutput level
+            # and allows for more specific error messages referencing the index.
             if change.action in ["ADD", "MODIFY"] and not change.full_content:
                 raise ValueError(
-                    f"full_content is required for action '{change.action}' on file '{change.file_path}'."
-                )
-            if change.action == "REMOVE" and not change.lines:
-                raise ValueError(
-                    f"lines are required for action 'REMOVE' on file '{change.file_path}'."
-                )
+                    f"LLMOutput validation failed: full_content is required for action '{change.action}' on file '{change.file_path}' (index {i}).")
+            if change.action == "REMOVE" and change.lines is None:
+                 raise ValueError(
+                     f"LLMOutput validation failed: lines must be provided for action 'REMOVE' on file '{change.file_path}' (index {i}).")
             if change.action == "REMOVE" and change.lines is not None and not isinstance(change.lines, list):
-                 raise ValueError(f"lines must be a list for action 'REMOVE' on file '{change.file_path}'.")
+                 raise ValueError(f"LLMOutput validation failed: lines must be a list for action 'REMOVE' on file '{change.file_path}' (index {i}). Found type: {type(change.lines).__name__}.")
         return self
-
 
 class LLMOutputParser:
     def __init__(self, llm_provider):
         self.llm_provider = llm_provider
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def parse_and_validate(self, raw_output: str) -> LLMOutput: # Return type changed to Pydantic model
-        """Parses raw LLM output, validates JSON structure using Pydantic models."""
+    def parse_and_validate(self, raw_output: str) -> Dict[str, Any]: # Return Dict for broader compatibility, Pydantic validation is internal
         json_content_str = None
-        parsed_json_data = None
+        extracted_json_block = None
 
         try:
-            # Attempt to extract JSON from markdown code blocks first
-            # The `(?s)` flag makes '.' match newlines.
-            # The `.*?` makes the match non-greedy.
-            match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL)
+            # Regex to find JSON within ```json ... ``` or ``` ... ``` blocks.
+            # This prioritizes ```json blocks but falls back to generic ``` blocks.
+            # It's designed to be relatively robust but might miss highly malformed blocks.
+            match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL) # Added re.DOTALL
             
             if match_json_block:
-                json_content_str = match_json_block.group(1) or match_json_block.group(2)
+                extracted_json_block = match_json_block.group(1) or match_json_block.group(2)
                 self.logger.info("Extracted JSON block from markdown.")
             else:
-                # If no markdown block is found, attempt to parse the entire output as JSON.
-                # This is a fallback and should be logged as potentially less reliable.
                 self.logger.warning("No markdown JSON block found. Attempting to parse entire output as JSON.")
-                json_content_str = raw_output
+                # Fallback: If no markdown block is found, attempt to parse the entire raw output.
+                # This is less reliable and potentially riskier if the output isn't JSON.
+                extracted_json_block = raw_output
 
-            if not json_content_str or not json_content_str.strip():
-                self.logger.error("No JSON content found or extracted from the LLM output.")
+            if not extracted_json_block or not extracted_json_block.strip():
+                self.logger.error("No JSON content found or extracted after attempting markdown parsing.")
                 raise ValueError("No JSON content found in the LLM output.")
-                
-            # Attempt to parse the extracted JSON string
+
+            # Attempt to parse the extracted content as JSON
             try:
-                parsed_json_data = json.loads(json_content_str)
-                self.logger.info("Successfully parsed extracted JSON string.")
+                parsed_json_data = json.loads(extracted_json_block)
+                self.logger.info("Successfully parsed JSON content.")
             except json.JSONDecodeError as e:
-                self.logger.error(
-                    f"Failed to decode JSON: {e}. Extracted JSON snippet: {json_content_str[:500]}..."
-                )
-                # Provide a more specific error message for JSON decoding failures
-                raise ValueError(f"Extracted LLM output is not valid JSON. Error: {e}") from e
+                self.logger.error(f"Failed to decode JSON: {e}. Raw extracted content: {extracted_json_block[:200]}...")
+                # Provide more context in the error message for debugging
+                raise ValueError(f"Malformed JSON received from LLM: {e}") from e
 
-            # Validate the parsed JSON structure using Pydantic
-            validated_data = LLMOutput(**parsed_json_data)
-            self.logger.info("Pydantic validation successful.")
-            return validated_data # Return Pydantic model instance
+            # Validate the parsed JSON data against the LLMOutput Pydantic model
+            try:
+                validated_output = LLMOutput(**parsed_json_data)
+                self.logger.info("LLM output successfully validated against schema.")
+                # Return as a dictionary for broader compatibility, as the Pydantic model itself is validated
+                return validated_output.dict(by_alias=True)
+            except ValidationError as e:
+                self.logger.error(f"Pydantic validation failed: {e}")
+                # Raise a specific error indicating schema violation
+                raise ValueError(f"LLM output schema validation failed: {e}") from e
 
-        except ValidationError as e:
-            self.logger.error(f"Pydantic validation failed: {e}")
-            # Provide more specific error messages from Pydantic
-            error_details = []
-            for error in e.errors():
-                field_name = ".".join(map(str, error['loc']))
-                error_details.append(f"Field '{field_name}': {error['msg']}")
-            raise ValueError(f"LLM output schema validation failed. Details: {'; '.join(error_details)}") from e
-        except Exception as e: # Catch any other unexpected errors during processing
-            self.logger.error(f"An unexpected error occurred during LLM output processing: {e}")
-            # Re-raise as a RuntimeError for unexpected issues
-            raise RuntimeError(f"Failed to process LLM output: {e}") from e
+        except ValueError as e:
+            # Catch ValueErrors raised from JSON parsing or Pydantic validation
+            self.logger.error(f"Error during LLM output processing: {e}")
+            # Re-raise to allow higher levels to handle the failure
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors during the process
+            self.logger.exception(f"An unexpected error occurred in parse_and_validate: {e}")
+            # Provide a generic but informative error message for unexpected issues
+            raise RuntimeError(f"An unexpected error occurred while processing LLM output: {e}") from e
 
-    def get_llm_response(self, prompt: str) -> str:
-        """Placeholder for calling the LLM provider and handling potential retries."""
-        # TODO: Implement actual LLM call with retry logic using self.llm_provider
-        # Example: 
-        # retries = 3
-        # for i in range(retries):
-        #     try:
-        #         response = self.llm_provider.generate(prompt)
-        #         return response
-        #     except Exception as e:
-        #         self.logger.warning(f"LLM call failed (attempt {i+1}/{retries}): {e}")
-        #         if i == retries - 1:
-        #             raise RuntimeError("LLM call failed after multiple retries.") from e
-        #         time.sleep(2**i) # Exponential backoff
-        self.logger.warning("LLM provider integration for response generation is not yet implemented.")
-        return "{ \"COMMIT_MESSAGE\": \"Placeholder Commit\", \"RATIONALE\": \"Placeholder Rationale\", \"CODE_CHANGES\": [ { \"file_path\": \"placeholder.py\", \"action\": \"ADD\", \"full_content\": \"# Placeholder file\\nprint(\\\"Hello, World!\\\")\\n\" } ] }"
+    # The validate_code_output_batch function is not provided, 
+    # but its integration point would be here or called after parse_and_validate.
+    # Enhancements would focus on robust error handling, type checking, and potentially 
+    # batching logic for efficiency if applicable.
+    def validate_code_output_batch(self, outputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Placeholder for batch validation logic. 
+        Actual implementation needs to be provided.
+        Focus on robust error handling and type checking.
+        """
+        self.logger.info(f"Starting batch validation for {len(outputs)} outputs.")
+        # Example: Iterate and apply individual validation or batch checks
+        validated_outputs = []
+        for i, output in enumerate(outputs):
+            try:
+                # Assuming each 'output' is already parsed and validated by parse_and_validate
+                # This function might perform additional checks on the list of CodeChanges, etc.
+                # For now, we'll just pass through validated outputs.
+                # A real implementation might re-validate or perform cross-output checks.
+                validated_outputs.append(output)
+                self.logger.debug(f"Output {i} passed batch validation.")
+            except Exception as e:
+                self.logger.error(f"Batch validation failed for output {i}: {e}")
+                # Decide on a strategy: skip, log, or raise?
+                # For now, we log and skip.
+        self.logger.info(f"Batch validation completed. {len(validated_outputs)} outputs passed.")
+        return validated_outputs
