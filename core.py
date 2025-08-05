@@ -340,7 +340,7 @@ class SocraticDebate:
                                         f"Please provide a general, concise summary or attempt to answer the original prompt given the context. "
                                         f"Original prompt:\n{step_prompt}")
                 current_output_key = f"{output_key}_Fallback_Attempt_{attempt}"
-                self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed. Attempting fallback to '{current_persona_name}' (Attempt {attempt}/{max_retries_on_fail}).[/yellow]", state="warning")
+                self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed. Attempting fallback to '{current_persona_name}' (Attempt {attempt}/{max_retries_on_fail}).[/yellow]", state="running")
 
             estimated_next_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request)
 
