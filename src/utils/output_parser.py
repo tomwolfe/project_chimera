@@ -61,20 +61,36 @@ class LLMOutputParser:
     def parse_and_validate(self, raw_output: str) -> Dict[str, Any]:
         """Parses raw LLM output, validates JSON structure using Pydantic models."""
         try:
-            parsed_json = json.loads(raw_output)
-            self.logger.info("Successfully parsed LLM output as JSON.")
+            # 1. Try to extract JSON from markdown code blocks (```json ... ``` or ``` ... ```)
+            json_content_str = None
+            # Regex to find JSON within ```json ... ``` or ``` ... ```
+            # The `(?s)` flag makes '.' match newlines.
+            # The `.*?` makes the match non-greedy.
+            match_json_block = re.search(r"```json\n(.*?)\n```|```\n(.*?)\n```", raw_output, re.DOTALL)
+            
+            if match_json_block:
+                # The JSON content will be in group 1 or group 2, depending on which ``` block matched
+                json_content_str = match_json_block.group(1) or match_json_block.group(2)
+                self.logger.info("Extracted JSON block from markdown.")
+            else:
+                # If no markdown block is found, assume the entire output might be JSON
+                json_content_str = raw_output
+                self.logger.info("No markdown JSON block found, attempting to parse entire output as JSON.")
+
+            # 2. Attempt to parse the extracted JSON string
+            parsed_json_data = None
+            if not json_content_str or not json_content_str.strip():
+                self.logger.error("No JSON content found or extracted from the LLM output.")
+                raise ValueError("No JSON content found in the LLM output.")
+                
+            parsed_json_data = json.loads(json_content_str)
+            self.logger.info("Successfully parsed extracted JSON string.")
         except json.JSONDecodeError as e:
             self.logger.error(
-                f"Failed to decode JSON: {e}. Raw output snippet: {raw_output[:500]}..."
+                f"Failed to decode JSON: {e}. Extracted JSON snippet: {json_content_str[:500]}..."
             )
-            raise ValueError(f"LLM output is not valid JSON. Error: {e}") from e
-
-        try:
-            # Validate the entire structure using Pydantic
-            validated_data = LLMOutput(**parsed_json)
-            # Convert Pydantic model back to dict for consistency with original proposal
-            return validated_data.model_dump()
-        except ValidationError as e:
+            raise ValueError(f"Extracted LLM output is not valid JSON. Error: {e}") from e
+        except ValidationError as e: # This catch is for Pydantic validation, not JSON parsing
             self.logger.error(f"Pydantic validation failed: {e}")
             # Provide more specific error messages from Pydantic
             error_details = []
@@ -82,6 +98,11 @@ class LLMOutputParser:
                 field_name = ".".join(map(str, error['loc']))
                 error_details.append(f"Field '{field_name}': {error['msg']}")
             raise ValueError(f"LLM output schema validation failed. Details: {'; '.join(error_details)}") from e
-        except Exception as e:
+        except Exception as e: # Catch any other unexpected errors during processing
             self.logger.error(f"An unexpected error occurred during LLM output validation: {e}")
             raise RuntimeError(f"Failed to process LLM output: {e}") from e
+
+        # 3. Validate the parsed JSON structure using Pydantic
+        validated_data = LLMOutput(**parsed_json_data)
+        # Convert Pydantic model back to dict for consistency with original proposal
+        return validated_data.model_dump()
