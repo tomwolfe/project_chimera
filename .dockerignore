@@ -19,7 +19,6 @@ env/
 # Ignore development/scripting files not needed in production
 repo_to_single_file.sh
 repo_contents.txt
-main.py
 LICENSE
 README.md
 
