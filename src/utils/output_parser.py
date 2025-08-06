@@ -214,14 +214,14 @@ class LLMOutputParser:
         
         # Ensure it starts and ends with a JSON object structure if it looks like one
         # This is a heuristic and might not always be correct.
-        stripped_json_str = json_str.strip()
-        if not (stripped_json_str.startswith('{') and stripped_json_str.endswith('}')):
-            # If it's not an object, try to make it one if it seems like it should be
-            # This is a heuristic and might not always be correct.
-            # For example, if the LLM returns a list directly.
-            # A more robust solution might try parsing as list if object fails.
-            # For now, we'll wrap it in an object if it doesn't look like one.
-            json_str = '{' + json_str + '}'
+        # Only wrap if it's not already a valid JSON object or array.
+        # This prevents wrapping a valid JSON array into an invalid object.
+        if not (json_str.strip().startswith('{') and json_str.strip().endswith('}')) and \
+           not (json_str.strip().startswith('[') and json_str.strip().endswith(']')):
+            try: # Try to parse it as is first
+                json.loads(json_str)
+            except json.JSONDecodeError: # If it's not valid JSON, then try wrapping it as an object
+                json_str = '{' + json_str + '}'
         
         return json_str
 

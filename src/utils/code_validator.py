@@ -430,14 +430,32 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
     return {'issues': issues}
 
 # The main validation function that orchestrates checks for all changes
-def validate_code_output_batch(parsed_changes: List[Dict[str, Any]], original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
+def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
     """Validates a batch of code changes and aggregates issues per file. 
-    This function is called after parse_and_validate has succeeded.
+    This function is called after parse_and_validate has succeeded and returned a structured dictionary.
     """
     if original_contents is None:
         original_contents = {}
     all_validation_results = {}
-    for i, change_entry in enumerate(parsed_changes):
+
+    # Ensure parsed_data is a dictionary and contains the 'code_changes' key as a list
+    if not isinstance(parsed_data, dict):
+        logger.error(f"validate_code_output_batch received non-dictionary parsed_data: {type(parsed_data).__name__}")
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+
+    code_changes_list = parsed_data.get('code_changes', [])
+    if not isinstance(code_changes_list, list):
+        logger.error(f"validate_code_output_batch received non-list 'code_changes' field: {type(code_changes_list).__name__}")
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid type for 'code_changes': Expected list, got {type(code_changes_list).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+
+    for i, change_entry in enumerate(code_changes_list):
+        if not isinstance(change_entry, dict):
+            # This is the specific error condition: an item in the list is not a dictionary
+            issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
+            logger.error(issue_message)
+            all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
+            continue # Skip this malformed entry and proceed to the next
+
         file_path = change_entry.get('file_path')
         if file_path:
             try:
@@ -458,8 +476,8 @@ def validate_code_output_batch(parsed_changes: List[Dict[str, Any]], original_co
         else:
             # Handle changes without file_path if necessary
             logger.warning(f"Encountered a code change without a 'file_path' in output {i}. Skipping validation for this item.")
-            # Optionally, add a generic issue for the batch if such items are critical.
-            # all_validation_results['<unspecified_file>'] = [{'type': 'Validation Error', 'message': 'Change item missing file_path'}]
+            # Add a generic issue for the batch if such items are critical.
+            all_validation_results.setdefault('N/A', []).append({'type': 'Validation Error', 'file': 'N/A', 'message': f'Change item at index {i} missing file_path.'})
             
     logger.info(f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files.")
     return all_validation_results
