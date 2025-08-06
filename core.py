@@ -87,7 +87,6 @@ class SocraticDebate:
         if gemini_provider:
             self.gemini_provider = gemini_provider
         else:
-            # MODIFIED: Removed _status_callback from GeminiProvider init
             self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name)
         self.parser = LLMOutputParser(self.gemini_provider)
         self.cumulative_token_usage = 0
@@ -138,10 +137,8 @@ class SocraticDebate:
                     other_lines.append(line)
         except SyntaxError:
             logging.warning(f"[yellow]Warning: Syntax error in Python context file, falling back to simple truncation.[/yellow]")
-            # MODIFIED: Pass _status_callback=None for static method
             return SocraticDebate._truncate_text_by_tokens(_gemini_provider, content, max_tokens, _status_callback=None)
         combined_content = "\n".join(priority_lines + other_lines)
-        # MODIFIED: Pass _status_callback=None for static method
         return SocraticDebate._truncate_text_by_tokens(_gemini_provider, combined_content, max_tokens, _status_callback=None)
 
     @staticmethod
@@ -149,7 +146,6 @@ class SocraticDebate:
         """Truncates text to fit within max_tokens using the GeminiProvider's token counting."""
         if not text:
             return ""
-        # MODIFIED: Pass _status_callback to count_tokens
         current_tokens = _gemini_provider.count_tokens(text, "", _status_callback=_status_callback)
         if current_tokens <= max_tokens:
             return text
@@ -158,13 +154,11 @@ class SocraticDebate:
         truncated_text = text
         if len(truncated_text) > target_chars:
             truncated_text = truncated_text[:target_chars]
-        # MODIFIED: Pass _status_callback to count_tokens
         while _gemini_provider.count_tokens(truncated_text, "", _status_callback=_status_callback) > max_tokens and len(truncated_text) > 0:
             chars_to_remove = max(1, len(truncated_text) // 20)
             truncated_text = truncated_text[:-chars_to_remove]
             if len(truncated_text) == 0:
                 break
-        # MODIFIED: Pass _status_callback to count_tokens
         if _gemini_provider.count_tokens(text, "", _status_callback=_status_callback) > max_tokens:
             return truncated_text.strip() + "\n... (truncated)"
         return truncated_text
@@ -177,12 +171,8 @@ class SocraticDebate:
         context_str_parts = []
         current_tokens = 0
         
-        # The variable final_context_string is assigned after the loop, so it's always defined before its use below.
-        # The previous "FIX" comment was misleading.
-
         for path, content in self.codebase_context.items():
             header = f"--- file_path: {path} ---\n"
-            # MODIFIED: Pass status_callback to count_tokens
             header_tokens = self.gemini_provider.count_tokens(header, "", _status_callback=self.status_callback)
             remaining_budget_for_file_content = context_budget - current_tokens - header_tokens
             if remaining_budget_for_file_content <= 0:
@@ -190,17 +180,13 @@ class SocraticDebate:
                 break
             file_content_to_add = ""
             if path.endswith('.py'):
-                # MODIFIED: Pass the gemini_provider instance and status_callback to _prioritize_python_code
                 prioritized_content = SocraticDebate._prioritize_python_code(self.gemini_provider, content, remaining_budget_for_file_content)
-                # MODIFIED: Pass self.gemini_provider and status_callback to _truncate_text_by_tokens
                 file_content_to_add = SocraticDebate._truncate_text_by_tokens(self.gemini_provider, prioritized_content, remaining_budget_for_file_content, _status_callback=self.status_callback)
             else:
-                # MODIFIED: Pass self.gemini_provider and status_callback to _truncate_text_by_tokens
                 file_content_to_add = SocraticDebate._truncate_text_by_tokens(self.gemini_provider, content, remaining_budget_for_file_content, _status_callback=self.status_callback)
             if not file_content_to_add:
                 continue
             full_file_block = header + file_content_to_add + "\n"
-            # MODIFIED: Pass status_callback to count_tokens
             file_block_tokens = self.gemini_provider.count_tokens(full_file_block, "", _status_callback=self.status_callback)
             if current_tokens + file_block_tokens > context_budget:
                 self._update_status(f"Warning: Could not fit full file '{path}' even after truncation. Skipping remaining files.")
@@ -210,7 +196,6 @@ class SocraticDebate:
         
         final_context_string = "\n".join(context_str_parts)
 
-        # MODIFIED: Pass status_callback to count_tokens
         self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '', _status_callback=self.status_callback)} tokens.")
         return final_context_string
 
@@ -236,7 +221,6 @@ class SocraticDebate:
 
         analysis_output_key = "Context_Analysis_Output"
         try:
-            # MODIFIED: Pass the function itself, not its call
             raw_analysis_response = self._execute_persona_step(
                 "Context_Aware_Assistant",
                 analysis_prompt_gen,
@@ -268,46 +252,51 @@ class SocraticDebate:
             self._update_status(error_message, state="error")
             return self._get_default_analysis_summary()
 
-    # MODIFIED: Changed return type to Any to accommodate both str and Dict
     def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False) -> Any:
         """Executes a single persona step, handling token budget, status updates, and parsing/validation errors."""
         persona = self._get_persona(persona_name)
-        step_prompt = step_prompt_generator() # MODIFIED: Call the prompt generator function
+        step_prompt = step_prompt_generator()
         
-        # MODIFIED: Pass status_callback to count_tokens
-        estimated_input_tokens = self.gemini_provider.count_tokens(prompt=step_prompt, system_prompt=persona.system_prompt, _status_callback=self.status_callback)
-        remaining_budget = self.max_total_tokens_budget - self.cumulative_token_usage
-        max_output_for_request = max(0, min(persona.max_tokens, remaining_budget - estimated_input_tokens))
-        if estimated_input_tokens >= remaining_budget:
-             raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
-        for attempt in range(max_retries_on_fail + 1):
+        json_repair_attempts = 0
+        MAX_JSON_REPAIR_ATTEMPTS = 2 # Limit attempts to avoid infinite loops for JSON repair
+
+        # This loop handles API errors and general retries for a persona step.
+        for api_retry_attempt in range(max_retries_on_fail + 1):
             current_persona_name = persona_name
             current_persona = persona
-            current_step_prompt = step_prompt
+            current_step_prompt = step_prompt # Start with original prompt for this API attempt
             current_output_key = output_key
             
-            # MODIFIED: Special handling for Impartial_Arbitrator fallback
-            if attempt > 0:
+            # If this is a fallback attempt due to API error, adjust prompt/persona
+            if api_retry_attempt > 0:
                 current_persona_name = "Generalist_Assistant"
                 if "Generalist_Assistant" not in self.all_personas:
                     self._update_status(f"[red]Error: Generalist_Assistant not found for fallback. Aborting.[/red]", state="error")
                     raise LLMUnexpectedError("Generalist_Assistant persona not found for fallback.")
                 current_persona = self._get_persona(current_persona_name)
                 
+                # Modify prompt for fallback: ask for plain text summary if it was a final answer step
                 if is_final_answer_step and persona_name == "Impartial_Arbitrator":
-                    # If Arbitrator fails, Generalist_Assistant provides a plain text summary
                     current_step_prompt = (
-                        f"The previous attempt to synthesize the final answer failed. "
+                        f"The previous attempt to synthesize the final answer failed due to an API error. "
                         f"Please provide a concise, plain-text summary of the debate and the proposed solution. "
                         f"Do NOT attempt to generate JSON. Focus on the key takeaways and any unresolved issues. "
                         f"Original prompt for final answer:\n{step_prompt}"
                     )
                 else:
-                    current_step_prompt = (f"The previous attempt to process the following prompt with persona '{persona_name}' failed. "
+                    current_step_prompt = (f"The previous attempt to process the following prompt with persona '{persona_name}' failed due to an API error. "
                                             f"Please provide a general, concise summary or attempt to answer the original prompt given the context. "
                                             f"Original prompt:\n{step_prompt}")
-                current_output_key = f"{output_key}_Fallback_Attempt_{attempt}"
-                self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed. Attempting fallback to '{current_persona_name}' (Attempt {attempt}/{max_retries_on_fail}).[/yellow]", state="running")
+                current_output_key = f"{output_key}_API_Fallback_Attempt_{api_retry_attempt}"
+                self._update_status(f"[yellow]Warning: Persona '{persona_name}' failed due to API error. Attempting fallback to '{current_persona_name}' (Attempt {api_retry_attempt}/{max_retries_on_fail}).[/yellow]", state="running")
+            
+            # Calculate tokens for the current prompt
+            estimated_input_tokens = self.gemini_provider.count_tokens(prompt=current_step_prompt, system_prompt=current_persona.system_prompt, _status_callback=self.status_callback)
+            remaining_budget = self.max_total_tokens_budget - self.cumulative_token_usage
+            max_output_for_request = max(0, min(current_persona.max_tokens, remaining_budget - estimated_input_tokens))
+            
+            if estimated_input_tokens >= remaining_budget:
+                 raise TokenBudgetExceededError(f"Prompt for '{persona_name}' ({estimated_input_tokens} tokens) exceeds remaining budget ({remaining_budget} tokens).")
             
             estimated_next_step_cost = self.gemini_provider.calculate_usd_cost(estimated_input_tokens, max_output_for_request)
             self._update_status(f"Running persona: {current_persona_name} (Input: {estimated_input_tokens} tokens, Output: {max_output_for_request} tokens)...",
@@ -315,8 +304,8 @@ class SocraticDebate:
                                 current_total_cost=self.cumulative_usd_cost,
                                 estimated_next_step_tokens=estimated_input_tokens + max_output_for_request,
                                 estimated_next_step_cost=estimated_next_step_cost)
+            
             try:
-                # MODIFIED: Pass status_callback to generate
                 raw_response_text, input_tokens, output_tokens = self.gemini_provider.generate(
                     prompt=current_step_prompt,
                     system_prompt=current_persona.system_prompt,
@@ -324,82 +313,138 @@ class SocraticDebate:
                     max_tokens=max_output_for_request,
                     _status_callback=self.status_callback
                 )
-                tokens_used = input_tokens + output_tokens
+                tokens_used_in_step = input_tokens + output_tokens
                 cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
                 
-                # MODIFIED: Handle parsing and return based on is_final_answer_step
+                # --- START JSON SELF-CORRECTION LOOP (for is_final_answer_step) ---
                 if is_final_answer_step:
-                    parsed_data = None
-                    if raw_response_text:
-                        try:
-                            parsed_data = self.parser.parse_and_validate(raw_response_text)
-                            if parsed_data.get("malformed_blocks"):
-                                error_message = f"LLM output parsing/validation failed for persona '{current_persona_name}'. See malformed_blocks for details."
-                                self.intermediate_steps[f"{current_output_key}_Error"] = error_message
-                                self._update_status(error_message, state="error")
-                        except Exception as parse_err:
-                            error_message = f"[ERROR] Unexpected error processing LLM output for '{current_persona_name}': {parse_err}"
+                    # Loop for JSON repair attempts
+                    while json_repair_attempts <= MAX_JSON_REPAIR_ATTEMPTS:
+                        parsed_data = None
+                        parsing_error_details = None
+                        
+                        if raw_response_text:
+                            try:
+                                # Attempt to parse and validate the LLM's output
+                                parsed_data = self.parser.parse_and_validate(raw_response_text)
+                                
+                                # If parse_and_validate returns malformed_blocks, it means it couldn't fully fix it.
+                                # We still want the LLM to try and fix it itself.
+                                if parsed_data.get("malformed_blocks"):
+                                    # Take the first malformed block for the error message
+                                    first_malformed_block = parsed_data["malformed_blocks"][0]
+                                    if isinstance(first_malformed_block, dict):
+                                        parsing_error_details = first_malformed_block
+                                    else: # Fallback if malformed_blocks contains strings
+                                        parsing_error_details = {"type": "UNKNOWN_MALFORMED_BLOCK", "message": str(first_malformed_block), "raw_string_snippet": str(first_malformed_block)[:500]}
+                                    raise ValueError(f"Malformed blocks detected by parser: {parsing_error_details['message']}")
+                                # If no malformed blocks, parsing was successful, break loop
+                                break 
+                            except Exception as parse_err:
+                                # Capture details of the parsing error
+                                parsing_error_details = {
+                                    "type": "JSON_PARSE_ERROR",
+                                    "message": str(parse_err),
+                                    "raw_string_snippet": raw_response_text[:1000] + ("..." if len(raw_response_text) > 1000 else "")
+                                }
+                                self._update_status(f"[yellow]Warning: JSON parsing failed for '{current_persona_name}'. Attempting self-correction (Attempt {json_repair_attempts + 1}/{MAX_JSON_REPAIR_ATTEMPTS + 1}). Error: {parse_err}[/yellow]", state="running")
+                        else:
+                            # Handle empty response case
+                            parsing_error_details = {
+                                "type": "EMPTY_RESPONSE",
+                                "message": "LLM returned empty response for final answer.",
+                                "raw_string_snippet": ""
+                            }
+                            self._update_status(f"[yellow]Warning: LLM returned empty response for '{current_persona_name}'. Attempting self-correction (Attempt {json_repair_attempts + 1}/{MAX_JSON_REPAIR_ATTEMPTS + 1}).[/yellow]", state="running")
+
+                        json_repair_attempts += 1
+                        if json_repair_attempts > MAX_JSON_REPAIR_ATTEMPTS:
+                            # Max attempts reached, return the best effort or error
+                            error_message = f"LLM output parsing/validation failed for persona '{current_persona_name}' after {MAX_JSON_REPAIR_ATTEMPTS} self-correction attempts. See malformed_blocks for details."
                             self.intermediate_steps[f"{current_output_key}_Error"] = error_message
                             self._update_status(error_message, state="error")
-                            # Ensure the error dict itself is valid JSON when re-serialized
+                            # Construct a final error dictionary that is valid JSON
                             parsed_data = {
-                                "COMMIT_MESSAGE": "Parsing error",
-                                "RATIONALE": self.parser._escape_json_string_value(f"Failed to parse LLM output as JSON. Error: {parse_err}\nRaw output: {raw_response_text[:500]}..."),
+                                "COMMIT_MESSAGE": "Parsing error (Max retries)",
+                                "RATIONALE": self.parser._escape_json_string_value(f"Failed to parse LLM output as JSON after multiple attempts. Error: {parsing_error_details['message']}\nRaw output: {raw_response_text[:500]}..."),
                                 "CODE_CHANGES": [],
                                 "CONFLICT_RESOLUTION": None,
                                 "UNRESOLVED_CONFLICT": None,
-                                "malformed_blocks": [
-                                    self.parser._escape_json_string_value(f"Unexpected error during parsing: {parse_err}"),
-                                    self.parser._escape_json_string_value(f"Raw output:\n{raw_response_text}")
-                                ]
+                                "malformed_blocks": [parsing_error_details]
                             }
-                    else:
-                        parsed_data = {
-                            "COMMIT_MESSAGE": "Empty response",
-                            "RATIONALE": "[INFO] LLM returned empty response for final answer.",
-                            "CODE_CHANGES": [],
-                            "CONFLICT_RESOLUTION": None,
-                            "UNRESOLVED_CONFLICT": None,
-                            "malformed_blocks": ["LLM returned empty response for final answer."]
-                        }
-                        tokens_used = input_tokens
-                        cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, 0)
+                            break # Exit the while loop and return the error dict
+                        
+                        # Prepare self-correction prompt
+                        correction_prompt = (
+                            f"Your previous output for the final answer was malformed and could not be parsed as valid JSON. "
+                            f"The specific error was: {parsing_error_details['message']}\n\n"
+                            f"Your malformed output was:\n```\n{raw_response_text}\n```\n\n"
+                            f"Please regenerate the *entire* JSON object, ensuring it is syntactically correct and strictly adheres to the schema. "
+                            f"Do NOT include any conversational text or markdown outside the JSON block. "
+                            f"The schema is:\n\n"
+                            f"```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ],\n  \"CONFLICT_RESOLUTION\": \"<string>\" (Optional),\n  \"UNRESOLVED_CONFLICT\": \"<string>\" (Optional)\n}}\n```\n\n"
+                            f"Ensure all double quotes within string values are escaped as `\\\"` and newlines as `\\n`. Pay extreme attention to commas (`,`) between all elements and key-value pairs."
+                        )
+                        
+                        # Store the correction prompt for debugging/intermediate steps
+                        self.intermediate_steps[f"{current_output_key}_Correction_Prompt_Attempt_{json_repair_attempts}"] = correction_prompt
+
+                        # Call LLM again with correction prompt
+                        # Use the same persona, but with the specific correction prompt
+                        raw_response_text, input_tokens, output_tokens = self.gemini_provider.generate(
+                            prompt=correction_prompt,
+                            system_prompt=current_persona.system_prompt,
+                            temperature=current_persona.temperature, # Keep original temperature
+                            max_tokens=max_output_for_request, # Keep original max tokens
+                            _status_callback=self.status_callback
+                        )
+                        tokens_used_in_step += (input_tokens + output_tokens) # Add tokens from correction attempt
+                        cost_this_step += self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens) # Add cost
+                        self.intermediate_steps[f"{current_output_key}_Correction_Output_Attempt_{json_repair_attempts}"] = raw_response_text
+                        self._update_status(f"Self-correction attempt {json_repair_attempts} for '{current_persona_name}' completed. Used {input_tokens + output_tokens} tokens in this sub-step.",
+                                            current_total_tokens=self.cumulative_token_usage + tokens_used_in_step, # Show cumulative including this sub-step
+                                            current_total_cost=self.cumulative_usd_cost + cost_this_step) # Show cumulative including this sub-step
                     
+                    # After the loop, parsed_data holds the successfully parsed data or the final error dict
                     self.intermediate_steps[current_output_key] = parsed_data
-                    self.cumulative_token_usage += tokens_used
+                    self.cumulative_token_usage += tokens_used_in_step
                     self.cumulative_usd_cost += cost_this_step
                     self.final_answer = parsed_data
-                    self._update_status(f"{current_persona_name} completed. Used {tokens_used} tokens.",
+                    self._update_status(f"{current_persona_name} completed. Used {tokens_used_in_step} tokens.",
                                         current_total_tokens=self.cumulative_token_usage,
                                         current_total_cost=self.cumulative_usd_cost)
                     return parsed_data
-                else: # Not a final answer step, return raw text
+                # --- END JSON SELF-CORRECTION LOOP ---
+                else: # Not a final answer step, return raw text, no JSON parsing needed
                     if raw_response_text:
                         self.intermediate_steps[current_output_key] = raw_response_text
                     else:
                         self.intermediate_steps[current_output_key] = "[INFO] LLM returned empty response."
-                        tokens_used = input_tokens
+                        tokens_used_in_step = input_tokens # If response is empty, only count input tokens
                         cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, 0)
                     
-                    self.cumulative_token_usage += tokens_used
+                    self.cumulative_token_usage += tokens_used_in_step
                     self.cumulative_usd_cost += cost_this_step
                     if update_current_thought: self.current_thought = raw_response_text
-                    self._update_status(f"{current_persona_name} completed. Used {tokens_used} tokens.",
+                    self._update_status(f"{current_persona_name} completed. Used {tokens_used_in_step} tokens.",
                                         current_total_tokens=self.cumulative_token_usage,
                                         current_total_cost=self.cumulative_usd_cost)
                     return raw_response_text
-            except LLMProviderError as e:
+            
+            except LLMProviderError as e: # Catch API errors and other LLM provider issues
                 error_msg = f"[ERROR] Persona '{current_persona_name}' failed: {e}"
                 self.intermediate_steps[current_output_key] = error_msg
                 self._update_status(error_msg, state="error")
-                if attempt == max_retries_on_fail:
-                    raise
-            except Exception as e:
+                if api_retry_attempt == max_retries_on_fail:
+                    raise # Re-raise if max retries are exceeded
+            except Exception as e: # Catch any other unexpected errors
                 error_msg = f"[ERROR] Unexpected error during '{current_persona_name}' execution: {e}"
                 self.intermediate_steps[current_output_key] = error_msg
                 self._update_status(error_msg, state="error")
-                if attempt == max_retries_on_fail:
-                    raise
+                if api_retry_attempt == max_retries_on_fail:
+                    raise # Re-raise if max retries are exceeded
+        
+        # If the loop finishes without returning or raising, it means max retries were exceeded.
         raise LLMUnexpectedError(f"Max retries exceeded for persona '{persona_name}'.")
 
     def run_debate(self, max_turns: int = 5) -> Tuple[Any, Dict[str, Any]]:
@@ -453,7 +498,9 @@ class SocraticDebate:
             constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
             def arbitrator_prompt_gen():
                 return (
-                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `FULL_CONTENT` of the file. For `REMOVE` actions, provide an array of `LINES` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT_RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED_CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `FULL_CONTENT` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `FULL_CONTENT`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
+                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n"
+                    f"```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\n"
+                    f"Ensure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `FULL_CONTENT` of the file. For `REMOVE` actions, provide an array of `LINES` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT_RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED_CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `FULL_CONTENT` are correctly formatted and escaped, especially double quotes (e.g., `\"` must be escaped as `\\\"`). Newlines within code snippets must also be escaped as `\\n`.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `FULL_CONTENT`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
                      f"User Prompt: {self.initial_prompt}\n\n"
                      f"Visionary Proposal:\n{visionary_output}\n\n"
                      f"Skeptical Critique:\n{skeptical_critique}\n"
@@ -461,10 +508,9 @@ class SocraticDebate:
                      f"Constructive Feedback:\n{constructive_feedback}\n\n"
                      f"--- END DEBATE ---"
                  )
-            # MODIFIED: arbitrator_output_dict will now be a dictionary (parsed_data)
+            
             arbitrator_output_dict = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True)
             
-            # MODIFIED: Use the parsed_data for Devil's Advocate prompt
             devil_advocate_input = json.dumps(arbitrator_output_dict, indent=2) if isinstance(arbitrator_output_dict, dict) else str(arbitrator_output_dict)
 
             def devil_prompt_gen():
@@ -478,20 +524,19 @@ class SocraticDebate:
                                 state="complete", expanded=False,
                                 current_total_tokens=self.cumulative_token_usage,
                                 current_total_cost=self.cumulative_usd_cost)
-            # MODIFIED: Return the parsed dictionary for the final answer
             return self.final_answer, self.intermediate_steps
         except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
             error_msg = f"[ERROR] Socratic Debate failed: {e}"
             self.intermediate_steps["Debate_Error"] = error_msg
             self._update_status(error_msg, state="error")
-            # MODIFIED: final_answer is now a dict, so populate it with error info
+            # Ensure final_answer is a dictionary with error details for consistency
             self.final_answer = {
                 "COMMIT_MESSAGE": "Debate Failed",
                 "RATIONALE": self.parser._escape_json_string_value(f"Socratic Debate failed: {e}"),
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
-                "malformed_blocks": [self.parser._escape_json_string_value(f"Debate failed: {e}")]
+                "malformed_blocks": [{"type": "DEBATE_EXECUTION_ERROR", "message": str(e), "raw_string_snippet": ""}]
             }
             self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
             self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost

@@ -101,6 +101,13 @@ class LLMOutputParser:
         json_str = re.sub(r',\s*]', ']', json_str)
         json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
         
+        # NEW HEURISTICS: Attempt to fix common LLM JSON formatting errors
+        # 1. Missing comma between a string value and a new key (e.g., "val""key":)
+        json_str = re.sub(r'("[^"]*")\s*("([A-Z_]+)":)', r'\1,\n\2', json_str)
+        # 2. Missing comma between an object/array/boolean/number/null and a new key (e.g., }{ "key": or 123"key":)
+        # This is more general and covers cases where the value isn't a string.
+        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*("([A-Z_]+)":)', r'\1,\n\2', json_str, flags=re.IGNORECASE)
+        
         parsed = {}
         try:
             parsed = json.loads(json_str)
