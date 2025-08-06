@@ -53,40 +53,51 @@ def find_project_root(start_path: Path = None) -> Path:
 # This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root.
 PROJECT_ROOT = find_project_root()
 
-# --- Sandbox Execution Helper ---
-@contextlib.contextmanager
-def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
+# MODIFIED: Renamed PROJECT_BASE_DIR to PROJECT_ROOT for consistency
+def is_within_base_dir(file_path: Path) -> bool:
+    """Checks if a file path is safely within the project base directory.
+    Handles potential exceptions during path resolution or comparison.
     """
-    Executes a command in a sandboxed environment using a temporary file.
-    Yields the command to execute and the temporary file path.
-    This helper is crucial for safely passing code content to external tools.
-    """
-    temp_file_path = None
     try:
-        # Create a temporary file to hold the content.
-        # delete=False is used because the file needs to exist when the subprocess runs.
-        # We manage cleanup manually in the finally block.
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=False) as temp_file:
-            temp_file.write(content)
-            temp_file_path = temp_file.name # Store the path for later use
-        
-        # Construct the command using the actual temporary file path directly.
-        # This avoids the placeholder replacement logic, making it cleaner.
-        final_command = []
-        for arg in command:
-            if arg == "TEMP_FILE_PLACEHOLDER": # If the command expects a placeholder
-                final_command.append(temp_file_path)
-            else:
-                final_command.append(arg)
-        
-        yield final_command, temp_file_path
-    finally:
-        # Clean up the temporary file if it was created and still exists.
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.remove(temp_file_path)
-            except OSError as e:
-                logger.error(f"Error removing temporary file {temp_file_path}: {e}")
+        # Resolve the path to handle symlinks and relative paths correctly
+        resolved_path = file_path.resolve()
+        # Check if the resolved path is a subdirectory of the project base directory
+        resolved_path.relative_to(PROJECT_ROOT) # MODIFIED: Use PROJECT_ROOT
+        return True
+    except ValueError:
+        # Path is not relative to PROJECT_ROOT (outside the scope)
+        logger.debug(f"Path '{file_path}' is outside the project base directory '{PROJECT_ROOT}'.") # MODIFIED: Use PROJECT_ROOT
+        return False
+    except Exception as e:
+        # Catch other potential errors during path operations (e.g., permissions)
+        logger.error(f"Error resolving or comparing path '{file_path}' against base directory '{PROJECT_ROOT}': {e}") # MODIFIED: Use PROJECT_ROOT
+        return False
+
+def sanitize_and_validate_file_path(raw_path: str) -> str:
+    """Sanitizes and validates a file path for safety against traversal and invalid characters.
+    Ensures the path is within the project's base directory.
+    """
+    if not raw_path:
+        raise ValueError("File path cannot be empty.")
+
+    # Basic character sanitization: remove characters invalid in most file systems
+    # and control characters. This is a defense-in-depth measure.
+    # Removed space from forbidden characters as it's a valid path character.
+    sanitized_path_str = re.sub(r'[<>:"|?*\\\x00-\x1f]', '', raw_path)
+
+    path_obj = Path(sanitized_path_str)
+
+    # Crucial check: Ensure the path resides within the determined project base directory
+    if not is_within_base_dir(path_obj):
+        raise ValueError(f"File path '{raw_path}' resolves to a location outside the allowed project directory.")
+
+    # Return the resolved and validated path string
+    # Using resolve() here ensures we return a canonical path after validation.
+    try:
+        return str(path_obj.resolve())
+    except Exception as e:
+        raise ValueError(f"Failed to resolve validated path '{sanitized_path_str}': {e}") from e
+
 
 def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs pycodestyle on the given content using its library API."""

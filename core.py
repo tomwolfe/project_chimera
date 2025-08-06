@@ -1,5 +1,4 @@
 # core.py
-# core.py
 import yaml
 import time
 import hashlib
@@ -12,6 +11,7 @@ import subprocess
 import tempfile
 import os
 import json
+import logging # ADDED: Import logging module
 from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator, validator
 import streamlit as st # For st.cache_resource/data decorators
@@ -113,6 +113,8 @@ class SocraticDebate:
         if not persona:
             raise ValueError(f"Persona '{name}' not found.")
         return persona
+
+    @staticmethod # ADDED: Decorator to make this a static method
     @st.cache_data(ttl=3600)
     def _prioritize_python_code(content: str, max_tokens: int, gemini_provider: GeminiProvider) -> str:
         """
@@ -143,6 +145,7 @@ class SocraticDebate:
             return SocraticDebate._truncate_text_by_tokens(content, max_tokens, gemini_provider)
         combined_content = "\n".join(priority_lines + other_lines)
         return SocraticDebate._truncate_text_by_tokens(combined_content, max_tokens, gemini_provider)
+
     def _truncate_text_by_tokens(self, text: str, max_tokens: int) -> str:
         """Truncates text to fit within max_tokens using the GeminiProvider's token counting."""
         if not text:
@@ -210,27 +213,21 @@ class SocraticDebate:
         self._update_status("Analyzing codebase context with Context_Aware_Assistant...")
         # Prepare the context string for the analysis persona
         context_string_for_analysis = self.prepare_context() # Use context preparation logic
-        codebase_analysis_summary = self._analyze_codebase_context()
-        analysis_str = json.dumps(codebase_analysis_summary, indent=2)
-        def visionary_prompt_gen():
-            if codebase_analysis_summary:
-                return (f"USER PROMPT: {self.initial_prompt}\n\nCODEBASE CONTEXT ANALYSIS:\n{analysis_str}\n\n"
-                        f"CODEBASE CONTEXT:\n{context_string_for_analysis}\n\nINSTRUCTIONS:\n"
-                        f"1. **Analyze the provided codebase context and its analysis thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic, incorporating insights from the analysis.\n"
-                        f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase and address any identified concerns from the analysis.\n"
-                        f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
-            return (f"USER PROMPT: {self.initial_prompt}\n\n"
-                    f"CODEBASE CONTEXT:\n{context_string_for_analysis}\n\n"
+        # REMOVED: Recursive call here: codebase_analysis_summary = self._analyze_codebase_context()
+        # analysis_str = json.dumps(codebase_analysis_summary, indent=2) # This line is now incorrect here
+        
+        def analysis_prompt_gen(): # This function needs to be called when passed to _execute_persona_step
+            return (f"CODEBASE CONTEXT:\n{context_string_for_analysis}\n\n"
                     f"INSTRUCTIONS:\n"
-                    f"1. **Analyze the provided codebase context thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic.\n"
-                    f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
-                    f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
+                    f"Analyze the provided codebase context thoroughly. Understand its structure, style, patterns, dependencies, and overall logic.\n"
+                    f"Provide a concise summary of the codebase in the specified JSON format.")
+
         analysis_output_key = "Context_Analysis_Output"
         try:
             # Execute the persona step. We expect a string response which is JSON.
             raw_analysis_response = self._execute_persona_step(
                 "Context_Aware_Assistant",
-                analysis_prompt_gen,
+                analysis_prompt_gen(), # MODIFIED: Call the function to get the prompt string
                 analysis_output_key,
                 update_current_thought=False, # This step doesn't update the main thought flow
                 is_final_answer_step=False
@@ -266,7 +263,7 @@ class SocraticDebate:
     def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False) -> str:
         """Executes a single persona step, handling token budget, status updates, and parsing/validation errors."""
         persona = self._get_persona(persona_name)
-        step_prompt = step_prompt_generator()
+        step_prompt = step_prompt_generator # This is already the string prompt, not a generator function
         estimated_input_tokens = self.gemini_provider.count_tokens(prompt=step_prompt, system_prompt=persona.system_prompt)
         remaining_budget = self.max_total_tokens_budget - self.cumulative_token_usage
         max_output_for_request = max(0, min(persona.max_tokens, remaining_budget - estimated_input_tokens))
@@ -370,7 +367,7 @@ class SocraticDebate:
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
         context_string = self.prepare_context()
-        codebase_analysis_summary = self._analyze_codebase_context()
+        codebase_analysis_summary = self._analyze_codebase_context() # This call is correct here
         analysis_str = json.dumps(codebase_analysis_summary, indent=2)
         def visionary_prompt_gen():
             if codebase_analysis_summary:
@@ -386,14 +383,14 @@ class SocraticDebate:
                     f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
                     f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
         try:
-            visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
+            visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen(), "Visionary_Generator_Output", update_current_thought=True)
             def skeptical_prompt_gen():
                 return f"Critique the following proposal from a highly skeptical, risk-averse perspective. Identify potential failure points, architectural flaws, or critical vulnerabilities:\n\n{visionary_output}"
-            skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen, "Skeptical_Critique")
+            skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen(), "Skeptical_Critique")
             domain_critiques_text = ""
             for persona_name_in_sequence in self.persona_sequence:
                 if persona_name_in_sequence in self.personas:
-                    if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant"]:
+                    if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant", "Context_Aware_Assistant"]: # Added Context_Aware_Assistant
                         def expert_prompt_gen(name=persona_name_in_sequence, proposal=visionary_output):
                             return (
                                 f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
@@ -401,7 +398,7 @@ class SocraticDebate:
                                 f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific. "
                                 f"Present your analysis in a structured format, using clear headings or bullet points for 'Concerns' and 'Recommendations'.\n\n"
                                 f"Proposal:\n{proposal}")
-                        critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen, f"{persona_name_in_sequence}_Critique")
+                        critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen(), f"{persona_name_in_sequence}_Critique")
                         domain_critiques_text += f"\n\n--- {persona_name_in_sequence.replace('_', ' ')} Critique ---\n{critique}"
             def constructive_prompt_gen():
                 return (
@@ -409,10 +406,10 @@ class SocraticDebate:
                     f"--- Skeptical Critique ---\n{skeptical_critique}\n"
                     f"{domain_critiques_text}\n\n"
                     f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
-            constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
+            constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen(), "Constructive_Critic_Output")
             def arbitrator_prompt_gen():
                 return (
-                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT RESOLUTION: or UNRESOLVED CONFLICT: if applicable>\"\n  \"CODE_CHANGES\": [\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"ADD | MODIFY | REMOVE\",\n      \"full_content\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"file_path\": \"<string>\",\n      \"action\": \"REMOVE\",\n      \"lines\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `full_content` of the file. For `REMOVE` actions, provide an array of `lines` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `full_content` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `full_content`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
+                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\nEnsure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `FULL_CONTENT` of the file. For `REMOVE` actions, provide an array of `LINES` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT_RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED_CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `FULL_CONTENT` are correctly formatted and escaped, especially double quotes.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `FULL_CONTENT`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
                      f"User Prompt: {self.initial_prompt}\n\n"
                      f"Visionary Proposal:\n{visionary_output}\n\n"
                      f"Skeptical Critique:\n{skeptical_critique}\n"
@@ -420,10 +417,10 @@ class SocraticDebate:
                      f"Constructive Feedback:\n{constructive_feedback}\n\n"
                      f"--- END DEBATE ---"
                  )
-            arbitrator_raw_response = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True)
+            arbitrator_raw_response = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen(), "Impartial_Arbitrator_Output", is_final_answer_step=True)
             def devil_prompt_gen():
                 return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{self.final_answer}"
-            self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
+            self._execute_persona_step("Devils_Advocate", devil_prompt_gen(), "Devils_Advocate_Critique")
             self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
             self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
             self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
