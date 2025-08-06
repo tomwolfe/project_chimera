@@ -1,5 +1,5 @@
 # .pre-commit-config.yaml
-
+# .pre-commit-config.yaml
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
@@ -12,13 +12,11 @@ repos:
       - id: check-added-large-files
       - id: check-ast # Checks for syntax errors in Python files
       - id: check-docstring-first # Ensures docstrings are at the top of modules/classes/functions
-
   - repo: https://github.com/psf/black
     rev: 23.11.0 # Use the latest stable version
     hooks:
       - id: black
         language_version: python3.10 # Specify your Python version, adjust if needed
-
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.1.9 # Use the latest stable version
     hooks:

@@ -20,8 +20,8 @@ class InvalidSchemaError(Exception):
 class CodeChange(BaseModel):
     file_path: str = Field(..., alias="FILE_PATH") # Original uses FILE_PATH
     action: str = Field(..., alias="ACTION") # Original uses ACTION
-    full_content: Optional[str] = Field(None, alias="FULL_CONTENT") # Original uses FULL_CONTENT, made optional
-    lines: Optional[List[str]] = Field(None, alias="LINES") # Original uses LINES, made optional
+    full_content: Optional[str] = Field(None, alias="FULL_CONTENT") # Required for ADD/MODIFY
+    lines: List[str] = Field(default_factory=list, alias="LINES") # Required for REMOVE, can be empty
 
     @validator('file_path')
     def validate_file_path(cls, v):
@@ -42,11 +42,9 @@ class CodeChange(BaseModel):
     @model_validator(mode='after')
     def check_content_based_on_action(self) -> 'CodeChange':
         """Ensures that full_content is provided for ADD/MODIFY and lines for REMOVE."""
-        if self.action in ["ADD", "MODIFY"] and not self.full_content:
+        if self.action in ["ADD", "MODIFY"] and self.full_content is None:
             raise ValueError(f"full_content is required for action '{self.action}' on file '{self.file_path}'.")
-        if self.action == "REMOVE" and self.lines is None:
-            raise ValueError(f"lines must be provided (can be an empty list) for action 'REMOVE' on file '{self.file_path}'.")
-        if self.action == "REMOVE" and self.lines is not None and not isinstance(self.lines, list):
+        if self.action == "REMOVE" and not isinstance(self.lines, list): # Check if lines is not a list
             raise ValueError(f"lines must be a list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__}.")
         return self
 
@@ -55,8 +53,9 @@ class LLMOutput(BaseModel):
     rationale: str = Field(alias="RATIONALE")
     code_changes: List[CodeChange] = Field(alias="CODE_CHANGES")
     # These fields are optional as per the schema, but their presence/absence should be handled.
-    conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION")
-    unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
+    conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION") # Optional
+    unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT") # Optional
+    malformed_blocks: Optional[List[str]] = Field(None) # Added to capture parsing errors
 
     @model_validator(mode='after')
     def check_code_changes_content(self) -> 'LLMOutput':
@@ -65,11 +64,9 @@ class LLMOutput(BaseModel):
             # Pydantic's model_validator on CodeChange already handles this,
             # but this provides an extra layer of validation at the LLMOutput level
             # and allows for more specific error messages referencing the index.
-            if change.action in ["ADD", "MODIFY"] and not change.full_content:
+            if change.action in ["ADD", "MODIFY"] and change.full_content is None: # Check for None explicitly
                 raise ValueError(f"LLMOutput validation failed: full_content is required for action '{change.action}' on file '{change.file_path}' (index {i}).")
-            if change.action == "REMOVE" and change.lines is None:
-                raise ValueError(f"LLMOutput validation failed: lines must be provided for action 'REMOVE' on file '{change.file_path}' (index {i}).")
-            if change.action == "REMOVE" and change.lines is not None and not isinstance(change.lines, list):
+            if change.action == "REMOVE" and not isinstance(change.lines, list): # Check if lines is not a list
                 raise ValueError(f"LLMOutput validation failed: lines must be a list for action 'REMOVE' on file '{change.file_path}' (index {i}). Found type: {type(change.lines).__name__}.")
         return self
 
@@ -112,29 +109,27 @@ class LLMOutputParser:
             parsed = json.loads(json_str)
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON decoding failed: {e}")
-            # Attempt recovery if parsing fails
-            try:
-                recovered_json_str = self._attempt_json_recovery(json_str)
-                parsed = json.loads(recovered_json_str)
-                self.logger.info("Successfully recovered JSON after initial parsing failure")
-            except Exception as recovery_e:
-                self.logger.error(f"JSON recovery failed: {recovery_e}")
-                # Return a minimal valid structure with the raw output as rationale
-                return {
-                    "commit_message": "Parsing error recovery",
-                    "rationale": f"Original output: {raw_output[:500]}...",
-                    "code_changes": [], # Default to empty list if recovery fails
-                    "conflict_resolution": None,
-                    "unresolved_conflict": None
-                }
+            # Instead of aggressive recovery, return a structured error with malformed blocks
+            return {
+                "commit_message": "Parsing error",
+                "rationale": f"Failed to parse LLM output as JSON. Error: {e}\nRaw output: {raw_output[:500]}...",
+                "code_changes": [],
+                "conflict_resolution": None,
+                "unresolved_conflict": None,
+                "malformed_blocks": [f"JSONDecodeError: {e}", f"Raw output:\n{raw_output}"]
+            }
 
         # Validate against schema
         try:
             # Use Pydantic model for validation
             validated_output = LLMOutput(**parsed)
             self.logger.info("LLM output successfully validated against schema.")
-            # Return as a dictionary for broader compatibility
-            return validated_output.dict(by_alias=True)
+            # Return as a dictionary for broader compatibility, including malformed_blocks if any
+            result_dict = validated_output.dict(by_alias=True)
+            # Ensure malformed_blocks is always a list, even if empty
+            if "malformed_blocks" not in result_dict or result_dict["malformed_blocks"] is None:
+                result_dict["malformed_blocks"] = []
+            return result_dict
         except Exception as validation_e: # Catch Pydantic validation errors and others
             self.logger.error(f"Schema validation failed: {validation_e}")
             # Attempt to provide a fallback if validation fails but parsing succeeded
@@ -145,7 +140,8 @@ class LLMOutputParser:
                 "rationale": f"Original output: {raw_output[:500]}...\nValidation Error: {validation_e}",
                 "code_changes": [], # Default to empty list
                 "conflict_resolution": None,
-                "unresolved_conflict": None
+                "unresolved_conflict": None,
+                "malformed_blocks": [f"Schema validation error: {validation_e}"] # Add validation error to malformed blocks
             }
             # If the original parsed data had some structure, try to incorporate it
             if isinstance(parsed, dict):
@@ -161,10 +157,11 @@ class LLMOutputParser:
                             # Try to validate it as a CodeChange.
                             try:
                                 valid_item = CodeChange(**item)
-                                processed_code_changes.append(valid_item.dict(by_alias=True))
+                                processed_code_changes.append(valid_item.dict(by_alias=True)) # Use by_alias=True to keep original keys like FILE_PATH
                             except ValidationError as inner_val_e:
                                 self.logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
-                                # Add a placeholder for this malformed dictionary item
+                                # Add a placeholder for this malformed dictionary item and log the error
+                                fallback_output["malformed_blocks"].append(f"Malformed CODE_CHANGES item at index {index}: {item}. Error: {inner_val_e}")
                                 processed_code_changes.append({
                                     "FILE_PATH": "malformed_dict_entry",
                                     "ACTION": "ADD", # Default action for malformed
@@ -174,8 +171,9 @@ class LLMOutputParser:
                         else:
                             # It's not a dictionary (e.g., a string), so create a placeholder.
                             self.logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
+                            fallback_output["malformed_blocks"].append(f"Non-dictionary item in CODE_CHANGES at index {index}: {item}")
                             processed_code_changes.append({
-                                "FILE_PATH": "malformed_non_dict_entry",
+                                "FILE_PATH": "malformed_non_dict_entry", # Use a placeholder file path
                                 "ACTION": "ADD", # Default action for malformed
                                 "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}",
                                 "LINES": []
@@ -191,12 +189,13 @@ class LLMOutputParser:
                     # Ensure code_changes is an empty list if it was malformed.
                     fallback_output["code_changes"] = []
 
-            # Add the original raw output to malformed_blocks for debugging, if not already handled.
-            if "malformed_blocks" not in fallback_output:
-                fallback_output["malformed_blocks"] = []
             # Ensure the raw output is captured if it wasn't already part of a specific malformed_blocks entry.
             if not any(raw_output[:50] in block for block in fallback_output["malformed_blocks"]):
                 fallback_output["malformed_blocks"].append(f"Original raw output that caused schema validation failure:\n{raw_output}")
+
+            # Ensure malformed_blocks is always a list, even if empty
+            if "malformed_blocks" not in fallback_output or fallback_output["malformed_blocks"] is None:
+                fallback_output["malformed_blocks"] = []
 
             return fallback_output
 
@@ -225,11 +224,12 @@ class LLMOutputParser:
         
         return json_str
 
-    def _validate_schema(self, data: Dict) -> bool:
-        """Validates the parsed data against the LLMOutput schema."""
-        try:
-            LLMOutput(**data)
-            return True
-        except Exception as e:
-            self.logger.warning(f"Schema validation failed: {e}")
-            return False
+    # Removed unused _validate_schema method
+    # def _validate_schema(self, data: Dict) -> bool:
+    #     """Validates the parsed data against the LLMOutput schema."""
+    #     try:
+    #         LLMOutput(**data)
+    #         return True
+    #     except Exception as e:
+    #         self.logger.warning(f"Schema validation failed: {e}")
+    #         return False

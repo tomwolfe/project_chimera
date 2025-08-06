@@ -8,12 +8,15 @@ logger = logging.getLogger(__name__)
 # Define markers to identify the project root
 PROJECT_ROOT_MARKERS = ['.git', 'config.yaml', 'pyproject.toml']
 
-def find_project_root() -> Path:
+def find_project_root(start_path: Path = None) -> Path:
     """Finds the project root directory by searching for known markers.
     Starts from the directory of the current file and traverses upwards.
     """
     # Start search from the directory of this file (src/utils)
-    current_dir = Path(__file__).resolve().parent
+    if start_path is None:
+        start_path = Path(__file__).resolve().parent
+
+    current_dir = start_path
     # Traverse upwards to find the project root
     for _ in range(10): # Limit search depth to prevent infinite loops
         if any(current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS):
@@ -25,13 +28,14 @@ def find_project_root() -> Path:
             break
         current_dir = parent_path
     
-    # Fallback if no markers are found after reaching the filesystem root
-    logger.warning("Project root markers not found. Falling back to current working directory.")
-    return Path('.').resolve()
+    # If no markers are found after searching, raise an error.
+    # This is more robust than falling back to the current working directory,
+    # as it forces the user to ensure the script is run in a project context.
+    raise FileNotFoundError(f"Project root markers ({PROJECT_ROOT_MARKERS}) not found starting from {start_path}. Cannot determine project root.")
 
-# Determine the project base directory once at module load time
-# This should be the root of the project, not just 'src'
-PROJECT_BASE_DIR = find_project_root()
+# --- Define PROJECT_ROOT dynamically ---
+# This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root.
+PROJECT_ROOT = find_project_root()
 
 def is_within_base_dir(file_path: Path) -> bool:
     """Checks if a file path is safely within the project base directory.
@@ -61,14 +65,8 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
 
     # Basic character sanitization: remove characters invalid in most file systems
     # and control characters. This is a defense-in-depth measure.
-    # Added space to forbidden characters as it can be problematic in some contexts.
-    sanitized_path_str = re.sub(r'[<>:"|?*\\ \x00-\x1f]', '', raw_path)
-
-    # Prevent absolute paths that might try to escape the intended scope
-    # The is_within_base_dir check using relative_to() is the primary defense,
-    # but this adds an explicit layer.
-    if Path(sanitized_path_str).is_absolute():
-         raise ValueError("Absolute paths are not permitted.")
+    # Removed space from forbidden characters as it's a valid path character.
+    sanitized_path_str = re.sub(r'[<>:"|?*\\\x00-\x1f]', '', raw_path)
 
     path_obj = Path(sanitized_path_str)
 

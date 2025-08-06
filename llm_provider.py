@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import logging
+from pathlib import Path # Ensure Path is imported
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -54,10 +55,10 @@ class GeminiProvider:
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", _status_callback=None):
         # Store these as instance attributes, but they are also used for caching.
         self._api_key = api_key # Store API key for hashing/equality
-        self.model_name = model_name
-        self._status_callback = _status_callback # Use the renamed parameter
+        self.model_name = model_name # This is part of the cache key
+        self._status_callback = _status_callback # This should NOT be part of the cache key
         self.client = genai.Client(api_key=self._api_key) # Initialize client here
-
+        
     # Define __hash__ and __eq__ for caching to work correctly
     def __hash__(self):
         # Hash based on model_name and a hash of the API key (not the key itself)
@@ -104,7 +105,7 @@ class GeminiProvider:
         return input_cost + output_cost
 
     # Use st.cache_data for methods that perform computations based on inputs
-    # The 'self' argument is implicitly handled by Streamlit's caching for methods
+    # The '_self' argument is implicitly handled by Streamlit's caching for methods
     # when the class itself is cached with @st.cache_resource.
     @st.cache_data(ttl=3600, show_spinner=False)
     def generate(_self, prompt: str, system_prompt: str, temperature: float, max_tokens: int) -> tuple[str, int, int]:
@@ -151,6 +152,9 @@ class GeminiProvider:
 
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
+    # Use st.cache_data for methods that perform computations based on inputs
+    # The '_self' argument is implicitly handled by Streamlit's caching for methods
+    # when the class itself is cached with @st.cache_resource.
     @st.cache_data(ttl=3600, show_spinner=False)
     def count_tokens(_self, prompt: str, system_prompt: str) -> int:
         full_text_for_counting = f"{system_prompt}\n\n{prompt}"
@@ -190,27 +194,3 @@ class GeminiProvider:
                     raise LLMUnexpectedError(error_msg) from e
 
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
-
-    # recommend_domain is a static method, it doesn't need the cached instance.
-    # It should be cached independently if needed.
-    @staticmethod
-    def recommend_domain(prompt: str, api_key: str, model_name: str = "gemini-2.5-flash-lite") -> str:
-        if not prompt or not api_key:
-            return "General"
-
-        # Create a temporary provider instance for this static method call
-        # This instance is NOT cached by the class-level @st.cache_resource
-        # If this method itself needs caching, it should have its own @st.cache_data decorator.
-        provider = GeminiProvider(api_key=api_key, model_name=model_name)
-        try:
-            response, _, _ = provider.generate(
-                prompt=f"Analyze the following prompt and determine which domain it best fits into. Choose ONLY from these options: 'Science', 'Business', 'Creative', 'Software Engineering', or 'General' (if none clearly apply).\n\nPrompt: {prompt}\n\nRespond with ONLY the domain name, nothing else. Be concise.",
-                system_prompt="You are an expert at categorizing problems into appropriate reasoning domains. Respond with a single word indicating the best domain match.",
-                temperature=0.1,
-                max_tokens=32
-            )
-            return response.strip()
-        except Exception as e:
-            error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-            logger.error(f"Error in domain recommendation LLM call: {error_msg}")
-            return "General"

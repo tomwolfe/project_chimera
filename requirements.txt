@@ -3,15 +3,12 @@ streamlit
 google-genai
 typer[all] # Includes Rich for better CLI output
 pyyaml
-pydantic
-jsonschema
-
+pydantic>=2.0 # Ensure Pydantic v2 for model_validator and other features
+rich # Explicitly add rich for app.py and core.py
+ 
 # Add linters and formatters for development/pre-commit
 black
 ruff
-
+ 
 # Add testing libraries
 pytest
-
-# Keep existing dependencies if any were missed in the original file
-# (Assuming the original requirements.txt was minimal and these are additions)
