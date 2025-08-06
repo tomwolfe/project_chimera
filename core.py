@@ -116,7 +116,8 @@ class SocraticDebate:
 
     @staticmethod # ADDED: Decorator to make this a static method
     @st.cache_data(ttl=3600)
-    def _prioritize_python_code(content: str, max_tokens: int, gemini_provider: GeminiProvider) -> str:
+    # MODIFIED: Prefixed 'gemini_provider' with an underscore to prevent hashing issues
+    def _prioritize_python_code(_gemini_provider: GeminiProvider, content: str, max_tokens: int) -> str:
         """
         Prioritizes imports, class/function definitions for Python code.
         Truncates the content to fit within max_tokens.
@@ -142,15 +143,21 @@ class SocraticDebate:
         except SyntaxError:
             # Log this warning, but don't use self._update_status as it's a static method
             logging.warning(f"[yellow]Warning: Syntax error in Python context file, falling back to simple truncation.[/yellow]")
-            return SocraticDebate._truncate_text_by_tokens(content, max_tokens, gemini_provider)
+            # MODIFIED: Call _truncate_text_by_tokens with the correct provider argument and as a static method
+            return SocraticDebate._truncate_text_by_tokens(_gemini_provider, content, max_tokens)
         combined_content = "\n".join(priority_lines + other_lines)
-        return SocraticDebate._truncate_text_by_tokens(combined_content, max_tokens, gemini_provider)
+        # MODIFIED: Call _truncate_text_by_tokens with the correct provider argument and as a static method
+        return SocraticDebate._truncate_text_by_tokens(_gemini_provider, combined_content, max_tokens)
 
-    def _truncate_text_by_tokens(self, text: str, max_tokens: int) -> str:
+    # MODIFIED: Added @staticmethod decorator
+    @staticmethod
+    # MODIFIED: Changed signature to accept _gemini_provider and use it directly
+    def _truncate_text_by_tokens(_gemini_provider: GeminiProvider, text: str, max_tokens: int) -> str:
         """Truncates text to fit within max_tokens using the GeminiProvider's token counting."""
         if not text:
             return ""
-        current_tokens = self.gemini_provider.count_tokens(text, "")
+        # MODIFIED: Use the passed _gemini_provider instance
+        current_tokens = _gemini_provider.count_tokens(text, "")
         if current_tokens <= max_tokens:
             return text
         chars_per_token_estimate = 4
@@ -158,14 +165,17 @@ class SocraticDebate:
         truncated_text = text
         if len(truncated_text) > target_chars:
             truncated_text = truncated_text[:target_chars]
-        while self.gemini_provider.count_tokens(truncated_text, "") > max_tokens and len(truncated_text) > 0:
+        # MODIFIED: Use the passed _gemini_provider instance
+        while _gemini_provider.count_tokens(truncated_text, "") > max_tokens and len(truncated_text) > 0:
             chars_to_remove = max(1, len(truncated_text) // 20)
             truncated_text = truncated_text[:-chars_to_remove]
             if len(truncated_text) == 0:
                 break
-        if self.gemini_provider.count_tokens(text, "") > max_tokens:
+        # MODIFIED: Use the passed _gemini_provider instance
+        if _gemini_provider.count_tokens(text, "") > max_tokens:
             return truncated_text.strip() + "\n... (truncated)"
         return truncated_text
+
     def prepare_context(self) -> str:
         """Prepares the codebase context, prioritizing Python code and truncating to fit budget."""
         if not self.codebase_context:
@@ -182,10 +192,13 @@ class SocraticDebate:
                 break
             file_content_to_add = ""
             if path.endswith('.py'):
-                prioritized_content = SocraticDebate._prioritize_python_code(content, remaining_budget_for_file_content, self.gemini_provider)
-                file_content_to_add = self._truncate_text_by_tokens(prioritized_content, remaining_budget_for_file_content)
+                # MODIFIED: Pass the gemini_provider instance to _prioritize_python_code
+                prioritized_content = SocraticDebate._prioritize_python_code(self.gemini_provider, content, remaining_budget_for_file_content)
+                # FIX: Pass self.gemini_provider as the first argument to the static method _truncate_text_by_tokens
+                file_content_to_add = self._truncate_text_by_tokens(self.gemini_provider, prioritized_content, remaining_budget_for_file_content)
             else:
-                file_content_to_add = self._truncate_text_by_tokens(content, remaining_budget_for_file_content)
+                # FIX: Pass self.gemini_provider as the first argument to the static method _truncate_text_by_tokens
+                file_content_to_add = self._truncate_text_by_tokens(self.gemini_provider, content, remaining_budget_for_file_content)
             if not file_content_to_add:
                 continue
             full_file_block = header + file_content_to_add + "\n"
