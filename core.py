@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # core.py
 import yaml
 import time
@@ -203,6 +204,10 @@ class SocraticDebate:
                 break
             context_str_parts.append(full_file_block)
             current_tokens += file_block_tokens
+        
+        # FIX: Define final_context_string before using it
+        final_context_string = "\n".join(context_str_parts)
+
         # MODIFIED: Pass status_callback to count_tokens
         self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '', _status_callback=self.status_callback)} tokens.")
         return final_context_string
