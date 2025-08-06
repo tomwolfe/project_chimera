@@ -2,7 +2,7 @@
 
 import pycodestyle
 import io
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import subprocess
 import sys
 import os
@@ -25,6 +25,9 @@ def find_project_root(start_path: Path = None) -> Path:
     """Finds the project root directory by searching for known markers.
     Starts from the directory of the current file and traverses upwards.
     """
+    # Define markers to identify the project root
+    PROJECT_ROOT_MARKERS = ['.git', 'config.yaml', 'pyproject.toml']
+
     # Start search from the directory of this file (src/utils)
     if start_path is None:
         start_path = Path(__file__).resolve().parent
@@ -32,10 +35,8 @@ def find_project_root(start_path: Path = None) -> Path:
     current_dir = start_path
     # Traverse upwards to find the project root
     for _ in range(10): # Limit search depth to prevent infinite loops
-        if (current_dir / "config.yaml").exists() or \
-           (current_dir / ".git").exists() or \
-           (current_dir / "pyproject.toml").exists():
-            logger.debug(f"Project root identified at: {current_dir}")
+        if any(current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS):
+            logger.info(f"Project root identified at: {current_dir}")
             return current_dir
         
         parent_path = current_dir.parent
@@ -43,13 +44,13 @@ def find_project_root(start_path: Path = None) -> Path:
             break
         current_dir = parent_path
     
-    # Fallback if no markers are found after reaching the filesystem root
-    logger.warning("Project root markers not found. Falling back to current working directory.")
-    return Path('.').resolve()
+    # If no markers are found after searching, raise an error.
+    # This is more robust than falling back to the current working directory,
+    # as it forces the user to ensure the script is run in a project context.
+    raise FileNotFoundError(f"Project root markers ({PROJECT_ROOT_MARKERS}) not found starting from {start_path}. Cannot determine project root.")
 
 # --- Define PROJECT_ROOT dynamically ---
-# This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root
-# if needed, though in this implementation, we use temporary files directly.
+# This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root.
 PROJECT_ROOT = find_project_root()
 
 # --- Sandbox Execution Helper ---
@@ -69,15 +70,16 @@ def _sandbox_execution(command: List[str], content: str, timeout: int = 10):
             temp_file.write(content)
             temp_file_path = temp_file.name # Store the path for later use
         
-        # Replace a placeholder filename (if used in the command) with the actual temp file path.
-        # This allows commands like `python -m pycodestyle TEMP_FILE_PLACEHOLDER` to work.
-        cmd_with_file = [arg.replace("TEMP_FILE_PLACEHOLDER", temp_file_path) for arg in command]
+        # Construct the command using the actual temporary file path directly.
+        # This avoids the placeholder replacement logic, making it cleaner.
+        final_command = []
+        for arg in command:
+            if arg == "TEMP_FILE_PLACEHOLDER": # If the command expects a placeholder
+                final_command.append(temp_file_path)
+            else:
+                final_command.append(arg)
         
-        # Ensure the correct Python executable is used, especially in virtual environments.
-        if cmd_with_file[0] == "python" and sys.executable:
-            cmd_with_file[0] = sys.executable
-            
-        yield cmd_with_file, temp_file_path
+        yield final_command, temp_file_path
     finally:
         # Clean up the temporary file if it was created and still exists.
         if temp_file_path and os.path.exists(temp_file_path):
@@ -100,6 +102,7 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
             temp_file.flush() # Ensure content is written before pycodestyle reads it
             
             # pycodestyle.check_files expects a list of filenames.
+            # We pass the temporary file's name.
             report = style_guide.check_files([temp_file.name])
             
             # Process the report. Each line typically contains: filename:line:col: code message
@@ -132,10 +135,10 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             
             # Construct the Bandit command safely.
             # Use sys.executable to ensure the correct Python interpreter is used.
-            # Pass the temporary file path to Bandit.
+            # Pass the temporary file path to Bandit. The placeholder is handled by _sandbox_execution.
             command = [
                 sys.executable,
-                "-m", "bandit",
+                "-m", "bandit", # Module execution is safer
                 "-q",  # Quiet mode
                 "-f", "json", # Output format
                 # "-c", "/dev/null", # Use default config, or specify a config file if needed
@@ -145,7 +148,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             # Execute Bandit using subprocess with shell=False for security.
             process = subprocess.run(
                 command,
-                capture_output=True,
+                capture_output=True, # Capture stdout and stderr
                 text=True,
                 check=False, # Don't raise exception on non-zero exit codes
                 shell=False, # Crucial for security
@@ -153,7 +156,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             )
 
             # Bandit returns 0 if no issues, 1 if issues are found, >1 for errors.
-            if process.returncode not in (0, 1): 
+            if process.returncode not in (0, 1): # Check for errors other than finding issues
                 logger.error(f"Bandit execution failed for {filename} with return code {process.returncode}. Stderr: {process.stderr}")
                 issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed: {process.stderr}'})
             else:
@@ -186,7 +189,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit executable not found. Please install Bandit.'})
     except subprocess.TimeoutExpired:
         logger.error(f"Bandit execution timed out for {filename}.")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'})
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'}) # Added message
     except Exception as e:
         logger.error(f"Unexpected error running Bandit on {filename}: {e}")
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})
@@ -244,7 +247,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
                         # Check for subprocess.run with shell=True
                         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'subprocess' and node.func.attr == 'run':
                             for keyword in node.keywords:
-                                if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                                if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True: # Check for shell=True
                                     self.issues.append({
                                         'type': 'Security Vulnerability (AST)',
                                         'file': self.filename,
@@ -253,7 +256,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
                                     })
                         
                         # Check for pickle.load
-                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.id == 'pickle' and node.func.attr == 'load':
+                        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.id == 'pickle' and node.func.attr == 'load': # Check for pickle.load
                             self.issues.append({
                                 'type': 'Security Vulnerability (AST)',
                                 'file': self.filename,
@@ -286,8 +289,8 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
                                      'line': node.lineno,
                                      'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."
                                  })
-
-                        self.generic_visit(node) # Continue visiting child nodes
+                        
+                        self.generic_visit(node) # Continue visiting child nodes to traverse the AST
 
                 visitor = SecurityPatternVisitor(file_path_str)
                 visitor.visit(tree)
@@ -314,11 +317,11 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         if original_content is not None:
             original_checksum = hashlib.sha256(original_content.encode('utf-8')).hexdigest()
             if checksum_new == original_checksum:
-                issues.append({'type': 'No Change Detected', 'file': file_path_str, 'message': 'New content is identical to original.'})
+                issues.append({'type': 'No Change Detected', 'file': file_path_str, 'message': 'New content is identical to original.'}) # Added message
             if is_python:
                 issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
-                # Add AST-based security checks
+                # Add AST-based security checks (duplicate logic for brevity, could be refactored)
                 try:
                     tree = ast.parse(content_to_check)
                     class SecurityPatternVisitor(ast.NodeVisitor):
@@ -410,11 +413,10 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
             original_lines_set = set(original_lines)
             
             for line_content_to_remove in lines_to_remove:
-                # Check if the line (or a close approximation) exists in the original content.
                 # This check is inherently fuzzy. A more robust approach would involve diffing.
                 # For now, we check for exact matches, but log a warning if not found.
                 if line_content_to_remove not in original_lines_set:
-                    # This is a potential issue: the LLM wants to remove a line that doesn't seem to exist.
+                    # This is a potential issue: the LLM wants to remove a line that doesn't seem to exist exactly.
                     # It might be a slight modification before removal, or an error.
                     # We'll flag it but not necessarily fail validation unless it's critical.
                     issues.append({
@@ -425,8 +427,8 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         else:
             issues.append({'type': 'Validation Warning', 'file': file_path_str, 'message': 'Original content not provided for REMOVE action validation.'})
         # Return early for REMOVE action as there's no code content to validate for syntax/style
-        return {'issues': issues} 
-
+        return {'issues': issues} # Return issues found for REMOVE action
+        
     return {'issues': issues}
 
 # The main validation function that orchestrates checks for all changes
@@ -441,10 +443,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
     # Ensure parsed_data is a dictionary and contains the 'code_changes' key as a list
     if not isinstance(parsed_data, dict):
         logger.error(f"validate_code_output_batch received non-dictionary parsed_data: {type(parsed_data).__name__}")
-        
-        # --- FIX START ---
-        # This block safely handles the case where parsed_data is not a dictionary,
-        # preventing an AttributeError if parsed_data is a string and .get() is called on it.
+        # Safely handle the case where parsed_data is not a dictionary.
         malformed_blocks_content = []
         if isinstance(parsed_data, str):
             # If parsed_data is a string, capture its content as a malformed block.
@@ -455,7 +454,6 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         
         # Return a structured error response, ensuring 'malformed_blocks' is always a list.
         return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
-        # --- FIX END ---
 
     code_changes_list = parsed_data.get('code_changes', [])
     if not isinstance(code_changes_list, list):
@@ -466,7 +464,8 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         if not isinstance(change_entry, dict):
             # This is the specific error condition: an item in the list is not a dictionary
             issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
-            logger.error(issue_message)
+            logger.error(issue_message) # Log the error
+            # Add the issue to the 'N/A' file key in the issues list.
             all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
             continue # Skip this malformed entry and proceed to the next
 
