@@ -11,6 +11,7 @@ import json
 import re
 import logging
 from pathlib import Path # Ensure Path is imported
+import socket # <<< ADD THIS IMPORT
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -139,8 +140,20 @@ class GeminiProvider:
                     time.sleep(sleep_time)
                 else:
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else getattr(e, 'code', None)) from e
-            except Exception as e:
+            except Exception as e: # <<< MODIFIED BLOCK STARTS HERE
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                
+                # Check if the error is a DNS resolution error (nodename nor servname provided)
+                if isinstance(e, socket.gaierror):
+                    user_friendly_error = (
+                        f"Network error during API call: Could not resolve hostname. "
+                        f"This might be due to DNS issues or proxy misconfiguration. "
+                        f"Details: {error_msg}"
+                    )
+                    # Raise a specific error type with a more informative message
+                    raise LLMProviderError(user_friendly_error) from e
+                
+                # Handle other exceptions as before
                 if attempt < _self.MAX_RETRIES:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
@@ -148,7 +161,7 @@ class GeminiProvider:
                     _self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise LLMUnexpectedError(error_msg) from e
+                    raise LLMUnexpectedError(error_msg) from e # <<< MODIFIED BLOCK ENDS HERE
 
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
@@ -182,15 +195,27 @@ class GeminiProvider:
                     time.sleep(sleep_time)
                 else:
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else getattr(e, 'code', None)) from e
-            except Exception as e:
+            except Exception as e: # <<< MODIFIED BLOCK STARTS HERE
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
+                
+                # Check if the error is a DNS resolution error (nodename nor servname provided)
+                if isinstance(e, socket.gaierror):
+                    user_friendly_error = (
+                        f"Network error during token count: Could not resolve hostname. "
+                        f"This might be due to DNS issues or proxy misconfiguration. "
+                        f"Details: {error_msg}"
+                    )
+                    # Raise a specific error type with a more informative message
+                    raise LLMProviderError(user_friendly_error) from e
+                
+                # Handle other exceptions as before
                 if attempt < _self.MAX_RETRIES:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    _self._log_status(f"Unexpected error: {error_msg} during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    _self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
                     time.sleep(sleep_time)
                 else:
-                    raise LLMUnexpectedError(error_msg) from e
+                    raise LLMUnexpectedError(error_msg) from e # <<< MODIFIED BLOCK ENDS HERE
 
         raise LLMUnexpectedError("Max retries exceeded for count_tokens call.")
