@@ -14,89 +14,22 @@ from pathlib import Path # Ensure Path is imported
 import pycodestyle # Import pycodestyle directly
 import ast # Import ast for AST-based checks
 
+# Import path utilities from the canonical location
+from src.utils.path_utils import find_project_root, is_within_base_dir, sanitize_and_validate_file_path
+
 logger = logging.getLogger(__name__)
 
 class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
     pass
 
-# --- Helper function to find project root ---
-def find_project_root(start_path: Path = None) -> Path:
-    """Finds the project root directory by searching for known markers.
-    Starts from the directory of the current file and traverses upwards.
-    """
-    # Define markers to identify the project root
-    PROJECT_ROOT_MARKERS = ['.git', 'config.yaml', 'pyproject.toml']
-
-    # Start search from the directory of this file (src/utils)
-    if start_path is None:
-        start_path = Path(__file__).resolve().parent
-
-    current_dir = start_path
-    # Traverse upwards to find the project root
-    for _ in range(10): # Limit search depth to prevent infinite loops
-        if any(current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS):
-            logger.info(f"Project root identified at: {current_dir}")
-            return current_dir
-        
-        parent_path = current_dir.parent
-        if parent_path == current_dir: # Reached filesystem root
-            break
-        current_dir = parent_path
-    
-    # If no markers are found after searching, raise an error.
-    # This is more robust than falling back to the current working directory,
-    # as it forces the user to ensure the script is run in a project context.
-    raise FileNotFoundError(f"Project root markers ({PROJECT_ROOT_MARKERS}) not found starting from {start_path}. Cannot determine project root.")
-
-# --- Define PROJECT_ROOT dynamically ---
-# This ensures that paths used by tools like Bandit or pycodestyle are relative to the project root.
-PROJECT_ROOT = find_project_root()
-
-# MODIFIED: Renamed PROJECT_BASE_DIR to PROJECT_ROOT for consistency
-def is_within_base_dir(file_path: Path) -> bool:
-    """Checks if a file path is safely within the project base directory.
-    Handles potential exceptions during path resolution or comparison.
-    """
-    try:
-        # Resolve the path to handle symlinks and relative paths correctly
-        resolved_path = file_path.resolve()
-        # Check if the resolved path is a subdirectory of the project base directory
-        resolved_path.relative_to(PROJECT_ROOT) # MODIFIED: Use PROJECT_ROOT
-        return True
-    except ValueError:
-        # Path is not relative to PROJECT_ROOT (outside the scope)
-        logger.debug(f"Path '{file_path}' is outside the project base directory '{PROJECT_ROOT}'.") # MODIFIED: Use PROJECT_ROOT
-        return False
-    except Exception as e:
-        # Catch other potential errors during path operations (e.g., permissions)
-        logger.error(f"Error resolving or comparing path '{file_path}' against base directory '{PROJECT_ROOT}': {e}") # MODIFIED: Use PROJECT_ROOT
-        return False
-
-def sanitize_and_validate_file_path(raw_path: str) -> str:
-    """Sanitizes and validates a file path for safety against traversal and invalid characters.
-    Ensures the path is within the project's base directory.
-    """
-    if not raw_path:
-        raise ValueError("File path cannot be empty.")
-
-    # Basic character sanitization: remove characters invalid in most file systems
-    # and control characters. This is a defense-in-depth measure.
-    # Removed space from forbidden characters as it's a valid path character.
-    sanitized_path_str = re.sub(r'[<>:"|?*\\\x00-\x1f]', '', raw_path)
-
-    path_obj = Path(sanitized_path_str)
-
-    # Crucial check: Ensure the path resides within the determined project base directory
-    if not is_within_base_dir(path_obj):
-        raise ValueError(f"File path '{raw_path}' resolves to a location outside the allowed project directory.")
-
-    # Return the resolved and validated path string
-    # Using resolve() here ensures we return a canonical path after validation.
-    try:
-        return str(path_obj.resolve())
-    except Exception as e:
-        raise ValueError(f"Failed to resolve validated path '{sanitized_path_str}': {e}") from e
+# --- Remove redundant definitions ---
+# PROJECT_ROOT = find_project_root() # REMOVE THIS REDUNDANT DEFINITION
+# def is_within_base_dir(file_path: Path) -> bool: # REMOVE THIS REDUNDANT DEFINITION
+#     ...
+# def sanitize_and_validate_file_path(raw_path: str) -> str: # REMOVE THIS REDUNDANT DEFINITION
+#     ...
+# --- End redundant definitions ---
 
 
 def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -397,7 +330,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
         
         # Return a structured error response, ensuring 'malformed_blocks' is always a list.
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_list}
 
     code_changes_list = parsed_data.get('code_changes', [])
     if not isinstance(code_changes_list, list):

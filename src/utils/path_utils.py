@@ -45,15 +45,18 @@ def is_within_base_dir(file_path: Path) -> bool:
         # Resolve the path to handle symlinks and relative paths correctly
         resolved_path = file_path.resolve()
         # Check if the resolved path is a subdirectory of the project base directory
-        resolved_path.relative_to(PROJECT_BASE_DIR)
+        # BUG FIX: Use PROJECT_ROOT instead of PROJECT_BASE_DIR
+        resolved_path.relative_to(PROJECT_ROOT)
         return True
     except ValueError:
-        # Path is not relative to PROJECT_BASE_DIR (outside the scope)
-        logger.debug(f"Path '{file_path}' is outside the project base directory '{PROJECT_BASE_DIR}'.")
+        # Path is not relative to PROJECT_ROOT (outside the scope)
+        # BUG FIX: Use PROJECT_ROOT in the log message
+        logger.debug(f"Path '{file_path}' is outside the project base directory '{PROJECT_ROOT}'.")
         return False
     except Exception as e:
         # Catch other potential errors during path operations (e.g., permissions)
-        logger.error(f"Error resolving or comparing path '{file_path}' against base directory '{PROJECT_BASE_DIR}': {e}")
+        # BUG FIX: Use PROJECT_ROOT in the log message
+        logger.error(f"Error resolving or comparing path '{file_path}' against base directory '{PROJECT_ROOT}': {e}")
         return False
 
 def sanitize_and_validate_file_path(raw_path: str) -> str:

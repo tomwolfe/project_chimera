@@ -87,16 +87,29 @@ class LLMOutputParser:
 
         malformed_blocks_list = [] # ADDED: Initialize list for malformed blocks
 
-        # First, try to find JSON within the response (LLM might add extra text)
-        # This regex looks for a JSON object starting with '{' and ending with '}'
-        # It handles nested structures and escaped characters within the JSON.
-        json_match = re.search(r'\{[\s\S]*\}', raw_output)
-        if json_match:
-            json_str = json_match.group(0)
-            self.logger.debug("Extracted JSON from potentially verbose LLM response")
+        # --- IMPROVED JSON EXTRACTION ---
+        # Try to find JSON within markdown code blocks first, then fall back to raw JSON.
+        json_str = None
+        # Regex to find JSON within ```json ... ``` blocks
+        json_block_match = re.search(r'```json\s*(\{[\s\S]*\})\s*```', raw_output, re.MULTILINE)
+        if json_block_match:
+            json_str = json_block_match.group(1) # Capture only the content inside the markdown block
+            self.logger.debug("Extracted JSON from markdown code block.")
         else:
+            # If no markdown block, try to find a raw JSON object
+            raw_json_match = re.search(r'\{[\s\S]*\}', raw_output)
+            if raw_json_match:
+                json_str = raw_json_match.group(0)
+                self.logger.debug("Extracted raw JSON from response.")
+            else:
+                # If no JSON structure is found at all, use the full response as a fallback
+                json_str = raw_output
+                self.logger.debug("No JSON structure found, using full response for parsing attempt.")
+        # --- END IMPROVED JSON EXTRACTION ---
+
+        if json_str is None: # Should not happen with the fallback, but as a safeguard
             json_str = raw_output
-            self.logger.debug("No JSON object found in expected location, using full response")
+            self.logger.error("JSON string extraction failed unexpectedly. Using raw output.")
 
         # Clean up common JSON formatting issues before parsing
         # 1. Fix single quotes to double quotes
@@ -105,6 +118,7 @@ class LLMOutputParser:
         json_str = re.sub(r',\s*}', '}', json_str)
         json_str = re.sub(r',\s*]', ']', json_str)
         # 3. Fix missing quotes around keys (basic attempt) - more robust than just wrapping
+        # This regex ensures it only quotes keys that are not already quoted and are valid identifiers.
         json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
         
         parsed = {} # Initialize parsed dict
@@ -114,10 +128,10 @@ class LLMOutputParser:
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON decoding failed: {e}")
             malformed_blocks_list.append(f"JSONDecodeError: {e}") # ADDED
-            malformed_blocks_list.append(f"Raw output:\n{raw_output}") # ADDED
+            malformed_blocks_list.append(f"Attempted JSON string:\n{json_str[:1000]}...") # ADDED: Show the string that failed
             return {
                 "commit_message": "Parsing error",
-                "rationale": f"Failed to parse LLM output as JSON. Error: {e}\nRaw output: {raw_output[:500]}...",
+                "rationale": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {json_str[:500]}...",
                 "code_changes": [],
                 "conflict_resolution": None,
                 "unresolved_conflict": None,
@@ -158,6 +172,7 @@ class LLMOutputParser:
                             # It's a dictionary, but might still be invalid according to CodeChange schema.
                             # Try to validate it as a CodeChange.
                             try:
+                                # Use the Pydantic model to validate each item
                                 valid_item = CodeChange(**item)
                                 processed_code_changes.append(valid_item.dict(by_alias=True)) # Use by_alias=True to keep original keys like FILE_PATH
                             except ValidationError as inner_val_e:
