@@ -11,7 +11,7 @@ import hashlib
 import re
 import contextlib
 import logging
-from pathlib import Path
+from pathlib import Path # Ensure Path is imported
 import ast # Import ast for AST-based checks
 
 logger = logging.getLogger(__name__)
@@ -441,7 +441,21 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
     # Ensure parsed_data is a dictionary and contains the 'code_changes' key as a list
     if not isinstance(parsed_data, dict):
         logger.error(f"validate_code_output_batch received non-dictionary parsed_data: {type(parsed_data).__name__}")
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+        
+        # --- FIX START ---
+        # This block safely handles the case where parsed_data is not a dictionary,
+        # preventing an AttributeError if parsed_data is a string and .get() is called on it.
+        malformed_blocks_content = []
+        if isinstance(parsed_data, str):
+            # If parsed_data is a string, capture its content as a malformed block.
+            malformed_blocks_content.append(f"Raw output that failed type check: {parsed_data[:500]}...")
+        elif parsed_data is not None: # If it's some other non-dict type (e.g., list, int)
+            # Capture the unexpected type.
+            malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
+        
+        # Return a structured error response, ensuring 'malformed_blocks' is always a list.
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
+        # --- FIX END ---
 
     code_changes_list = parsed_data.get('code_changes', [])
     if not isinstance(code_changes_list, list):

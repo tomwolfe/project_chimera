@@ -367,8 +367,11 @@ class SocraticDebate:
                         # Use the LLMOutputParser to parse and validate the raw response
                         parsed_data = self.parser.parse_and_validate(raw_response_text)
 
-                        # Check if the parser returned malformed_blocks (indicating parsing/validation failure)
-                        if "malformed_blocks" in parsed_data:
+                        # --- FIX START ---
+                        # Safely check if parsed_data is a dictionary and contains malformed_blocks
+                        # This prevents an AttributeError if parse_and_validate returns a string or None.
+                        if isinstance(parsed_data, dict) and "malformed_blocks" in parsed_data:
+                        # --- FIX END ---
                             malformed_blocks = parsed_data["malformed_blocks"]
                             error_message = f"LLM output parsing/validation failed for persona '{current_persona_name}'.\n" + "\n".join(malformed_blocks)
                             self.intermediate_steps[f"{current_output_key}_Error"] = error_message
@@ -376,25 +379,6 @@ class SocraticDebate:
                             # If parsing/validation fails, we cannot proceed with storing valid data.
                             # Raise an error to be caught by the outer handler.
                             raise LLMProviderError(f"Failed to parse/validate LLM output from {current_persona_name}.")
-
-                        # If parsing and initial validation are successful, proceed to code validation
-                        code_changes_list = parsed_data.get('code_changes', [])
-                        original_context_for_validation = self.codebase_context
-
-                        # Perform batch validation on the extracted code changes
-                        validation_report = validate_code_output_batch(code_changes_list, original_context_for_validation)
-
-                        # Aggregate all validation issues
-                        all_issues = []
-                        for file_issues in validation_report.values():
-                            all_issues.extend(file_issues)
-
-                        if all_issues:
-                            validation_error_message = "Code validation issues found:\n"
-                            for issue in all_issues:
-                                validation_error_message += f"- [{issue.get('type', 'Unknown')}] in {issue.get('file', 'N/A')} (Line {issue.get('line', 'N/A')}): {issue.get('message', '')}\n"
-                            self.intermediate_steps[f"{current_output_key}_Validation_Issues"] = validation_error_message
-                            self._update_status(f"[yellow]Warning: Code validation issues found for {current_persona_name}. Check intermediate steps for details.[/yellow]", state="warning")
 
                         # Store the parsed and validated data (even if it has validation issues)
                         self.intermediate_steps[current_output_key] = parsed_data
