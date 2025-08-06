@@ -493,9 +493,6 @@ with col1:
                 else: # If the custom framework doesn't explicitly define its sets, use a default or clear
                     st.session_state.persona_sets[st.session_state.selected_persona_set] = [] # Or a default set if appropriate
 
-                # Update available_domains if a new custom framework adds new sets (though typically custom frameworks use existing sets)
-                # For simplicity, we assume custom frameworks primarily define personas and might reference existing sets.
-                
             except ValidationError as e:
                 st.error(f"Error loading custom framework '{st.session_state.selected_persona_set}': Invalid persona data. {e}")
                 st.session_state.personas = {} # Clear personas on error
@@ -722,8 +719,8 @@ if run_button_clicked:
                         model_name=st.session_state.selected_model_selectbox,
                         personas=personas_for_run, # Use the filtered personas for the run
                         all_personas=all_personas, # Pass all loaded personas for fallback/reference
-                        persona_sequence=st.session_state.persona_sequence, # Pass the loaded persona sequence
                         persona_sets=persona_sets, # Pass all persona sets
+                        persona_sequence=st.session_state.persona_sequence, # Pass the loaded persona sequence
                         domain=domain_for_run,
                         gemini_provider=gemini_provider_instance, # Pass the instantiated provider
                         status_callback=streamlit_status_callback,
@@ -811,7 +808,12 @@ if st.session_state.debate_ran:
             try:
                 parsed_data = parser.parse_and_validate(raw_output)
                 # Use the imported validate_code_output_batch from utils.py for detailed validation
-                validation_results = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
+                # validate_code_output_batch returns a dict where keys are file paths and values are lists of issues.
+                # We need to combine these with malformed_blocks from parsed_data.
+                code_validation_issues_by_file = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
+                validation_results = {'issues': [], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+                for file_issues_list in code_validation_issues_by_file.values():
+                    validation_results['issues'].extend(file_issues_list)
             except (ValueError, RuntimeError) as e:
                 # If parsing fails, capture the error and mark blocks as malformed
                 validation_results['malformed_blocks'].append(f"Error parsing LLM output: {e}\nRaw Output:\n{raw_output}")
