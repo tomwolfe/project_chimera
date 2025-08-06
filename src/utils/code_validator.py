@@ -1,5 +1,4 @@
 # src/utils/code_validator.py
-
 import io
 from typing import List, Tuple, Dict, Any, Optional
 import subprocess
@@ -10,11 +9,10 @@ import hashlib
 import re
 import contextlib
 import logging
-from pathlib import Path # Ensure Path is imported
-import pycodestyle # Import pycodestyle directly
-import ast # Import ast for AST-based checks
+from pathlib import Path
+import pycodestyle
+import ast
 
-# Import path utilities from the canonical location
 from src.utils.path_utils import find_project_root, is_within_base_dir, sanitize_and_validate_file_path
 
 logger = logging.getLogger(__name__)
@@ -23,49 +21,48 @@ class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
     pass
 
-# --- Remove redundant definitions ---
-# PROJECT_ROOT = find_project_root() # REMOVE THIS REDUNDANT DEFINITION
-# def is_within_base_dir(file_path: Path) -> bool: # REMOVE THIS REDUNDANT DEFINITION
-#     ...
-# def sanitize_and_validate_file_path(raw_path: str) -> str: # REMOVE THIS REDUNDANT DEFINITION
-#     ...
-# --- End redundant definitions ---
-
-
 def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
-    """Runs pycodestyle on the given content using its library API."""
+    """Runs pycodestyle on the given content using its library API, avoiding temporary files."""
     issues = []
     try:
-        # Use StyleGuide for checking code. quiet=True suppresses non-error messages.
+        # Use pycodestyle's API to check code directly from content.
+        # This avoids the overhead of temporary files.
+        # Pass filename for accurate error reporting (line numbers, etc.)
         style_guide = pycodestyle.StyleGuide(quiet=True, format='default')
-        
-        # pycodestyle's check_files expects file paths. We simulate this using a temporary file.
-        # delete=True ensures the file is cleaned up automatically after use.
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=True) as temp_file:
-            temp_file.write(content)
-            temp_file.flush() # Ensure content is written before pycodestyle reads it
-            
-            # pycodestyle.check_files expects a list of filenames.
-            # We pass the temporary file's name.
-            report = style_guide.check_files([temp_file.name])
-            
-            # Process the report. Each line typically contains: filename:line:col: code message
-            for line in report.splitlines():
-                # Regex to parse pycodestyle output format, capturing line, col, code, and message.
-                match = re.match(r"^[^:]+:(?P<line>\d+):(?P<col>\d+): (?P<code>\w+) (?P<message>.*)", line)
-                if match:
-                    issues.append({
-                        'type': 'PEP8 Violation',
-                        'file': filename, # Use the original filename for reporting
-                        'line': int(match.group('line')),
-                        'column': int(match.group('col')),
-                        'code': match.group('code'),
-                        'message': match.group('message').strip()
-                    })
-        # If report is empty, no issues were found, which is correct.
+        # The Checker takes a list of lines and a filename.
+        # We simulate a file by passing the content as lines.
+        checker = pycodestyle.Checker(
+            filename=filename,
+            lines=content.splitlines(keepends=True),
+            # Optionally, you can specify options here if needed,
+            # e.g., exclude=['E501']
+        )
+
+        # `check_all` returns a list of tuples: (line_number, column_number, error_code, text)
+        errors = checker.check_all()
+
+        for line_num, col_num, code, message in errors:
+            issues.append({
+                "line_number": line_num,
+                "column_number": col_num,
+                "code": code,
+                "message": message.strip(),
+                "source": "pycodestyle",
+                "filename": filename,
+                "type": "PEP8 Violation" # Added type for consistency with other issues
+            })
+
     except Exception as e:
         logger.error(f"Error running pycodestyle on {filename}: {e}")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run pycodestyle: {e}'})
+        issues.append({
+            "line_number": None,
+            "column_number": None,
+            "code": "PYCODESTYLE_ERROR",
+            "message": f"Internal error during pycodestyle check: {e}",
+            "source": "pycodestyle",
+            "filename": filename,
+            "type": "Validation Tool Error" # Added type
+        })
     return issues
 
 def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -74,19 +71,20 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     # Bandit typically analyzes files, so we use a temporary file.
     # Using delete=True for automatic cleanup.
     try:
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', encoding='utf-8', delete=True) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode='w+', suffix='.py', encoding='utf-8', delete=True
+        ) as temp_file:
             temp_file.write(content)
             temp_file.flush()
             
             # Construct the Bandit command safely.
             # Use sys.executable to ensure the correct Python interpreter is used.
-            # Pass the temporary file path to Bandit. The placeholder is handled by _sandbox_execution.
+            # Pass the temporary file path to Bandit.
             command = [
                 sys.executable,
                 "-m", "bandit", # Module execution is safer
                 "-q",  # Quiet mode
                 "-f", "json", # Output format
-                # "-c", "/dev/null", # Use default config, or specify a config file if needed
                 temp_file.name
             ]
             
@@ -112,8 +110,6 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                         import json
                         data = json.loads(bandit_results)
                         for issue in data.get('results', []):
-                            # Filter out 'info' level issues if desired, or include all.
-                            # For security analysis, 'info' might be relevant too, but typically warnings/errors are prioritized.
                             if issue['level'] != 'info': # Example: only include non-info issues
                                 issues.append({
                                     'type': 'Bandit Security Issue',
@@ -134,7 +130,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit executable not found. Please install Bandit.'})
     except subprocess.TimeoutExpired:
         logger.error(f"Bandit execution timed out for {filename}.")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'}) # Added message
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'})
     except Exception as e:
         logger.error(f"Unexpected error running Bandit on {filename}: {e}")
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})
@@ -237,19 +233,19 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 
 def validate_code_output(parsed_change: Dict[str, Any], original_content: str = None) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
-    file_path_str = parsed_change.get('file_path')
-    action = parsed_change.get('action')
+    file_path_str = parsed_change.get('FILE_PATH') # Use uppercase key
+    action = parsed_change.get('ACTION') # Use uppercase key
     content_to_check = ""
     issues = []
 
     if not file_path_str or not action:
-        return {'issues': [{'type': 'Validation Error', 'file': file_path_str or 'N/A', 'message': 'Missing file_path or action in parsed change.'}]}
+        return {'issues': [{'type': 'Validation Error', 'file': file_path_str or 'N/A', 'message': 'Missing FILE_PATH or ACTION in parsed change.'}]} # Use uppercase key
     
     file_path = Path(file_path_str)
     is_python = file_path.suffix.lower() == '.py'
 
     if action == 'ADD':
-        content_to_check = parsed_change.get('full_content', '')
+        content_to_check = parsed_change.get('FULL_CONTENT', '') # Use uppercase key
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"New file SHA256: {checksum}"})
         if is_python:
@@ -260,7 +256,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == 'MODIFY':
-        content_to_check = parsed_change.get('full_content', '')
+        content_to_check = parsed_change.get('FULL_CONTENT', '') # Use uppercase key
         checksum_new = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"Modified file (new content) SHA256: {checksum_new}"})
         
@@ -282,20 +278,13 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
 
     elif action == 'REMOVE':
         # For REMOVE actions, we primarily check if the lines intended for removal exist.
-        # This is a heuristic and might not catch all semantic issues.
         if original_content is not None:
             original_lines = original_content.splitlines()
-            lines_to_remove = parsed_change.get('lines', [])
-            # Use a set for efficient lookup
+            lines_to_remove = parsed_change.get('LINES', []) # Use uppercase key
             original_lines_set = set(original_lines)
             
             for line_content_to_remove in lines_to_remove:
-                # This check is inherently fuzzy. A more robust approach would involve diffing.
-                # For now, we check for exact matches, but log a warning if not found.
                 if line_content_to_remove not in original_lines_set:
-                    # This is a potential issue: the LLM wants to remove a line that doesn't seem to exist exactly.
-                    # It might be a slight modification before removal, or an error.
-                    # We'll flag it but not necessarily fail validation unless it's critical.
                     issues.append({
                         'type': 'Potential Removal Mismatch',
                         'file': file_path_str,
@@ -303,12 +292,10 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
                     })
         else:
             issues.append({'type': 'Validation Warning', 'file': file_path_str, 'message': 'Original content not provided for REMOVE action validation.'})
-        # Return early for REMOVE action as there's no code content to validate
-        return {'issues': issues} # Return issues found for REMOVE action
+        return {'issues': issues}
         
     return {'issues': issues}
 
-# The main validation function that orchestrates checks for all changes
 def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
     """Validates a batch of code changes and aggregates issues per file. 
     This function is called after parse_and_validate has succeeded and returned a structured dictionary.
@@ -317,69 +304,53 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         original_contents = {}
     all_validation_results = {}
 
-    # Ensure parsed_data is a dictionary and contains the 'code_changes' key as a list
     if not isinstance(parsed_data, dict):
         logger.error(f"validate_code_output_batch received non-dictionary parsed_data: {type(parsed_data).__name__}")
-        # Safely handle the case where parsed_data is not a dictionary.
         malformed_blocks_content = []
         if isinstance(parsed_data, str):
-            # If parsed_data is a string, capture its content as a malformed block.
             malformed_blocks_content.append(f"Raw output that failed type check: {parsed_data[:500]}...")
-        elif parsed_data is not None: # If it's some other non-dict type (e.g., list, int)
-            # Capture the unexpected type.
+        elif parsed_data is not None:
             malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
         
-        # Return a structured error response, ensuring 'malformed_blocks' is always a list.
-        # Note: The malformed_blocks_list here is local to this function's error handling.
-        # The main malformed_blocks from LLMOutputParser are already in parsed_data.
-        # This is for internal errors within validate_code_output_batch itself.
         return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
 
-    code_changes_list = parsed_data.get('CODE_CHANGES', []) # MODIFIED: Use uppercase key for CODE_CHANGES
+    code_changes_list = parsed_data.get('CODE_CHANGES', [])
     if not isinstance(code_changes_list, list):
-        logger.error(f"validate_code_output_batch received non-list 'CODE_CHANGES' field: {type(code_changes_list).__name__}") # MODIFIED: Use uppercase key
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid type for 'CODE_CHANGES': Expected list, got {type(code_changes_list).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])} # MODIFIED: Use uppercase key
+        logger.error(f"validate_code_output_batch received non-list 'CODE_CHANGES' field: {type(code_changes_list).__name__}")
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid type for 'CODE_CHANGES': Expected list, got {type(code_changes_list).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
 
     for i, change_entry in enumerate(code_changes_list):
         if not isinstance(change_entry, dict):
-            # This is the specific error condition: an item in the list is not a dictionary
             issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
-            logger.error(issue_message) # Log the error
-            # Add the issue to the 'N/A' file key in the issues list.
+            logger.error(issue_message)
             all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
-            continue # Skip this malformed entry and proceed to the next
+            continue
 
-        file_path = change_entry.get('FILE_PATH') # MODIFIED: Use uppercase key
+        file_path = change_entry.get('FILE_PATH')
         if file_path:
             try:
-                # validate_code_output expects a single change dict and original content (if available)
-                # We pass original_contents which maps file_path to its content.
                 original_content = original_contents.get(file_path)
                 validation_result = validate_code_output(change_entry, original_content)
                 
-                # Store issues per file path
                 all_validation_results[file_path] = validation_result.get('issues', [])
                 logger.debug(f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues.")
             except Exception as e:
                 logger.error(f"Error during validation of change entry {i} for file {file_path}: {e}")
-                # Add an error issue if validation itself fails
                 if file_path not in all_validation_results:
                     all_validation_results[file_path] = []
                 all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})
         else:
-            # Handle changes without file_path if necessary
-            logger.warning(f"Encountered a code change without a 'FILE_PATH' in output {i}. Skipping validation for this item.") # MODIFIED: Use uppercase key
-            # Add a generic issue for the batch if such items are critical.
-            all_validation_results.setdefault('N/A', []).append({'type': 'Validation Error', 'file': 'N/A', 'message': f'Change item at index {i} missing FILE_PATH.'}) # MODIFIED: Use uppercase key
+            logger.warning(f"Encountered a code change without a 'FILE_PATH' in output {i}. Skipping validation for this item.")
+            all_validation_results.setdefault('N/A', []).append({'type': 'Validation Error', 'file': 'N/A', 'message': f'Change item at index {i} missing FILE_PATH.'})
             
     # --- New: Unit Test Presence Check ---
     python_files_modified_or_added = {
-        change['FILE_PATH'] for change in code_changes_list # MODIFIED: Use uppercase key
-        if change.get('FILE_PATH', '').endswith('.py') and change.get('ACTION') in ['ADD', 'MODIFY'] # MODIFIED: Use uppercase keys
+        change['FILE_PATH'] for change in code_changes_list
+        if change.get('FILE_PATH', '').endswith('.py') and change.get('ACTION') in ['ADD', 'MODIFY']
     }
     test_files_added = {
-        change['FILE_PATH'] for change in code_changes_list # MODIFIED: Use uppercase key
-        if change.get('FILE_PATH', '').startswith('tests/') and change.get('ACTION') == 'ADD' # MODIFIED: Use uppercase keys
+        change['FILE_PATH'] for change in code_changes_list
+        if change.get('FILE_PATH', '').startswith('tests/') and change.get('ACTION') == 'ADD'
     }
 
     for py_file in python_files_modified_or_added:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # core.py
 import yaml
 import time
@@ -177,6 +176,10 @@ class SocraticDebate:
         context_budget = int(self.max_total_tokens_budget * self.context_token_budget_ratio)
         context_str_parts = []
         current_tokens = 0
+        
+        # The variable final_context_string is assigned after the loop, so it's always defined before its use below.
+        # The previous "FIX" comment was misleading.
+
         for path, content in self.codebase_context.items():
             header = f"--- file_path: {path} ---\n"
             # MODIFIED: Pass status_callback to count_tokens
@@ -205,7 +208,6 @@ class SocraticDebate:
             context_str_parts.append(full_file_block)
             current_tokens += file_block_tokens
         
-        # FIX: Define final_context_string before using it
         final_context_string = "\n".join(context_str_parts)
 
         # MODIFIED: Pass status_callback to count_tokens
@@ -339,21 +341,25 @@ class SocraticDebate:
                             error_message = f"[ERROR] Unexpected error processing LLM output for '{current_persona_name}': {parse_err}"
                             self.intermediate_steps[f"{current_output_key}_Error"] = error_message
                             self._update_status(error_message, state="error")
+                            # Ensure the error dict itself is valid JSON when re-serialized
                             parsed_data = {
-                                "commit_message": "Parsing error",
-                                "rationale": f"Failed to parse LLM output as JSON. Error: {parse_err}\nRaw output: {raw_response_text[:500]}...",
-                                "code_changes": [],
-                                "conflict_resolution": None,
-                                "unresolved_conflict": None,
-                                "malformed_blocks": [f"Unexpected error during parsing: {parse_err}", f"Raw output:\n{raw_response_text}"]
+                                "COMMIT_MESSAGE": "Parsing error",
+                                "RATIONALE": self.parser._escape_json_string_value(f"Failed to parse LLM output as JSON. Error: {parse_err}\nRaw output: {raw_response_text[:500]}..."),
+                                "CODE_CHANGES": [],
+                                "CONFLICT_RESOLUTION": None,
+                                "UNRESOLVED_CONFLICT": None,
+                                "malformed_blocks": [
+                                    self.parser._escape_json_string_value(f"Unexpected error during parsing: {parse_err}"),
+                                    self.parser._escape_json_string_value(f"Raw output:\n{raw_response_text}")
+                                ]
                             }
                     else:
                         parsed_data = {
-                            "commit_message": "Empty response",
-                            "rationale": "[INFO] LLM returned empty response for final answer.",
-                            "code_changes": [],
-                            "conflict_resolution": None,
-                            "unresolved_conflict": None,
+                            "COMMIT_MESSAGE": "Empty response",
+                            "RATIONALE": "[INFO] LLM returned empty response for final answer.",
+                            "CODE_CHANGES": [],
+                            "CONFLICT_RESOLUTION": None,
+                            "UNRESOLVED_CONFLICT": None,
                             "malformed_blocks": ["LLM returned empty response for final answer."]
                         }
                         tokens_used = input_tokens
@@ -480,12 +486,12 @@ class SocraticDebate:
             self._update_status(error_msg, state="error")
             # MODIFIED: final_answer is now a dict, so populate it with error info
             self.final_answer = {
-                "commit_message": "Debate Failed",
-                "rationale": f"Socratic Debate failed: {e}",
-                "code_changes": [],
-                "conflict_resolution": None,
-                "unresolved_conflict": None,
-                "malformed_blocks": [f"Debate failed: {e}"]
+                "COMMIT_MESSAGE": "Debate Failed",
+                "RATIONALE": self.parser._escape_json_string_value(f"Socratic Debate failed: {e}"),
+                "CODE_CHANGES": [],
+                "CONFLICT_RESOLUTION": None,
+                "UNRESOLVED_CONFLICT": None,
+                "malformed_blocks": [self.parser._escape_json_string_value(f"Debate failed: {e}")]
             }
             self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
             self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
