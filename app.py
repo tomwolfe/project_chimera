@@ -130,6 +130,7 @@ EXAMPLE_PROMPTS = {
     "Implement Python API Endpoint": "Implement a new FastAPI endpoint `/items/{item_id}` that retrieves an item from a dictionary. Include basic error handling for non-existent items and add a corresponding unit test.",
     "Refactor a Python Function": "Refactor the given Python function to improve its readability and performance. It currently uses a nested loop; see if you can optimize it.",
     "Fix a Bug in a Script": "The provided Python script is supposed to calculate the average of a list of numbers but fails with a `TypeError` if the list contains non-numeric strings. Fix the bug by safely ignoring non-numeric values.",
+    "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.": "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.",
     "Climate Change Solution": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
 }
 
@@ -350,7 +351,7 @@ if selected_option_from_widget != st.session_state.selected_example_name:
             st.session_state.selected_persona_set = "General"
     else:
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[st.session_state.selected_example_name]
-        if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script"]:
+        if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script", "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."]: # Added the new prompt to trigger SE framework
             st.session_state.codebase_context = load_demo_codebase_context()
             st.session_state.uploaded_files = [
                 type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
@@ -612,11 +613,11 @@ if run_button_clicked:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
                 # MODIFIED: final_answer_output is now a dict, so populate it with error info
                 st.session_state.final_answer_output = {
-                    "commit_message": "Debate Failed",
-                    "rationale": f"Error during debate: {e}",
-                    "code_changes": [],
-                    "conflict_resolution": None,
-                    "unresolved_conflict": None,
+                    "COMMIT_MESSAGE": "Debate Failed",
+                    "RATIONALE": f"Error during debate: {e}",
+                    "CODE_CHANGES": [],
+                    "CONFLICT_RESOLUTION": None,
+                    "UNRESOLVED_CONFLICT": None,
                     "malformed_blocks": [f"Error during debate: {e}"]
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -628,6 +629,40 @@ if run_button_clicked:
 if st.session_state.debate_ran:
     st.markdown("---")
     st.header("Results")
+
+    # --- ADDED: Download Buttons ---
+    download_cols = st.columns(2)
+    with download_cols[0]:
+        # Generate the full markdown report content
+        full_report_content = generate_markdown_report(
+            user_prompt=user_prompt,
+            final_answer=st.session_state.final_answer_output,
+            intermediate_steps=st.session_state.intermediate_steps_output,
+            process_log_output=st.session_state.process_log_output_text,
+            config_params=st.session_state.last_config_params
+        )
+        st.download_button(
+            label="Download Full Report (Markdown)",
+            data=full_report_content,
+            file_name=f"project_chimera_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+    with download_cols[1]:
+        # Generate the final answer JSON content if applicable
+        if isinstance(st.session_state.final_answer_output, dict):
+            final_answer_json = json.dumps(st.session_state.final_answer_output, indent=2)
+            st.download_button(
+                label="Download Final Answer (JSON)",
+                data=final_answer_json,
+                file_name=f"project_chimera_final_answer_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        else:
+            st.info("Final answer is not in JSON format for download.")
+    # --- END ADDED: Download Buttons ---
+
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         # MODIFIED: final_answer_output is now expected to be a dictionary
         parsed_data = st.session_state.final_answer_output 
@@ -637,7 +672,8 @@ if st.session_state.debate_ran:
         if isinstance(parsed_data, dict):
             validation_results['malformed_blocks'] = parsed_data.get('malformed_blocks', [])
             
-            if isinstance(parsed_data.get('CODE_CHANGES'), list) and parsed_data.get('CODE_CHANGES'): # MODIFIED: Use uppercase key
+            # MODIFIED: Use uppercase key for CODE_CHANGES
+            if isinstance(parsed_data.get('CODE_CHANGES'), list) and parsed_data.get('CODE_CHANGES'): 
                 try:
                     code_validation_issues_by_file = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
                     for file_issues_list in code_validation_issues_by_file.values():
@@ -679,7 +715,7 @@ if st.session_state.debate_ran:
 
         with st.expander("✅ Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
-                st.success("✨ No syntax, style, or formatting issues detected.")
+                st.success("✅ No syntax, style, or formatting issues detected.")
             else:
                 for issue in validation_results['issues']:
                     st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
@@ -687,10 +723,12 @@ if st.session_state.debate_ran:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
 
         st.subheader("Proposed Code Changes")
-        if not parsed_data.get('CODE_CHANGES') and not validation_results['malformed_blocks']: # MODIFIED: Use uppercase key
+        # MODIFIED: Use uppercase key for CODE_CHANGES
+        if not parsed_data.get('CODE_CHANGES') and not validation_results['malformed_blocks']: 
             st.info("No code changes were proposed.")
-        for change in parsed_data.get('CODE_CHANGES', []): # MODIFIED: Use uppercase key
-            with st.expander(f"📄 **{change.get('FILE_PATH', 'N/A')}** (`{change.get('ACTION', 'N/A')}`)", expanded=False):
+        # MODIFIED: Use uppercase key for CODE_CHANGES
+        for change in parsed_data.get('CODE_CHANGES', []): 
+            with st.expander(f"📝 **{change.get('FILE_PATH', 'N/A')}** (`{change.get('ACTION', 'N/A')}`)", expanded=False):
                 st.write(f"**Action:** {change.get('ACTION')}")
                 st.write(f"**File Path:** {change.get('FILE_PATH')}")
                 if change.get('ACTION') in ['ADD', 'MODIFY']:

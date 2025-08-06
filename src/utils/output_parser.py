@@ -130,11 +130,11 @@ class LLMOutputParser:
             malformed_blocks_list.append(f"JSONDecodeError: {e}") # ADDED
             malformed_blocks_list.append(f"Attempted JSON string:\n{json_str[:1000]}...") # ADDED: Show the string that failed
             return {
-                "commit_message": "Parsing error",
-                "rationale": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {json_str[:500]}...",
-                "code_changes": [],
-                "conflict_resolution": None,
-                "unresolved_conflict": None,
+                "COMMIT_MESSAGE": "Parsing error", # MODIFIED: Use uppercase key
+                "RATIONALE": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {json_str[:500]}...", # MODIFIED: Use uppercase key
+                "CODE_CHANGES": [], # MODIFIED: Use uppercase key
+                "CONFLICT_RESOLUTION": None,
+                "UNRESOLVED_CONFLICT": None,
                 "malformed_blocks": malformed_blocks_list # ADDED
             }
 
@@ -152,19 +152,19 @@ class LLMOutputParser:
             malformed_blocks_list.append(f"Schema validation error: {validation_e}") # ADDED
             
             fallback_output = {
-                "commit_message": "Schema validation failed",
-                "rationale": f"Original output: {raw_output[:500]}...\nValidation Error: {validation_e}",
-                "code_changes": [], # Default to empty list
-                "conflict_resolution": None,
-                "unresolved_conflict": None,
-                "malformed_blocks": malformed_blocks_list # ADDED: Add validation error to malformed blocks
+                "COMMIT_MESSAGE": "Schema validation failed", # MODIFIED: Use uppercase key
+                "RATIONALE": f"Original output: {raw_output[:500]}...\nValidation Error: {validation_e}", # MODIFIED: Use uppercase key
+                "CODE_CHANGES": [], # Default to empty list # MODIFIED: Use uppercase key
+                "CONFLICT_RESOLUTION": None,
+                "UNRESOLVED_CONFLICT": None,
+                "malformed_blocks": malformed_blocks_list # ADDED
             }
             # If the original parsed data had some structure, try to incorporate it
             if isinstance(parsed, dict):
-                fallback_output["commit_message"] = parsed.get("COMMIT_MESSAGE", fallback_output["commit_message"])
-                fallback_output["rationale"] = parsed.get("RATIONALE", fallback_output["rationale"])
+                fallback_output["COMMIT_MESSAGE"] = parsed.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"]) # MODIFIED: Use uppercase key
+                fallback_output["RATIONALE"] = parsed.get("RATIONALE", fallback_output["RATIONALE"]) # MODIFIED: Use uppercase key
                 # Try to salvage code_changes if they exist and are list-like
-                original_code_changes = parsed.get("CODE_CHANGES")
+                original_code_changes = parsed.get("CODE_CHANGES") # MODIFIED: Use uppercase key
                 if isinstance(original_code_changes, list):
                     processed_code_changes = []
                     for index, item in enumerate(original_code_changes):
@@ -195,14 +195,14 @@ class LLMOutputParser:
                                 "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}",
                                 "LINES": []
                             })
-                    fallback_output["code_changes"] = processed_code_changes
+                    fallback_output["CODE_CHANGES"] = processed_code_changes # MODIFIED: Use uppercase key
                 else:
                     # CODE_CHANGES was not a list, or was missing.
-                    self.logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing in LLM output.")
+                    self.logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing in LLM output.") # MODIFIED: Use uppercase key
                     # Add a specific malformed block entry for this case.
-                    malformed_blocks_list.append(f"CODE_CHANGES field was not a list or was missing in LLM output. Raw value: {original_code_changes}") # ADDED
+                    malformed_blocks_list.append(f"CODE_CHANGES field was not a list or was missing in LLM output. Raw value: {original_code_changes}") # ADDED # MODIFIED: Use uppercase key
                     # Ensure code_changes is an empty list if it was malformed.
-                    fallback_output["code_changes"] = []
+                    fallback_output["CODE_CHANGES"] = [] # MODIFIED: Use uppercase key
 
             # Ensure the raw output is captured if it wasn't already part of a specific malformed_blocks entry.
             if not any(raw_output[:50] in block for block in malformed_blocks_list):
@@ -215,11 +215,11 @@ class LLMOutputParser:
             malformed_blocks_list.append(f"Unexpected error during schema validation: {general_e}") # ADDED
             malformed_blocks_list.append(f"Original raw output:\n{raw_output}") # ADDED
             return {
-                "commit_message": "Unexpected validation error",
-                "rationale": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {raw_output[:500]}...",
-                "code_changes": [],
-                "conflict_resolution": None,
-                "unresolved_conflict": None,
+                "COMMIT_MESSAGE": "Unexpected validation error", # MODIFIED: Use uppercase key
+                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {raw_output[:500]}...", # MODIFIED: Use uppercase key
+                "CODE_CHANGES": [], # MODIFIED: Use uppercase key
+                "CONFLICT_RESOLUTION": None,
+                "UNRESOLVED_CONFLICT": None,
                 "malformed_blocks": malformed_blocks_list # ADDED
             }
 

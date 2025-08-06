@@ -330,12 +330,15 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
         
         # Return a structured error response, ensuring 'malformed_blocks' is always a list.
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_list}
+        # Note: The malformed_blocks_list here is local to this function's error handling.
+        # The main malformed_blocks from LLMOutputParser are already in parsed_data.
+        # This is for internal errors within validate_code_output_batch itself.
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
 
-    code_changes_list = parsed_data.get('code_changes', [])
+    code_changes_list = parsed_data.get('CODE_CHANGES', []) # MODIFIED: Use uppercase key for CODE_CHANGES
     if not isinstance(code_changes_list, list):
-        logger.error(f"validate_code_output_batch received non-list 'code_changes' field: {type(code_changes_list).__name__}")
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid type for 'code_changes': Expected list, got {type(code_changes_list).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
+        logger.error(f"validate_code_output_batch received non-list 'CODE_CHANGES' field: {type(code_changes_list).__name__}") # MODIFIED: Use uppercase key
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid type for 'CODE_CHANGES': Expected list, got {type(code_changes_list).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])} # MODIFIED: Use uppercase key
 
     for i, change_entry in enumerate(code_changes_list):
         if not isinstance(change_entry, dict):
@@ -346,7 +349,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
             continue # Skip this malformed entry and proceed to the next
 
-        file_path = change_entry.get('file_path')
+        file_path = change_entry.get('FILE_PATH') # MODIFIED: Use uppercase key
         if file_path:
             try:
                 # validate_code_output expects a single change dict and original content (if available)
@@ -365,18 +368,18 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
                 all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})
         else:
             # Handle changes without file_path if necessary
-            logger.warning(f"Encountered a code change without a 'file_path' in output {i}. Skipping validation for this item.")
+            logger.warning(f"Encountered a code change without a 'FILE_PATH' in output {i}. Skipping validation for this item.") # MODIFIED: Use uppercase key
             # Add a generic issue for the batch if such items are critical.
-            all_validation_results.setdefault('N/A', []).append({'type': 'Validation Error', 'file': 'N/A', 'message': f'Change item at index {i} missing file_path.'})
+            all_validation_results.setdefault('N/A', []).append({'type': 'Validation Error', 'file': 'N/A', 'message': f'Change item at index {i} missing FILE_PATH.'}) # MODIFIED: Use uppercase key
             
     # --- New: Unit Test Presence Check ---
     python_files_modified_or_added = {
-        change['file_path'] for change in code_changes_list
-        if change.get('file_path', '').endswith('.py') and change.get('action') in ['ADD', 'MODIFY']
+        change['FILE_PATH'] for change in code_changes_list # MODIFIED: Use uppercase key
+        if change.get('FILE_PATH', '').endswith('.py') and change.get('ACTION') in ['ADD', 'MODIFY'] # MODIFIED: Use uppercase keys
     }
     test_files_added = {
-        change['file_path'] for change in code_changes_list
-        if change.get('file_path', '').startswith('tests/') and change.get('action') == 'ADD'
+        change['FILE_PATH'] for change in code_changes_list # MODIFIED: Use uppercase key
+        if change.get('FILE_PATH', '').startswith('tests/') and change.get('ACTION') == 'ADD' # MODIFIED: Use uppercase keys
     }
 
     for py_file in python_files_modified_or_added:
