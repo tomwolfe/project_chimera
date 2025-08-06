@@ -7,7 +7,7 @@ import io
 import contextlib
 import re
 import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional # Added Optional here
 import yaml
 import logging
 from rich.console import Console # For rich output capture
@@ -381,7 +381,7 @@ with col1:
         suggested_domain = recommend_domain_from_keywords(user_prompt)
         # Only show recommendation if it's different from current selection and valid
         if suggested_domain and suggested_domain != st.session_state.selected_persona_set and suggested_domain in st.session_state.available_domains:
-            st.info(f"💡 Recommendation: Use the **'{suggested_domain}'** framework for this prompt.")
+            st.info(f"üí° Recommendation: Use the **'{suggested_domain}'** framework for this prompt.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
                 st.session_state.selected_persona_set_widget = suggested_domain # Update widget state too
                 st.rerun() # Rerun to update the selectbox immediately
@@ -530,9 +530,9 @@ with col2:
 st.markdown("---")
 run_col, reset_col = st.columns([0.8, 0.2])
 with run_col:
-    run_button_clicked = st.button("🚀 Run Socratic Debate", type="primary", use_container_width=True)
+    run_button_clicked = st.button("üöÄ Run Socratic Debate", type="primary", use_container_width=True)
 with reset_col:
-    st.button("🔄 Reset All", on_click=reset_app_state, use_container_width=True)
+    st.button("üîÑ Reset All", on_click=reset_app_state, use_container_width=True)
 # --- Execution Logic ---
 if run_button_clicked:
     api_key_feedback_placeholder.empty()
@@ -560,7 +560,7 @@ if run_button_clicked:
                     budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
                     if estimated_next_step_tokens > budget_remaining:
                         next_step_warning_placeholder.warning(
-                            f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
+                            f"‚ö†Ô∏è Next step ({estimated_next_step_tokens:,} tokens) "
                             f"will exceed budget ({budget_remaining:,} remaining). "
                             f"Estimated cost: ${estimated_next_step_cost:.4f}"
                         )
@@ -707,9 +707,9 @@ if st.session_state.debate_ran:
             st.markdown("**Unresolved Conflict**")
             st.warning(parsed_data['unresolved_conflict'])
         # --- Validation Report ---
-        with st.expander("🔍 Validation & Quality Report", expanded=True):
+        with st.expander("üîç Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
-                st.success("✅ No syntax, style, or formatting issues detected.")
+                st.success("‚úÖ No syntax, style, or formatting issues detected.")
             else:
                 for issue in validation_results['issues']:
                     st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
@@ -721,7 +721,7 @@ if st.session_state.debate_ran:
             st.info("No code changes were proposed.")
         # Iterate over the list of changes
         for change in parsed_data.get('code_changes', []):
-            with st.expander(f"📄 **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
+            with st.expander(f"üìÑ **{change.get('file_path', 'N/A')}** (`{change.get('action', 'N/A')}`)", expanded=False): # Changed expanded to False by default
                 st.write(f"**Action:** {change.get('action')}")
                 st.write(f"**File Path:** {change.get('file_path')}")
                 if change.get('action') in ['ADD', 'MODIFY']:
@@ -735,7 +735,7 @@ if st.session_state.debate_ran:
                     st.write(change.get('lines', []))
         # Display malformed blocks as fallbacks if any were detected
         for block in validation_results['malformed_blocks']:
-            with st.expander(f"📄 **Unknown File (Malformed Block)**", expanded=True):
+            with st.expander(f"üìÑ **Unknown File (Malformed Block)**", expanded=True):
                 st.error("This block was malformed and could not be parsed correctly. Raw output is shown below.")
                 st.code(block, language='text')
     # Handle all other frameworks
@@ -762,28 +762,3 @@ if st.session_state.debate_ran:
                 with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
                     st.markdown(f"```markdown\n{content}\n```")
         st.subheader("Process Log")
-        st.code(strip_ansi_codes(st.session_state.process_log_output_text), language="text")
-    # --- Export Functionality ---
-    st.markdown("---")
-    st.subheader("Export Results")
-    final_answer_md = f"# Final Synthesized Answer\n\n{st.session_state.final_answer_output}"
-    st.download_button(
-        label="Download Final Answer (Markdown)",
-        data=final_answer_md,
-        file_name="final_answer.md",
-        mime="text/markdown"
-    )
-    full_report_md = generate_markdown_report(
-        user_prompt=user_prompt,
-        final_answer=st.session_state.final_answer_output,
-        intermediate_steps=st.session_state.intermediate_steps_output, # Pass the intermediate steps
-        process_log_output=st.session_state.process_log_output_text,
-        config_params=st.session_state.last_config_params
-    )
-    st.download_button(
-        label="Download Full Report (Markdown)",
-        data=full_report_md,
-        file_name="socratic_debate_report.md",
-        mime="text/markdown"
-    )
-    st.info("To generate a PDF, download the Markdown report and use your browser's 'Print to PDF' option (usually accessible via Ctrl+P or Cmd+P).")
