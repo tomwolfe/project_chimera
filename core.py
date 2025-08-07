@@ -26,9 +26,6 @@ class TokenBudgetExceededError(LLMProviderError):
     """Raised when an LLM call would exceed the total token budget."""
     pass
 
-# Removed the load_personas function as it's now handled by PersonaManager.
-# The SocraticDebate constructor will receive the pre-loaded persona data.
-
 class SocraticDebate:
     DEFAULT_MAX_RETRIES = 2
     MAX_BACKOFF_SECONDS = 30
@@ -351,16 +348,18 @@ class SocraticDebate:
                         # Dynamically get the schema definition for the prompt
                         schema_json_str = json.dumps(schema_model_for_validation.model_json_schema(), indent=2)
 
+                        # --- MODIFIED CORRECTION PROMPT ---
                         correction_prompt = (
-                            f"Your previous output for the final answer was malformed and could not be parsed as valid JSON. "
+                            f"Your previous output was malformed and could not be parsed as valid JSON. "
                             f"The specific error was: '{parsing_error_details['message']}'. "
                             f"This indicates a syntax issue, likely a missing comma between JSON elements or incorrect structure. "
-                            f"Please review the schema and regenerate the *entire* JSON object. "
+                            f"Please review the expected JSON schema and regenerate the *entire* JSON object. "
                             f"Pay extreme attention to ensuring all key-value pairs and array elements are correctly separated by commas and that the overall structure is valid JSON.\n\n"
                             f"The expected JSON schema is:\n```json\n{schema_json_str}\n```\n\n"
-                            f"Your previous malformed output snippet:\n```\n{raw_response_text}\n```\n\n"
+                            f"Your previous malformed output snippet:\n```\n{raw_response_text}\n```\n\n" # Pass raw_response_text as is
                             f"Please regenerate the JSON object ensuring strict adherence to the schema and valid JSON syntax. Do NOT include any conversational text or markdown outside the JSON block."
                         )
+                        # --- END MODIFIED CORRECTION PROMPT ---
                         
                         # Store the correction prompt for debugging/intermediate steps
                         self.intermediate_steps[f"{current_output_key}_Correction_Prompt_Attempt_{json_repair_attempts}"] = correction_prompt

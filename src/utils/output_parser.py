@@ -22,75 +22,103 @@ class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
-    def _escape_json_string_value(self, value: str) -> str:
-        """Escapes a string to be safely embedded as a JSON string value.
-        This uses json.dumps to handle all necessary escaping (quotes, backslashes, newlines, etc.)
-        and then removes the outer quotes added by json.dumps.
+    # REMOVED: _escape_json_string_value is problematic and not needed.
+    # json.dumps handles all necessary escaping when serializing Python objects to JSON strings.
+
+    def _extract_and_sanitize_json_string(self, text: str) -> Optional[str]:
         """
-        # Handle None explicitly to avoid "null" string in error messages
-        if value is None:
-            return ""
-        # json.dumps will add outer quotes, so we slice them off.
-        # It also handles unicode characters.
-        return json.dumps(value)[1:-1]
+        Attempts to extract the outermost valid JSON object or array from text.
+        This method prioritizes finding a structurally sound JSON block using
+        brace/bracket counting, then applies basic sanitization.
+        It correctly handles escaped characters within strings and avoids
+        incorrectly pairing delimiters. This implementation refines the LLM's
+        own suggested approach for more robust extraction.
+        """
+        self.logger.debug("Attempting robust JSON extraction and sanitization...")
 
-    def _sanitize_json_string(self, json_str: str) -> str:
-        """Applies deterministic sanitization rules to LLM output to fix common JSON errors."""
-        original_json_str = json_str # Keep original for fallback if sanitization fails
+        # 1. Remove markdown code block fences if present
+        text_cleaned = re.sub(r'```json\s*', '', text, flags=re.MULTILINE)
+        text_cleaned = re.sub(r'\s*```', '', text_cleaned, flags=re.MULTILINE)
+        
+        # Find potential start indices of JSON objects or arrays
+        potential_starts = []
+        for i, char in enumerate(text_cleaned):
+            if char == '{' or char == '[':
+                potential_starts.append(i)
+        
+        if not potential_starts:
+            self.logger.debug("No JSON start delimiters found.")
+            return None
 
-        # 1. Remove markdown code block fences if present, but keep content.
-        json_str = re.sub(r'```json\s*', '', json_str, flags=re.MULTILINE)
-        json_str = re.sub(r'\s*```', '', json_str, flags=re.MULTILINE)
-        
-        # NEW: Attempt to extract the outermost JSON object/array
-        # This is a heuristic and might fail if the JSON is deeply nested or malformed.
-        # It tries to find the first '{' or '[' and the last '}' or ']'.
-        
-        # Find the first opening brace/bracket
-        first_open_brace = json_str.find('{')
-        first_open_bracket = json_str.find('[')
-        
-        start_index = -1
-        if first_open_brace != -1 and (first_open_bracket == -1 or first_open_brace < first_open_bracket):
-            start_index = first_open_brace
-        elif first_open_bracket != -1:
-            start_index = first_open_bracket
+        # Iterate through potential start points to find a valid JSON block
+        for start_index in potential_starts:
+            balance = 0
+            # Stack to keep track of expected closing delimiters for nested structures
+            expected_closers_stack = [] 
 
-        if start_index != -1:
-            # Find the last closing brace/bracket
-            last_close_brace = json_str.rfind('}')
-            last_close_bracket = json_str.rfind(']')
+            # Determine the type of the starting delimiter
+            if text_cleaned[start_index] == '{':
+                balance = 1
+                expected_closers_stack.append('}')
+            elif text_cleaned[start_index] == '[':
+                balance = 1
+                expected_closers_stack.append(']')
+            else:
+                continue # Should not happen if potential_starts is correctly populated
 
             end_index = -1
-            if last_close_brace != -1 and (last_close_bracket == -1 or last_close_brace > last_close_bracket):
-                end_index = last_close_brace + 1 # +1 to include the closing brace
-            elif last_close_bracket != -1:
-                end_index = last_close_bracket + 1 # +1 to include the closing bracket
-            
-            if end_index != -1 and end_index > start_index:
-                extracted_json_str = json_str[start_index:end_index]
-                # Check if the extracted part is likely valid JSON by trying to load it
-                try:
-                    json.loads(extracted_json_str)
-                    json_str = extracted_json_str # Use the extracted part if it's valid
-                    self.logger.debug("Successfully extracted outermost JSON block.")
-                except json.JSONDecodeError:
-                    self.logger.debug("Extracted JSON block is still invalid, proceeding with other sanitization.")
-            else:
-                self.logger.debug("Could not find valid outermost JSON block, proceeding with other sanitization.")
+            # Iterate from the character *after* the start_index
+            for i in range(start_index + 1, len(text_cleaned)):
+                char = text_cleaned[i]
 
-        # 2. Remove C-style comments (// and /* */)
-        json_str = re.sub(r"//.*", "", json_str)
-        json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
+                # Handle nested structures
+                if char == '{':
+                    balance += 1
+                    expected_closers_stack.append('}')
+                elif char == '[':
+                    balance += 1
+                    expected_closers_stack.append(']')
+                elif char == '}':
+                    balance -= 1
+                    if expected_closers_stack and expected_closers_stack[-1] == '}':
+                        expected_closers_stack.pop()
+                    else:
+                        # Mismatched closing brace, this path is invalid
+                        balance = -999 # Force invalid balance
+                        break # Exit inner loop for this start_index
+                elif char == ']':
+                    balance -= 1
+                    if expected_closers_stack and expected_closers_stack[-1] == ']':
+                        expected_closers_stack.pop()
+                    else:
+                        # Mismatched closing bracket, this path is invalid
+                        balance = -999 # Force invalid balance
+                        break # Exit inner loop for this start_index
+                
+                # If balance is zero and stack is empty, we found a complete outermost structure
+                if balance == 0 and not expected_closers_stack:
+                    end_index = i + 1 # +1 to include the closing delimiter
+                    potential_json_str = text_cleaned[start_index:end_index]
+                    try:
+                        # Attempt to parse to validate the extracted string
+                        json.loads(potential_json_str)
+                        self.logger.debug(f"Successfully extracted valid JSON block: {potential_json_str[:100]}...")
+                        
+                        # Apply basic sanitization like removing trailing commas before closing braces/brackets
+                        # This helps with minor LLM quirks.
+                        potential_json_str = re.sub(r',\s*([\}\]])', r'\1', potential_json_str)
+                        return potential_json_str.strip()
+                    except json.JSONDecodeError:
+                        self.logger.debug("Extracted block is not valid JSON, continuing search for a longer valid one.")
+                        # Do NOT break here. Continue the inner loop to find a larger, valid block
+                        # that might encompass the current invalid one, or a different valid block.
+                        continue 
+            # If the inner loop finishes and balance is not 0 or stack not empty,
+            # this start_index did not lead to a valid, complete JSON block.
+            # The outer loop will try the next potential_start.
 
-        # 3. Replace single quotes with double quotes for keys and string values
-        json_str = json_str.replace("'", '"')
-
-        # 4. Remove trailing commas before closing braces/brackets
-        json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
-        
-        # Trim leading/trailing whitespace
-        return json_str.strip()
+        self.logger.debug("Failed to extract a valid JSON block after all attempts.")
+        return None
 
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
@@ -103,27 +131,41 @@ class LLMOutputParser:
 
         malformed_blocks_list = []
 
-        # Apply sanitization heuristics
-        sanitized_json_str = self._sanitize_json_string(raw_output)
+        # Apply robust extraction and sanitization
+        sanitized_json_str = self._extract_and_sanitize_json_string(raw_output)
         
         parsed_data = {}
-        try:
-            # Attempt to parse the sanitized string as JSON
-            # json.loads will raise JSONDecodeError if the string is not valid JSON,
-            # even after sanitization. This is where "Extra data" errors might occur
-            # if the LLM output is truncated or has trailing text.
-            parsed_data = json.loads(sanitized_json_str)
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON decoding failed after sanitization: {e}")
+        if not sanitized_json_str:
+            self.logger.error("Failed to extract any JSON structure from the output.")
             malformed_blocks_list.append({
-                "type": "JSON_DECODE_ERROR",
-                "message": str(e),
-                "raw_string_snippet": self._escape_json_string_value(sanitized_json_str[:1000] + ("..." if len(sanitized_json_str) > 1000 else ""))
+                "type": "JSON_EXTRACTION_FAILED",
+                "message": "Could not find or extract a valid JSON structure.",
+                "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "") # Use raw_output directly
             })
             # Return a structured error dictionary that app.py can interpret
             return {
                 "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": self._escape_json_string_value(f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {sanitized_json_str[:500]}..."),
+                "RATIONALE": f"Failed to parse LLM output as JSON. Error: Could not extract valid JSON structure.\nAttempted raw output: {raw_output[:500]}...",
+                "CODE_CHANGES": [], # Default empty list for CODE_CHANGES
+                "CONFLICT_RESOLUTION": None,
+                "UNRESOLVED_CONFLICT": None,
+                "malformed_blocks": malformed_blocks_list # Crucial for app.py to know parsing failed
+            }
+
+        try:
+            # Attempt to parse the sanitized string as JSON
+            parsed_data = json.loads(sanitized_json_str)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"JSON decoding failed after extraction: {e}")
+            malformed_blocks_list.append({
+                "type": "JSON_DECODE_ERROR",
+                "message": str(e),
+                "raw_string_snippet": sanitized_json_str[:1000] + ("..." if len(sanitized_json_str) > 1000 else "") # Use sanitized_json_str directly
+            })
+            # Return a structured error dictionary that app.py can interpret
+            return {
+                "COMMIT_MESSAGE": "Parsing error",
+                "RATIONALE": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {sanitized_json_str[:500]}...",
                 "CODE_CHANGES": [], # Default empty list for CODE_CHANGES
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
@@ -135,7 +177,7 @@ class LLMOutputParser:
             validated_output = schema_model(**parsed_data)
             self.logger.info(f"LLM output successfully validated against {schema_model.__name__} schema.")
             result_dict = validated_output.model_dump(by_alias=True) # Use model_dump for Pydantic v2+
-            # Include any malformed blocks found during sanitization (e.g., if markdown was stripped)
+            # Include any malformed blocks found during extraction (e.g., if markdown was stripped)
             result_dict["malformed_blocks"] = malformed_blocks_list 
             return result_dict
         except ValidationError as validation_e:
@@ -143,14 +185,14 @@ class LLMOutputParser:
             malformed_blocks_list.append({
                 "type": "SCHEMA_VALIDATION_ERROR",
                 "message": str(validation_e),
-                "raw_string_snippet": self._escape_json_string_value(raw_output[:500] + ("..." if len(raw_output) > 500 else ""))
+                "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "") # Use raw_output directly
             })
             
             # Attempt to salvage partial data for LLMOutput if it was the target schema
             # This allows the system to report *what* was wrong, even if the full structure failed.
             fallback_output = {
                 "COMMIT_MESSAGE": "Schema validation failed",
-                "RATIONALE": self._escape_json_string_value(f"Original output: {self._escape_json_string_value(raw_output[:500] + ('...' if len(raw_output) > 500 else ''))}\nValidation Error: {self._escape_json_string_value(str(validation_e))}"),
+                "RATIONALE": f"Original output: {raw_output[:500] + ('...' if len(raw_output) > 500 else '')}\nValidation Error: {str(validation_e)}",
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
@@ -161,7 +203,7 @@ class LLMOutputParser:
             if schema_model == LLMOutput and isinstance(parsed_data, dict):
                 fallback_output["COMMIT_MESSAGE"] = parsed_data.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"])
                 if "RATIONALE" in parsed_data:
-                    fallback_output["RATIONALE"] = self._escape_json_string_value(parsed_data["RATIONALE"])
+                    fallback_output["RATIONALE"] = parsed_data["RATIONALE"] # Do not escape here
                 
                 original_code_changes = parsed_data.get("CODE_CHANGES")
                 if isinstance(original_code_changes, list):
@@ -177,13 +219,13 @@ class LLMOutputParser:
                                     "type": "MALFORMED_CODE_CHANGE_ITEM",
                                     "index": index,
                                     "message": str(inner_val_e),
-                                    "raw_item": self._escape_json_string_value(str(item))
+                                    "raw_item": str(item) # Use raw item directly
                                 })
                                 # Add a placeholder for the malformed item to keep list structure
                                 processed_code_changes.append({
                                     "FILE_PATH": f"malformed_entry_{index}",
                                     "ACTION": "ADD", # Default to ADD for malformed
-                                    "FULL_CONTENT": self._escape_json_string_value(f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}"),
+                                    "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", # Do not escape here
                                     "LINES": []
                                 })
                         else:
@@ -192,13 +234,13 @@ class LLMOutputParser:
                                 "type": "NON_DICT_CODE_CHANGE_ITEM",
                                 "index": index,
                                 "message": "Item is not a dictionary.",
-                                "raw_item": self._escape_json_string_value(str(item))
+                                "raw_item": str(item) # Use raw item directly
                             })
                             # Add a placeholder for the malformed item
                             processed_code_changes.append({
                                 "FILE_PATH": f"malformed_entry_{index}",
                                 "ACTION": "ADD", # Default to ADD for malformed
-                                "FULL_CONTENT": self._escape_json_string_value(f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}"),
+                                "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}", # Do not escape here
                                 "LINES": []
                             })
                     fallback_output["CODE_CHANGES"] = processed_code_changes
@@ -207,7 +249,7 @@ class LLMOutputParser:
                     malformed_blocks_list.append({
                         "type": "MALFORMED_CODE_CHANGES_FIELD",
                         "message": "CODE_CHANGES field was not a list or was missing.",
-                        "raw_value": self._escape_json_string_value(str(original_code_changes))
+                        "raw_value": str(original_code_changes) # Use raw value directly
                     })
                     fallback_output["CODE_CHANGES"] = []
 
@@ -217,11 +259,11 @@ class LLMOutputParser:
             malformed_blocks_list.append({
                 "type": "UNEXPECTED_VALIDATION_ERROR",
                 "message": str(general_e),
-                "raw_string_snippet": self._escape_json_string_value(raw_output)
+                "raw_string_snippet": raw_output # Use raw_output directly
             })
             return {
                 "COMMIT_MESSAGE": "Unexpected validation error",
-                "RATIONALE": self._escape_json_string_value(f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {raw_output[:500]}..."),
+                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {raw_output[:500]}...",
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
