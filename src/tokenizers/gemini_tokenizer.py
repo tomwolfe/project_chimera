@@ -1,28 +1,28 @@
 # src/tokenizers/gemini_tokenizer.py
 """Gemini-specific tokenizer implementation."""
-from google import genai
+import google.genai as genai
 from google.genai import types
 import logging
 # Import the Tokenizer ABC from base.py instead of src.tokenizers
-from .base import Tokenizer  # CHANGED THIS LINE
+from .base import Tokenizer
 
 logger = logging.getLogger(__name__)
 
 class GeminiTokenizer(Tokenizer):
     """Gemini-specific tokenizer that uses the google-genai library to count tokens."""    
-    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
+    # FIX: Added genai_client parameter and validation
+    def __init__(self, model_name: str = "gemini-2.5-flash-lite", genai_client=None):
         """
         Initializes the GeminiTokenizer.
         
         Args:
             model_name: The Gemini model name to use for token counting.
-                        This should match the model used by the GeminiProvider.
+            genai_client: An initialized google.genai.Client instance.
         """
+        if genai_client is None:
+            raise ValueError("genai_client must be provided to GeminiTokenizer for token counting.")
+        self.genai_client = genai_client # Store the client instance
         self.model_name = model_name
-        # The genai library handles client initialization internally or
-        # expects it to be managed by the caller (e.g., GeminiProvider).
-        # This tokenizer relies on the genai library being configured with an API key,
-        # which is assumed to be handled by the GeminiProvider.
         
     def count_tokens(self, text: str) -> int:
         """
@@ -41,12 +41,11 @@ class GeminiTokenizer(Tokenizer):
             return 0
             
         try:
-            # The genai.count_tokens function requires a model name and content.
-            # The content should be structured as a list of parts.
-            # We'll assume a single user part for simplicity.
-            response = genai.count_tokens(
+            # FIX: Use the client instance to call models.count_tokens
+            # FIX: Use types.Part.from_text for clarity in contents argument
+            response = self.genai_client.models.count_tokens(
                 model=self.model_name,
-                contents=[{"parts": [{"text": text}]}]
+                contents=[types.Part.from_text(text)]
             )
             return response.total_tokens
         except Exception as e:
@@ -66,5 +65,5 @@ class GeminiTokenizer(Tokenizer):
             return context_tokens + prompt_tokens
         except Exception as e:
             logger.error(f"Error estimating tokens for context/prompt: {e}")
-            # Return a conservative estimate or re-raise
-            return 0 # Or raise an error if this is critical for budget calculation
+            # FIX: Re-raise the exception as it's critical for budget calculation
+            raise

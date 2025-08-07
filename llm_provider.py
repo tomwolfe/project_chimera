@@ -64,7 +64,8 @@ class GeminiProvider:
         self.client = genai.Client(api_key=self._api_key)
         
         # Use provided tokenizer or create a default GeminiTokenizer
-        self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name)
+        # FIX: Pass the genai_client instance to the GeminiTokenizer
+        self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
         
     # Define __hash__ and __eq__ for caching to work correctly
     def __hash__(self):
