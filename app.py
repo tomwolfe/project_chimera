@@ -575,7 +575,7 @@ if run_button_clicked:
                     next_step_warning_placeholder.empty()
 
             debate_instance = None
-            gemini_provider_instance = None
+            # gemini_provider_instance = None # This line is removed as gemini_provider is no longer passed
             final_total_tokens = 0
             final_total_cost = 0.0
             try:
@@ -588,10 +588,11 @@ if run_button_clicked:
                 if not personas_for_run:
                     raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
                 
-                gemini_provider_instance = core.GeminiProvider(
-                    api_key=st.session_state.api_key_input,
-                    model_name=st.session_state.selected_model_selectbox
-                )
+                # Removed the creation of gemini_provider_instance here as it's handled internally by SocraticDebate
+                # gemini_provider_instance = core.GeminiProvider(
+                #     api_key=st.session_state.api_key_input,
+                #     model_name=st.session_state.selected_model_selectbox
+                # )
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                     debate_instance = core.SocraticDebate(
                         initial_prompt=user_prompt,
@@ -599,13 +600,13 @@ if run_button_clicked:
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
                         # --- FIX APPLIED HERE ---
-                        # Removed the 'personas=personas_for_run' argument.
+                        # Removed the 'gemini_provider=gemini_provider_instance' argument.
                         # The SocraticDebate class will now determine personas internally.
                         all_personas=st.session_state.all_personas, # Pass the full set of personas
                         persona_sets=st.session_state.persona_sets,
                         persona_sequence=st.session_state.persona_sequence,
                         domain=domain_for_run,
-                        gemini_provider=gemini_provider_instance,
+                        # gemini_provider=gemini_provider_instance, # REMOVED THIS LINE
                         status_callback=streamlit_status_callback,
                         rich_console=rich_console_instance,
                         codebase_context=st.session_state.get('codebase_context', {}),
