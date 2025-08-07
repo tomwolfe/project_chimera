@@ -58,18 +58,48 @@ class GeminiProvider:
         self.tokenizer = GeminiTokenizer(model_name=self.model_name)
         
     def count_tokens(self, text: str) -> int:
-        """Accurate token counting using Gemini API via tokenizer."""
+        """Accurate token counting using Gemini API via tokenizer, with an improved fallback."""
+        if not text:
+            return 0
+            
         try:
             # Ensure tokenizer is initialized and available
             if not hasattr(self, 'tokenizer') or not self.tokenizer:
-                logger.warning("Tokenizer not initialized in GeminiProvider. Using fallback estimation.")
-                # Fallback if tokenizer wasn't initialized properly
-                return max(1, len(text) // 4)
+                logger.warning("Tokenizer not initialized in GeminiProvider. Using improved fallback estimation.")
+                return self._improved_token_estimate(text) # Use improved fallback
+            
+            # Use the tokenizer for accurate counting
             return self.tokenizer.count_tokens(text)
         except Exception as e:
-            logger.warning(f"Token counting API failed: {str(e)}. Using fallback estimation.")
-            # Fallback to rough estimate ONLY if the accurate method fails
-            return max(1, len(text) // 4)
+            # Catch potential errors from the tokenizer itself or API issues
+            logger.warning(f"Token counting API failed: {str(e)}. Using improved fallback estimation.")
+            return self._improved_token_estimate(text) # Use improved fallback
+
+    def _improved_token_estimate(self, text: str) -> int:
+        """
+        Provides a more robust token estimation heuristic when the primary tokenizer fails.
+        This heuristic is designed to better approximate Gemini's tokenization behavior
+        than a simple character-to-token ratio.
+        """
+        if not text:
+            return 0
+            
+        # Heuristic: Estimate based on word count, considering common patterns.
+        # Gemini's tokenization is complex, but word count is a reasonable proxy.
+        # Average tokens per word can vary, but ~1.3 is a common estimate.
+        words = text.split()
+        estimated_tokens = len(words) * 1.3
+        
+        # Adjust for common code elements which might be tokenized differently
+        # (e.g., symbols, keywords, indentation). This is a simplified adjustment.
+        code_indicators = ['{', '}', '[', ']', '(', ')', '=', '+', '-', '*', '/', '#', '//', '/*', ':', ';']
+        code_density = sum(text.count(ind) for ind in code_indicators) / max(1, len(text))
+        
+        if code_density > 0.05: # If text appears to be code-heavy
+            estimated_tokens *= 1.2 # Increase estimate slightly for code
+        
+        # Ensure a minimum of 1 token for any non-empty text
+        return max(1, int(round(estimated_tokens)))
 
     def generate_content(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
         """Generate content using Gemini API with retry logic and token tracking."""

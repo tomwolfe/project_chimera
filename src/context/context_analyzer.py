@@ -1,7 +1,4 @@
-"""
-Advanced context relevance analyzer using semantic embeddings.
-"""
-
+# src/context/context_analyzer.py
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
@@ -15,6 +12,10 @@ class ContextRelevanceAnalyzer:
         """Initialize the analyzer with a sentence transformer model."""
         self.model = SentenceTransformer(model_name, cache_folder=cache_dir)
         self.file_embeddings = {}
+        # NOTE: To make _apply_keyword_boost more effective, we would ideally store
+        # file contents or extracted key elements here. For this revision, we'll
+        # focus on analyzing the file path and prompt keywords directly for simplicity.
+        # If file contents were stored, they would be loaded here or passed to methods.
     
     def _clean_code_content(self, content: str) -> str:
         """Clean code content by removing comments, strings, and normalizing whitespace."""
@@ -59,23 +60,67 @@ class ContextRelevanceAnalyzer:
             embedding = self.model.encode([representation], convert_to_numpy=True)[0]
             self.file_embeddings[file_path] = embedding
     
-    def get_relevant_files(self, prompt: str, top_k: int = 10) -> List[Tuple[str, float]]:
+    def find_relevant_files(self, prompt: str, top_k: int = 5) -> List[Tuple[str, float]]:
         """
-        Get the top K most relevant files for a given prompt.
-        
-        Returns list of (file_path, relevance_score) tuples sorted by score descending.
+        Find the most relevant files to the prompt with enhanced weighting.
+        Incorporates prompt keyword analysis to boost similarity scores.
         """
-        # Create prompt representation
+        if not self.file_embeddings:
+            return []
+
         prompt_embedding = self.model.encode([prompt], convert_to_numpy=True)[0]
         
-        # Calculate similarities
+        # 1. Extract key terms from the prompt for keyword analysis
+        key_terms = self._extract_prompt_keywords(prompt)
+        
         similarities = []
         for file_path, embedding in self.file_embeddings.items():
-            similarity = cosine_similarity(
-                [prompt_embedding], 
-                [embedding]
-            )[0][0]
-            similarities.append((file_path, float(similarity)))
+            # Calculate base similarity using embeddings
+            base_similarity = cosine_similarity([prompt_embedding], [embedding])[0][0]
+            
+            # 2. Apply keyword-based relevance boost
+            weighted_similarity = self._apply_keyword_boost(file_path, base_similarity, key_terms)
+            
+            similarities.append((file_path, float(weighted_similarity)))
         
-        # Sort by similarity score (descending)
+        # Sort by the final weighted similarity score (descending)
         return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_k]
+
+    def _extract_prompt_keywords(self, prompt: str) -> List[str]:
+        """Extracts significant keywords from the prompt, excluding common stop words."""
+        words = prompt.lower().split()
+        # Simple stop word list for common English words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'of', 'is', 'it', 'this', 'that', 'be', 'are', 'was', 'were'}
+        
+        # Extract words that are likely keywords (alphanumeric, longer than 2 chars, not stop words)
+        keywords = [
+            word.strip('.,!?;:') for word in words 
+            if word.lower() not in stop_words and len(word) > 2 and word.isalnum()
+        ]
+        return keywords
+
+    def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str]) -> float:
+        """
+        Applies a boost to the similarity score based on keyword matches in the file path.
+        This function can be extended for more sophisticated relevance scoring.
+        """
+        boost = 0.0
+        file_path_lower = file_path.lower()
+        
+        # Boost based on keywords appearing in the file path itself
+        for term in key_terms:
+            if term in file_path_lower:
+                boost += 0.1 # Small boost for path matches
+
+        # Example: If prompt mentions 'API' and file path contains 'controller' or 'service'
+        if 'api' in key_terms and ('controller' in file_path_lower or 'service' in file_path_lower or 'route' in file_path_lower):
+            boost += 0.15
+        
+        # Example: If prompt mentions 'test' and file path starts with 'test_'
+        if 'test' in key_terms and file_path.startswith('tests/'):
+            boost += 0.2
+
+        # Combine base similarity with boost, capping at 1.0
+        weighted_similarity = min(1.0, base_similarity + boost)
+        
+        return weighted_similarity

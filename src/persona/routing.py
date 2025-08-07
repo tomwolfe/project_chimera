@@ -6,10 +6,10 @@ based on prompt analysis and intermediate results.
 
 from typing import List, Dict, Set, Optional, Any
 import re
-import json # Added for processing intermediate results
-from pathlib import Path # Added for potential future path-based routing
+import json
+from pathlib import Path
 
-from src.models import PersonaConfig # Assuming these models exist
+from src.models import PersonaConfig
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
@@ -17,15 +17,61 @@ class PersonaRouter:
     def __init__(self, all_personas: Dict[str, PersonaConfig]):
         self.all_personas = all_personas
         
-        # Keywords for initial domain detection
+        # Updated DOMAIN_KEYWORDS with positive and negative keyword sets
         self.domain_keywords = {
-            "security": ["vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", "risk", "malware", "penetration", "compliance"],
-            "architecture": ["architect", "design", "pattern", "scalab", "perform", "modular", "refactor", "system", "structure", "database", "api", "framework"],
-            "testing": ["test", "cover", "unit", "integration", "bug", "error", "quality", "qa", "defect", "debug", "validate"],
-            "devops": ["deploy", "ci/cd", "pipeline", "infra", "monitor", "cloud", "docker", "k8s", "ops", "server", "automation", "release", "scalability", "reliability", "performance", "logging", "alerting"],
-            "scientific": ["science", "research", "experiment", "data", "model", "hypothesis", "biology", "physics", "chemistry", "astronomy", "engineering", "algorithm", "computation"],
-            "business": ["business", "market", "strategy", "finance", "investment", "startup", "profit", "revenue", "marketing", "sales", "operations", "management", "economy", "entrepreneurship"],
-            "creative": ["creative", "art", "story", "design", "narrative", "fiction", "poetry", "music", "film", "painting", "sculpture", "writing", "imagination", "concept", "aesthetic"]
+            "architecture": {
+                "positive": [
+                    "software architect", "system design", "code structure", "architecture pattern", 
+                    "scalab", "perform", "modular", "refactor", "system", "structure", "database", 
+                    "api", "framework", "codebase", "maintainability", "technical debt", 
+                    "separation of concerns", "microservice", "monolith", "backend", "frontend"
+                ],
+                "negative": [
+                    "building", "house", "construct", "physical", "brick", "concrete", 
+                    "skyscraper", "residential", "commercial", "architecture firm", "civil engineer",
+                    "urban planning", "interior design"
+                ]
+            },
+            "security": {
+                "positive": [
+                    "vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", 
+                    "risk", "malware", "penetration", "compliance", "firewall", "ssl", "tls"
+                ],
+                "negative": []
+            },
+            "testing": {
+                "positive": [
+                    "test", "cover", "unit", "integration", "bug", "error", "quality", 
+                    "qa", "defect", "debug", "validate", "assertion", "failure", "edge case"
+                ],
+                "negative": []
+            },
+            "devops": {
+                "positive": [
+                    "deploy", "ci/cd", "pipeline", "infra", "monitor", "cloud", "docker", 
+                    "k8s", "ops", "server", "automation", "release", "scalability", 
+                    "reliability", "performance", "logging", "alerting"
+                ],
+                "negative": []
+            },
+            "scientific": {
+                "positive": ["science", "research", "experiment", "data", "model", "hypothesis", 
+                             "biology", "physics", "chemistry", "astronomy", "engineering", 
+                             "algorithm", "computation", "genetics", "ecology", "neuroscience"],
+                "negative": []
+            },
+            "business": {
+                "positive": ["business", "market", "strategy", "finance", "investment", 
+                             "startup", "profit", "revenue", "marketing", "sales", "operations", 
+                             "management", "economy", "entrepreneurship", "product", "customer"],
+                "negative": []
+            },
+            "creative": {
+                "positive": ["creative", "art", "story", "design", "narrative", "fiction", 
+                             "poetry", "music", "film", "painting", "sculpture", "writing", 
+                             "imagination", "concept", "aesthetic"],
+                "negative": []
+            }
         }
         
         # Keywords to trigger specific personas based on intermediate results
@@ -39,19 +85,26 @@ class PersonaRouter:
         }
     
     def _analyze_prompt_domain(self, prompt: str) -> Set[str]:
-        """Identify relevant domains in the prompt."""
+        """
+        Analyze prompt to determine relevant domains, using negative keyword filtering
+        to prevent misclassifications.
+        """
         prompt_lower = prompt.lower()
-        detected_domains = set()
+        matched_domains = set()
         
-        for domain, keywords in self.domain_keywords.items():
-            for keyword in keywords:
-                # Use word boundaries for more precise matching
-                if re.search(rf'\b{keyword}\b', prompt_lower):
-                    detected_domains.add(domain)
-                    break # Found a keyword for this domain, move to the next domain
+        for domain, config in self.domain_keywords.items():
+            # Check for negative keywords first. If any are present, skip this domain.
+            has_negative_match = any(keyword in prompt_lower for keyword in config.get("negative", []))
+            if has_negative_match:
+                continue # Skip this domain if a negative keyword is found
+                
+            # If no negative keywords matched, check for positive keywords.
+            has_positive_match = any(keyword in prompt_lower for keyword in config.get("positive", []))
+            if has_positive_match:
+                matched_domains.add(domain)
         
-        # Default to general if no specific domains detected
-        return detected_domains if detected_domains else {"general"}
+        # Fallback to "General" if no specific domains are matched after filtering.
+        return matched_domains if matched_domains else {"General"}
     
     def _get_domain_specific_personas(self, domains: Set[str]) -> List[str]:
         """Get personas relevant to the detected domains."""
