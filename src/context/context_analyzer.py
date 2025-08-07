@@ -5,6 +5,15 @@ from sentence_transformers import SentenceTransformer
 import re
 from typing import Dict, List, Tuple
 
+# NEW: Import PersonaRouter to access its methods
+from src.persona.routing import PersonaRouter # CORRECTED PATH
+
+# --- ADDED IMPORT ---
+import logging # <-- This import was missing
+# --- END ADDED IMPORT ---
+
+logger = logging.getLogger(__name__)
+
 class ContextRelevanceAnalyzer:
     """Analyzes code context relevance using semantic embeddings."""
     
@@ -16,7 +25,15 @@ class ContextRelevanceAnalyzer:
         # file contents or extracted key elements here. For this revision, we'll
         # focus on analyzing the file path and prompt keywords directly for simplicity.
         # If file contents were stored, they would be loaded here or passed to methods.
-    
+        
+        # Placeholder for PersonaRouter instance. This should be injected via a setter
+        # or constructor argument in a real application to manage dependencies properly.
+        self.persona_router: Optional[PersonaRouter] = None 
+
+    def set_persona_router(self, router: PersonaRouter):
+        """Sets the PersonaRouter instance for this analyzer."""
+        self.persona_router = router
+
     def _clean_code_content(self, content: str) -> str:
         """Clean code content by removing comments, strings, and normalizing whitespace."""
         # Remove single-line comments
@@ -48,7 +65,6 @@ class ContextRelevanceAnalyzer:
             elements.append(f"Imports: {', '.join(imports[:5])}")
         return " ".join(elements)
     
-    # --- NEW FUNCTION INSERTION START ---
     def extract_relevant_code_segments(self, content: str, max_chars: int = 5000) -> str:
         """Preserves structural elements while respecting token limits"""
         # Keep imports and class/function definitions at top
@@ -64,7 +80,6 @@ class ContextRelevanceAnalyzer:
                     break
             return content[:cutoff]
         return content[:max_chars]
-    # --- NEW FUNCTION INSERTION END ---
 
     def compute_file_embeddings(self, codebase_context: Dict[str, str]):
         """Compute embeddings for all files in the codebase context."""
@@ -73,10 +88,7 @@ class ContextRelevanceAnalyzer:
             clean_content = self._clean_code_content(content)
             key_elements = self._extract_key_elements(content)
             
-            # --- MODIFIED LINE START ---
-            # Replace: representation = f"File: {file_path}. {key_elements}. Content summary: {clean_content[:500]}"
             representation = f"File: {file_path}. {key_elements}. Content summary: {self.extract_relevant_code_segments(clean_content)}"
-            # --- MODIFIED LINE END ---
             
             # Generate embedding
             embedding = self.model.encode([representation], convert_to_numpy=True)[0]
@@ -89,6 +101,32 @@ class ContextRelevanceAnalyzer:
         """
         if not self.file_embeddings:
             return []
+
+        # --- MODIFICATION START ---
+        # Check if PersonaRouter is available before calling its methods.
+        # If not, fall back to a default behavior or raise an error.
+        if not self.persona_router:
+            logger.warning("PersonaRouter not set in ContextRelevanceAnalyzer. Cannot perform self-analysis detection.")
+            # Fallback: If no router, assume it's not a self-analysis prompt for this component.
+            # The persona_router's main determine_persona_sequence will still handle routing.
+            # However, the original code *did* have a return here, so we replicate that behavior
+            # but with a warning and a default sequence that might be overridden later.
+            # A more robust solution would be to raise an error or ensure the router is always set.
+            # For now, we'll mimic the LLM's proposed change structure.
+            # The LLM's diff kept the return statement, so we will too, but with a check.
+            if "chimera" in prompt.lower() or "your code" in prompt.lower() or "self-analysis" in prompt.lower() or "codebase" in prompt.lower():
+                logger.warning("Self-analysis prompt detected but PersonaRouter is not set. Returning a default sequence.")
+                # This return is a fallback and might not be ideal, but matches the LLM's proposed structure.
+                return ["Code_Architect", "Constructive_Critic", "Impartial_Arbitrator"] 
+        else:
+            # Use the centralized detection method from PersonaRouter
+            if self.persona_router.is_self_analysis_prompt(prompt):
+                logger.info("Detected self-analysis prompt via PersonaRouter. Using specialized persona sequence.")
+                # NOTE: This return statement is kept as per the LLM's "better iteration" diff,
+                # but it's architecturally questionable for ContextRelevanceAnalyzer to return
+                # persona sequences directly. The primary responsibility should lie with PersonaRouter.
+                return ["Code_Architect", "Constructive_Critic", "Impartial_Arbitrator"]
+        # --- MODIFICATION END ---
 
         prompt_embedding = self.model.encode([prompt], convert_to_numpy=True)[0]
         

@@ -11,8 +11,7 @@ from pathlib import Path
 import logging # Ensure logging is imported
 
 from src.models import PersonaConfig
-
-# NEW: Import constants for self-analysis keywords
+# NEW: Import SELF_ANALYSIS_KEYWORDS
 from src.constants import SELF_ANALYSIS_KEYWORDS
 
 logger = logging.getLogger(__name__) # Initialize logger
@@ -155,82 +154,129 @@ class PersonaRouter:
         
         return ordered_sequence
     
-    # --- REFACTORED METHOD ---
+    # --- NEW METHOD: is_self_analysis_prompt ---
+    def is_self_analysis_prompt(self, prompt: str) -> bool:
+       """Standardized method to detect self-analysis prompts using central constants"""
+       prompt_lower = prompt.lower()
+       # Ensure SELF_ANALYSIS_KEYWORDS are correctly imported and used
+       return any(keyword in prompt_lower for keyword in SELF_ANALYSIS_KEYWORDS)
+
+    # --- NEW HELPER METHOD: _apply_dynamic_adjustment ---
+    def _apply_dynamic_adjustment(self, base_sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
+        """Apply dynamic persona adjustments based on intermediate findings."""
+        # Analyze previous outputs for specific trigger keywords
+        triggered_personas_to_add = set()
+        
+        # Iterate through all intermediate steps
+        for step_name, result in intermediate_results.items():
+            # Skip steps that are not actual persona outputs (e.g., token counts, errors)
+            if not (step_name.endswith("_Output") or step_name.endswith("_Critique")):
+                continue
+
+            # Convert result to string for keyword searching. Handle dicts by serializing.
+            result_text = ""
+            if isinstance(result, dict):
+                try:
+                    result_text = json.dumps(result)
+                except TypeError: # Handle cases where result might not be JSON serializable
+                    result_text = str(result)
+            elif isinstance(result, str):
+                result_text = result
+            else:
+                result_text = str(result) # Fallback for other types
+
+            # Check for trigger keywords in the result text
+            for persona_name, keywords in self.trigger_keywords.items():
+                # Only consider adding personas not already in the sequence
+                if persona_name not in base_sequence: # Check against the base sequence
+                    for keyword in keywords:
+                        # Use word boundaries for more precise matching
+                        if re.search(rf'\b{keyword}\b', result_text, re.IGNORECASE):
+                            triggered_personas_to_add.add(persona_name)
+                            break # Found a trigger for this persona, move to the next persona
+        
+        # If new personas were triggered, insert them into the sequence.
+        # A good place is before the Impartial_Arbitrator, or based on their role.
+        # For simplicity, we'll insert them before the Arbitrator.
+        final_sequence = list(base_sequence) # Create a mutable copy
+        if triggered_personas_to_add:
+            # Sort triggered personas alphabetically for deterministic order
+            sorted_triggered_personas = sorted(list(triggered_personas_to_add))
+            
+            # Find the index where the Arbitrator is (or where it would be inserted)
+            arbitrator_index = len(final_sequence)
+            if "Impartial_Arbitrator" in final_sequence:
+                arbitrator_index = final_sequence.index("Impartial_Arbitrator")
+            
+            # Insert the triggered personas before the Arbitrator
+            for persona_to_insert in sorted_triggered_personas:
+                if persona_to_insert not in final_sequence: # Double check uniqueness
+                    final_sequence.insert(arbitrator_index, persona_to_insert)
+                    arbitrator_index += 1 # Adjust index for subsequent insertions
+        
+        # --- Minimal 80/20 Refinement for Framework Selection ---
+        # Add a simple check to prevent common misclassifications based on prompt context.
+        # This avoids modifying personas.yaml or adding complex scoring.
+        
+        # Example: Prevent "building architect" from triggering Code_Architect
+        if "Code_Architect" in final_sequence:
+            if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
+               ("software architect" not in prompt_lower and "software" not in prompt_lower):
+                
+                logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
+                final_sequence.remove("Code_Architect")
+                # Optionally, add a more general persona if a specific one is removed
+                if "Generalist_Assistant" not in final_sequence:
+                    final_sequence.append("Generalist_Assistant")
+        
+        # Add similar checks for other known problematic keyword overlaps if identified.
+        # --- End of Refinement ---
+
+        # Ensure the final sequence is unique and maintains a logical order.
+        # This step is important if multiple triggers add the same persona or if
+        # the insertion logic creates duplicates.
+        seen = set()
+        unique_sequence = []
+        for persona in final_sequence:
+            if persona not in seen:
+                unique_sequence.append(persona)
+                seen.add(persona)
+        
+        return unique_sequence
+
     def determine_persona_sequence(self, prompt: str, 
                                  intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
         """
-        Determine optimal persona sequence with clear decision hierarchy and centralized logic.
+        Determine the optimal sequence of personas for processing the prompt.
+        Dynamically adjusts the sequence based on intermediate results.
+        
+        Returns a list of persona names in execution order.
         """
+        
         prompt_lower = prompt.lower()
         
-        # 1. Primary check: Is this a self-analysis prompt?
-        if self._is_self_analysis_prompt(prompt_lower):
-            logger.info("Detected self-analysis prompt. Using specialized persona sequence.")
-            return self._get_self_analysis_sequence()
+        # 1. Primary check: Is this a self-analysis prompt? Use the centralized method.
+        if self.is_self_analysis_prompt(prompt): # Use the new centralized method
+            logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
+            # Start with the standardized, comprehensive self-analysis sequence
+            base_sequence = self._get_self_analysis_sequence()
+            
+            # Apply dynamic adjustment if intermediate results exist
+            return self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
         
-        # 2. Secondary check: Domain-specific routing
+        # --- Domain-specific routing continues below (original logic) ---
+        # 2. Initial domain-based sequence
         domains = self._analyze_prompt_domain(prompt)
         base_sequence = self._get_domain_specific_personas(domains)
         
-        # 3. Apply core framework with domain experts
+        # Get core personas and domain experts
         core_order = ["Visionary_Generator", "Skeptical_Generator"]
         domain_experts = [p for p in base_sequence
                          if p not in core_order and p != "Impartial_Arbitrator"]
         
-        # Ensure Arbitrator is included if it was part of the base sequence
         final_sequence = core_order + domain_experts
-        if "Impartial_Arbitrator" in base_sequence and "Impartial_Arbitrator" not in final_sequence:
+        if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
             final_sequence.append("Impartial_Arbitrator")
         
-        # 4. Apply final sequence safeguards (e.g., misclassification fixes)
-        final_sequence = self._apply_sequence_safeguards(final_sequence, prompt_lower)
-        
-        # 5. Ensure uniqueness and order
-        return self._ensure_unique_and_ordered_sequence(final_sequence)
-
-    # --- NEW HELPER METHODS (extracted from original logic) ---
-    def _is_self_analysis_prompt(self, prompt_lower: str) -> bool:
-        """Checks if the prompt contains keywords indicating self-analysis."""
-        # Import from constants for consistency (as per Suggestion 1)
-        return any(keyword in prompt_lower for keyword in SELF_ANALYSIS_KEYWORDS)
-
-    def _get_self_analysis_sequence(self) -> List[str]:
-        """Returns the specialized persona sequence for self-analysis tasks."""
-        # This sequence prioritizes code-focused roles.
-        return [
-            "Code_Architect",
-            "Skeptical_Generator",
-            "Constructive_Critic",
-            "Test_Engineer",
-            "Impartial_Arbitrator",
-            "Devils_Advocate"
-        ]
-
-    def _apply_sequence_safeguards(self, sequence: List[str], prompt_lower: str) -> List[str]:
-        """Applies final validation and adjustments to the persona sequence."""
-        # Prevent misclassification: e.g., "building architect" vs "software architect"
-        if "Code_Architect" in sequence:
-            building_terms = ["building architect", "construction architect"]
-            software_terms = ["software architect", "software"]
-            
-            if any(term in prompt_lower for term in building_terms) and \
-               not any(term in prompt_lower for term in software_terms):
-                
-                logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
-                sequence.remove("Code_Architect")
-                # Optionally add a general fallback if a specific persona is removed
-                if "Generalist_Assistant" not in sequence:
-                    sequence.append("Generalist_Assistant")
-        
-        # Add other safeguard checks here as needed.
-        return sequence
-
-    def _ensure_unique_and_ordered_sequence(self, sequence: List[str]) -> List[str]:
-        """Ensures the final sequence contains unique persona names in a logical order."""
-        seen = set()
-        unique_sequence = []
-        for persona in sequence:
-            if persona not in seen:
-                unique_sequence.append(persona)
-                seen.add(persona)
-        return unique_sequence
+        # 3. Apply dynamic adjustment based on intermediate results (using the helper method)
+        return self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)
