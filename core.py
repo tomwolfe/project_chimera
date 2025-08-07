@@ -450,12 +450,12 @@ User's Original Prompt:
         # This should ideally be derived from a configuration or model pricing lookup.
         return self.tokens_used * 0.000003
     
-    def run_debate(self) -> Dict[str, Any]:
+    def run_debate(self) -> Tuple[Any, Dict[str, Any]]: # Changed return type hint
         """
         Run the complete Socratic debate process and return the results.
         
         Returns:
-            Dictionary containing the final answer and intermediate steps
+            A tuple containing the final answer and a dictionary of intermediate steps.
         """
         try:
             # 1. Analyze context
@@ -498,39 +498,28 @@ User's Original Prompt:
             else:
                 logger.warning("No persona sequence generated. Debate cannot proceed.")
                 # Handle case where no personas are selected
-                return {
-                    "final_answer": "Error: No personas selected for debate.",
-                    "intermediate_steps": self.intermediate_steps,
-                    "process_log": self.process_log,
-                    "token_usage": dict(self.llm_provider.token_usage),
-                    "total_tokens_used": self.tokens_used,
-                    "error": "No persona sequence generated."
-                }
+                return (
+                    "Error: No personas selected for debate.", # final_answer
+                    { # intermediate_steps
+                        "error": "No persona sequence generated.",
+                        "process_log": self.process_log,
+                        "Total_Tokens_Used": self.tokens_used,
+                        "Total_Estimated_Cost_USD": self._calculate_cost()
+                    }
+                )
             
             # 6. Synthesize final answer
             final_answer = self._synthesize_final_answer(current_response)
             
-            # 7. Return results
-            return {
-                "final_answer": final_answer,
-                "intermediate_steps": self.intermediate_steps,
-                "process_log": self.process_log,
-                "token_usage": dict(self.llm_provider.token_usage),
-                "total_tokens_used": self.tokens_used
-            }
+            # 7. Return results as a tuple (final_answer, intermediate_steps)
+            # app.py expects this format and retrieves other details from intermediate_steps.
+            return final_answer, self.intermediate_steps
             
         except TokenBudgetExceededError as e:
             logger.warning(f"Token budget exceeded: {str(e)}")
-            # Return partial results with error information
-            return {
-                "final_answer": "Process terminated early due to token budget constraints.",
-                "intermediate_steps": self.intermediate_steps,
-                "process_log": self.process_log,
-                "token_usage": dict(self.llm_provider.token_usage),
-                "total_tokens_used": self.tokens_used,
-                "error": str(e),
-                "error_details": e.details
-            }
+            # Re-raise the exception to be caught by app.py's error handling.
+            # app.py is designed to populate session state with error details from the caught exception.
+            raise 
         except Exception as e:
             logger.exception("Unexpected error during debate process")
             # Re-raise the exception to be caught by the app.py handler
