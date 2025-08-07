@@ -36,11 +36,8 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
 # REMOVED: The GeminiTokenizer import is no longer needed here as GeminiProvider is imported
 # from src.tokenizers import GeminiTokenizer
-# NEW: Import LLMResponseValidationError
-from src.exceptions import LLMResponseValidationError, SchemaValidationError # Import SchemaValidationError
-
-# NEW: Import constants for self-analysis keywords
-from src.constants import SELF_ANALYSIS_KEYWORDS
+# NEW: Import LLMResponseValidationError and other exceptions
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError # Corrected import
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -50,17 +47,8 @@ logger = logging.getLogger(__name__)
 # It has been replaced by importing the corrected version from llm_provider.py.
 # --- END REMOVED ---
 
-# --- Keep TokenBudgetExceededError definition as it's used by SocraticDebate ---
-class TokenBudgetExceededError(ChimeraError):
-    """Raised when token usage exceeds budget"""
-    def __init__(self, current_tokens: int, budget: int, details: Optional[Dict[str, Any]] = None):
-        error_details = {
-            "current_tokens": current_tokens,
-            "budget": budget,
-            **(details or {})
-        }
-        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used", details=error_details)
-# --- END KEEP ---
+# The definition of TokenBudgetExceededError is now correctly imported from src.exceptions.py
+# and does not need to be redefined here.
 
 class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
@@ -246,7 +234,7 @@ class SocraticDebate:
                 break # No more budget for context
 
             # Extract key elements and relevant code segments
-            key_elements = self.context_analyzer._extract_key_elements(content)
+            key_elements = self._extract_key_elements(content)
             relevant_segment = self.context_analyzer.extract_relevant_code_segments(
                 content, max_chars=int(remaining_budget_chars)
             )
