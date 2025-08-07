@@ -1,4 +1,4 @@
-# core.py
+# src/core.py
 import yaml
 import time
 import hashlib
@@ -22,9 +22,32 @@ from src.utils.code_validator import validate_code_output_batch
 # Import all necessary models
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
 
-class TokenBudgetExceededError(LLMProviderError):
-    """Raised when an LLM call would exceed the total token budget."""
+# --- Custom Exceptions for Project Chimera ---
+class ChimeraError(Exception):
+    """Base exception for all Project Chimera errors."""
     pass
+
+class ContextAnalysisError(ChimeraError):
+    """Base exception for context analysis failures."""
+    pass
+
+class MalformedContextError(ContextAnalysisError):
+    """Raised when context analysis response contains malformed blocks."""
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details
+
+# Note: The original code imports TokenBudgetExceededError from llm_provider.
+# The suggestion is to use it more specifically and potentially redefine it.
+# For clarity and adherence to the suggestion, we define it here inheriting from ContextAnalysisError.
+# In a production scenario, careful consideration would be given to potential conflicts or
+# merging this with the imported exception if they represent the same concept.
+class TokenBudgetExceededError(ContextAnalysisError):
+    """Raised when context exceeds token budget constraints."""
+    def __init__(self, message, required_tokens, available_tokens):
+        super().__init__(message)
+        self.required_tokens = required_tokens
+        self.available_tokens = available_tokens
 
 class SocraticDebate:
     DEFAULT_MAX_RETRIES = 2
@@ -133,42 +156,150 @@ class SocraticDebate:
             return truncated_text.strip() + "\n... (truncated)"
         return truncated_text
 
+    # --- NEW METHOD FOR TOKEN BUDGET EXCEEDED ---
+    def _handle_token_budget_exceeded(self) -> Dict[str, Any]:
+        """Placeholder for handling token budget exceeded errors during context analysis."""
+        # In a real scenario, this might try to reduce context, warn the user, or return a default.
+        # For now, returning a default summary as per the original error handling.
+        self._update_status("[red]Context token budget exceeded. Cannot perform detailed analysis. Returning default summary.[/red]")
+        return self._get_default_analysis_summary()
+
+    # --- MODIFIED METHOD: prepare_context ---
     def prepare_context(self) -> str:
-        """Prioritizes and truncates codebase context to fit within budget."""
+        """Intelligently prioritizes and truncates codebase context based on semantic relevance."""
         if not self.codebase_context:
             return "No codebase context provided."
+        
         context_budget = int(self.max_total_tokens_budget * self.context_token_budget_ratio)
+        
+        # Identify most relevant files based on prompt content
+        relevant_files = self._identify_relevant_files(context_budget)
+        
+        # Build context with prioritized files
         context_str_parts = []
         current_tokens = 0
         
-        for path, content in self.codebase_context.items():
-            header = f"--- file_path: {path} ---\n"
+        for path in relevant_files:
+            content = self.codebase_context[path]
+            header = f"\n=== {path} ===\n"
             header_tokens = self.gemini_provider.count_tokens(header, "", _status_callback=self.status_callback)
-            remaining_budget_for_file_content = context_budget - current_tokens - header_tokens
-            if remaining_budget_for_file_content <= 0:
+            
+            # Check if we have enough budget for this file
+            remaining_budget = context_budget - current_tokens - header_tokens
+            if remaining_budget <= 0:
                 self._update_status(f"Skipping file '{path}' due to context token budget exhaustion.")
                 break
-            file_content_to_add = ""
-            if path.endswith('.py'):
-                prioritized_content = SocraticDebate._prioritize_python_code(self.gemini_provider, content, remaining_budget_for_file_content)
-                file_content_to_add = SocraticDebate._truncate_text_by_tokens(self.gemini_provider, prioritized_content, remaining_budget_for_file_content, _status_callback=self.status_callback)
-            else:
-                file_content_to_add = SocraticDebate._truncate_text_by_tokens(self.gemini_provider, content, remaining_budget_for_file_content, _status_callback=self.status_callback)
-            if not file_content_to_add:
-                continue
-            full_file_block = header + file_content_to_add + "\n"
-            file_block_tokens = self.gemini_provider.count_tokens(full_file_block, "", _status_callback=self.status_callback)
-            if current_tokens + file_block_tokens > context_budget:
-                self._update_status(f"Warning: Could not fit full file '{path}' even after truncation. Skipping remaining files.")
-                break
-            context_str_parts.append(full_file_block)
-            current_tokens += file_block_tokens
+                
+            # Strategically truncate file content to preserve important sections
+            file_content = self._truncate_file_content(content, remaining_budget)
+            
+            context_str_parts.append(header + file_content)
+            current_tokens += header_tokens + self.gemini_provider.count_tokens(file_content, "", _status_callback=self.status_callback)
         
-        final_context_string = "\n".join(context_str_parts)
-
-        self._update_status(f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '', _status_callback=self.status_callback)} tokens.")
+        # Add summary of excluded files for transparency
+        excluded_files = set(self.codebase_context.keys()) - set(relevant_files)
+        if excluded_files and len(context_str_parts) > 0:
+            excluded_summary = f"\n\n=== EXCLUDED FILES ({len(excluded_files)} total) ===\n"
+            excluded_summary += "The following relevant files were not included due to token constraints:\n"
+            excluded_summary += ", ".join(list(excluded_files)[:10])  # Show first 10
+            if len(excluded_files) > 10:
+                excluded_summary += f", and {len(excluded_files) - 10} more..."
+            
+            # Only add if we have tokens for it
+            if self.gemini_provider.count_tokens(excluded_summary, "", _status_callback=self.status_callback) <= (context_budget - current_tokens):
+                context_str_parts.append(excluded_summary)
+        
+        final_context_string = "".join(context_str_parts)
+        self._update_status(
+            f"Prepared codebase context using {self.gemini_provider.count_tokens(final_context_string, '', _status_callback=self.status_callback)} "
+            f"tokens from {len(relevant_files)} relevant files (budget: {context_budget} tokens)."
+        )
         return final_context_string
 
+    # --- NEW HELPER METHOD FOR prepare_context ---
+    def _identify_relevant_files(self, context_budget: int) -> List[str]:
+        """Uses semantic analysis to identify which files are most relevant to the current prompt."""
+        # Extract meaningful keywords from the prompt
+        prompt_keywords = self._extract_keywords_from_prompt()
+        
+        # Calculate relevance score for each file
+        file_scores = []
+        for path, content in self.codebase_context.items():
+            score = 0
+            
+            # Check path relevance (higher weight for path matches)
+            path_lower = path.lower()
+            for keyword in prompt_keywords:
+                if keyword in path_lower:
+                    score += 3  # Path match is highly relevant
+            
+            # Check content relevance (sample first part to avoid processing entire large files)
+            content_sample = content[:1000].lower()  # First 1000 chars for better accuracy
+            for keyword in prompt_keywords:
+                if keyword in content_sample:
+                    score += 2  # Content match is relevant
+            
+            file_scores.append((path, score))
+        
+        # Sort by score (highest first) and return only relevant files
+        file_scores.sort(key=lambda x: x[1], reverse=True)
+        return [path for path, score in file_scores if score > 0] or list(self.codebase_context.keys())[:5]
+
+    # --- NEW HELPER METHOD FOR prepare_context ---
+    def _extract_keywords_from_prompt(self) -> List[str]:
+        """Extracts meaningful keywords from the user prompt using simple NLP techniques."""
+        prompt = self.initial_prompt.lower()
+        
+        # Remove common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'in', 'on', 
+                     'at', 'to', 'for', 'with', 'by', 'of', 'as', 'it', 'this', 'that', 'code', 'file'}
+        words = [word.strip('.,!?()[]{}') for word in prompt.split() 
+                 if word.lower() not in stop_words and len(word) > 2]
+        
+        # Return unique, meaningful keywords
+        return list(set(words))
+
+    # --- NEW HELPER METHOD FOR prepare_context ---
+    def _truncate_file_content(self, content: str, max_tokens: int) -> str:
+        """Strategically truncates file content to preserve the most important sections."""
+        # For Python files, prioritize the beginning (imports, class definitions) and key methods
+        if content.endswith('.py'):
+            # Keep the first part (typically imports and class definitions)
+            first_part = content[:max_tokens//2]
+            
+            # If possible, preserve some key methods from the middle/end
+            if len(content) > max_tokens//2:
+                # Look for function/method definitions in the entire content
+                method_pattern = r'def\s+\w+\s*\('
+                method_matches = list(re.finditer(method_pattern, content)) # Use 'content' to find all methods
+                
+                if method_matches:
+                    # Take content from up to 3 key methods
+                    selected_methods = []
+                    for i, match in enumerate(method_matches[:3]):
+                        start_idx = match.start()
+                        # Find end of method (next 'def' or end of file)
+                        end_idx = len(content)
+                        if i < len(method_matches) - 1:
+                            end_idx = method_matches[i+1].start()
+                        
+                        method_content = content[start_idx:end_idx].strip()
+                        # Limit each method to reasonable size
+                        if len(method_content) > 500:
+                            method_content = method_content[:500] + "\n    # [Truncated for token budget]"
+                        selected_methods.append(method_content)
+                    
+                    # Combine first part with selected methods
+                    return first_part + "\n\n# Key methods:\n" + "\n\n".join(selected_methods)
+            
+            # If no methods found or content is short, just return the first part
+            return first_part
+        
+        # For config/markup files, prioritize the beginning which often contains critical settings
+        return content[:max_tokens]
+
+
+    # --- MODIFIED METHOD: _analyze_codebase_context ---
     def _analyze_codebase_context(self) -> Dict[str, Any]:
         """
         Analyzes the codebase context using a dedicated persona.
@@ -180,9 +311,20 @@ class SocraticDebate:
             self._update_status("[yellow]Context_Aware_Assistant persona not found. Skipping context analysis.[/yellow]")
             return self._get_default_analysis_summary()
         self._update_status("Analyzing codebase context with Context_Aware_Assistant...")
+        
+        # Prepare context string using the new strategic method
         context_string_for_analysis = self.prepare_context()
         
         def analysis_prompt_gen():
+            # Ensure analysis_str is properly formatted if summary is available
+            # Check if analysis was already run and stored in intermediate_steps
+            analysis_data = self.intermediate_steps.get("Context_Analysis_Output")
+            if analysis_data:
+                analysis_str = json.dumps(analysis_data, indent=2)
+            else:
+                # If analysis failed or was skipped, use a default summary
+                analysis_str = json.dumps(self._get_default_analysis_summary(), indent=2)
+            
             return (f"CODEBASE CONTEXT:\n{context_string_for_analysis}\n\n"
                     f"INSTRUCTIONS:\n"
                     f"Analyze the provided codebase context thoroughly. Understand its structure, style, patterns, dependencies, and overall logic.\n"
@@ -190,7 +332,7 @@ class SocraticDebate:
 
         analysis_output_key = "Context_Analysis_Output"
         try:
-            # Pass ContextAnalysisOutput schema for validation
+            # Execute analysis with validation
             analysis_response = self._execute_persona_step(
                 "Context_Aware_Assistant",
                 analysis_prompt_gen,
@@ -200,23 +342,43 @@ class SocraticDebate:
                 is_final_answer_step=False # This is not the final answer for the whole debate
             )
             
-            # Check for malformed blocks in the analysis response
+            # Check for specific error conditions
             if analysis_response and analysis_response.get("malformed_blocks"):
-                self._update_status(f"[yellow]Warning: Context analysis response contained malformed blocks. Using default summary.[/yellow]")
-                return self._get_default_analysis_summary()
-            
-            # If analysis_response is a dict and valid, return it.
+                raise MalformedContextError( # Use the new custom exception
+                    "Context analysis response contained malformed blocks",
+                    details=analysis_response["malformed_blocks"]
+                )
+                
             if isinstance(analysis_response, dict):
                 self._update_status("Codebase context analysis successful.")
+                # Store the successful analysis response for potential later use (e.g., in visionary_prompt_gen)
+                self.intermediate_steps[analysis_output_key] = analysis_response
                 return analysis_response
             else:
-                self._update_status("[yellow]Context analysis persona returned non-JSON or empty response. Using default summary.[/yellow]")
-                return self._get_default_analysis_summary()
-
-        except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
-            error_message = f"[ERROR] Context analysis failed: {e}"
-            self.intermediate_steps[f"{analysis_output_key}_Error"] = error_message
-            self._update_status(error_message, state="error")
+                raise ContextAnalysisError("Context analysis persona returned non-JSON or empty response.") # Use the new custom exception
+                
+        except MalformedContextError as e: # Catch the specific new exception
+            self._update_status(f"[yellow]Warning: {str(e)}. Using default summary.[/yellow]")
+            logger.warning(f"Malformed context: {str(e)} - Details: {e.details}")
+            return self._get_default_analysis_summary()
+            
+        except TokenBudgetExceededError as e: # Catch the specific new exception
+            self._update_status(
+                f"[red]Token budget exceeded: Need {e.required_tokens} tokens but only {e.available_tokens} available. "
+                "Consider increasing token budget.[/red]"
+            )
+            logger.getLogger(__name__).error(f"Token budget exceeded during context analysis: {str(e)}") # Use logger directly
+            # Call the placeholder method
+            return self._handle_token_budget_exceeded()
+            
+        except ContextAnalysisError as e: # Catch the specific new exception
+            self._update_status(f"[yellow]Context analysis failed: {str(e)}. Using default summary.[/yellow]")
+            logger.exception("Context analysis error")
+            return self._get_default_analysis_summary()
+            
+        except Exception as e: # Catch-all for unexpected errors with detailed logging
+            self._update_status(f"[red]Unexpected error: {str(e)}. Using default summary.[/red]")
+            logger.exception("Unexpected error during context analysis")
             return self._get_default_analysis_summary()
 
     def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False, schema_model_for_validation: Optional[Type[BaseModel]] = None) -> Any:
@@ -314,6 +476,7 @@ class SocraticDebate:
                                     "message": str(parse_err),
                                     "raw_string_snippet": self.parser._escape_json_string_value(raw_response_text[:1000] + ("..." if len(raw_response_text) > 1000 else ""))
                                 }
+                                # Corrected: Call self._update_status, not self.self._update_status
                                 self._update_status(f"[yellow]Warning: JSON parsing failed for '{current_persona_name}'. Attempting self-correction (Attempt {json_repair_attempts + 1}/{MAX_JSON_REPAIR_ATTEMPTS + 1}). Error: {parse_err}[/yellow]", state="running")
                         else:
                             # Handle empty response case
@@ -322,6 +485,7 @@ class SocraticDebate:
                                 "message": "LLM returned empty response for final answer.",
                                 "raw_string_snippet": ""
                             }
+                            # Corrected: Call self._update_status, not self.self._update_status
                             self._update_status(f"[yellow]Warning: LLM returned empty response for '{current_persona_name}'. Attempting self-correction (Attempt {json_repair_attempts + 1}/{MAX_JSON_REPAIR_ATTEMPTS + 1}).[/yellow]", state="running")
 
                         json_repair_attempts += 1
@@ -430,22 +594,27 @@ class SocraticDebate:
         self._update_status("Starting Socratic Arbitration Loop...",
                             current_total_tokens=self.cumulative_token_usage,
                             current_total_cost=self.cumulative_usd_cost)
+        
+        # Prepare context using the new strategic method
         context_string = self.prepare_context()
+        
+        # Analyze context, now using the improved _analyze_codebase_context
         codebase_analysis_summary = self._analyze_codebase_context()
-        analysis_str = json.dumps(codebase_analysis_summary, indent=2)
-
+        
         def visionary_prompt_gen():
-            if codebase_analysis_summary:
-                return (f"USER PROMPT: {self.initial_prompt}\n\nCODEBASE CONTEXT ANALYSIS:\n{analysis_str}\n\n"
-                        f"CODEBASE CONTEXT:\n{context_string}\n\nINSTRUCTIONS:\n"
-                        f"1. **Analyze the provided codebase context and its analysis thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic, incorporating insights from the analysis.\n"
-                        f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase and address any identified concerns from the analysis.\n"
-                        f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
-            return (f"USER PROMPT: {self.initial_prompt}\n\n"
-                    f"CODEBASE CONTEXT:\n{context_string}\n\n"
-                    f"INSTRUCTIONS:\n"
-                    f"1. **Analyze the provided codebase context thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic.\n"
-                    f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase.\n"
+            # Ensure analysis_str is properly formatted if summary is available
+            # Check if analysis was already run and stored in intermediate_steps
+            analysis_data = self.intermediate_steps.get("Context_Analysis_Output")
+            if analysis_data:
+                analysis_str = json.dumps(analysis_data, indent=2)
+            else:
+                # If analysis failed or was skipped, use a default summary
+                analysis_str = json.dumps(self._get_default_analysis_summary(), indent=2)
+            
+            return (f"USER PROMPT: {self.initial_prompt}\n\nCODEBASE CONTEXT ANALYSIS:\n{analysis_str}\n\n"
+                    f"CODEBASE CONTEXT:\n{context_string}\n\nINSTRUCTIONS:\n"
+                    f"1. **Analyze the provided codebase context and its analysis thoroughly.** Understand its structure, style, patterns, dependencies, and overall logic, incorporating insights from the analysis.\n"
+                    f"2. **Propose an initial implementation strategy or code snippet.** Your proposal should be consistent with the existing codebase and address any identified concerns from the analysis.\n"
                     f"3. **Ensure your proposed code fits naturally into the existing architecture and follows its conventions.** Use the provided `GeminiProvider` and `SocraticDebate` classes as examples of how to integrate.")
         try:
             visionary_output = self._execute_persona_step("Visionary_Generator", visionary_prompt_gen, "Visionary_Generator_Output", update_current_thought=True)
