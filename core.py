@@ -25,7 +25,8 @@ from pydantic import ValidationError
 # Import models and settings
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
 from src.config.settings import ChimeraSettings
-from src.persona_manager import PersonaRouter, ContextRelevanceAnalyzer
+from src.persona.routing import PersonaRouter
+from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
 
 # Configure logging
