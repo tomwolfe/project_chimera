@@ -1,23 +1,15 @@
 # src/tokenizers/gemini_tokenizer.py
-"""
-Gemini-specific tokenizer implementation.
-"""
-
+"""Gemini-specific tokenizer implementation."""
 from google import genai
 from google.genai import types
 import logging
-from abc import ABC, abstractmethod
-
-# Import the Tokenizer ABC from its module
-from src.tokenizers import Tokenizer
+# Import the Tokenizer ABC from base.py instead of src.tokenizers
+from .base import Tokenizer  # CHANGED THIS LINE
 
 logger = logging.getLogger(__name__)
 
 class GeminiTokenizer(Tokenizer):
-    """
-    Gemini-specific tokenizer that uses the google-genai library to count tokens.
-    """
-    
+    """Gemini-specific tokenizer that uses the google-genai library to count tokens."""    
     def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
         """
         Initializes the GeminiTokenizer.
