@@ -8,8 +8,11 @@ from typing import List, Dict, Set, Optional, Any
 import re
 import json
 from pathlib import Path
+import logging # Ensure logging is imported
 
 from src.models import PersonaConfig
+
+logger = logging.getLogger(__name__) # Initialize logger
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
@@ -157,17 +160,32 @@ class PersonaRouter:
         
         Returns a list of persona names in execution order.
         """
+        
+        # --- NEW SECTION: Self-Awareness for Self-Analysis ---
+        prompt_lower = prompt.lower()
+        # Check for keywords indicating self-analysis or code analysis of Chimera
+        # MODIFIED: Use the full 'Software Engineering' persona set for comprehensive self-analysis
+        if "chimera" in prompt_lower or "your code" in prompt_lower or "self-analysis" in prompt_lower or "codebase" in prompt_lower:
+            logger.info("Detected self-analysis prompt. Using comprehensive Software Engineering persona sequence.")
+            # Hardcode the names from the 'Software Engineering' persona_sets in personas.yaml
+            # This avoids needing to pass persona_sets into PersonaRouter, keeping it minimal.
+            return [
+                "Visionary_Generator", "Skeptical_Generator", "Code_Architect",
+                "Security_Auditor", "DevOps_Engineer", "Test_Engineer",
+                "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate"
+            ]
+        # --- END NEW SECTION ---
+        
+        # --- Domain-specific routing continues below (original logic) ---
         # 1. Initial domain-based sequence
         domains = self._analyze_prompt_domain(prompt)
         base_sequence = self._get_domain_specific_personas(domains)
         
-        # Ensure core personas are present and ordered correctly
+        # Get core personas and domain experts
         core_order = ["Visionary_Generator", "Skeptical_Generator"]
-        # Get domain experts from the base sequence, excluding core ones and Arbitrator
-        domain_experts = [p for p in base_sequence 
+        domain_experts = [p for p in base_sequence
                          if p not in core_order and p != "Impartial_Arbitrator"]
         
-        # Start with the core sequence, then domain experts, then the arbitrator
         final_sequence = core_order + domain_experts
         if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
             final_sequence.append("Impartial_Arbitrator")
@@ -227,14 +245,11 @@ class PersonaRouter:
         # Add a simple check to prevent common misclassifications based on prompt context.
         # This avoids modifying personas.yaml or adding complex scoring.
         
-        # prompt_lower is already defined earlier in the function scope.
-        
         # Example: Prevent "building architect" from triggering Code_Architect
         if "Code_Architect" in final_sequence:
-            if ("building architect" in prompt.lower() or "construction architect" in prompt.lower()) and \
-               ("software architect" not in prompt.lower() and "software" not in prompt.lower()):
+            if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
+               ("software architect" not in prompt_lower and "software" not in prompt_lower):
                 
-                # logger is available from the top of the file
                 logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
                 final_sequence.remove("Code_Architect")
                 # Optionally, add a more general persona if a specific one is removed

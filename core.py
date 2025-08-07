@@ -30,6 +30,9 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
 # Import GeminiTokenizer for GeminiProvider
 from src.tokenizers import GeminiTokenizer 
+# NEW: Import LLMResponseValidator and LLMResponseValidationError
+from src.utils.response_validator import LLMResponseValidator
+from src.exceptions import LLMResponseValidationError # Ensure this is imported for catching
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -236,7 +239,6 @@ class SocraticDebate:
         # Calculate token budgets based on prompt complexity
         self._calculate_token_budgets()
     
-    # --- MODIFIED METHOD START ---
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on analysis type"""
         # Base ratios from settings
@@ -266,7 +268,6 @@ class SocraticDebate:
         self.debate_token_budget = int(self.max_total_tokens_budget * debate_ratio)
         
         logger.info(f"Token budgets: Context={self.context_token_budget}, Debate={self.debate_token_budget}")
-    # --- MODIFIED METHOD END ---
     
     def _check_token_budget(self, prompt_text: str, step_name: str) -> int:
         """
@@ -321,25 +322,60 @@ class SocraticDebate:
         }
     
     def _prepare_context(self, context_analysis: Dict[str, Any]) -> str:
-        """Prepare the context for the debate based on the context analysis."""
+        """
+        Prepare the context for the debate based on the context analysis,
+        respecting the context token budget.
+        """
         if not self.codebase_context or not context_analysis.get("relevant_files"):
             return ""
         
-        # Get the content of relevant files
         context_parts = []
-        # Limit to top 5 relevant files for context window management
-        for file_path, _ in context_analysis.get("relevant_files", [])[:5]:  
-            if file_path in self.codebase_context:
-                content = self.codebase_context[file_path]
-                # Create a meaningful representation of the file
-                clean_content = self.context_analyzer._clean_code_content(content)
-                key_elements = self.context_analyzer._extract_key_elements(content)
-                
-                context_parts.append(f"File: {file_path}")
-                context_parts.append(f"Key elements: {key_elements}")
-                context_parts.append(f"Content snippet:\n{clean_content[:500]}...")
-                context_parts.append("")
+        current_context_tokens = 0
         
+        # Iterate through all relevant files, ordered by relevance
+        for file_path, _ in context_analysis.get("relevant_files", []):  
+            if file_path not in self.codebase_context:
+                continue
+
+            content = self.codebase_context[file_path]
+            
+            # Use extract_relevant_code_segments for intelligent content selection
+            # Pass a max_chars that is a fraction of remaining context budget
+            # This is an estimate, actual tokens will be counted later.
+            # A simple heuristic: 4 chars ~ 1 token.
+            remaining_budget_chars = (self.context_token_budget - current_context_tokens) * 4
+            
+            # Ensure at least some content is extracted if budget allows
+            if remaining_budget_chars <= 0:
+                break # No more budget for context
+
+            # Extract key elements and relevant code segments
+            key_elements = self.context_analyzer._extract_key_elements(content)
+            relevant_segment = self.context_analyzer.extract_relevant_code_segments(
+                content, max_chars=int(remaining_budget_chars)
+            )
+            
+            # Construct the part for this file
+            file_context_part = (
+                f"File: {file_path}\n"
+                f"Key elements: {key_elements}\n"
+                f"Content snippet:\n```\n{relevant_segment}\n```\n"
+            )
+            
+            # Check if adding this file's context would exceed the budget
+            # Use the actual tokenizer for precise counting
+            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            
+            if current_context_tokens + estimated_file_tokens > self.context_token_budget:
+                logger.info(f"Skipping {file_path} due to context budget. "
+                            f"Current: {current_context_tokens}, Estimated for file: {estimated_file_tokens}, "
+                            f"Budget: {self.context_token_budget}")
+                break # Stop adding files if budget is exceeded
+            
+            context_parts.append(file_context_part)
+            current_context_tokens += estimated_file_tokens
+            
+        logger.info(f"Prepared context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
         return "\n".join(context_parts)
     
     def _generate_persona_sequence(self, context_analysis: Dict[str, Any]) -> List[str]:
@@ -422,33 +458,23 @@ Focus on logical reasoning, identifying flaws, or offering improvements.
         
         return response
     
-    def _synthesize_final_answer(self, final_debate_state: str) -> str:
-        """Synthesize the final answer from the debate state."""
-        # Find the impartial arbitrator
+    def _synthesize_final_answer(self, final_debate_state: str) -> Dict[str, Any]:
+        """
+        Synthesize the final answer from the debate state, with retry logic
+        for schema validation failures.
+        """
         arbitrator = None
         for persona_name, persona in self.all_personas.items():
-            if "arbitrator" in persona_name.lower(): # Case-insensitive check
+            if "arbitrator" in persona_name.lower():
                 arbitrator = persona
                 break
         
-        # Construct the prompt for the arbitrator
         if not arbitrator:
-            # Default arbitrator prompt if no specific one is found
-            prompt_for_synthesis = f"""
-You are an Impartial Arbitrator. Based on the following debate about the user's prompt, synthesize a clear, 
-comprehensive, and balanced final answer that incorporates the best insights 
-from all perspectives:
+            logger.error("Impartial_Arbitrator persona not found. Cannot synthesize final answer.")
+            return {"error": "Impartial_Arbitrator persona not found."}
 
-Debate Summary:
-{final_debate_state}
-
-User's Original Prompt:
-{self.initial_prompt}
-
-Provide a final answer that addresses the user's needs directly and thoroughly.
-            """
-        else:
-            # Use the arbitrator's system prompt
+        max_retries = 2 # Allow up to 2 retries for JSON formatting/schema issues
+        for attempt in range(max_retries + 1):
             prompt_for_synthesis = f"""
 {arbitrator.system_prompt}
 
@@ -459,37 +485,61 @@ Debate Summary:
 
 User's Original Prompt:
 {self.initial_prompt}
-            """
+"""
+            if attempt > 0:
+                prompt_for_synthesis += f"\n\n**ATTENTION: PREVIOUS RESPONSE FAILED VALIDATION.**\n" \
+                                        f"Please ensure your response is a PERFECTLY VALID JSON object " \
+                                        f"adhering to the `LLMOutput` schema. Double-check all commas, " \
+                                        f"quotes, and nested structures. Do NOT include any text outside " \
+                                        f"the JSON block. This is attempt {attempt+1}/{max_retries+1}."
+                logger.warning(f"Retrying final answer synthesis (attempt {attempt+1}).")
+
+            tokens_used_in_synthesis = self._check_token_budget(prompt_for_synthesis, "final_synthesis")
+            
+            raw_final_answer = self.llm_provider.generate_content(
+                prompt_for_synthesis,
+                temperature=arbitrator.temperature, # Use arbitrator's temperature
+                max_tokens=arbitrator.max_tokens # Use arbitrator's max_tokens
+            )
+            
+            self.tokens_used += tokens_used_in_synthesis
+            
+            # Attempt to parse and validate the raw output
+            try:
+                # Use LLMOutputParser to handle extraction and validation
+                llm_output_parser = LLMOutputParser()
+                validated_output_dict = llm_output_parser.parse_and_validate(raw_final_answer, LLMOutput)
+                
+                # If successful, store and return
+                self.final_answer = validated_output_dict
+                self.intermediate_steps["Final_Answer_Output"] = validated_output_dict
+                self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis
+                self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
+                self.intermediate_steps["Total_Estimated_Cost_USD"] = self._calculate_cost()
+                return validated_output_dict
+            except Exception as e: # Catch any exception from parse_and_validate
+                logger.error(f"Validation failed for final answer (attempt {attempt+1}): {e}")
+                # Store the raw, invalid output for debugging
+                self.intermediate_steps[f"Final_Answer_Output_Attempt_{attempt+1}_Raw"] = raw_final_answer
+                self.intermediate_steps[f"Final_Answer_Output_Attempt_{attempt+1}_Error"] = str(e)
+                if attempt == max_retries:
+                    # If max retries reached, raise the error to app.py
+                    raise LLMResponseValidationError(
+                        f"Final answer failed validation after {max_retries} retries: {e}",
+                        invalid_response=raw_final_answer,
+                        expected_schema="LLMOutput",
+                        details={"validation_error": str(e)}
+                    ) from e
+                # Continue to next attempt
         
-        # Check token budget using the constructed prompt text
-        tokens_used_in_synthesis = self._check_token_budget(prompt_for_synthesis, "final_synthesis")
-        
-        # Generate final answer
-        logger.info("Synthesizing final answer")
-        final_answer = self.llm_provider.generate_content(
-            prompt_for_synthesis, # Use the constructed prompt
-            temperature=0.3,
-            max_tokens=1024
-        )
-        
-        # Update total token usage
-        self.tokens_used += tokens_used_in_synthesis
-        
-        # Store the result
-        self.final_answer = final_answer
-        self.intermediate_steps["Final_Answer_Output"] = final_answer
-        self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis
-        self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
-        self.intermediate_steps["Total_Estimated_Cost_USD"] = self._calculate_cost()
-        
-        return final_answer
+        # Should not be reached if max_retries logic is sound
+        raise Exception("Unexpected state in _synthesize_final_answer.")
     
     def _calculate_cost(self) -> float:
         """Calculate the estimated cost based on token usage."""
         # This is a placeholder - actual cost calculation would depend on the model
         # For Gemini, as of 2023, pricing is approximately:
         # $0.00000025 per character for input, $0.0000005 per character for output
-        # But this varies by model and over time
         
         # Simplified estimate: $0.000003 per token (as used in app.py)
         # This should ideally be derived from a configuration or model pricing lookup.
