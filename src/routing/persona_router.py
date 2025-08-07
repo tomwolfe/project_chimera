@@ -11,6 +11,8 @@ from pathlib import Path
 import logging # Ensure logging is imported
 
 from src.models import PersonaConfig
+# NEW: Import SELF_ANALYSIS_KEYWORDS
+from src.constants import SELF_ANALYSIS_KEYWORDS
 
 logger = logging.getLogger(__name__) # Initialize logger
 
@@ -152,89 +154,72 @@ class PersonaRouter:
         
         return ordered_sequence
     
-    def determine_persona_sequence(self, prompt: str, 
-                                 intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
-        """
-        Determine the optimal sequence of personas for processing the prompt.
-        Dynamically adjusts the sequence based on intermediate results.
-        
-        Returns a list of persona names in execution order.
-        """
-        
-        # --- NEW SECTION: Self-Awareness for Self-Analysis ---
+    def _is_self_analysis_prompt(self, prompt: str) -> bool:
+        """Helper method to detect self-analysis prompts using keywords from src.constants."""
         prompt_lower = prompt.lower()
-        # Check for keywords indicating self-analysis or code analysis of Chimera
-        if "chimera" in prompt_lower or "your code" in prompt_lower or "self-analysis" in prompt_lower or "codebase" in prompt_lower:
-            # Prioritize code-focused personas when analyzing self, using the prompt's specific list
-            # This early return ensures efficiency for self-analysis tasks.
-            logger.info("Detected self-analysis prompt. Using specialized persona sequence.")
-            return ["Code_Architect", "Constructive_Critic", "Impartial_Arbitrator"]
-        # --- END NEW SECTION ---
-        
-        # --- Domain-specific routing continues below (original logic) ---
-        # 1. Initial domain-based sequence
-        domains = self._analyze_prompt_domain(prompt)
-        base_sequence = self._get_domain_specific_personas(domains)
-        
-        # Get core personas and domain experts
-        core_order = ["Visionary_Generator", "Skeptical_Generator"]
-        domain_experts = [p for p in base_sequence
-                         if p not in core_order and p != "Impartial_Arbitrator"]
-        
-        final_sequence = core_order + domain_experts
-        if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
-            final_sequence.append("Impartial_Arbitrator")
-        
-        # 2. Dynamic adjustment based on intermediate results
-        if intermediate_results:
-            # Analyze previous outputs for specific trigger keywords
-            triggered_personas_to_add = set()
-            
-            # Iterate through all intermediate steps
-            for step_name, result in intermediate_results.items():
-                # Skip steps that are not actual persona outputs (e.g., token counts, errors)
-                if not (step_name.endswith("_Output") or step_name.endswith("_Critique")):
-                    continue
+        # Use the centralized SELF_ANALYSIS_KEYWORDS for detection
+        return any(keyword in prompt_lower for keyword in SELF_ANALYSIS_KEYWORDS)
 
-                # Convert result to string for keyword searching. Handle dicts by serializing.
-                result_text = ""
-                if isinstance(result, dict):
-                    try:
-                        result_text = json.dumps(result)
-                    except TypeError: # Handle cases where result might not be JSON serializable
-                        result_text = str(result)
-                elif isinstance(result, str):
-                    result_text = result
-                else:
-                    result_text = str(result) # Fallback for other types
+    def _get_software_engineering_sequence(self) -> List[str]:
+        """Returns the full list of personas for the Software Engineering framework."""
+        # This list should ideally be loaded dynamically from persona_sets,
+        # but for a quick fix and given PersonaRouter's current __init__ (only all_personas),
+        # hardcoding the known full Software Engineering set is the most direct path.
+        return ["Visionary_Generator", "Skeptical_Generator", "Code_Architect",
+                "Security_Auditor", "DevOps_Engineer", "Test_Engineer",
+                "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate"]
 
-                # Check for trigger keywords in the result text
-                for persona_name, keywords in self.trigger_keywords.items():
-                    # Only consider adding personas not already in the sequence
-                    if persona_name not in final_sequence:
-                        for keyword in keywords:
-                            # Use word boundaries for more precise matching
-                            if re.search(rf'\b{keyword}\b', result_text, re.IGNORECASE):
-                                triggered_personas_to_add.add(persona_name)
-                                break # Found a trigger for this persona, move to the next persona
+    def _apply_dynamic_adjustment(self, base_sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
+        """Apply dynamic persona adjustments based on intermediate findings."""
+        # Analyze previous outputs for specific trigger keywords
+        triggered_personas_to_add = set()
+        
+        # Iterate through all intermediate steps
+        for step_name, result in intermediate_results.items():
+            # Skip steps that are not actual persona outputs (e.g., token counts, errors)
+            if not (step_name.endswith("_Output") or step_name.endswith("_Critique")):
+                continue
+
+            # Convert result to string for keyword searching. Handle dicts by serializing.
+            result_text = ""
+            if isinstance(result, dict):
+                try:
+                    result_text = json.dumps(result)
+                except TypeError: # Handle cases where result might not be JSON serializable
+                    result_text = str(result)
+            elif isinstance(result, str):
+                result_text = result
+            else:
+                result_text = str(result) # Fallback for other types
+
+            # Check for trigger keywords in the result text
+            for persona_name, keywords in self.trigger_keywords.items():
+                # Only consider adding personas not already in the sequence
+                if persona_name not in base_sequence: # Check against the base sequence
+                    for keyword in keywords:
+                        # Use word boundaries for more precise matching
+                        if re.search(rf'\b{keyword}\b', result_text, re.IGNORECASE):
+                            triggered_personas_to_add.add(persona_name)
+                            break # Found a trigger for this persona, move to the next persona
+        
+        # If new personas were triggered, insert them into the sequence.
+        # A good place is before the Impartial_Arbitrator, or based on their role.
+        # For simplicity, we'll insert them before the Arbitrator.
+        final_sequence = list(base_sequence) # Create a mutable copy
+        if triggered_personas_to_add:
+            # Sort triggered personas alphabetically for deterministic order
+            sorted_triggered_personas = sorted(list(triggered_personas_to_add))
             
-            # If new personas were triggered, insert them into the sequence.
-            # A good place is before the Impartial_Arbitrator, or based on their role.
-            # For simplicity, we'll insert them before the Arbitrator.
-            if triggered_personas_to_add:
-                # Sort triggered personas alphabetically for deterministic order
-                sorted_triggered_personas = sorted(list(triggered_personas_to_add))
-                
-                # Find the index where the Arbitrator is (or where it would be inserted)
-                arbitrator_index = len(final_sequence)
-                if "Impartial_Arbitrator" in final_sequence:
-                    arbitrator_index = final_sequence.index("Impartial_Arbitrator")
-                
-                # Insert the triggered personas before the Arbitrator
-                for persona_to_insert in sorted_triggered_personas:
-                    if persona_to_insert not in final_sequence: # Double check uniqueness
-                        final_sequence.insert(arbitrator_index, persona_to_insert)
-                        arbitrator_index += 1 # Adjust index for subsequent insertions
+            # Find the index where the Arbitrator is (or where it would be inserted)
+            arbitrator_index = len(final_sequence)
+            if "Impartial_Arbitrator" in final_sequence:
+                arbitrator_index = final_sequence.index("Impartial_Arbitrator")
+            
+            # Insert the triggered personas before the Arbitrator
+            for persona_to_insert in sorted_triggered_personas:
+                if persona_to_insert not in final_sequence: # Double check uniqueness
+                    final_sequence.insert(arbitrator_index, persona_to_insert)
+                    arbitrator_index += 1 # Adjust index for subsequent insertions
         
         # --- Minimal 80/20 Refinement for Framework Selection ---
         # Add a simple check to prevent common misclassifications based on prompt context.
@@ -242,10 +227,10 @@ class PersonaRouter:
         
         # Example: Prevent "building architect" from triggering Code_Architect
         if "Code_Architect" in final_sequence:
-            if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
+            if ("building architect" in prompt_lower or "construction architect" in prompt_lower or "architectural design" in prompt_lower) and \
                ("software architect" not in prompt_lower and "software" not in prompt_lower):
                 
-                logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
+                logger.warning("Misclassification detected: Non-software 'architect' prompt likely triggered Code_Architect. Removing it.")
                 final_sequence.remove("Code_Architect")
                 # Optionally, add a more general persona if a specific one is removed
                 if "Generalist_Assistant" not in final_sequence:
@@ -265,3 +250,40 @@ class PersonaRouter:
                 seen.add(persona)
         
         return unique_sequence
+
+    def determine_persona_sequence(self, prompt: str, 
+                                 intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
+        """
+        Determine the optimal sequence of personas for processing the prompt.
+        Dynamically adjusts the sequence based on intermediate results.
+        
+        Returns a list of persona names in execution order.
+        """
+        
+        prompt_lower = prompt.lower()
+        
+        # 1. Primary check: Is this a self-analysis prompt? Use the centralized method.
+        if self._is_self_analysis_prompt(prompt):
+            logger.info("Detected self-analysis prompt. Using comprehensive software engineering persona sequence.")
+            # Start with the standardized, comprehensive self-analysis sequence
+            base_sequence = self._get_software_engineering_sequence()
+            
+            # Apply dynamic adjustment to this base sequence
+            return self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
+        
+        # --- Domain-specific routing continues below (original logic) ---
+        # 2. Initial domain-based sequence
+        domains = self._analyze_prompt_domain(prompt)
+        base_sequence = self._get_domain_specific_personas(domains)
+        
+        # Get core personas and domain experts
+        core_order = ["Visionary_Generator", "Skeptical_Generator"]
+        domain_experts = [p for p in base_sequence
+                         if p not in core_order and p != "Impartial_Arbitrator"]
+        
+        final_sequence = core_order + domain_experts
+        if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
+            final_sequence.append("Impartial_Arbitrator")
+        
+        # 3. Dynamic adjustment based on intermediate results
+        return self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)

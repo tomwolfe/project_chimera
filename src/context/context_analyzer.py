@@ -102,32 +102,6 @@ class ContextRelevanceAnalyzer:
         if not self.file_embeddings:
             return []
 
-        # --- MODIFICATION START ---
-        # Check if PersonaRouter is available before calling its methods.
-        # If not, fall back to a default behavior or raise an error.
-        if not self.persona_router:
-            logger.warning("PersonaRouter not set in ContextRelevanceAnalyzer. Cannot perform self-analysis detection.")
-            # Fallback: If no router, assume it's not a self-analysis prompt for this component.
-            # The persona_router's main determine_persona_sequence will still handle routing.
-            # However, the original code *did* have a return here, so we replicate that behavior
-            # but with a warning and a default sequence that might be overridden later.
-            # A more robust solution would be to raise an error or ensure the router is always set.
-            # For now, we'll mimic the LLM's proposed change structure.
-            # The LLM's diff kept the return statement, so we will too, but with a check.
-            if "chimera" in prompt.lower() or "your code" in prompt.lower() or "self-analysis" in prompt.lower() or "codebase" in prompt.lower():
-                logger.warning("Self-analysis prompt detected but PersonaRouter is not set. Returning a default sequence.")
-                # This return is a fallback and might not be ideal, but matches the LLM's proposed structure.
-                return ["Code_Architect", "Constructive_Critic", "Impartial_Arbitrator"] 
-        else:
-            # Use the centralized detection method from PersonaRouter
-            if self.persona_router.is_self_analysis_prompt(prompt):
-                logger.info("Detected self-analysis prompt via PersonaRouter. Using specialized persona sequence.")
-                # NOTE: This return statement is kept as per the LLM's "better iteration" diff,
-                # but it's architecturally questionable for ContextRelevanceAnalyzer to return
-                # persona sequences directly. The primary responsibility should lie with PersonaRouter.
-                return ["Code_Architect", "Constructive_Critic", "Impartial_Arbitrator"]
-        # --- MODIFICATION END ---
-
         prompt_embedding = self.model.encode([prompt], convert_to_numpy=True)[0]
         
         # 1. Extract key terms from the prompt for keyword analysis
