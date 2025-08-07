@@ -38,11 +38,10 @@ class LLMOutputParser:
         """Applies deterministic sanitization rules to LLM output to fix common JSON errors."""
         original_json_str = json_str # Keep original for fallback if sanitization fails
 
-        # 1. Extract JSON from markdown code block if present
-        json_match = re.search(r'```json\s*(\{[\s\S]*\})\s*```', json_str, re.MULTILINE)
-        if json_match:
-            self.logger.debug("Extracted JSON from markdown code block during sanitization.")
-            json_str = json_match.group(1)
+        # 1. Remove markdown code block fences if present, but keep content.
+        # This helps ensure that json.loads receives a clean JSON string.
+        json_str = re.sub(r'```json\s*', '', json_str, flags=re.MULTILINE)
+        json_str = re.sub(r'\s*```', '', json_str, flags=re.MULTILINE)
         
         # 2. Remove C-style comments (// and /* */)
         json_str = re.sub(r"//.*", "", json_str)
@@ -53,40 +52,9 @@ class LLMOutputParser:
 
         # 4. Remove trailing commas before closing braces/brackets
         json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
-
-        # 5. Ensure keys are double-quoted (e.g., {key: "value"} -> {"key": "value"})
-        # This regex is problematic and can incorrectly quote values that look like keys.
-        # It's safer to remove this heuristic and rely on LLM self-correction or a dedicated JSON repair library.
-        # Commenting out this problematic regex:
-        # json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
-
-        # Removed aggressive heuristics for missing commas. Rely on LLM self-correction.
         
-        # 7. Attempt to trim non-JSON content from start/end if it's clearly not JSON
-        # This is crucial: if after all sanitization, the string doesn't start with '{' or '[',
-        # we need to try and find the actual JSON object/array. If we can't, we must return
-        # the original string to avoid `json.loads` getting an empty/invalid string.
-        stripped_json_str = json_str.strip()
-        if stripped_json_str and stripped_json_str[0] not in ['{','[']:
-            try:
-                # Try to find the first '{' and last '}'
-                start_index = stripped_json_str.index('{')
-                end_index = stripped_json_str.rindex('}') + 1
-                json_str = stripped_json_str[start_index:end_index]
-            except ValueError:
-                try:
-                    # If no braces, try to find the first '[' and last ']'
-                    start_index = stripped_json_str.index('[')
-                    end_index = stripped_json_str.rindex(']') + 1
-                    json_str = stripped_json_str[start_index:end_index]
-                except ValueError:
-                    # If no JSON delimiters are found, return the original string.
-                    # This prevents `json.loads` from failing with "Expecting value: line 1 column 1 (char 0)"
-                    # if the output is entirely non-JSON or malformed without clear delimiters.
-                    self.logger.warning("No JSON object or array delimiters found after sanitization. Returning original string for parsing attempt.")
-                    return original_json_str
-        
-        return json_str
+        # Trim leading/trailing whitespace
+        return json_str.strip()
 
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
@@ -105,6 +73,9 @@ class LLMOutputParser:
         parsed_data = {}
         try:
             # Attempt to parse the sanitized string as JSON
+            # json.loads will raise JSONDecodeError if the string is not valid JSON,
+            # even after sanitization. This is where "Extra data" errors might occur
+            # if the LLM output is truncated or has trailing text.
             parsed_data = json.loads(sanitized_json_str)
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON decoding failed after sanitization: {e}")
@@ -143,7 +114,7 @@ class LLMOutputParser:
             # This allows the system to report *what* was wrong, even if the full structure failed.
             fallback_output = {
                 "COMMIT_MESSAGE": "Schema validation failed",
-                "RATIONALE": f"Original output: {self._escape_json_string_value(raw_output[:500] + ('...' if len(raw_output) > 500 else ''))}\nValidation Error: {self._escape_json_string_value(str(validation_e))}",
+                "RATIONALE": self._escape_json_string_value(f"Original output: {self._escape_json_string_value(raw_output[:500] + ('...' if len(raw_output) > 500 else ''))}\nValidation Error: {self._escape_json_string_value(str(validation_e))}"),
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,

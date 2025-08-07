@@ -157,7 +157,7 @@ personas:
       ```
       Focus on clarity and direct relevance to the code. If a category has no relevant findings, provide an empty list.
     temperature: 0.5
-    max_tokens: 512
+    max_tokens: 1024 # Increased to allow more comprehensive summaries
     description: "Provides context-specific analysis and explanations."
  
 persona_sets:

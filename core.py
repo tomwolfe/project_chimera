@@ -516,7 +516,7 @@ class SocraticDebate:
                     f"Original Proposal:\n{visionary_output}\n\n"
                     f"Skeptical Critique:\n{skeptical_critique}\n\n"
                     f"{domain_critiques_text}\n\n"
-                    f"Constructive Critic Feedback:\n{constructive_feedback}\n\n"
+                    # Removed reference to constructive_feedback here
                     f"Synthesize all the above information into a single, balanced, and definitive final answer. Adhere strictly to the JSON output format and escaping rules provided in your system prompt. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability based on the Pareto principle.")
             constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
             
@@ -527,7 +527,7 @@ class SocraticDebate:
                     f"Original Proposal:\n{visionary_output}\n\n"
                     f"Skeptical Critique:\n{skeptical_critique}\n\n"
                     f"{domain_critiques_text}\n\n"
-                    f"Constructive Critic Feedback:\n{constructive_feedback}\n\n"
+                    f"Constructive Critic Feedback:\n{constructive_feedback}\n\n" # This is the output from the previous step
                     f"Synthesize all the above information into a single, balanced, and definitive final answer. Adhere strictly to the JSON output format and escaping rules provided in your system prompt. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability based on the Pareto principle.")
             
             # The Impartial_Arbitrator will receive all previous outputs and synthesize the final answer.
