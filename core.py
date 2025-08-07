@@ -61,7 +61,8 @@ class SocraticDebate:
                  max_total_tokens_budget: int = 10000,
                  model_name: str = "gemini-2.5-flash-lite",
                  status_callback: Optional[Callable] = None, # Added status_callback
-                 rich_console: Optional[Console] = None # Added rich_console
+                 rich_console: Optional[Console] = None, # Added rich_console
+                 context_token_budget_ratio: float = 0.25 # ADDED THIS LINE
                  ):
         """
         Initialize a Socratic debate session.
@@ -82,7 +83,9 @@ class SocraticDebate:
         """
         # Load settings, using defaults if not provided
         self.settings = settings or ChimeraSettings()
-        self.max_total_tokens_budget = max_total_tokens
+        # Apply the passed context_token_budget_ratio to settings
+        self.settings.context_token_budget_ratio = context_token_budget_ratio # ADDED THIS LINE
+        self.max_total_tokens_budget = max_total_tokens_budget # FIXED: Changed from 'max_total_tokens'
         self.tokens_used = 0 # Total tokens consumed across all LLM calls
         self.model_name = model_name
         
