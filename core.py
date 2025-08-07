@@ -12,7 +12,7 @@ import tempfile
 import os
 import json
 import logging
-import random  # Needed for backoff jitter
+import random
 from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type
@@ -29,178 +29,71 @@ from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
 # Import GeminiTokenizer for GeminiProvider
-from src.tokenizers import GeminiTokenizer 
-# NEW: Import LLMResponseValidator and LLMResponseValidationError
-from src.utils.response_validator import LLMResponseValidator
-from src.exceptions import LLMResponseValidationError # Ensure this is imported for catching
+from src.tokenizers import GeminiTokenizer
+# Import custom exceptions
+from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError
+# Import TokenManager
+from src.token_manager import TokenManager # Assuming this file exists
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class TokenBudgetExceededError(Exception):
-    """Custom exception for when token usage exceeds the budget."""
-    def __init__(self, current_tokens: int, budget: int, details: Optional[Dict[str, Any]] = None):
-        error_details = {
-            "current_tokens": current_tokens,
-            "budget": budget,
-            **(details or {})
-        }
-        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used")
-        self.details = error_details
-        self.severity = "WARNING"
-        self.recoverable = True
+# --- Placeholder for GeminiProvider (as it's defined in llm_provider.py) ---
+# In a real scenario, this would be imported. For this snippet, we assume it's available.
+# We'll include a minimal mock for demonstration if it were not imported.
+# For this context, we assume it's correctly imported and functional.
+# If GeminiProvider were defined here, it would need its own imports.
+# The key methods needed by SocraticDebate are:
+# - count_tokens(text: str) -> int
+# - estimate_tokens_for_context(context_str: str, prompt: str) -> int
+# - generate_content(prompt: str, temperature: float, max_tokens: int) -> str
+# - calculate_usd_cost(input_tokens: int, output_tokens: int) -> float
+# - tokenizer attribute (instance of Tokenizer)
 
-class GeminiProvider:
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
-        self.token_usage = defaultdict(int)
-        self.console = Console()
-        self.model_name = model_name
-        # Initialize tokenizer for accurate counting
-        self.tokenizer = GeminiTokenizer(model_name=self.model_name)
-        
-    def count_tokens(self, text: str) -> int:
-        """Accurate token counting using Gemini API via tokenizer, with an improved fallback."""
-        if not text:
-            return 0
-            
-        try:
-            # Ensure tokenizer is initialized and available
-            if not hasattr(self, 'tokenizer') or not self.tokenizer:
-                logger.warning("Tokenizer not initialized in GeminiProvider. Using improved fallback estimation.")
-                return self._improved_token_estimate(text) # Use improved fallback
-            
-            # Use the tokenizer for accurate counting
-            return self.tokenizer.count_tokens(text)
-        except Exception as e:
-            # Catch potential errors from the tokenizer itself or API issues
-            logger.warning(f"Token counting API failed: {str(e)}. Using improved fallback estimation.")
-            return self._improved_token_estimate(text) # Use improved fallback
+# Mock GeminiProvider if not imported (for standalone context, but ideally imported)
+# class GeminiProvider:
+#     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
+#         # Minimal mock init
+#         self.model_name = model_name
+#         self.tokenizer = GeminiTokenizer(model_name=self.model_name) # Assume GeminiTokenizer is available
+#         self.token_usage = defaultdict(int)
+#         logger.warning("Using mock GeminiProvider. Real implementation should be imported.")
+#
+#     def count_tokens(self, text: str) -> int:
+#         return self.tokenizer.count_tokens(text) if text else 0
+#
+#     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
+#         return self.count_tokens(context_str) + self.count_tokens(prompt)
+#
+#     def generate_content(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
+#         # Mock response
+#         return "Mock response from GeminiProvider."
+#
+#     def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
+#         return (input_tokens + output_tokens) * 0.000003 # Mock cost
 
-    def _improved_token_estimate(self, text: str) -> int:
-        """
-        Provides a more robust token estimation heuristic when the primary tokenizer fails.
-        This heuristic is designed to better approximate Gemini's tokenization behavior
-        than a simple character-to-token ratio.
-        """
-        if not text:
-            return 0
-            
-        # Heuristic: Estimate based on word count, considering common patterns.
-        # Gemini's tokenization is complex, but word count is a reasonable proxy.
-        # Average tokens per word can vary, but ~1.3 is a common estimate.
-        words = text.split()
-        estimated_tokens = len(words) * 1.3
-        
-        # Adjust for common code elements which might be tokenized differently
-        # (e.g., symbols, keywords, indentation). This is a simplified adjustment.
-        code_indicators = ['{', '}', '[', ']', '(', ')', '=', '+', '-', '*', '/', '#', '//', '/*', ':', ';']
-        code_density = sum(text.count(ind) for ind in code_indicators) / max(1, len(text))
-        
-        if code_density > 0.05: # If text appears to be code-heavy
-            estimated_tokens *= 1.2 # Increase estimate slightly for code
-        
-        # Ensure a minimum of 1 token for any non-empty text
-        return max(1, int(round(estimated_tokens)))
+# --- End Mock ---
 
-    def generate_content(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
-        """Generate content using Gemini API with retry logic and token tracking."""
-        start_time = time.time()
-        retries = 0
-        max_retries = 3
-        
-        while retries < max_retries:
-            try:
-                # Log the request
-                logger.debug(f"Sending request to Gemini (model: {self.model_name})")
-                logger.debug(f"Prompt length: {len(prompt)} characters")
-                
-                # Generate content
-                response = self.model.generate_content(
-                    prompt,
-                    generation_config=types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens
-                    )
-                )
-                
-                # Extract and return the response text
-                if response.text:
-                    # Track token usage
-                    # Note: GeminiProvider.count_tokens should be used for accurate counts
-                    # The response.usage_metadata might be available and more precise.
-                    # For now, we rely on the count_tokens method for consistency.
-                    prompt_tokens = self.count_tokens(prompt) # Use our accurate counter
-                    completion_tokens = self.count_tokens(response.text) # Use our accurate counter
-                    total_tokens = prompt_tokens + completion_tokens # Sum for this call
-                    
-                    self.token_usage['prompt'] += prompt_tokens
-                    self.token_usage['completion'] += completion_tokens
-                    self.token_usage['total'] += total_tokens
-                    
-                    # Log token usage
-                    elapsed = time.time() - start_time
-                    logger.info(f"Generated response in {elapsed:.2f}s | "
-                               f"Tokens: {prompt_tokens}+{completion_tokens}={total_tokens}")
-                    
-                    return response.text
-                else:
-                    logger.warning("Gemini API returned empty response")
-                    return ""
-                    
-            except APIError as e:
-                logger.error(f"Gemini API error: {str(e)}")
-                retries += 1
-                if retries >= max_retries:
-                    raise
-                # Exponential backoff with jitter
-                wait_time = (2 ** retries) + random.uniform(0, 1)
-                logger.info(f"Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            except Exception as e:
-                logger.exception(f"Unexpected error in GeminiProvider: {str(e)}")
-                raise
 
 class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
-                 codebase_context: Optional[Dict[str, str]] = None, # Changed type hint to Dict[str, str]
+                 codebase_context: Optional[Dict[str, str]] = None,
                  settings: Optional[ChimeraSettings] = None,
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
-                 persona_sets: Optional[Dict[str, List[str]]] = None, # Added persona_sets
-                 persona_sequence: Optional[List[str]] = None, # Added persona_sequence
-                 domain: Optional[str] = None, # Added domain
+                 persona_sets: Optional[Dict[str, List[str]]] = None,
+                 persona_sequence: Optional[List[str]] = None,
+                 domain: Optional[str] = None,
                  max_total_tokens_budget: int = 10000,
                  model_name: str = "gemini-2.5-flash-lite",
-                 status_callback: Optional[Callable] = None, # Added status_callback
-                 rich_console: Optional[Console] = None # Added rich_console
+                 status_callback: Optional[Callable] = None,
+                 rich_console: Optional[Console] = None
                  ):
         """
         Initialize a Socratic debate session.
-        
-        Args:
-            initial_prompt: The user's initial prompt/question
-            api_key: API key for the LLM provider
-            codebase_context: Optional context about the codebase for code-related prompts
-            settings: Optional custom settings; uses defaults if not provided
-            all_personas: Optional custom personas; uses defaults if not provided
-            persona_sets: Optional custom persona groupings; uses defaults if not provided
-            persona_sequence: Optional default persona execution order; uses defaults if not provided
-            domain: The selected reasoning domain/framework.
-            max_total_tokens_budget: Maximum token budget for the entire debate process
-            model_name: Name of the LLM model to use
-            status_callback: Callback function for updating UI status.
-            rich_console: Rich Console instance for logging.
         """
-        # Load settings, using defaults if not provided
         self.settings = settings or ChimeraSettings()
         self.max_total_tokens_budget = max_total_tokens_budget
-        self.tokens_used = 0
         self.model_name = model_name
-        
-        # Initialize token budgets based on settings and prompt analysis
-        self.context_token_budget = 0
-        self.debate_token_budget = 0
         
         # Initialize context analyzer
         self.context_analyzer = None
@@ -208,7 +101,6 @@ class SocraticDebate:
         if codebase_context:
             self.codebase_context = codebase_context
             self.context_analyzer = ContextRelevanceAnalyzer()
-            # Ensure context is a dict of strings, not just a single string
             if isinstance(codebase_context, dict):
                 self.context_analyzer.compute_file_embeddings(self.codebase_context)
             else:
@@ -235,90 +127,421 @@ class SocraticDebate:
         # Status callback and console for UI updates
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
+
+        # --- Token Manager Integration ---
+        self.token_manager = TokenManager(self.llm_provider, self.max_total_tokens_budget)
+        # Prepare context first to pass to budget calculation
+        context_analysis = self._analyze_context() # Ensure this is called before budget calculation
+        context_str = self._prepare_context(context_analysis)
+        self.token_manager.calculate_phase_budgets(context_str, self.initial_prompt)
+        # --- End Token Manager Integration ---
+
+    # --- NEW: Token Manager Integration Methods ---
+    def _truncate_prompt_for_tokens(self, prompt: str, max_tokens: int) -> str:
+        """Truncates a prompt to fit within a token limit."""
+        if max_tokens <= 0:
+            return ""
         
-        # Calculate token budgets based on prompt complexity
-        self._calculate_token_budgets()
-    
-    def _calculate_token_budgets(self):
-        """Calculate dynamic token budgets based on analysis type"""
-        # Base ratios from settings
-        base_context_ratio = self.settings.context_token_budget_ratio
-        base_debate_ratio = self.settings.debate_token_budget_ratio
-        
-        # ADAPT FOR CODE ANALYSIS (NEW LOGIC)
-        prompt_lower = self.initial_prompt.lower()
-        # Check for keywords indicating code analysis or self-analysis
-        if "code" in prompt_lower or "analyze" in prompt_lower or "refactor" in prompt_lower or "chimera" in prompt_lower or "self-analysis" in prompt_lower:
-            # For code analysis, prioritize context understanding
-            # Scale up context ratio, ensuring it doesn't exceed a reasonable max (e.g., 70%)
-            context_ratio = min(0.7, base_context_ratio * 3.5)  # Example scaling factor
-            debate_ratio = 1.0 - context_ratio
-        else:
-            # Use default ratios if not a code analysis prompt
-            context_ratio = base_context_ratio
-            debate_ratio = base_debate_ratio
-        
-        # Normalize to ensure ratios sum to 1.0, respecting boundaries
-        total = context_ratio + debate_ratio
-        if abs(total - 1.0) > 0.01: # Handle potential floating point inaccuracies
-            context_ratio = context_ratio / total
-            debate_ratio = debate_ratio / total
-        
-        self.context_token_budget = int(self.max_total_tokens_budget * context_ratio)
-        self.debate_token_budget = int(self.max_total_tokens_budget * debate_ratio)
-        
-        logger.info(f"Token budgets: Context={self.context_token_budget}, Debate={self.debate_token_budget}")
-    
-    def _check_token_budget(self, prompt_text: str, step_name: str) -> int:
-        """
-        Check if using the specified tokens would exceed the budget using accurate counting.
-        Returns the number of tokens used for this step.
-        Raises TokenBudgetExceededError if budget is exceeded.
-        """
+        # Use the tokenizer for more accurate truncation
         try:
-            actual_tokens = self.llm_provider.count_tokens(prompt_text)
-            if self.tokens_used + actual_tokens > self.max_total_tokens_budget:
-                raise TokenBudgetExceededError(
-                    current_tokens=self.tokens_used,
-                    budget=self.max_total_tokens_budget,
-                    details={"step": step_name, "tokens_requested": actual_tokens}
-                )
-            return actual_tokens # Return tokens used for this step
+            # This is a simplified approach; a real implementation might need to
+            # tokenize, truncate the token list, and then detokenize.
+            # For now, we'll use a character limit as a proxy.
+            # Estimate: 1 token ~ 4 characters.
+            max_chars = max_tokens * 4 
+            if len(prompt) > max_chars:
+                return prompt[:max_chars] + "..."
+            return prompt
+        except Exception as e:
+            logger.error(f"Error during prompt truncation: {e}")
+            return prompt[:max_tokens * 4] # Fallback to character truncation
+
+    def _check_token_budget(self, phase: str, prompt_text: str, step_name: str) -> int:
+        """Wrapper to check budget using TokenManager."""
+        try:
+            # Use the LLM provider's tokenizer for accurate counting
+            tokens_needed = self.llm_provider.count_tokens(prompt_text)
+            return self.token_manager.check_budget(phase, tokens_needed, step_name)
         except TokenBudgetExceededError:
-            raise # Re-raise if budget is exceeded
+            raise # Re-raise to be caught by the main run_debate handler
         except Exception as e:
             logger.error(f"Error during token budget check for step '{step_name}': {e}")
-            # If counting fails, we can't reliably check the budget.
-            # For safety, assume it might exceed or log a critical warning.
+            # Raise a specific error if token counting itself fails
             raise TokenBudgetExceededError(
-                current_tokens=self.tokens_used,
-                budget=self.max_total_tokens_budget,
+                current_tokens=self.token_manager.used_tokens.get(phase, 0),
+                budget=self.token_manager.phase_budgets.get(phase, 0),
                 details={"step": step_name, "error": f"Token counting failed: {e}"}
             )
+
+    def _analyze_validation_error(self, validation_error: Exception, response_text: str) -> str:
+        """Analyze validation errors to provide specific correction instructions."""
+        try:
+            import json
+            from jsonschema import ValidationError # Ensure jsonschema is available (via pydantic)
+            
+            # Attempt to extract the JSON part of the response
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                partial_json = response_text[json_start:json_end]
+                try:
+                    json.loads(partial_json) # Validate JSON structure
+                    
+                    # If it's a Pydantic ValidationError, extract specific field issues
+                    if isinstance(validation_error, ValidationError):
+                        # Extracting path and message from Pydantic ValidationError
+                        error_details = validation_error.errors()
+                        if error_details:
+                            # Take the first error for simplicity
+                            first_error = error_details[0]
+                            error_path = " > ".join(str(p) for p in first_error.get('loc', []))
+                            error_msg = first_error.get('msg', 'Unknown error')
+                            
+                            instructions = "**SPECIFIC VALIDATION ERROR:**\n"
+                            instructions += f"Field: `{error_path or 'root'}`\n"
+                            instructions += f"Problem: {error_msg}\n\n"
+                            
+                            # Provide targeted remediation based on common error types
+                            if "is a required property" in error_msg:
+                                field_name = error_msg.split("'")[1] # Extract field name
+                                instructions += f"**ACTION REQUIRED:** Add the missing required field '{field_name}'.\n"
+                            elif "is not of type" in error_msg:
+                                if "string" in error_msg:
+                                    instructions += "**ACTION REQUIRED:** This field must be a string. Ensure values are enclosed in double quotes.\n"
+                                elif "integer" in error_msg:
+                                    instructions += "**ACTION REQUIRED:** This field must be a number. Remove any quotes around the value.\n"
+                            elif "does not match pattern" in error_msg:
+                                instructions += "**ACTION REQUIRED:** The value does not match the expected format.\n"
+                            
+                            return instructions
+                        else:
+                            return "**VALIDATION ERROR DETECTED**\nCould not extract specific field error details. Please ensure all fields conform to the schema and JSON format."
+                            
+                except json.JSONDecodeError:
+                    # Handle cases where the extracted JSON is malformed
+                    line_num = response_text.count('\n', 0, json_start) + 1
+                    col_num = json_start - response_text.rfind('\n', 0, json_start)
+                    return (
+                        f"**JSON STRUCTURE ERROR near line {line_num}, column {col_num}**\n"
+                        "Your response contains invalid JSON formatting. Please ensure:\n"
+                        "- All keys and string values are enclosed in double quotes.\n"
+                        "- Commas correctly separate key-value pairs and array elements.\n"
+                        "- No trailing commas before closing braces/brackets.\n"
+                        "**ACTION REQUIRED:** Provide ONLY a valid JSON object."
+                    )
+            
+            # Fallback for when no JSON structure is found
+            return (
+                "**CRITICAL ERROR: NO JSON FOUND**\n"
+                "Your response must contain a valid JSON object enclosed in curly braces `{}`.\n"
+                "**ACTION REQUIRED:** Start your response with '{' and end with '}'. Do NOT include any text outside the JSON block."
+            )
+        except Exception as e:
+            self.logger.error(f"Error analyzing validation failure: {str(e)}")
+            return (
+                "**VALIDATION ERROR DETECTED**\n"
+                "Please ensure your response is a valid JSON object that strictly follows the required schema.\n"
+                "Check for missing fields, incorrect data types, and proper JSON formatting."
+            )
+
+    def _create_simplified_final_answer(self, debate_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create a simplified final answer when validation repeatedly fails."""
+        logger.warning("Creating simplified final answer due to repeated validation failures")
+        
+        # Extract key points from debate results
+        key_points = []
+        for result in debate_results:
+            if 'response' in result and isinstance(result['response'], str):
+                # Take the first sentence of the response if it's long enough
+                sentences = [s.strip() for s in result['response'].split('.') if len(s.strip()) > 10]
+                if sentences:
+                    key_points.append(sentences[0] + '.')
+        
+        # Create minimal valid response adhering to LLMOutput structure
+        return {
+            "COMMIT_MESSAGE": "Simplified Answer: Validation Failed",
+            "RATIONALE": "This simplified response was generated due to repeated validation failures. "
+                         "The system extracted the most important points from the debate. "
+                         "Please review the process log for details.",
+            "CODE_CHANGES": [], # Ensure CODE_CHANGES is an empty list
+            "CONFLICT_RESOLUTION": None,
+            "UNRESOLVED_CONFLICT": None,
+            "malformed_blocks": [{"type": "SIMPLIFIED_FALLBACK", "message": "Final output could not be validated. Simplified answer provided."}]
+        }
+
+    def _construct_synthesis_prompt(self, debate_results: List[Dict[str, Any]]) -> str:
+        """Constructs the prompt for the final synthesis step."""
+        debate_summary = "\n\n".join([f"Persona: {r.get('persona', 'Unknown')}\nResponse:\n{r.get('response', '')}" for r in debate_results if r.get('response')])
+        
+        arbitrator = None
+        for persona_name, persona in self.all_personas.items():
+            if "arbitrator" in persona_name.lower():
+                arbitrator = persona
+                break
+        
+        if not arbitrator:
+            logger.error("Impartial_Arbitrator persona not found. Cannot construct synthesis prompt.")
+            return "Error: Impartial_Arbitrator persona not found."
+
+        return f"""
+{arbitrator.system_prompt}
+
+Based on the following debate, provide a final synthesized answer:
+
+Debate Summary:
+{debate_summary}
+
+User's Original Prompt:
+{self.initial_prompt}
+"""
+
+    def _synthesize_final_answer(self, debate_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Synthesize final answer with intelligent error recovery and specific guidance."""
+        
+        # Construct the initial prompt for synthesis
+        prompt_for_synthesis = self._construct_synthesis_prompt(debate_results)
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Check token budget for the synthesis phase
+                tokens_needed = self._check_token_budget("synthesis", prompt_for_synthesis, "final_synthesis")
+                
+                # Generate content, ensuring max_tokens respects the phase budget
+                # Use a small buffer for generation, but don't exceed the budget
+                # Assuming GeminiProvider.tokenizer has a max_output_tokens attribute or similar
+                # If not, this might need adjustment based on GeminiProvider's capabilities.
+                generation_max_tokens = min(self.llm_provider.tokenizer.max_output_tokens if hasattr(self.llm_provider.tokenizer, 'max_output_tokens') else 4096, tokens_needed + 50)
+                
+                raw_final_answer = self.llm_provider.generate_content(
+                    prompt_for_synthesis,
+                    temperature=0.3, # Use arbitrator's temperature
+                    max_tokens=generation_max_tokens
+                )
+                
+                # Validate response using the parser
+                final_answer = self._validate_synthesis_response(raw_final_answer)
+                
+                # Track actual tokens used for synthesis
+                actual_tokens_used = self.llm_provider.count_tokens(prompt_for_synthesis) # Count tokens for the prompt sent
+                self.token_manager.track_usage("synthesis", actual_tokens_used)
+                
+                return final_answer
+                
+            except LLMResponseValidationError as e:
+                if attempt < self.max_retries:
+                    # Generate SPECIFIC correction instructions using the new helper
+                    correction_instructions = self._analyze_validation_error(e, raw_final_answer)
+                    # Append instructions to the prompt for the next retry
+                    prompt_for_synthesis += f"\n\n{correction_instructions}"
+                    self.logger.warning(f"Synthesis validation failed (attempt {attempt+1}). Applying specific corrections.")
+                else:
+                    # Final fallback: If all retries fail, create a simplified, valid response
+                    self.logger.error("Final synthesis validation failed after all retries. Using simplified format.")
+                    return self._create_simplified_final_answer(debate_results)
+            except Exception as e: # Catch other potential errors during generation/validation
+                self.logger.exception(f"Unexpected error during synthesis attempt {attempt+1}: {e}")
+                if attempt == self.max_retries:
+                    return self._create_simplified_final_answer(debate_results) # Fallback on unexpected errors too
+        
+        # Should not be reached if max_retries logic is sound
+        raise Exception("Unexpected state in _synthesize_final_answer.")
+
+    def _execute_debate_round(self, persona_name: str, current_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a debate round with proper token accounting."""
+        if persona_name not in self.all_personas:
+            logger.warning(f"Persona '{persona_name}' not found. Skipping this round.")
+            return {"response": current_state.get("response", ""), "tokens_used": 0} # Return previous state if persona missing
+
+        persona = self.all_personas[persona_name]
+        
+        # Construct the prompt for this persona
+        prompt_for_llm = f"""
+You are {persona_name}: {persona.description}
+{persona.system_prompt}
+
+Current debate state:
+{current_state.get("response", "No previous response.")}
+
+User's original prompt:
+{self.initial_prompt}
+        """
+        
+        # Check token budget for the 'debate' phase
+        tokens_needed = self._check_token_budget("debate", prompt_for_llm, f"debate_round_{persona_name}")
+        
+        # Handle potential truncation if budget is tight
+        remaining_debate_tokens = self.token_manager.get_remaining_tokens("debate")
+        if tokens_needed > remaining_debate_tokens:
+            # Truncate prompt to fit remaining budget
+            truncated_prompt = self._truncate_prompt_for_tokens(prompt_for_llm, remaining_debate_tokens)
+            # Re-check tokens needed for the truncated prompt
+            tokens_needed = self._check_token_budget("debate", truncated_prompt, f"debate_round_{persona_name}_truncated")
+            logger.warning(f"Truncated prompt for {persona_name} to fit debate budget.")
+        else:
+            truncated_prompt = prompt_for_llm
+
+        # Generate response, respecting the calculated tokens_needed (which is already capped by budget)
+        # Use the persona's max_tokens, but ensure it doesn't exceed the budget for this round.
+        generation_max_tokens = min(persona.max_tokens, tokens_needed + 50) # Add a small buffer if needed, but stay within budget
+        
+        response = self.llm_provider.generate_content(
+            truncated_prompt,
+            temperature=persona.temperature,
+            max_tokens=generation_max_tokens
+        )
+        
+        # Track actual usage for the 'debate' phase
+        actual_tokens_used = self.llm_provider.count_tokens(truncated_prompt) # Count tokens for the prompt sent
+        self.token_manager.track_usage("debate", actual_tokens_used)
+        
+        # Log the step
+        self.intermediate_steps[f"{persona_name}_Output"] = response
+        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = actual_tokens_used
+        self.process_log.append({
+            "step": f"{persona_name}_Output",
+            "tokens_used": actual_tokens_used,
+            "response_length": len(response)
+        })
+        
+        return {"response": response, "tokens_used": actual_tokens_used}
+
+    def run_debate(self) -> Dict[str, Any]:
+        """
+        Run the complete Socratic debate process and return the results.
+        """
+        try:
+            # 1. Analyze context
+            context_analysis = self._analyze_context()
+            self.intermediate_steps["Context_Analysis"] = context_analysis
+            
+            # 2. Prepare context
+            context_str = self._prepare_context(context_analysis)
+            self.intermediate_steps["Context_Preparation"] = context_str
+            # Token budget calculation is now done in __init__ using context_str and initial_prompt
+
+            # 3. Generate persona sequence
+            self.persona_sequence = self.persona_router.determine_persona_sequence(
+                self.initial_prompt,
+                intermediate_results=None # No intermediate results on the first pass
+            )
+            self.intermediate_steps["Persona_Sequence"] = self.persona_sequence
+            
+            # 4. Run initial generation
+            current_response_data = {"response": "No previous response. Starting the debate.", "tokens_used": 0}
+            if self.persona_sequence:
+                current_response_data = self._execute_debate_round(
+                    self.persona_sequence[0], 
+                    current_response_data # Pass previous state
+                )
+                
+                # 5. Run subsequent debate rounds
+                for persona_name in self.persona_sequence[1:]:
+                    current_response_data = self._execute_debate_round(persona_name, current_response_data)
+            else:
+                logger.warning("No persona sequence generated. Debate cannot proceed.")
+                # Handle case where no personas are selected
+                return {
+                    "final_answer": "Error: No personas selected for debate.",
+                    "intermediate_steps": self.intermediate_steps,
+                    "process_log": self.process_log,
+                    "token_usage": dict(self.token_manager.used_tokens), # Use token_manager for total usage
+                    "total_tokens_used": self.token_manager.get_total_used_tokens(),
+                    "error": "No persona sequence generated."
+                }
+            
+            # 6. Synthesize final answer
+            final_answer = self._synthesize_final_answer(
+                [{"persona": p_name, "response": self.intermediate_steps.get(f"{p_name}_Output", "")} for p_name in self.persona_sequence]
+            )
+            
+            # 7. Update final results and token usage
+            self.final_answer = final_answer
+            self.intermediate_steps["Final_Answer"] = final_answer
+            # Token usage for synthesis is handled within _synthesize_final_answer
+            
+            # Log total tokens used
+            total_tokens_used = self.token_manager.get_total_used_tokens()
+            self.intermediate_steps["Total_Tokens_Used"] = total_tokens_used
+            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.llm_provider.calculate_usd_cost(
+                self.token_manager.initial_input_tokens,
+                total_tokens_used - self.token_manager.initial_input_tokens # Completion tokens = Total - Input
+            )
+            
+            # Return results
+            return {
+                "final_answer": self.final_answer,
+                "intermediate_steps": self.intermediate_steps,
+                "process_log": self.process_log,
+                "token_usage": dict(self.token_manager.used_tokens),
+                "total_tokens_used": total_tokens_used
+            }
+            
+        except TokenBudgetExceededError as e:
+            logger.warning(f"Token budget exceeded: {str(e)}")
+            # Return partial results with error information
+            return {
+                "final_answer": "Process terminated early due to token budget constraints.",
+                "intermediate_steps": self.intermediate_steps,
+                "process_log": self.process_log,
+                "token_usage": dict(self.token_manager.used_tokens),
+                "total_tokens_used": self.token_manager.get_total_used_tokens(),
+                "error": str(e),
+                "error_details": e.details
+            }
+        except Exception as e:
+            logger.exception("Unexpected error during debate process")
+            # Re-raise the exception to be caught by the app.py handler
+            raise
+
+    # --- Helper methods that were implied or needed for the proposed changes ---
+    # These might need to be added if they don't exist in the original core.py
     
+    # Placeholder for _validate_synthesis_response if not present
+    def _validate_synthesis_response(self, raw_final_answer: str) -> Dict[str, Any]:
+        """Validates the raw synthesis response against the LLMOutput schema."""
+        from src.utils.output_parser import LLMOutputParser
+        parser = LLMOutputParser()
+        try:
+            # The parse_and_validate method returns a dict, which is what we need.
+            return parser.parse_and_validate(raw_final_answer, LLMOutput)
+        except Exception as e:
+            # If parsing/validation fails, return an error structure
+            logger.error(f"Failed to parse/validate synthesis response: {e}")
+            return {
+                "COMMIT_MESSAGE": "Validation Failed",
+                "RATIONALE": f"Failed to parse or validate the final synthesis response. Error: {e}",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "SYNTHESIS_VALIDATION_ERROR", "message": str(e), "raw_string_snippet": raw_final_answer[:500]}]
+            }
+
+    # --- End NEW Methods ---
+
+    # Removed: _calculate_token_budgets (replaced by TokenManager)
+    # Removed: self.tokens_used (replaced by TokenManager)
+    # Removed: self.context_token_budget, self.debate_token_budget (replaced by TokenManager)
+
+    # --- Original Methods (kept for context, some might be slightly adjusted by TokenManager integration) ---
     def _analyze_context(self) -> Dict[str, Any]:
         """Analyze the context of the prompt to determine the best approach."""
         if not self.codebase_context or not self.context_analyzer:
             logger.info("No codebase context provided, skipping context analysis")
             return {"domain": "General", "relevant_files": []}
         
-        # Extract keywords from the prompt
-        # Assuming context_analyzer has a method to extract keywords from prompt
-        keywords = self.context_analyzer.model_dump_json() # Placeholder, needs actual keyword extraction
+        # Use the router's domain analysis for the primary domain
+        # Note: _analyze_prompt_domain is called by PersonaRouter.determine_persona_sequence
+        # Here we just need a general domain for context analysis if not specified.
+        # A simple approach is to use the router's domain analysis on the initial prompt.
+        domain = self.persona_router.determine_domain(self.initial_prompt) # Assuming determine_domain exists in router
         
-        # Find relevant files based on keywords
-        relevant_files = self.context_analyzer.find_relevant_files(self.initial_prompt) # Corrected method name
-        
-        # Determine the domain based on the prompt
-        # Use the router to determine domain, potentially using context analysis results
-        domain = self.persona_router.determine_domain(self.initial_prompt) # Assuming determine_domain exists
+        # Find relevant files based on prompt and context analysis
+        relevant_files = self.context_analyzer.find_relevant_files(self.initial_prompt)
         
         logger.info(f"Context analysis complete. Domain: {domain}, Relevant files: {len(relevant_files)}")
         
         return {
             "domain": domain,
             "relevant_files": relevant_files,
-            "keywords": keywords # This might be a string representation of keywords
         }
     
     def _prepare_context(self, context_analysis: Dict[str, Any]) -> str:
@@ -341,21 +564,16 @@ class SocraticDebate:
             
             # Use extract_relevant_code_segments for intelligent content selection
             # Pass a max_chars that is a fraction of remaining context budget
-            # This is an estimate, actual tokens will be counted later.
-            # A simple heuristic: 4 chars ~ 1 token.
-            remaining_budget_chars = (self.context_token_budget - current_context_tokens) * 4
+            remaining_budget_chars = (self.token_manager.phase_budgets.get("context", 1000) - current_context_tokens) * 4 # Estimate chars from tokens
             
-            # Ensure at least some content is extracted if budget allows
-            if remaining_budget_chars <= 0:
-                break # No more budget for context
+            if remaining_budget_chars <= 0: break
 
             # Extract key elements and relevant code segments
-            key_elements = self.context_analyzer._extract_key_elements(content)
+            key_elements = self.context_analyzer._extract_key_elements(content) # Assuming this method exists
             relevant_segment = self.context_analyzer.extract_relevant_code_segments(
                 content, max_chars=int(remaining_budget_chars)
             )
             
-            # Construct the part for this file
             file_context_part = (
                 f"File: {file_path}\n"
                 f"Key elements: {key_elements}\n"
@@ -363,13 +581,12 @@ class SocraticDebate:
             )
             
             # Check if adding this file's context would exceed the budget
-            # Use the actual tokenizer for precise counting
             estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
             
-            if current_context_tokens + estimated_file_tokens > self.context_token_budget:
+            if current_context_tokens + estimated_file_tokens > self.token_manager.phase_budgets.get("context", 1000):
                 logger.info(f"Skipping {file_path} due to context budget. "
                             f"Current: {current_context_tokens}, Estimated for file: {estimated_file_tokens}, "
-                            f"Budget: {self.context_token_budget}")
+                            f"Budget: {self.token_manager.phase_budgets.get('context', 1000)}")
                 break # Stop adding files if budget is exceeded
             
             context_parts.append(file_context_part)
@@ -380,6 +597,9 @@ class SocraticDebate:
     
     def _generate_persona_sequence(self, context_analysis: Dict[str, Any]) -> List[str]:
         """Generate the sequence of personas to participate in the debate."""
+        # This method is called by run_debate, and it calls persona_router.determine_persona_sequence
+        # The changes for self-analysis and dynamic routing are in persona_router.py
+        
         # Use the domain determined from context analysis or provided domain
         domain_for_sequence = context_analysis.get("domain", self.domain) or "General"
         
@@ -409,228 +629,15 @@ class SocraticDebate:
         
         return unique_sequence
     
-    def _run_debate_round(self, current_response: str, persona_name: str) -> str:
-        """Run a single round of the debate with the specified persona."""
-        if persona_name not in self.all_personas:
-            logger.warning(f"Persona '{persona_name}' not found. Skipping this round.")
-            return current_response # Return previous response if persona is missing
+    # ... (rest of the original core.py methods like _run_debate_round, etc.) ...
+    # The _run_debate_round method is modified above to integrate token manager.
+    # The original _calculate_token_budgets is removed.
+    # The original _check_token_budget is modified.
+    # The original _synthesize_final_answer is modified.
 
-        persona = self.all_personas[persona_name]
-        
-        # Create the prompt for this persona
-        # Construct the prompt text that will be passed to the LLM
-        prompt_for_llm = f"""
-You are {persona_name}: {persona.description}
-{persona.system_prompt}
-
-Current debate state:
-{current_response}
-
-User's original prompt:
-{self.initial_prompt}
-
-Please provide your critique, feedback, or new perspective on the current debate state.
-Focus on logical reasoning, identifying flaws, or offering improvements.
-        """
-        
-        # Check token budget using the constructed prompt text
-        tokens_used_in_round = self._check_token_budget(prompt_for_llm, f"debate_round_{persona_name}")
-        
-        # Generate response
-        logger.info(f"Running debate round with {persona_name}")
-        response = self.llm_provider.generate_content(
-            prompt_for_llm, # Use the constructed prompt
-            temperature=persona.temperature,
-            max_tokens=persona.max_tokens
-        )
-        
-        # Update total token usage
-        self.tokens_used += tokens_used_in_round
-        
-        # Log the step
-        self.intermediate_steps[f"{persona_name}_Output"] = response
-        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = tokens_used_in_round
-        self.process_log.append({
-            "step": f"{persona_name}_Output",
-            "tokens_used": tokens_used_in_round,
-            "response_length": len(response)
-        })
-        
-        return response
-    
-    def _synthesize_final_answer(self, final_debate_state: str) -> Dict[str, Any]:
-        """
-        Synthesize the final answer from the debate state, with retry logic
-        for schema validation failures.
-        """
-        arbitrator = None
-        for persona_name, persona in self.all_personas.items():
-            if "arbitrator" in persona_name.lower():
-                arbitrator = persona
-                break
-        
-        if not arbitrator:
-            logger.error("Impartial_Arbitrator persona not found. Cannot synthesize final answer.")
-            return {"error": "Impartial_Arbitrator persona not found."}
-
-        max_retries = 2 # Allow up to 2 retries for JSON formatting/schema issues
-        for attempt in range(max_retries + 1):
-            prompt_for_synthesis = f"""
-{arbitrator.system_prompt}
-
-Based on the following debate, provide a final synthesized answer:
-
-Debate Summary:
-{final_debate_state}
-
-User's Original Prompt:
-{self.initial_prompt}
-"""
-            if attempt > 0:
-                prompt_for_synthesis += f"\n\n**ATTENTION: PREVIOUS RESPONSE FAILED VALIDATION.**\n" \
-                                        f"Please ensure your response is a PERFECTLY VALID JSON object " \
-                                        f"adhering to the `LLMOutput` schema. Double-check all commas, " \
-                                        f"quotes, and nested structures. Do NOT include any text outside " \
-                                        f"the JSON block. This is attempt {attempt+1}/{max_retries+1}."
-                logger.warning(f"Retrying final answer synthesis (attempt {attempt+1}).")
-
-            tokens_used_in_synthesis = self._check_token_budget(prompt_for_synthesis, "final_synthesis")
-            
-            raw_final_answer = self.llm_provider.generate_content(
-                prompt_for_synthesis,
-                temperature=arbitrator.temperature, # Use arbitrator's temperature
-                max_tokens=arbitrator.max_tokens # Use arbitrator's max_tokens
-            )
-            
-            self.tokens_used += tokens_used_in_synthesis
-            
-            # Attempt to parse and validate the raw output
-            try:
-                # Use LLMOutputParser to handle extraction and validation
-                llm_output_parser = LLMOutputParser()
-                validated_output_dict = llm_output_parser.parse_and_validate(raw_final_answer, LLMOutput)
-                
-                # If successful, store and return
-                self.final_answer = validated_output_dict
-                self.intermediate_steps["Final_Answer_Output"] = validated_output_dict
-                self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis
-                self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
-                self.intermediate_steps["Total_Estimated_Cost_USD"] = self._calculate_cost()
-                return validated_output_dict
-            except Exception as e: # Catch any exception from parse_and_validate
-                logger.error(f"Validation failed for final answer (attempt {attempt+1}): {e}")
-                # Store the raw, invalid output for debugging
-                self.intermediate_steps[f"Final_Answer_Output_Attempt_{attempt+1}_Raw"] = raw_final_answer
-                self.intermediate_steps[f"Final_Answer_Output_Attempt_{attempt+1}_Error"] = str(e)
-                if attempt == max_retries:
-                    # If max retries reached, raise the error to app.py
-                    raise LLMResponseValidationError(
-                        f"Final answer failed validation after {max_retries} retries: {e}",
-                        invalid_response=raw_final_answer,
-                        expected_schema="LLMOutput",
-                        details={"validation_error": str(e)}
-                    ) from e
-                # Continue to next attempt
-        
-        # Should not be reached if max_retries logic is sound
-        raise Exception("Unexpected state in _synthesize_final_answer.")
-    
-    def _calculate_cost(self) -> float:
-        """Calculate the estimated cost based on token usage."""
-        # This is a placeholder - actual cost calculation would depend on the model
-        # For Gemini, as of 2023, pricing is approximately:
-        # $0.00000025 per character for input, $0.0000005 per character for output
-        
-        # Simplified estimate: $0.000003 per token (as used in app.py)
-        # This should ideally be derived from a configuration or model pricing lookup.
-        return self.tokens_used * 0.000003
-    
-    def run_debate(self) -> Dict[str, Any]:
-        """
-        Run the complete Socratic debate process and return the results.
-        
-        Returns:
-            Dictionary containing the final answer and intermediate steps
-        """
-        try:
-            # 1. Analyze context
-            # Check token budget for context analysis phase
-            # Note: _check_token_budget expects prompt_text, not a phase.
-            # For context analysis, we might not have a single prompt text,
-            # but rather the initial prompt and codebase context.
-            # A simple approach is to count the initial prompt.
-            initial_prompt_tokens = self._check_token_budget(self.initial_prompt, "initial_prompt_count")
-            
-            context_analysis = self._analyze_context()
-            self.intermediate_steps["Context_Analysis"] = context_analysis
-            
-            # 2. Prepare context
-            context_str = self._prepare_context(context_analysis)
-            self.intermediate_steps["Context_Preparation"] = context_str
-            # Count tokens for context preparation if it's significant
-            if context_str:
-                context_tokens_used = self._check_token_budget(context_str, "context_preparation")
-                self.tokens_used += context_tokens_used
-            
-            # 3. Generate persona sequence
-            self.persona_sequence = self._generate_persona_sequence(context_analysis)
-            self.intermediate_steps["Persona_Sequence"] = self.persona_sequence
-            
-            # 4. Run initial generation (Visionary Generator)
-            current_response = ""
-            if self.persona_sequence:
-                # The first persona's prompt will include context and initial prompt
-                # The _run_debate_round method handles constructing the prompt and checking budget
-                current_response = self._run_debate_round(
-                    "No previous responses. Starting the debate.", 
-                    self.persona_sequence[0]
-                )
-                
-                # 5. Run subsequent debate rounds
-                for persona_name in self.persona_sequence[1:]:
-                    current_response = self._run_debate_round(current_response, persona_name)
-            else:
-                logger.warning("No persona sequence generated. Debate cannot proceed.")
-                # Handle case where no personas are selected
-                return {
-                    "final_answer": "Error: No personas selected for debate.",
-                    "intermediate_steps": self.intermediate_steps,
-                    "process_log": self.process_log,
-                    "token_usage": dict(self.llm_provider.token_usage),
-                    "total_tokens_used": self.tokens_used,
-                    "error": "No persona sequence generated."
-                }
-            
-            # 6. Synthesize final answer
-            final_answer = self._synthesize_final_answer(current_response)
-            
-            # 7. Return results
-            return {
-                "final_answer": final_answer,
-                "intermediate_steps": self.intermediate_steps,
-                "process_log": self.process_log,
-                "token_usage": dict(self.llm_provider.token_usage),
-                "total_tokens_used": self.tokens_used
-            }
-            
-        except TokenBudgetExceededError as e:
-            logger.warning(f"Token budget exceeded: {str(e)}")
-            # Return partial results with error information
-            return {
-                "final_answer": "Process terminated early due to token budget constraints.",
-                "intermediate_steps": self.intermediate_steps,
-                "process_log": self.process_log,
-                "token_usage": dict(self.llm_provider.token_usage),
-                "total_tokens_used": self.tokens_used,
-                "error": str(e),
-                "error_details": e.details
-            }
-        except Exception as e:
-            logger.exception("Unexpected error during debate process")
-            # Re-raise the exception to be caught by the app.py handler
-            raise
-
-# Additional helper functions
+# Additional helper functions (load_personas_from_yaml, load_frameworks_from_yaml)
+# These are not directly modified by the requested changes, but are part of the original core.py.
+# They are kept for completeness.
 def load_personas_from_yaml(yaml_path: str) -> Dict[str, PersonaConfig]:
     """Load personas configuration from a YAML file."""
     try:

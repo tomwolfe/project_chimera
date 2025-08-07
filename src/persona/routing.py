@@ -8,11 +8,20 @@ from typing import List, Dict, Set, Optional, Any
 import re
 import json
 from pathlib import Path
-import logging # Ensure logging is imported
+import logging
 
+# Import necessary models and libraries
 from src.models import PersonaConfig
+# Assuming SentenceTransformer and util are available if sentence-transformers is installed
+try:
+    from sentence_transformers import SentenceTransformer, util
+    import torch
+    _SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    _SENTENCE_TRANSFORMERS_AVAILABLE = False
+    logger.warning("sentence-transformers not available. Semantic routing will be disabled.")
 
-logger = logging.getLogger(__name__) # Initialize logger
+logger = logging.getLogger(__name__)
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
@@ -20,7 +29,7 @@ class PersonaRouter:
     def __init__(self, all_personas: Dict[str, PersonaConfig]):
         self.all_personas = all_personas
         
-        # Updated DOMAIN_KEYWORDS with positive and negative keyword sets
+        # Domain keywords for fallback keyword matching
         self.domain_keywords = {
             "architecture": {
                 "positive": [
@@ -86,28 +95,116 @@ class PersonaRouter:
             "Constructive_Critic": ["improve", "refine", "optimize", "recommend", "suggest", "enhanc", "fix", "best practice"], # General improvement keywords
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"] # Keywords indicating skepticism
         }
+
+        # --- NEW ATTRIBUTES FOR SEMANTIC ROUTING ---
+        self._embedding_model = None
+        self._domain_embeddings = {}
+        self._domain_examples = {
+            "Software Engineering": ["refactor code", "design a scalable API", "fix a Python bug", "implement a feature", "database schema", "system architecture", "clean code", "technical debt"],
+            "Business Strategy": ["market analysis", "business plan", "ROI", "marketing strategy", "startup funding", "competitive advantage", "financial forecast", "operations management"],
+            "Scientific Research": ["quantum physics", "genetic engineering", "climate modeling", "experimental design", "hypothesis testing", "data analysis", "biological process", "chemical reaction"],
+            "Creative Writing": ["novel plot", "character development", "story arc", "poetry analysis", "scriptwriting", "world-building", "narrative structure", "dialogue writing"],
+            "Architecture (Physical)": ["design a house", "skyscraper construction", "urban planning", "building materials", "civil engineering", "interior design", "structural integrity", "construction project"] # Added for disambiguation
+        }
+        self._load_domain_embeddings()
+        # --- END NEW ATTRIBUTES ---
     
+    def _load_domain_embeddings(self):
+        """Loads embeddings for domain examples."""
+        if not _SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.warning("sentence-transformers not available. Skipping domain embedding loading.")
+            return
+
+        try:
+            if not self._embedding_model:
+                # Lazy load the model
+                self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            
+            for domain, examples in self._domain_examples.items():
+                self._domain_embeddings[domain] = self._embedding_model.encode(examples, convert_to_tensor=True)
+            logger.info("Domain embeddings loaded successfully.")
+        except Exception as e:
+            logger.error(f"Error loading domain embeddings: {e}")
+            self._embedding_model = None # Ensure model is None if loading fails
+
     def _analyze_prompt_domain(self, prompt: str) -> Set[str]:
-        """
-        Analyze prompt to determine relevant domains, using negative keyword filtering
-        to prevent misclassifications.
-        """
+        """Analyze prompt to determine relevant domains using semantic understanding."""
         prompt_lower = prompt.lower()
-        matched_domains = set()
         
+        # --- Enhanced Self-Analysis Detection ---
+        self_analysis_keywords = [
+            "chimera", "your code", "self-analysis", "codebase", "refactor this code", 
+            "improve your logic", "analyze your performance", "optimize this process", 
+            "self-improvement", "system analysis", "critique your own output", "your reasoning"
+        ]
+        
+        is_self_analysis_prompt = any(keyword in prompt_lower for keyword in self_analysis_keywords)
+        
+        if is_self_analysis_prompt:
+            logger.info("Detected self-analysis prompt. Prioritizing 'Software Engineering' domain.")
+            return {"Software Engineering", "Self-Analysis"} # Special handling for self-analysis
+        # --- End Detection ---
+
+        # Fallback to keyword matching if sentence-transformers is not available
+        if not self._embedding_model:
+            logger.warning("Using keyword matching for domain analysis as sentence-transformers is not loaded.")
+            return self._analyze_prompt_domain_keyword_fallback(prompt)
+
+        # Semantic analysis using sentence-transformers
+        try:
+            prompt_embedding = self._embedding_model.encode([prompt], convert_to_tensor=True)
+            domain_scores = {}
+            
+            for domain, embeddings in self._domain_embeddings.items():
+                cosine_scores = util.pytorch_cos_sim(prompt_embedding, embeddings)[0]
+                # Use the maximum similarity score for this domain
+                domain_scores[domain] = max(cosine_scores).item()
+            
+            # Apply a threshold and filter out ambiguous cases (e.g., "building architect")
+            threshold = 0.55 # Tunable parameter
+            relevant_domains = set()
+            
+            for domain, score in domain_scores.items():
+                if score > threshold:
+                    # Specific disambiguation for "Architecture"
+                    if domain == "Architecture (Physical)":
+                        # Check if prompt contains software-related terms that might confuse it
+                        if not any(sw_keyword in prompt_lower for sw_keyword in ["software", "code", "api", "system", "application", "framework"]):
+                            relevant_domains.add(domain)
+                    else:
+                        relevant_domains.add(domain)
+            
+            # If no domains meet the threshold, use the highest scoring domain as a fallback
+            if not relevant_domains and domain_scores:
+                top_domain = max(domain_scores, key=domain_scores.get)
+                relevant_domains = {top_domain}
+                logger.debug(f"No domains above threshold, using fallback: {top_domain} ({domain_scores[top_domain]:.2f})")
+            
+            # Ensure "Software Engineering" is included if related terms are present, even if score is low
+            if any(sw_keyword in prompt_lower for sw_keyword in ["software", "code", "api", "system", "application", "framework", "refactor", "bug", "test"]):
+                relevant_domains.add("Software Engineering")
+
+            return relevant_domains if relevant_domains else {"General"}
+            
+        except Exception as e:
+            logger.error(f"Error during semantic domain analysis: {e}. Falling back to keyword matching.")
+            # Fallback to keyword matching if semantic analysis fails
+            return self._analyze_prompt_domain_keyword_fallback(prompt)
+
+    def _analyze_prompt_domain_keyword_fallback(self, prompt: str) -> Set[str]:
+        """Fallback keyword analysis for domain detection."""
+        prompt_lower = prompt.lower()
+        domains = set()
         for domain, config in self.domain_keywords.items():
-            # Check for negative keywords first. If any are present, skip this domain.
+            # Apply negative keyword filtering
             has_negative_match = any(keyword in prompt_lower for keyword in config.get("negative", []))
             if has_negative_match:
-                continue # Skip this domain if a negative keyword is found
-                
-            # If no negative keywords matched, check for positive keywords.
+                continue
+            # Check for positive keywords
             has_positive_match = any(keyword in prompt_lower for keyword in config.get("positive", []))
             if has_positive_match:
-                matched_domains.add(domain)
-        
-        # Fallback to "General" if no specific domains are matched after filtering.
-        return matched_domains if matched_domains else {"General"}
+                domains.add(domain)
+        return domains if domains else {"General"}
     
     def _get_domain_specific_personas(self, domains: Set[str]) -> List[str]:
         """Get personas relevant to the detected domains."""
@@ -154,34 +251,35 @@ class PersonaRouter:
     
     def determine_persona_sequence(self, prompt: str, 
                                  intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
-        """
-        Determine the optimal sequence of personas for processing the prompt.
-        Dynamically adjusts the sequence based on intermediate results.
-        
-        Returns a list of persona names in execution order.
-        """
-        
-        # --- NEW SECTION: Self-Awareness for Self-Analysis ---
+        """Determine optimal persona sequence, prioritizing self-analysis and dynamic adjustments."""
         prompt_lower = prompt.lower()
-        # Check for keywords indicating self-analysis or code analysis of Chimera
-        # MODIFIED: Use the full 'Software Engineering' persona set for comprehensive self-analysis
-        if "chimera" in prompt_lower or "your code" in prompt_lower or "self-analysis" in prompt_lower or "codebase" in prompt_lower:
-            logger.info("Detected self-analysis prompt. Using comprehensive Software Engineering persona sequence.")
-            # Hardcode the names from the 'Software Engineering' persona_sets in personas.yaml
-            # This avoids needing to pass persona_sets into PersonaRouter, keeping it minimal.
-            return [
-                "Visionary_Generator", "Skeptical_Generator", "Code_Architect",
-                "Security_Auditor", "DevOps_Engineer", "Test_Engineer",
-                "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate"
-            ]
-        # --- END NEW SECTION ---
         
-        # --- Domain-specific routing continues below (original logic) ---
-        # 1. Initial domain-based sequence
+        # --- Enhanced Self-Analysis Detection ---
+        self_analysis_keywords = [
+            "chimera", "your code", "self-analysis", "codebase", "refactor this code", 
+            "improve your logic", "analyze your performance", "optimize this process", 
+            "self-improvement", "system analysis", "critique your own output", "your reasoning"
+        ]
+        
+        is_self_analysis_prompt = any(keyword in prompt_lower for keyword in self_analysis_keywords)
+        
+        if is_self_analysis_prompt:
+            logger.info("Detected self-analysis prompt. Using specialized persona sequence.")
+            # Specialized sequence for self-improvement tasks, prioritizing code analysis and critique
+            return [
+                "Code_Architect",         # To analyze structure and design
+                "Skeptical_Generator",    # To find flaws in current logic/code
+                "Constructive_Critic",    # To suggest specific improvements
+                "Test_Engineer",          # To ensure robustness of proposed changes
+                "Impartial_Arbitrator",   # To synthesize findings into actionable steps
+                "Devils_Advocate"         # To challenge the proposed self-improvements
+            ]
+        # --- End Enhanced Self-Analysis Detection ---
+        
+        # --- Domain-specific routing (original logic) ---
         domains = self._analyze_prompt_domain(prompt)
         base_sequence = self._get_domain_specific_personas(domains)
         
-        # Get core personas and domain experts
         core_order = ["Visionary_Generator", "Skeptical_Generator"]
         domain_experts = [p for p in base_sequence
                          if p not in core_order and p != "Impartial_Arbitrator"]
@@ -190,83 +288,39 @@ class PersonaRouter:
         if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
             final_sequence.append("Impartial_Arbitrator")
         
-        # 2. Dynamic adjustment based on intermediate results
-        if intermediate_results:
-            # Analyze previous outputs for specific trigger keywords
-            triggered_personas_to_add = set()
+        # --- Dynamic adjustment based on intermediate results ---
+        if intermediate_results and len(intermediate_results) > 2:
+            # Analyze recent outputs for trigger keywords to add/reorder personas
+            # Example: If a critique mentions "need more technical depth"
+            recent_output_text = ""
+            # Find the last persona output for analysis
+            for step_name, result in reversed(list(intermediate_results.items())):
+                if step_name.endswith("_Output") and isinstance(result, str):
+                    recent_output_text = result.lower()
+                    break
             
-            # Iterate through all intermediate steps
-            for step_name, result in intermediate_results.items():
-                # Skip steps that are not actual persona outputs (e.g., token counts, errors)
-                if not (step_name.endswith("_Output") or step_name.endswith("_Critique")):
-                    continue
-
-                # Convert result to string for keyword searching. Handle dicts by serializing.
-                result_text = ""
-                if isinstance(result, dict):
-                    try:
-                        result_text = json.dumps(result)
-                    except TypeError: # Handle cases where result might not be JSON serializable
-                        result_text = str(result)
-                elif isinstance(result, str):
-                    result_text = result
-                else:
-                    result_text = str(result) # Fallback for other types
-
-                # Check for trigger keywords in the result text
-                for persona_name, keywords in self.trigger_keywords.items():
-                    # Only consider adding personas not already in the sequence
-                    if persona_name not in final_sequence:
-                        for keyword in keywords:
-                            # Use word boundaries for more precise matching
-                            if re.search(rf'\b{keyword}\b', result_text, re.IGNORECASE):
-                                triggered_personas_to_add.add(persona_name)
-                                break # Found a trigger for this persona, move to the next persona
+            if recent_output_text:
+                # Check for phrases that suggest adding specific personas
+                if "need more technical depth" in recent_output_text or "architectural concerns" in recent_output_text:
+                    if "Code_Architect" not in final_sequence: final_sequence.append("Code_Architect")
+                    if "Security_Auditor" not in final_sequence: final_sequence.append("Security_Auditor")
+                if "business viability" in recent_output_text or "market impact" in recent_output_text:
+                    if "Business_Strategist" not in final_sequence: final_sequence.append("Business_Strategist")
+                if "testing concerns" in recent_output_text or "bug found" in recent_output_text:
+                    if "Test_Engineer" not in final_sequence: final_sequence.append("Test_Engineer")
+                if "deployment issues" in recent_output_text or "operational challenges" in recent_output_text:
+                    if "DevOps_Engineer" not in final_sequence: final_sequence.append("DevOps_Engineer")
             
-            # If new personas were triggered, insert them into the sequence.
-            # A good place is before the Impartial_Arbitrator, or based on their role.
-            # For simplicity, we'll insert them before the Arbitrator.
-            if triggered_personas_to_add:
-                # Sort triggered personas alphabetically for deterministic order
-                sorted_triggered_personas = sorted(list(triggered_personas_to_add))
-                
-                # Find the index where the Arbitrator is (or where it would be inserted)
-                arbitrator_index = len(final_sequence)
-                if "Impartial_Arbitrator" in final_sequence:
-                    arbitrator_index = final_sequence.index("Impartial_Arbitrator")
-                
-                # Insert the triggered personas before the Arbitrator
-                for persona_to_insert in sorted_triggered_personas:
-                    if persona_to_insert not in final_sequence: # Double check uniqueness
-                        final_sequence.insert(arbitrator_index, persona_to_insert)
-                        arbitrator_index += 1 # Adjust index for subsequent insertions
-        
-        # --- Minimal 80/20 Refinement for Framework Selection ---
-        # Add a simple check to prevent common misclassifications based on prompt context.
-        # This avoids modifying personas.yaml or adding complex scoring.
-        
-        # Example: Prevent "building architect" from triggering Code_Architect
+        # --- Minimal 80/20 Refinement for Framework Selection (as before) ---
+        # Example: Prevent "building architect" misclassification
         if "Code_Architect" in final_sequence:
             if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
-               ("software architect" not in prompt_lower and "software" not in prompt_lower):
-                
+               not any(sw_keyword in prompt_lower for sw_keyword in ["software", "code", "api", "system", "framework"]):
                 logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
                 final_sequence.remove("Code_Architect")
-                # Optionally, add a more general persona if a specific one is removed
                 if "Generalist_Assistant" not in final_sequence:
                     final_sequence.append("Generalist_Assistant")
         
-        # Add similar checks for other known problematic keyword overlaps if identified.
-        # --- End of Refinement ---
-
-        # Ensure the final sequence is unique and maintains a logical order.
-        # This step is important if multiple triggers add the same persona or if
-        # the insertion logic creates duplicates.
+        # Ensure uniqueness while preserving order
         seen = set()
-        unique_sequence = []
-        for persona in final_sequence:
-            if persona not in seen:
-                unique_sequence.append(persona)
-                seen.add(persona)
-        
-        return unique_sequence
+        return [p for p in final_sequence if not (p in seen or seen.add(p))]
