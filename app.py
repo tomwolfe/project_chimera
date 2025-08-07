@@ -721,7 +721,12 @@ if run_button_clicked:
                     final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             except (core.TokenBudgetExceededError, Exception) as e:
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue() if 'rich_output_buffer' in locals() else ""
+                # Capture any output buffer if it exists
+                if 'rich_output_buffer' in locals():
+                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                else:
+                    st.session_state.process_log_output_text = "" # Ensure it's empty if buffer wasn't created
+
                 status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
                 st.error(f"**Error:** {e}")
                 st.session_state.debate_ran = True
@@ -781,38 +786,76 @@ if st.session_state.debate_ran:
     # --- END ADDED: Download Buttons ---
 
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
-        parsed_data = st.session_state.final_answer_output 
+        # final_llm_response_data is the output from LLMOutputParser.parse_and_validate
+        final_llm_response_data = st.session_state.final_answer_output 
         
         validation_results = {'issues': [], 'malformed_blocks': []}
 
-        if isinstance(parsed_data, dict):
-            validation_results['malformed_blocks'] = parsed_data.get('malformed_blocks', [])
-            
-            if isinstance(parsed_data.get('CODE_CHANGES'), list) and parsed_data.get('CODE_CHANGES'): 
-                try:
-                    code_validation_issues_by_file = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
-                    for file_issues_list in code_validation_issues_by_file.values():
-                        validation_results['issues'].extend(file_issues_list)
-                except Exception as e:
-                    st.error(f"Error during batch code validation: {e}")
-                    validation_results['issues'].append({'type': 'Internal Error', 'file': 'N/A', 'message': f'Batch code validation failed: {e}'})
+        if isinstance(final_llm_response_data, dict):
+            # Extract malformed blocks reported by the parser during the arbitrator's step.
+            # These are critical for informing the user about parsing failures.
+            validation_results['malformed_blocks'].extend(final_llm_response_data.get('malformed_blocks', []))
+
+            # Check if the primary structure (COMMIT_MESSAGE, RATIONALE, CODE_CHANGES) is present
+            # This implies the LLMOutputParser successfully created at least a partial LLMOutput dict
+            # and that the 'malformed_blocks' list is empty (meaning no critical parsing/schema errors).
+            if final_llm_response_data.get('COMMIT_MESSAGE') is not None and \
+               final_llm_response_data.get('RATIONALE') is not None and \
+               isinstance(final_llm_response_data.get('CODE_CHANGES'), list):
+                
+                # If there are no malformed blocks from the initial parsing, proceed to content validation.
+                if not validation_results['malformed_blocks']:
+                    # --- Perform Domain-Specific Validation (e.g., Code Syntax) ---
+                    # This is where validate_code_output_batch or similar logic should reside.
+                    # It validates the *content* of the code changes.
+                    
+                    # Pass the already parsed and structured data to validate_code_output_batch.
+                    # validate_code_output_batch expects a dictionary with 'CODE_CHANGES'.
+                    try:
+                        code_validation_issues_by_file = validate_code_output_batch(final_llm_response_data, st.session_state.get('codebase_context', {}))
+                        for file_issues_list in code_validation_issues_by_file.values():
+                            validation_results['issues'].extend(file_issues_list)
+                    except Exception as e:
+                        st.error(f"Error during batch code content validation: {e}")
+                        validation_results['issues'].append({'type': 'Internal Error', 'file': 'N/A', 'message': f'Batch code content validation failed: {e}'})
+                else:
+                    # If there were malformed blocks from the arbitrator's output,
+                    # consider the overall output malformed and don't proceed with content validation.
+                    # The malformed_blocks will be displayed separately.
+                    validation_results['issues'].append({
+                        'type': 'Malformed Output',
+                        'file': 'N/A',
+                        'message': 'LLM output structure was malformed and could not be fully parsed by the arbitrator. See "Malformed LLM Blocks" below.'
+                    })
+            else:
+                # This case means final_llm_response_data is a dictionary, but it's missing critical fields
+                # required by LLMOutput (e.g., COMMIT_MESSAGE, RATIONALE, CODE_CHANGES).
+                # The malformed_blocks should already contain details about why parsing failed.
+                validation_results['issues'].append({
+                    'type': 'Structural Error',
+                    'file': 'N/A',
+                    'message': 'LLM output did not conform to the expected primary structure (COMMIT_MESSAGE, RATIONALE, CODE_CHANGES). See "Malformed LLM Blocks" for details.'
+                })
         else:
-            st.error(f"Cannot display structured output: Final answer is not a valid structured dictionary. Raw output: {parsed_data}")
-            parsed_data = {
+            # This case means final_llm_response_data is not a dictionary at all (e.g., plain string error from LLM).
+            st.error(f"Cannot display structured output: Final answer is not a valid structured dictionary. Raw output: {final_llm_response_data}")
+            # Re-assign to a structured error dict for display consistency.
+            final_llm_response_data = { 
                 "COMMIT_MESSAGE": "Error: Output not structured.",
-                "RATIONALE": f"Error: Output not structured. Raw output: {parsed_data}",
+                "RATIONALE": f"Error: Output not structured. Raw output: {final_llm_response_data}",
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
-                "malformed_blocks": [f"Final answer was not a dictionary. Raw: {parsed_data}"]
+                "malformed_blocks": [f"Final answer was not a dictionary. Raw: {final_llm_response_data}"]
             }
-            validation_results['malformed_blocks'].append(f"Final answer was not a dictionary. Raw: {parsed_data}")
+            validation_results['malformed_blocks'].append(f"Final answer was not a dictionary. Raw: {final_llm_response_data}")
 
+        # --- Consolidate and Display Results ---
         st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_data.get('COMMIT_MESSAGE', 'Not generated.'), language='text')
+            st.code(final_llm_response_data.get('COMMIT_MESSAGE', 'Not generated.'), language='text')
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -820,27 +863,27 @@ if st.session_state.debate_ran:
             st.metric("Total Tokens Consumed", f"{total_tokens:,}")
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         st.markdown("**Rationale**")
-        st.markdown(parsed_data.get('RATIONALE', 'Not generated.'))
-        if parsed_data.get('CONFLICT_RESOLUTION'):
+        st.markdown(final_llm_response_data.get('RATIONALE', 'Not generated.'))
+        if final_llm_response_data.get('CONFLICT_RESOLUTION'):
             st.markdown("**Conflict Resolution**")
-            st.info(parsed_data['CONFLICT_RESOLUTION'])
-        if parsed_data.get('UNRESOLVED_CONFLICT'):
+            st.info(final_llm_response_data['CONFLICT_RESOLUTION'])
+        if final_llm_response_data.get('UNRESOLVED_CONFLICT'):
             st.markdown("**Unresolved Conflict**")
-            st.warning(parsed_data['UNRESOLVED_CONFLICT'])
+            st.warning(final_llm_response_data['UNRESOLVED_CONFLICT'])
 
         with st.expander("✅ Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
                 st.success("✅ No syntax, style, or formatting issues detected.")
             else:
-                for issue in validation_results['issues']:
-                    st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
                 if validation_results['malformed_blocks']:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
+                for issue in validation_results['issues']:
+                    st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
 
         st.subheader("Proposed Code Changes")
-        if not parsed_data.get('CODE_CHANGES') and not validation_results['malformed_blocks']: 
+        if not final_llm_response_data.get('CODE_CHANGES') and not validation_results['malformed_blocks']: 
             st.info("No code changes were proposed.")
-        for change in parsed_data.get('CODE_CHANGES', []): 
+        for change in final_llm_response_data.get('CODE_CHANGES', []): 
             with st.expander(f"📝 **{change.get('FILE_PATH', 'N/A')}** (`{change.get('ACTION', 'N/A')}`)", expanded=False):
                 st.write(f"**Action:** {change.get('ACTION')}")
                 st.write(f"**File Path:** {change.get('FILE_PATH')}")
@@ -851,6 +894,7 @@ if st.session_state.debate_ran:
                 elif change.get('ACTION') == 'REMOVE':
                     st.write("**Lines to Remove:**")
                     st.write(change.get('LINES', []))
+        # Display malformed blocks separately if they exist
         for block in validation_results['malformed_blocks']:
             with st.expander(f"⚠️ **Unknown File (Malformed Block)**", expanded=True):
                 st.error("This block was malformed and could not be parsed correctly. Raw output is shown below.")

@@ -20,7 +20,6 @@ class InvalidSchemaError(Exception):
 
 class LLMOutputParser:
     def __init__(self):
-        # The schema_model is now passed directly to parse_and_validate
         self.logger = logger
 
     def _escape_json_string_value(self, value: str) -> str:
@@ -28,51 +27,71 @@ class LLMOutputParser:
         This uses json.dumps to handle all necessary escaping (quotes, backslashes, newlines, etc.)
         and then removes the outer quotes added by json.dumps.
         """
+        # Handle None explicitly to avoid "null" string in error messages
+        if value is None:
+            return ""
         # json.dumps will add outer quotes, so we slice them off.
         # It also handles unicode characters.
         return json.dumps(value)[1:-1]
 
     def _sanitize_json_string(self, json_str: str) -> str:
         """Applies deterministic sanitization rules to LLM output to fix common JSON errors."""
-        # Remove C-style comments (// and /* */)
-        json_str = re.sub(r"//.*", "", json_str)
-        json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
+        original_json_str = json_str # Keep original for fallback if sanitization fails
 
-        # Replace single quotes with double quotes for keys and string values
-        json_str = json_str.replace("'", '"')
-
-        # Remove trailing commas before closing braces/brackets
-        json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
-
-        # Ensure keys are double-quoted (e.g., {key: "value"} -> {"key": "value"})
-        json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
-
-        # NEW AGGRESSIVE HEURISTICS for missing commas between elements:
-        # 1. Missing comma between a string value and a new key (e.g., "val""key":)
-        json_str = re.sub(r'("[^"]*")\s*("([A-Z_]+)":)', r'\1,\n\2', json_str)
-        # 2. Missing comma between an object/array/boolean/number/null and a new key (e.g., }{ "key": or 123"key":)
-        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*("([A-Z_]+)":)', r'\1,\n\2', json_str, flags=re.IGNORECASE)
-        # 3. Missing comma between two objects or two arrays (e.g., {} {} or [] [])
-        json_str = re.sub(r'([}\]])\s*([{\[])', r'\1,\n\2', json_str)
-        # 4. Missing comma between a value and an opening bracket/brace (e.g., "value"[{ or "value"{)
-        json_str = re.sub(r'("[^"]*")\s*([{\[])', r'\1,\n\2', json_str)
-        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*([{\[])', r'\1,\n\2', json_str, flags=re.IGNORECASE)
-        
-        # Remove any non-JSON content outside the main JSON structure if it's clearly delimited
-        # Example: If LLM wraps JSON in markdown ```json ... ```
+        # 1. Extract JSON from markdown code block if present
         json_match = re.search(r'```json\s*(\{[\s\S]*\})\s*```', json_str, re.MULTILINE)
         if json_match:
             self.logger.debug("Extracted JSON from markdown code block during sanitization.")
             json_str = json_match.group(1)
-        else:
-            # Try to find the first '{' and last '}' if no markdown block is found
+        
+        # 2. Remove C-style comments (// and /* */)
+        json_str = re.sub(r"//.*", "", json_str)
+        json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
+
+        # 3. Replace single quotes with double quotes for keys and string values
+        json_str = json_str.replace("'", '"')
+
+        # 4. Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+
+        # 5. Ensure keys are double-quoted (e.g., {key: "value"} -> {"key": "value"})
+        # This regex is problematic and can incorrectly quote values that look like keys.
+        # It's safer to remove this heuristic and rely on LLM self-correction or a dedicated JSON repair library.
+        # Commenting out this problematic regex:
+        # json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+
+        # 6. Aggressive heuristics for missing commas between elements:
+        # These are highly heuristic and can sometimes cause issues.
+        # They are kept here as they were part of the original logic, but should be monitored.
+        json_str = re.sub(r'("[^"]*")\s*("([A-Z_]+)":)', r'\1,\n\2', json_str)
+        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*("([A-Z_]+)":)', r'\1,\n\2', json_str, flags=re.IGNORECASE)
+        json_str = re.sub(r'([}\]])\s*([{\[])', r'\1,\n\2', json_str)
+        json_str = re.sub(r'("[^"]*")\s*([{\[])', r'\1,\n\2', json_str)
+        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*([{\[])', r'\1,\n\2', json_str, flags=re.IGNORECASE)
+        
+        # 7. Attempt to trim non-JSON content from start/end if it's clearly not JSON
+        # This is crucial: if after all sanitization, the string doesn't start with '{' or '[',
+        # we need to try and find the actual JSON object/array. If we can't, we must return
+        # the original string to avoid `json.loads` getting an empty/invalid string.
+        stripped_json_str = json_str.strip()
+        if stripped_json_str and stripped_json_str[0] not in ['{','[']:
             try:
-                start_index = json_str.index('{')
-                end_index = json_str.rindex('}') + 1
-                json_str = json_str[start_index:end_index]
+                # Try to find the first '{' and last '}'
+                start_index = stripped_json_str.index('{')
+                end_index = stripped_json_str.rindex('}') + 1
+                json_str = stripped_json_str[start_index:end_index]
             except ValueError:
-                # If no braces are found, return original string for potential further handling
-                pass
+                try:
+                    # If no braces, try to find the first '[' and last ']'
+                    start_index = stripped_json_str.index('[')
+                    end_index = stripped_json_str.rindex(']') + 1
+                    json_str = stripped_json_str[start_index:end_index]
+                except ValueError:
+                    # If no JSON delimiters are found, return the original string.
+                    # This prevents `json.loads` from failing with "Expecting value: line 1 column 1 (char 0)"
+                    # if the output is entirely non-JSON or malformed without clear delimiters.
+                    self.logger.warning("No JSON object or array delimiters found after sanitization. Returning original string for parsing attempt.")
+                    return original_json_str
         
         return json_str
 
@@ -81,6 +100,7 @@ class LLMOutputParser:
         Parse and validate the raw LLM output against a given Pydantic schema.
         Returns a dictionary representation of the validated model, or a dictionary
         containing 'malformed_blocks' if parsing/validation fails.
+        This output is then used by app.py to display errors or processed results.
         """
         self.logger.debug(f"Attempting to parse raw output: {raw_output[:500]}...")
 
@@ -91,6 +111,7 @@ class LLMOutputParser:
         
         parsed_data = {}
         try:
+            # Attempt to parse the sanitized string as JSON
             parsed_data = json.loads(sanitized_json_str)
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON decoding failed after sanitization: {e}")
@@ -99,22 +120,23 @@ class LLMOutputParser:
                 "message": str(e),
                 "raw_string_snippet": self._escape_json_string_value(sanitized_json_str[:1000] + ("..." if len(sanitized_json_str) > 1000 else ""))
             })
-            # Return a structured error dictionary
+            # Return a structured error dictionary that app.py can interpret
             return {
                 "COMMIT_MESSAGE": "Parsing error",
                 "RATIONALE": self._escape_json_string_value(f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {sanitized_json_str[:500]}..."),
                 "CODE_CHANGES": [], # Default empty list for CODE_CHANGES
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
-                "malformed_blocks": malformed_blocks_list
+                "malformed_blocks": malformed_blocks_list # Crucial for app.py to know parsing failed
             }
 
         # Validate against the provided schema_model
         try:
             validated_output = schema_model(**parsed_data)
             self.logger.info(f"LLM output successfully validated against {schema_model.__name__} schema.")
-            result_dict = validated_output.dict(by_alias=True)
-            result_dict["malformed_blocks"] = malformed_blocks_list # Include any pre-parsing issues if any
+            result_dict = validated_output.model_dump(by_alias=True) # Use model_dump for Pydantic v2+
+            # Include any malformed blocks found during sanitization (e.g., if markdown was stripped)
+            result_dict["malformed_blocks"] = malformed_blocks_list 
             return result_dict
         except ValidationError as validation_e:
             self.logger.error(f"Schema validation failed for {schema_model.__name__}: {validation_e}")
@@ -125,15 +147,17 @@ class LLMOutputParser:
             })
             
             # Attempt to salvage partial data for LLMOutput if it was the target schema
+            # This allows the system to report *what* was wrong, even if the full structure failed.
             fallback_output = {
                 "COMMIT_MESSAGE": "Schema validation failed",
                 "RATIONALE": f"Original output: {self._escape_json_string_value(raw_output[:500] + ('...' if len(raw_output) > 500 else ''))}\nValidation Error: {self._escape_json_string_value(str(validation_e))}",
                 "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
-                "malformed_blocks": malformed_blocks_list
+                "malformed_blocks": malformed_blocks_list # Pass validation errors as malformed blocks
             }
             
+            # If the target schema is LLMOutput, try to populate fields from parsed_data
             if schema_model == LLMOutput and isinstance(parsed_data, dict):
                 fallback_output["COMMIT_MESSAGE"] = parsed_data.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"])
                 if "RATIONALE" in parsed_data:
@@ -146,7 +170,7 @@ class LLMOutputParser:
                         if isinstance(item, dict):
                             try:
                                 valid_item = CodeChange(**item)
-                                processed_code_changes.append(valid_item.dict(by_alias=True))
+                                processed_code_changes.append(valid_item.model_dump(by_alias=True)) # Use model_dump
                             except ValidationError as inner_val_e:
                                 self.logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
                                 malformed_blocks_list.append({

@@ -13,7 +13,7 @@ import os
 import json
 import logging
 from rich.console import Console
-from pydantic import BaseModel, Field, ValidationError, model_validator, validator
+from pydantic import BaseModel, Field, validator, model_validator, ValidationError
 import streamlit as st
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
@@ -499,65 +499,61 @@ class SocraticDebate:
                     f"{domain_critiques_text}\n\n"
                     f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
             constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
+            
+            # --- CORRECTED ARBITRATOR PROMPT GENERATOR ---
             def arbitrator_prompt_gen():
-                return (
-                    f"Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:\n\n"
-                    f"```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ]\n}}\n```\n\n"
-                    f"Ensure that the `CODE_CHANGES` array contains objects for each file change. For `MODIFY` and `ADD` actions, provide the `FULL_CONTENT` of the file. For `REMOVE` actions, provide an array of `LINES` to be removed. If there are conflicting suggestions, you must identify them and explain your resolution in the 'RATIONALE' section, starting with 'CONFLICT_RESOLUTION: '.\nIf a conflict cannot be definitively resolved or requires further human input, flag it clearly in the 'RATIONALE' starting with 'UNRESOLVED_CONFLICT: '.\n*   **Code Snippets:** Ensure all code snippets within `FULL_CONTENT` are correctly formatted and escaped, especially double quotes (e.g., `\"` must be escaped as `\\\"`). Newlines within code snippets must also be escaped as `\\n`.\n*   **Clarity and Conciseness:** Present the final plan clearly and concisely.\n*   **Unit Tests:** For any `ADD` or `MODIFY` action in `CODE_CHANGES`, if the file is a Python file, you MUST also propose a corresponding unit test file (e.g., `tests/test_new_module.py` or `tests/test_modified_function.py`) in a separate `CODE_CHANGES` entry with action `ADD` and its `FULL_CONTENT`. Ensure these tests are comprehensive and follow standard Python `unittest` or `pytest` practices.\n\n--- DEBATE SUMMARY ---\n"
-                     f"User Prompt: {self.initial_prompt}\n\n"
-                     f"Visionary Proposal:\n{visionary_output}\n\n"
-                     f"Skeptical Critique:\n{skeptical_critique}\n"
-                     f"{domain_critiques_text}\n\n"
-                     f"Constructive Feedback:\n{constructive_feedback}\n\n"
-                     f"--- END DEBATE ---"
-                 )
-            
-            arbitrator_output_dict = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True, schema_model_for_validation=LLMOutput)
-            
-            devil_advocate_input = json.dumps(arbitrator_output_dict, indent=2) if isinstance(arbitrator_output_dict, dict) else str(arbitrator_output_dict)
+                return f'''Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:
 
-            def devil_prompt_gen():
-                return f"Critique the following final synthesized answer (which will be a JSON object). Find the single most critical, fundamental flaw. Do not offer solutions, only expose the weakness with a sharp, incisive critique. Focus on non-obvious issues like race conditions, scalability limits, or subtle security holes:\n{devil_advocate_input}"
+```json
+{{
+  "COMMIT_MESSAGE": "<string>",
+  "RATIONALE": "<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>",
+  "CODE_CHANGES": [
+    {{
+      "FILE_PATH": "<string>",
+      "ACTION": "ADD | MODIFY | REMOVE",
+      "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\".)
+    }},
+    {{
+      "FILE_PATH": "<string>",
+      "ACTION": "REMOVE",
+      "LINES": ["<string>", "<string>"] (Required for REMOVE action, representing the specific lines to be removed)
+    }}
+  ]
+}}
+"''' # Changed from """ to ''' to fix SyntaxError
             
-            self._execute_persona_step("Devils_Advocate", devil_prompt_gen, "Devils_Advocate_Critique")
+            # The Impartial_Arbitrator will receive all previous outputs and synthesize the final answer.
+            # It needs to be instructed to output in the specific JSON format.
+            arbitrator_output = self._execute_persona_step(
+                "Impartial_Arbitrator",
+                arbitrator_prompt_gen,
+                "Impartial_Arbitrator_Output",
+                schema_model_for_validation=LLMOutput, # Assuming LLMOutput is the Pydantic model for the final JSON
+                update_current_thought=True,
+                is_final_answer_step=True
+            )
             
-            self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
-            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
-            self._update_status(f"Socratic Arbitration Loop finished. Total tokens used: {self.cumulative_token_usage:,}. Total estimated cost: ${self.cumulative_usd_cost:.4f}",
-                                state="complete", expanded=False,
-                                current_total_tokens=self.cumulative_token_usage,
-                                current_total_cost=self.cumulative_usd_cost)
+            # The final_answer is already updated within _execute_persona_step if is_final_answer_step is True.
+            # We just need to return it along with the intermediate steps.
             return self.final_answer, self.intermediate_steps
-        except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
-            error_msg = f"[ERROR] Socratic Debate failed: {e}"
-            self.intermediate_steps["Debate_Error"] = error_msg
-            self._update_status(error_msg, state="error")
-            # Ensure final_answer is a dictionary with error details for consistency
-            self.final_answer = {
-                "COMMIT_MESSAGE": "Debate Failed",
-                "RATIONALE": self.parser._escape_json_string_value(f"Socratic Debate failed: {e}"),
-                "CODE_CHANGES": [],
-                "CONFLICT_RESOLUTION": None,
-                "UNRESOLVED_CONFLICT": None,
-                "malformed_blocks": [{"type": "DEBATE_EXECUTION_ERROR", "message": str(e), "raw_string_snippet": ""}]
-            }
-            self.intermediate_steps["Total_Tokens_Used"] = self.cumulative_token_usage
-            self.intermediate_steps["Total_Estimated_Cost_USD"] = self.cumulative_usd_cost
-            raise
 
-    def _validate_analysis_summary(self, summary: Dict[str, Any]) -> bool:
-        """Validate the structure and content of the analysis summary using Pydantic."""
-        try:
-            ContextAnalysisOutput(**summary)
-            return True
-        except ValidationError:
-            return False
+        except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
+            error_message = f"[ERROR] Socratic debate failed: {e}"
+            self.intermediate_steps["Socratic_Debate_Error"] = error_message
+            self._update_status(error_message, state="error")
+            return {"error": str(e)}, self.intermediate_steps
 
     def _get_default_analysis_summary(self) -> Dict[str, Any]:
-        """Provides a default summary if validation fails or analysis is skipped."""
+        """Returns a default summary if context analysis fails or is skipped."""
         return {
-            "key_modules": [],
-            "security_concerns": [],
-            "architectural_patterns": [],
-            "performance_bottlenecks": []
+            "summary": "Codebase analysis could not be performed.",
+            "structure": "Unknown",
+            "style": "Unknown",
+            "patterns": "Unknown",
+            "dependencies": "Unknown",
+            "logic": "Unknown",
+            "potential_issues": [],
+            "recommendations": [],
+            "malformed_blocks": [] # Ensure this key exists even if empty
         }
