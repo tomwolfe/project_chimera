@@ -17,6 +17,29 @@ from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, Conte
 from src.utils import LLMOutputParser, validate_code_output_batch # Import LLMOutputParser
 # Import PersonaManager
 from src.persona_manager import PersonaManager
+# Import ConfigPersistence for unified configuration management
+from src.config.persistence import ConfigPersistence
+# Import custom exceptions from core.py (or a dedicated exceptions module if refactored)
+# Assuming core.py now re-exports or defines these exceptions.
+# If core.py uses a separate exceptions module, import from there.
+# For this example, we'll assume they are accessible via core or a dedicated module.
+# If core.py raises its own exceptions, we might need to catch those.
+# Based on the LLM's suggestion, we'll catch ChimeraError and its subclasses.
+# Let's assume core.py now raises exceptions from src.exceptions.
+# If not, we might need to adjust the except block.
+# For now, let's assume core.py raises exceptions that are subclasses of ChimeraError.
+# If core.py directly raises TokenBudgetExceededError, we'll catch that too.
+# The LLM suggestion implies core.py will raise ChimeraError subclasses.
+# Let's add a placeholder for ChimeraError if it's not directly in core.py
+try:
+    from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError
+except ImportError:
+    # Define a placeholder if src.exceptions doesn't exist or isn't structured as expected
+    # This is a fallback if the suggested exception structure isn't fully implemented elsewhere.
+    class ChimeraError(Exception): pass
+    class LLMResponseValidationError(ChimeraError): pass
+    class TokenBudgetExceededError(ChimeraError): pass
+
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -151,6 +174,9 @@ EXAMPLE_PROMPTS = {
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 persona_manager_instance = PersonaManager()
 
+# Initialize ConfigPersistence instance (managed by PersonaManager, but can be accessed here if needed)
+# config_persistence_instance = ConfigPersistence() # PersonaManager now holds this internally
+
 # --- Session State Initialization ---
 # Initialize context_token_budget_ratio unconditionally at the top level
 # This ensures it's available when the slider is rendered, even if other states aren't initialized yet.
@@ -167,10 +193,11 @@ def _initialize_session_state(pm: PersonaManager):
     
     # Initialize persona-related states from PersonaManager
     st.session_state.persona_manager = pm # Store the cached instance
+    # Load initial personas and sets from PersonaManager
     st.session_state.all_personas = pm.all_personas
     st.session_state.persona_sets = pm.persona_sets
     st.session_state.persona_sequence = pm.persona_sequence
-    st.session_state.available_domains = pm.available_domains
+    st.session_state.available_domains = pm.available_domains # This should include custom frameworks loaded by PersonaManager
     st.session_state.selected_persona_set = pm.default_persona_set_name
 
     st.session_state.debate_ran = False
@@ -185,6 +212,11 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
     st.session_state.persona_audit_log = [] # Reset audit log
     st.session_state.persona_edit_mode = False # Reset edit mode
+    
+    # Framework saving/loading state
+    st.session_state.save_framework_input = ""
+    st.session_state.framework_description = "" # For saving new frameworks
+    st.session_state.load_framework_select = "" # For loading frameworks
 
 # Initialize session state if not already done
 if "api_key_input" not in st.session_state: # Check for any key to determine if state is initialized
@@ -194,10 +226,6 @@ def reset_app_state():
     """Resets all session state variables to their default values."""
     _initialize_session_state(st.session_state.persona_manager)
     st.rerun()
-
-# --- Custom Framework File Management ---
-# These functions are now part of PersonaManager, but kept here for context if needed elsewhere.
-# However, the UI logic should call PersonaManager methods directly.
 
 # --- Persona Change Logging ---
 def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_value: Any):
@@ -290,13 +318,16 @@ with col1:
                 st.session_state.selected_persona_set_widget = suggested_domain
                 st.rerun()
 
-    # Use available_domains from PersonaManager
+    # Use available_domains from PersonaManager (which now includes custom frameworks)
     available_framework_options = st.session_state.available_domains
     unique_framework_options = sorted(list(set(available_framework_options)))
+    
     current_framework_selection = st.session_state.selected_persona_set
+    # Ensure the current selection is valid, otherwise default to the first available
     if current_framework_selection not in unique_framework_options:
         current_framework_selection = unique_framework_options[0] if unique_framework_options else "General"
         st.session_state.selected_persona_set = current_framework_selection
+        
     selected_framework_for_widget = st.selectbox(
         "Select Framework",
         options=unique_framework_options,
@@ -304,7 +335,11 @@ with col1:
         key="selected_persona_set_widget",
         help="Choose a domain-specific reasoning framework or a custom saved framework."
     )
-    st.session_state.selected_persona_set = selected_framework_for_widget
+    # Update session state if the selection changes
+    if selected_framework_for_widget != st.session_state.selected_persona_set:
+        st.session_state.selected_persona_set = selected_framework_for_widget
+        # Rerun to load personas for the new framework
+        st.rerun()
 
     # Load personas for the selected framework
     if st.session_state.selected_persona_set:
@@ -318,21 +353,30 @@ with col1:
 
     st.subheader("Save Current Framework")
     new_framework_name_input = st.text_input("Enter a name for your current framework:", key='save_framework_input')
+    # Add a text area for framework description
+    framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50)
+
     if st.button("Save Current Framework") and new_framework_name_input:
-        # Pass the currently active personas (which might have been edited in UI)
-        current_active_personas_for_save = {
-            p_name: st.session_state.all_personas[p_name]
-            for p_name in st.session_state.persona_sets.get(st.session_state.selected_persona_set, [])
+        # Get current active personas for the selected framework
+        current_framework_name = st.session_state.selected_persona_set
+        current_domain_persona_names = st.session_state.persona_sets.get(current_framework_name, [])
+        current_active_personas_data = {
+            p_name: st.session_state.all_personas[p_name].model_dump() # Use model_dump for Pydantic v2+
+            for p_name in current_domain_persona_names
             if p_name in st.session_state.all_personas
         }
-        if st.session_state.persona_manager.save_framework(
-            new_framework_name_input,
-            st.session_state.selected_persona_set,
-            current_active_personas_for_save
-        ):
+
+        # Construct framework config for persistence
+        framework_config_to_save = {
+            "description": st.session_state.framework_description,
+            "personas": list(current_active_personas_data.values()) # Save as a list of persona dicts
+        }
+        
+        # Use PersonaManager's save_framework method (which internally uses ConfigPersistence)
+        if st.session_state.persona_manager.save_framework(new_framework_name_input, framework_config_to_save):
             # Update session state to reflect the newly saved framework
-            sanitized_name = st.session_state.persona_manager._sanitize_framework_filename(new_framework_name_input)
-            st.session_state.selected_persona_set = sanitized_name
+            # PersonaManager's save_framework should handle internal updates and reloading of custom frameworks
+            # We might need to rerun to update the UI elements like the selectbox
             st.rerun()
 
     st.subheader("Load Framework")
@@ -343,6 +387,7 @@ with col1:
     current_selection_for_load = ""
     if st.session_state.selected_persona_set in unique_framework_options_for_load:
         current_selection_for_load = st.session_state.selected_persona_set
+    # Check if the current selection is a custom framework name not directly in persona_sets
     elif st.session_state.selected_persona_set in st.session_state.persona_manager.all_custom_frameworks_data:
         current_selection_for_load = st.session_state.selected_persona_set
     
@@ -353,13 +398,16 @@ with col1:
         key='load_framework_select'
     )
     if st.button("Load Selected Framework") and selected_framework_to_load:
-        loaded_personas, loaded_persona_sets, new_selected_framework_name = st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
-        if loaded_personas:
-            # Update the master list of all personas and persona sets in session state
-            st.session_state.all_personas.update(loaded_personas)
-            st.session_state.persona_sets.update(loaded_persona_sets)
+        # PersonaManager handles loading both default and custom frameworks
+        loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
+        
+        if loaded_personas_dict:
+            # Update session state with loaded data
+            st.session_state.all_personas.update(loaded_personas_dict)
+            st.session_state.persona_sets.update(loaded_persona_sets_dict)
             st.session_state.selected_persona_set = new_selected_framework_name
             st.rerun()
+    
     st.subheader("Context Budget")
     # This slider now safely accesses st.session_state.context_token_budget_ratio
     # because it was initialized unconditionally above.
@@ -467,6 +515,8 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
             # Reset button for individual persona
             if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}"):
                 # Reload original persona config from the initial load (via PersonaManager)
+                # This requires PersonaManager to store original configs or reload them.
+                # For simplicity, we'll assume PersonaManager.all_personas holds the defaults.
                 original_persona_config = st.session_state.persona_manager.all_personas.get(p_name)
                 if original_persona_config:
                     if persona.system_prompt != original_persona_config.system_prompt:
@@ -580,7 +630,9 @@ if run_button_clicked:
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
                     final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
-            except (core.TokenBudgetExceededError, Exception) as e:
+            # --- UPDATED ERROR HANDLING ---
+            # Catch specific ChimeraError subclasses and general Exceptions
+            except (TokenBudgetExceededError, LLMResponseValidationError, ChimeraError) as e:
                 # Capture any output buffer if it exists
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -592,17 +644,45 @@ if run_button_clicked:
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                # final_answer_output is now a dict, so populate it with error info
+                
+                # Populate final_answer_output with error details
                 st.session_state.final_answer_output = {
                     "COMMIT_MESSAGE": "Debate Failed",
-                    "RATIONALE": f"Error during debate: {e}",
+                    "RATIONALE": f"An error occurred during the Socratic debate: {str(e)}",
                     "CODE_CHANGES": [],
                     "CONFLICT_RESOLUTION": None,
                     "UNRESOLVED_CONFLICT": None,
-                    "malformed_blocks": [f"Error during debate: {e}"]
+                    # Add specific error details if available from the exception
+                    "error_details": getattr(e, 'details', {})
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            except Exception as e: # Catch any other unexpected errors not covered by ChimeraError
+                # Capture any output buffer if it exists
+                if 'rich_output_buffer' in locals():
+                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                else:
+                    st.session_state.process_log_output_text = "" # Ensure it's empty if buffer wasn't created
+
+                status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
+                st.error(f"**Unexpected Error:** {e}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                # Populate final_answer_output with error details
+                st.session_state.final_answer_output = {
+                    "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
+                    "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "CONFLICT_RESOLUTION": None,
+                    "UNRESOLVED_CONFLICT": None,
+                    "error_details": {"traceback": traceback.format_exc()} # Include traceback for unexpected errors
+                }
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            # --- END UPDATED ERROR HANDLING ---
+
             total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
             total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
             next_step_warning_placeholder.empty()
@@ -653,6 +733,9 @@ if st.session_state.debate_ran:
         if isinstance(st.session_state.final_answer_output, dict):
             try:
                 # Attempt to parse the final_answer_output into an LLMOutput model
+                # The LLMOutputParser's validate_response method should have already ensured this structure
+                # or returned a dict with 'malformed_blocks' if it failed.
+                # We still use the LLMOutput model for type hinting and structured access.
                 parsed_llm_output = LLMOutput(**st.session_state.final_answer_output)
                 # Capture malformed blocks reported by the parser during the arbitrator's step
                 malformed_blocks_from_parser = st.session_state.final_answer_output.get('malformed_blocks', [])
@@ -663,29 +746,32 @@ if st.session_state.debate_ran:
                     COMMIT_MESSAGE="Parsing Error",
                     RATIONALE=f"Failed to parse final LLM output into expected structure. Error: {e}",
                     CODE_CHANGES=[],
-                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_output": str(st.session_state.final_answer_output)[:500]}]
+                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(st.session_state.final_answer_output)[:500]}]
                 )
                 malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks) # Add to the list
         else:
+            # This case handles when final_answer_output is not a dictionary (e.g., a simple string error message)
             st.error(f"Final answer is not a structured dictionary. Raw output: {st.session_state.final_answer_output}")
             parsed_llm_output = LLMOutput(
                 COMMIT_MESSAGE="Error: Output not structured.",
                 RATIONALE=f"Error: Output not structured. Raw output: {st.session_state.final_answer_output}",
                 CODE_CHANGES=[],
-                malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": "Final answer was not a dictionary.", "raw_output": str(st.session_state.final_answer_output)[:500]}]
+                malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": "Final answer was not a dictionary.", "raw_string_snippet": str(st.session_state.final_answer_output)[:500]}]
             )
             malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks) # Add to the list
 
         # The validate_code_output_batch function expects a dictionary, so pass the model_dump
+        # Ensure that the input to validate_code_output_batch is a dictionary, even if it's an error dict.
         validation_results_by_file = validate_code_output_batch(
-            parsed_llm_output.model_dump(by_alias=True), # Pass the dictionary representation
+            parsed_llm_output.model_dump(by_alias=True) if isinstance(parsed_llm_output, LLMOutput) else st.session_state.final_answer_output, # Pass the dictionary representation
             st.session_state.get('codebase_context', {})
         )
 
         # Aggregate all issues for display
         all_issues = []
         for file_issues_list in validation_results_by_file.values():
-            all_issues.extend(file_issues_list)
+            if isinstance(file_issues_list, list): # Ensure it's a list of issues
+                all_issues.extend(file_issues_list)
 
         # Combine malformed blocks from parser and any from validation
         all_malformed_blocks = malformed_blocks_from_parser
@@ -718,7 +804,7 @@ if st.session_state.debate_ran:
                 st.success("✅ No syntax, style, or formatting issues detected.")
             else:
                 if all_malformed_blocks:
-                     st.error(f"**Malformed Output Detected:** The LLM produced {len(all_malformed_blocks)} block(s) that could not be parsed. The raw output is provided as a fallback.")
+                     st.error(f"**Malformed Output Detected:** The LLM produced {len(all_malformed_blocks)} block(s) that could not be parsed or validated correctly. Raw output snippets are provided below.")
                 for issue in all_issues:
                     st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
 
@@ -732,18 +818,25 @@ if st.session_state.debate_ran:
                 if change.action in ['ADD', 'MODIFY']:
                     st.write("**Content:**")
                     display_content = change.full_content or ''
-                    st.code(display_content[:1000] + ('...' if len(display_content) > 1000 else ''), language='python')
+                    # Limit display content to prevent overwhelming the UI
+                    st.code(display_content[:2000] + ('...' if len(display_content) > 2000 else ''), language='python')
                 elif change.action == 'REMOVE':
                     st.write("**Lines to Remove:**")
                     st.write(change.lines)
         # Display malformed blocks separately if they exist
         for block_info in all_malformed_blocks:
             with st.expander(f"⚠️ **Malformed Block ({block_info.get('type', 'Unknown')})**", expanded=True):
-                st.error(f"This block was malformed and could not be parsed correctly. Raw output is shown below. Message: {block_info.get('message', 'N/A')}")
-                st.code(block_info.get('raw_string_snippet', str(block_info)), language='text')
+                st.error(f"This block was malformed and could not be parsed correctly. Message: {block_info.get('message', 'N/A')}")
+                # Display a snippet of the raw output that caused the issue
+                raw_snippet = block_info.get('raw_string_snippet', block_info.get('raw_item', 'N/A'))
+                st.code(raw_snippet[:1000] + ('...' if len(raw_snippet) > 1000 else ''), language='text')
     else:
         st.subheader("Final Synthesized Answer")
-        st.markdown(st.session_state.final_answer_output)
+        # Display the final answer, handling both dict and string cases
+        if isinstance(st.session_state.final_answer_output, dict):
+            st.json(st.session_state.final_answer_output)
+        else:
+            st.markdown(st.session_state.final_answer_output)
 
     with st.expander("Show Intermediate Steps & Process Log"):
         if st.session_state.show_intermediate_steps_checkbox:
@@ -759,7 +852,7 @@ if st.session_state.debate_ran:
                 token_count_key = f"{cleaned_step_key}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
                 with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
-                    # If content is a dict (e.g., final answer), display as JSON
+                    # If content is a dict (e.g., final answer, context analysis), display as JSON
                     if isinstance(content, dict):
                         st.json(content)
                     else:

@@ -185,7 +185,7 @@ class LLMOutputParser:
             malformed_blocks_list.append({
                 "type": "SCHEMA_VALIDATION_ERROR",
                 "message": str(validation_e),
-                "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "") # Use raw_output directly
+                "raw_string_snippet": raw_output # Use raw_output directly
             })
             
             # Attempt to salvage partial data for LLMOutput if it was the target schema
