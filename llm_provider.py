@@ -52,7 +52,6 @@ class GeminiProvider:
     MAX_BACKOFF_SECONDS = 60 # Maximum backoff time in seconds
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
-    # MODIFIED: Removed _status_callback from __init__
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         self._api_key = api_key # Store API key for hashing/equality
         self.model_name = model_name # This is part of the cache key
@@ -68,23 +67,6 @@ class GeminiProvider:
             return NotImplemented
         return self.model_name == other.model_name and self._api_key == other._api_key
 
-    # MODIFIED: Added _status_callback as an argument
-    def _log_status(self, message: str, _status_callback=None, state: str = "running", expanded: bool = True,
-                    current_total_tokens: int = 0, current_total_cost: float = 0.0,
-                    estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
-        if _status_callback: # MODIFIED: Use the passed argument
-            _status_callback( # MODIFIED: Call the passed argument
-                message=message,
-                state=state,
-                expanded=expanded,
-                current_total_tokens=current_total_tokens,
-                current_total_cost=current_total_cost,
-                estimated_next_step_tokens=estimated_next_step_tokens,
-                estimated_next_step_cost=estimated_next_step_cost
-            )
-        else:
-            logger.info(f"[LLM Provider] {message}")
-
     def _get_pricing_model_name(self) -> str:
         if "flash" in self.model_name:
             return "gemini-1.5-flash"
@@ -96,7 +78,7 @@ class GeminiProvider:
         pricing_model = self._get_pricing_model_name()
         costs = TOKEN_COSTS_PER_1K_TOKENS.get(pricing_model)
         if not costs:
-            self._log_status(f"Warning: No pricing information for model '{self.model_name}'. Cost estimation will be $0.", state="running")
+            logger.warning(f"No pricing information for model '{self.model_name}'. Cost estimation will be $0.")
             return 0.0
 
         input_cost = (input_tokens / 1000) * costs["input"]
@@ -104,7 +86,6 @@ class GeminiProvider:
         return input_cost + output_cost
 
     @st.cache_data(ttl=3600, show_spinner=False)
-    # MODIFIED: Added _status_callback as an argument
     def generate(_self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, _status_callback=None) -> tuple[str, int, int]:
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
@@ -132,8 +113,11 @@ class GeminiProvider:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # MODIFIED: Pass _status_callback
-                    _self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", _status_callback=_status_callback, state="running")
+                    # Use _status_callback directly if provided, otherwise log
+                    if _status_callback:
+                        _status_callback(message=f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    else:
+                        logger.warning(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})")
                     time.sleep(sleep_time)
                 else:
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else getattr(e, 'code', None)) from e
@@ -155,8 +139,11 @@ class GeminiProvider:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # MODIFIED: Pass _status_callback
-                    _self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", _status_callback=_status_callback, state="running")
+                    # Use _status_callback directly if provided, otherwise log
+                    if _status_callback:
+                        _status_callback(message=f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    else:
+                        logger.error(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})")
                     time.sleep(sleep_time)
                 else:
                     raise LLMUnexpectedError(error_msg) from e
@@ -164,7 +151,6 @@ class GeminiProvider:
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
     @st.cache_data(ttl=3600, show_spinner=False)
-    # MODIFIED: Added _status_callback as an argument
     def count_tokens(_self, prompt: str, system_prompt: str, _status_callback=None) -> int:
         full_text_for_counting = f"{system_prompt}\n\n{prompt}"
         contents_for_counting = [
@@ -187,8 +173,11 @@ class GeminiProvider:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # MODIFIED: Pass _status_callback
-                    _self._log_status(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", _status_callback=_status_callback, state="running")
+                    # Use _status_callback directly if provided, otherwise log
+                    if _status_callback:
+                        _status_callback(message=f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    else:
+                        logger.warning(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}) during token count. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})")
                     time.sleep(sleep_time)
                 else:
                     raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else getattr(e, 'code', None)) from e
@@ -210,8 +199,11 @@ class GeminiProvider:
                     backoff_time = min(_self.INITIAL_BACKOFF_SECONDS * (_self.BACKOFF_FACTOR ** (attempt - 1)), _self.MAX_BACKOFF_SECONDS)
                     jitter = random.uniform(0, 0.5 * backoff_time)
                     sleep_time = backoff_time + jitter
-                    # MODIFIED: Pass _status_callback
-                    _self._log_status(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", _status_callback=_status_callback, state="running")
+                    # Use _status_callback directly if provided, otherwise log
+                    if _status_callback:
+                        _status_callback(message=f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})", state="running")
+                    else:
+                        logger.error(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{_self.MAX_RETRIES})")
                     time.sleep(sleep_time)
                 else:
                     raise LLMUnexpectedError(error_msg) from e

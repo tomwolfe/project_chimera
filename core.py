@@ -26,36 +26,8 @@ class TokenBudgetExceededError(LLMProviderError):
     """Raised when an LLM call would exceed the total token budget."""
     pass
 
-@st.cache_resource
-def load_personas(file_path: str = 'personas.yaml') -> Tuple[Dict[str, PersonaConfig], Dict[str, List[str]], List[str], str]:
-    """Loads persona configurations from a YAML file. Cached using st.cache_resource."""
-    try:
-        with open(file_path, 'r') as f:
-            data = yaml.safe_load(f)
-        all_personas_list = [PersonaConfig(**p_data) for p_data in data.get('personas', [])]
-        all_personas_dict = {p.name: p for p in all_personas_list}
-        persona_sets = data.get('persona_sets', {"General": []})
-        persona_sequence = data.get('persona_sequence', [
-            "Visionary_Generator",
-            "Skeptical_Generator",
-            "Constructive_Critic",
-            "Impartial_Arbitrator",
-            "Devils_Advocate"
-        ])
-        for set_name, persona_names_in_set in persona_sets.items():
-            if not isinstance(persona_names_in_set, list):
-                raise ValueError(f"Persona set '{set_name}' must be a list of persona names.")
-            for p_name in persona_names_in_set:
-                if p_name not in all_personas_dict:
-                    raise ValueError(f"Persona '{p_name}' referenced in set '{set_name}' not found in 'personas' list.")
-        for p_name in persona_sequence:
-            if p_name not in all_personas_dict:
-                raise ValueError(f"Persona '{p_name}' in persona_sequence not found in 'personas' list.")
-        default_persona_set_name = "General" if "General" in persona_sets else next(iter(persona_sets.keys()))
-        return all_personas_dict, persona_sets, persona_sequence, default_persona_set_name
-    except (FileNotFoundError, ValidationError, yaml.YAMLError) as e:
-        logging.error(f"Error loading personas from {file_path}: {e}")
-        raise
+# Removed the load_personas function as it's now handled by PersonaManager.
+# The SocraticDebate constructor will receive the pre-loaded persona data.
 
 class SocraticDebate:
     DEFAULT_MAX_RETRIES = 2
@@ -65,8 +37,8 @@ class SocraticDebate:
                  api_key: str,
                  max_total_tokens_budget: int,
                  model_name: str,
-                 personas: Dict[str, PersonaConfig],
-                 all_personas: Dict[str, PersonaConfig],
+                 personas: Dict[str, PersonaConfig], # Personas active in the current domain
+                 all_personas: Dict[str, PersonaConfig], # All loaded personas
                  persona_sets: Dict[str, List[str]],
                  persona_sequence: List[str],
                  gemini_provider: Optional[GeminiProvider] = None,
@@ -78,9 +50,9 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         self.max_total_tokens_budget = max_total_tokens_budget
         self.model_name = model_name
-        self.personas = personas # Personas active in the current domain
+        self.personas = personas
         self.domain = domain
-        self.all_personas = all_personas # All loaded personas
+        self.all_personas = all_personas
         self.persona_sets = persona_sets
         self.persona_sequence = persona_sequence # Default sequence if domain doesn't override
         self.status_callback = status_callback

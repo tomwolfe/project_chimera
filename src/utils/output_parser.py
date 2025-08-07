@@ -39,10 +39,46 @@ class LLMOutputParser:
         original_json_str = json_str # Keep original for fallback if sanitization fails
 
         # 1. Remove markdown code block fences if present, but keep content.
-        # This helps ensure that json.loads receives a clean JSON string.
         json_str = re.sub(r'```json\s*', '', json_str, flags=re.MULTILINE)
         json_str = re.sub(r'\s*```', '', json_str, flags=re.MULTILINE)
         
+        # NEW: Attempt to extract the outermost JSON object/array
+        # This is a heuristic and might fail if the JSON is deeply nested or malformed.
+        # It tries to find the first '{' or '[' and the last '}' or ']'.
+        
+        # Find the first opening brace/bracket
+        first_open_brace = json_str.find('{')
+        first_open_bracket = json_str.find('[')
+        
+        start_index = -1
+        if first_open_brace != -1 and (first_open_bracket == -1 or first_open_brace < first_open_bracket):
+            start_index = first_open_brace
+        elif first_open_bracket != -1:
+            start_index = first_open_bracket
+
+        if start_index != -1:
+            # Find the last closing brace/bracket
+            last_close_brace = json_str.rfind('}')
+            last_close_bracket = json_str.rfind(']')
+
+            end_index = -1
+            if last_close_brace != -1 and (last_close_bracket == -1 or last_close_brace > last_close_bracket):
+                end_index = last_close_brace + 1 # +1 to include the closing brace
+            elif last_close_bracket != -1:
+                end_index = last_close_bracket + 1 # +1 to include the closing bracket
+            
+            if end_index != -1 and end_index > start_index:
+                extracted_json_str = json_str[start_index:end_index]
+                # Check if the extracted part is likely valid JSON by trying to load it
+                try:
+                    json.loads(extracted_json_str)
+                    json_str = extracted_json_str # Use the extracted part if it's valid
+                    self.logger.debug("Successfully extracted outermost JSON block.")
+                except json.JSONDecodeError:
+                    self.logger.debug("Extracted JSON block is still invalid, proceeding with other sanitization.")
+            else:
+                self.logger.debug("Could not find valid outermost JSON block, proceeding with other sanitization.")
+
         # 2. Remove C-style comments (// and /* */)
         json_str = re.sub(r"//.*", "", json_str)
         json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
