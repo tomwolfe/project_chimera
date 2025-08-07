@@ -29,7 +29,7 @@ from llm_provider import GeminiProvider
 # --- END ADDED IMPORT ---
 
 # Import models and settings
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig
 from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
@@ -138,18 +138,21 @@ class SocraticDebate:
 
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
+        
+        # Check if this is a self-analysis prompt
+        from src.constants import is_self_analysis_prompt
+        is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
+        
         # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
-        context_ratio = self.settings.context_token_budget_ratio
-        debate_ratio = self.settings.debate_token_budget_ratio
+        context_ratio = self.settings.self_analysis_context_ratio if is_self_analysis else self.settings.context_token_budget_ratio
+        debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
         
-        # Ensure ratios sum to 1.0 (handled by Pydantic model_validator in settings)
-        # The prompt analysis logic for scaling ratios can be added here if needed,
-        # but for 80/20, using settings directly is low effort.
+        # Calculate available tokens for the debate/synthesis phases
+        available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
-        self.context_token_budget = int(self.max_total_tokens_budget * context_ratio)
-        self.debate_token_budget = int(self.max_total_tokens_budget * debate_ratio)
-        
-        logger.info(f"Token budgets calculated: Context={self.context_token_budget}, Debate={self.debate_token_budget}")
+        # Calculate phase budgets, ensuring minimums for critical phases
+        self.phase_budgets["context"] = max(200, int(available_tokens * context_ratio))
+        self.phase_budgets["debate"] = max(500, int(available_tokens * debate_ratio))
     
     def _check_token_budget(self, prompt_text: str, step_name: str, system_prompt: str = "") -> int:
         """
@@ -209,10 +212,14 @@ class SocraticDebate:
         }
     
     def _prepare_context(self, context_analysis: Dict[str, Any]) -> str:
-        """
-        Prepare the context for the debate based on the context analysis,
-        respecting the context token budget.
-        """
+        """Prepare the context for the debate based on the context analysis,
+        respecting the context token budget."""
+        
+        # Check if this is a self-analysis prompt
+        from src.constants import is_self_analysis_prompt
+        if is_self_analysis_prompt(self.initial_prompt):
+            return self._prepare_self_analysis_context(context_analysis)
+        
         if not self.codebase_context or not context_analysis.get("relevant_files"):
             return ""
         
@@ -264,6 +271,57 @@ class SocraticDebate:
             
         logger.info(f"Prepared context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
         return "\n".join(context_parts)
+    
+    def _prepare_self_analysis_context(self, context_analysis: Dict[str, Any]) -> str:
+        """Prepare specialized context for self-analysis with core files prioritized."""
+        if not self.codebase_context or not context_analysis.get("relevant_files"):
+            return ""
+        
+        # For self-analysis, prioritize core system files
+        core_files = [
+            "src/core.py",
+            "src/persona/routing.py",
+            "src/token_manager.py",
+            "src/constants.py",
+            "src/exceptions.py"
+        ]
+        
+        context_parts = []
+        current_context_tokens = 0
+        
+        # First add core files if they exist in the codebase context
+        for file_path in core_files:
+            if file_path in self.codebase_context:
+                content = self.codebase_context[file_path]
+                # Add the entire file for self-analysis of core components
+                file_context_part = f"### {file_path}\n{content}\n"
+                estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+                
+                # Check if adding this file would exceed budget
+                if current_context_tokens + estimated_file_tokens > self.phase_budgets["context"]:
+                    break
+                    
+                context_parts.append(file_context_part)
+                current_context_tokens += estimated_file_tokens
+        
+        # Then add other relevant files up to token budget
+        for file_path, _ in context_analysis.get("relevant_files", []):
+            if file_path in core_files or file_path not in self.codebase_context:
+                continue
+                
+            content = self.codebase_context[file_path]
+            file_context_part = f"### {file_path}\n{content}\n"
+            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            
+            # Check if adding this file would exceed budget
+            if current_context_tokens + estimated_file_tokens > self.phase_budgets["context"]:
+                break
+                
+            context_parts.append(file_context_part)
+            current_context_tokens += estimated_file_tokens
+        
+        logger.info(f"Prepared self-analysis context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
+        return "".join(context_parts)
     
     def _generate_persona_sequence(self, context_analysis: Dict[str, Any]) -> List[str]:
         """Generate the sequence of personas to participate in the debate."""

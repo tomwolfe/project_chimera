@@ -244,6 +244,19 @@ class PersonaRouter:
         
         return unique_sequence
 
+    def _get_self_analysis_sequence(self) -> List[str]:
+        """Return standardized persona sequence for self-analysis prompts."""
+        # Standard sequence for deep codebase analysis
+        return [
+            "Context_Aware_Assistant",
+            "Code_Architect",
+            "Security_Auditor",
+            "Constructive_Critic",
+            "Test_Engineer",
+            "DevOps_Engineer",
+            "Impartial_Arbitrator"
+        ]
+
     def determine_persona_sequence(self, prompt: str, 
                                  intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
         """
