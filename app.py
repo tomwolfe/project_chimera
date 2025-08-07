@@ -408,6 +408,8 @@ if selected_option_from_widget != st.session_state.selected_example_name:
             st.session_state.uploaded_files = []
             if st.session_state.selected_persona_set == "Software Engineering":
                 st.session_state.selected_persona_set = "General"
+    # ADDED: Force a rerun to update the UI, especially the framework selectbox
+    st.rerun()
 
 user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input")
 
