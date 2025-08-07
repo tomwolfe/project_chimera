@@ -5,52 +5,65 @@ import datetime
 from typing import Optional, Dict, Any
 import streamlit as st # Import streamlit to access session state
 
-class ChimeraError(Exception):
-    """Base exception for all Chimera errors"""
-    # This simplified version focuses on the core inheritance.
-    # More detailed attributes (like details, severity, timestamp) are omitted
-    # for minimal complexity as per the 80/20 principle.
-    pass
-
-class TokenBudgetExceededError(ChimeraError):
-    """Raised when token usage exceeds budget"""
-    # Simplified from original to just inherit from ChimeraError.
-    # Specific parameters like current_tokens, budget, details are omitted
-    # in this minimal version, assuming the calling code will handle context.
-    pass
-
 # --- MODIFIED CLASS START ---
-class LLMResponseValidationError(ChimeraError):
-    """Raised when LLM response fails schema validation, with code-specific guidance"""
-    def __init__(self, message: str, invalid_response: Any = None, 
-                 expected_schema: str = None, details: dict = None):
-        
-        # Add code-specific guidance when analyzing code
-        # Check if Streamlit context is available and if the prompt context suggests code analysis
-        prompt_context = ""
-        if 'st' in globals(): # Check if Streamlit context is available
-            prompt_context = st.session_state.get('initial_prompt', '')
-        
-        is_code_analysis = False
-        if prompt_context:
-            prompt_lower = prompt_context.lower()
-            # Keywords indicating code analysis or self-analysis of Chimera
-            if "code" in prompt_lower or "analyze" in prompt_lower or "refactor" in prompt_lower or "chimera" in prompt_lower or "self-analysis" in prompt_lower:
-                is_code_analysis = True
-        
-        if is_code_analysis:
-            message += "\n\nWhen analyzing codebases, ensure responses include:\n" \
-                      "1) Complete file content (not diffs)\n" \
-                      "2) PEP8-compliant code\n" \
-                      "3) Structural elements (classes/functions) preserved\n" \
-                      "4) Key imports maintained"
-        
+class ChimeraError(Exception):
+    """Base exception for all Chimera errors with standardized structure."""
+    def __init__(self, message: str, details: Optional[dict] = None):
         super().__init__(message)
-        self.invalid_response = invalid_response
-        self.expected_schema = expected_schema
-        self.details = details
+        self.details = details or {}
+        self.timestamp = datetime.datetime.now()
+
+class ValidationPhaseError(ChimeraError):
+    """Base for errors occurring during response validation."""
+    def __init__(self, message: str, invalid_response: Any = None, 
+                 expected_schema: str = None, details: Optional[dict] = None):
+        full_details = (details or {}).copy()
+        full_details.update({
+            "invalid_response": invalid_response,
+            "expected_schema": expected_schema
+        })
+        super().__init__(message, full_details)
+
+class SchemaValidationError(ValidationPhaseError):
+    """Specific error when response fails schema validation."""
+    def __init__(self, error_type: str, field_path: str, 
+                 invalid_value: Any = None, details: Optional[dict] = None):
+        message = f"Schema validation failed: {error_type} at '{field_path}'"
+        full_details = (details or {}).copy()
+        full_details.update({
+            "error_type": error_type,
+            "field_path": field_path,
+            "invalid_value": invalid_value
+        })
+        super().__init__(message, details=full_details)
 # --- MODIFIED CLASS END ---
 
 # Note: The 'ContextAnalysisError' class from the original code is omitted here
 # as the Iteration #3 suggestion for error handling focused on a minimal set
 # of core exceptions.
+
+# The TokenBudgetExceededError is kept simple as per previous iterations,
+# but could be enhanced to inherit from ChimeraError with details if needed.
+class TokenBudgetExceededError(ChimeraError):
+    """Raised when token usage exceeds budget"""
+    def __init__(self, current_tokens: int, budget: int, details: Optional[Dict[str, Any]] = None):
+        error_details = {
+            "current_tokens": current_tokens,
+            "budget": budget,
+            **(details or {})
+        }
+        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used", details=error_details)
+
+# LLMResponseValidationError is now superseded by SchemaValidationError for schema issues,
+# but might be kept for other non-schema-related LLM errors if they arise.
+# For this update, we'll assume SchemaValidationError covers the primary need.
+# If LLMResponseValidationError is still used elsewhere, it might need to be updated
+# to inherit from ChimeraError and include details.
+# For now, we'll keep it minimal as per the prompt's focus.
+class LLMResponseValidationError(ValidationPhaseError):
+    """Raised when LLM response fails validation, with code-specific guidance."""
+    # This class now inherits from ValidationPhaseError for better structure.
+    # The specific logic for adding code-focused guidance is now handled within
+    # core.py's _analyze_validation_error, which is more context-aware.
+    # This class primarily serves as a structured wrapper for validation errors.
+    pass

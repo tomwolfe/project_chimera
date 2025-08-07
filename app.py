@@ -25,15 +25,17 @@ from src.config.persistence import ConfigPersistence
 # For this example, we'll assume they are accessible via core or a dedicated module.
 # If core.py raises its own exceptions, we might need to catch those.
 # Based on the LLM's suggestion, we'll catch ChimeraError and its subclasses.
-# Let's assume core.py now raises exceptions from src.exceptions.
-# If not, we might need to adjust the except block.
-# For now, let's assume core.py raises exceptions that are subclasses of ChimeraError.
+# Let's assume core.py raises exceptions that are subclasses of ChimeraError.
 # If core.py directly raises TokenBudgetExceededError, we'll catch that too.
 # The LLM suggestion implies core.py will raise ChimeraError subclasses.
 # REMOVED: The entire try-except block for importing exceptions.
 # We now rely on src.exceptions and core.py to provide these.
-from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError
+from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError, SchemaValidationError # Added SchemaValidationError import
+# --- ADDED IMPORT FOR SUGGESTION 1 ---
+from src.constants import SELF_ANALYSIS_KEYWORDS
+# --- END ADDED IMPORT ---
 
+import traceback # Needed for error handling in app.py
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -648,6 +650,29 @@ if run_button_clicked:
                     "UNRESOLVED_CONFLICT": None,
                     # Add specific error details if available from the exception
                     "error_details": getattr(e, 'details', {})
+                }
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            except SchemaValidationError as e: # Catch the new specific validation error
+                if 'rich_output_buffer' in locals():
+                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                else:
+                    st.session_state.process_log_output_text = ""
+
+                status.update(label=f"Socratic Debate Failed: Schema Validation Error", state="error", expanded=True)
+                st.error(f"**Schema Validation Error:** {e}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                # Populate final_answer_output with error details
+                st.session_state.final_answer_output = {
+                    "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
+                    "RATIONALE": f"A schema validation error occurred: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "CONFLICT_RESOLUTION": None,
+                    "UNRESOLVED_CONFLICT": None,
+                    "error_details": e.details # Use details from the specific exception
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
