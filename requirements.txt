@@ -1,10 +1,10 @@
 # requirements.txt
 streamlit
 google-genai
-typer[all] # Includes Rich for better CLI output
+typer[all]  # Includes Rich for better CLI output
 pyyaml
-pydantic>=2.0 # Ensure Pydantic v2 for model_validator and other features
-rich # Explicitly add rich for app.py and core.py
+pydantic>=2.0  # Ensure Pydantic v2 for model_validator and other features
+rich<14  # Pin to version compatible with flask-limiter
  
 # Add linters and formatters for development/pre-commit
 black
