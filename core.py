@@ -15,11 +15,12 @@ import logging
 from rich.console import Console
 from pydantic import BaseModel, Field, ValidationError, model_validator, validator
 import streamlit as st
-from typing import List, Dict, Tuple, Any, Callable, Optional
+from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 from llm_provider import GeminiProvider, LLMProviderError, GeminiAPIError, LLMUnexpectedError
 from src.utils.output_parser import LLMOutputParser
 from src.utils.code_validator import validate_code_output_batch
-from src.models import PersonaConfig, ReasoningFrameworkConfig
+# Import all necessary models
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
 
 class TokenBudgetExceededError(LLMProviderError):
     """Raised when an LLM call would exceed the total token budget."""
@@ -88,7 +89,7 @@ class SocraticDebate:
             self.gemini_provider = gemini_provider
         else:
             self.gemini_provider = GeminiProvider(api_key=api_key, model_name=model_name)
-        self.parser = LLMOutputParser(self.gemini_provider)
+        self.parser = LLMOutputParser() # Initialize without a specific schema model
         self.cumulative_token_usage = 0
         self.cumulative_usd_cost = 0.0
         self.intermediate_steps: Dict[str, Any] = {}
@@ -164,7 +165,7 @@ class SocraticDebate:
         return truncated_text
 
     def prepare_context(self) -> str:
-        """Prepares the codebase context, prioritizing Python code and truncating to fit budget."""
+        """Prioritizes and truncates codebase context to fit within budget."""
         if not self.codebase_context:
             return "No codebase context provided."
         context_budget = int(self.max_total_tokens_budget * self.context_token_budget_ratio)
@@ -202,7 +203,6 @@ class SocraticDebate:
     def _analyze_codebase_context(self) -> Dict[str, Any]:
         """
         Analyzes the codebase context using a dedicated persona.
-        CRE_001: Introduce a 'Context Analysis' step using a dedicated persona.
         """
         if not self.codebase_context:
             self._update_status("[yellow]No codebase context provided for analysis.[/yellow]")
@@ -221,38 +221,36 @@ class SocraticDebate:
 
         analysis_output_key = "Context_Analysis_Output"
         try:
-            raw_analysis_response = self._execute_persona_step(
+            # Pass ContextAnalysisOutput schema for validation
+            analysis_response = self._execute_persona_step(
                 "Context_Aware_Assistant",
                 analysis_prompt_gen,
                 analysis_output_key,
+                schema_model_for_validation=ContextAnalysisOutput, # Pass the schema model
                 update_current_thought=False,
-                is_final_answer_step=False
+                is_final_answer_step=False # This is not the final answer for the whole debate
             )
-            analysis_summary = {}
-            if raw_analysis_response:
-                try:
-                    analysis_summary = json.loads(raw_analysis_response)
-                    self._update_status("Codebase context analysis successful.")
-                except json.JSONDecodeError:
-                    self._update_status(f"[yellow]Warning: Failed to parse context analysis response as JSON. Using default summary.[/yellow]")
-                    analysis_summary = self._get_default_analysis_summary()
-                except Exception as e:
-                    self._update_status(f"[yellow]Warning: Unexpected error parsing context analysis response: {e}. Using default summary.[/yellow]")
-                    analysis_summary = self._get_default_analysis_summary()
-            else:
-                self._update_status("[yellow]Context analysis persona returned empty response. Using default summary.[/yellow]")
-                analysis_summary = self._get_default_analysis_summary()
-            if not self._validate_analysis_summary(analysis_summary):
-                self._update_status("[yellow]Codebase analysis summary validation failed. Using default context.[/yellow]")
+            
+            # Check for malformed blocks in the analysis response
+            if analysis_response and analysis_response.get("malformed_blocks"):
+                self._update_status(f"[yellow]Warning: Context analysis response contained malformed blocks. Using default summary.[/yellow]")
                 return self._get_default_analysis_summary()
-            return analysis_summary
+            
+            # If analysis_response is a dict and valid, return it.
+            if isinstance(analysis_response, dict):
+                self._update_status("Codebase context analysis successful.")
+                return analysis_response
+            else:
+                self._update_status("[yellow]Context analysis persona returned non-JSON or empty response. Using default summary.[/yellow]")
+                return self._get_default_analysis_summary()
+
         except (TokenBudgetExceededError, LLMProviderError, ValueError, RuntimeError, Exception) as e:
             error_message = f"[ERROR] Context analysis failed: {e}"
             self.intermediate_steps[f"{analysis_output_key}_Error"] = error_message
             self._update_status(error_message, state="error")
             return self._get_default_analysis_summary()
 
-    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False) -> Any:
+    def _execute_persona_step(self, persona_name: str, step_prompt_generator: Callable[[], str], output_key: str, max_retries_on_fail: int = 1, update_current_thought: bool = False, is_final_answer_step: bool = False, schema_model_for_validation: Optional[Type[BaseModel]] = None) -> Any:
         """Executes a single persona step, handling token budget, status updates, and parsing/validation errors."""
         persona = self._get_persona(persona_name)
         step_prompt = step_prompt_generator()
@@ -316,8 +314,8 @@ class SocraticDebate:
                 tokens_used_in_step = input_tokens + output_tokens
                 cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens)
                 
-                # --- START JSON SELF-CORRECTION LOOP (for is_final_answer_step) ---
-                if is_final_answer_step:
+                # --- START JSON SELF-CORRECTION LOOP (if schema_model_for_validation is provided) ---
+                if schema_model_for_validation:
                     # Loop for JSON repair attempts
                     while json_repair_attempts <= MAX_JSON_REPAIR_ATTEMPTS:
                         parsed_data = None
@@ -325,8 +323,8 @@ class SocraticDebate:
                         
                         if raw_response_text:
                             try:
-                                # Attempt to parse and validate the LLM's output
-                                parsed_data = self.parser.parse_and_validate(raw_response_text)
+                                # Attempt to parse and validate the LLM's output against the provided schema
+                                parsed_data = self.parser.parse_and_validate(raw_response_text, schema_model_for_validation)
                                 
                                 # If parse_and_validate returns malformed_blocks, it means it couldn't fully fix it.
                                 # We still want the LLM to try and fix it itself.
@@ -335,17 +333,17 @@ class SocraticDebate:
                                     first_malformed_block = parsed_data["malformed_blocks"][0]
                                     if isinstance(first_malformed_block, dict):
                                         parsing_error_details = first_malformed_block
-                                    else: # Fallback if malformed_blocks contains strings
+                                    else: # Fallback if malformed_blocks contains strings (shouldn't happen with new parser)
                                         parsing_error_details = {"type": "UNKNOWN_MALFORMED_BLOCK", "message": str(first_malformed_block), "raw_string_snippet": str(first_malformed_block)[:500]}
                                     raise ValueError(f"Malformed blocks detected by parser: {parsing_error_details['message']}")
                                 # If no malformed blocks, parsing was successful, break loop
                                 break 
-                            except Exception as parse_err:
+                            except Exception as parse_err: # Catch any error during parsing/validation
                                 # Capture details of the parsing error
                                 parsing_error_details = {
                                     "type": "JSON_PARSE_ERROR",
                                     "message": str(parse_err),
-                                    "raw_string_snippet": raw_response_text[:1000] + ("..." if len(raw_response_text) > 1000 else "")
+                                    "raw_string_snippet": self.parser._escape_json_string_value(raw_response_text[:1000] + ("..." if len(raw_response_text) > 1000 else ""))
                                 }
                                 self._update_status(f"[yellow]Warning: JSON parsing failed for '{current_persona_name}'. Attempting self-correction (Attempt {json_repair_attempts + 1}/{MAX_JSON_REPAIR_ATTEMPTS + 1}). Error: {parse_err}[/yellow]", state="running")
                         else:
@@ -364,44 +362,49 @@ class SocraticDebate:
                             self.intermediate_steps[f"{current_output_key}_Error"] = error_message
                             self._update_status(error_message, state="error")
                             # Construct a final error dictionary that is valid JSON
-                            parsed_data = {
-                                "COMMIT_MESSAGE": "Parsing error (Max retries)",
-                                "RATIONALE": self.parser._escape_json_string_value(f"Failed to parse LLM output as JSON after multiple attempts. Error: {parsing_error_details['message']}\nRaw output: {raw_response_text[:500]}..."),
-                                "CODE_CHANGES": [],
-                                "CONFLICT_RESOLUTION": None,
-                                "UNRESOLVED_CONFLICT": None,
-                                "malformed_blocks": [parsing_error_details]
-                            }
+                            # The parse_and_validate method already returns a structured error dict.
+                            # We just need to ensure it's the last one.
+                            if parsed_data is None: # If no data was ever parsed
+                                parsed_data = {
+                                    "COMMIT_MESSAGE": "Parsing error (Max retries)",
+                                    "RATIONALE": self.parser._escape_json_string_value(f"Failed to parse LLM output as JSON after multiple attempts. Error: {parsing_error_details['message']}\nRaw output: {raw_response_text[:500]}..."),
+                                    "CODE_CHANGES": [],
+                                    "CONFLICT_RESOLUTION": None,
+                                    "UNRESOLVED_CONFLICT": None,
+                                    "malformed_blocks": [parsing_error_details]
+                                }
                             break # Exit the while loop and return the error dict
                         
                         # Prepare self-correction prompt
+                        # Dynamically get the schema definition for the prompt
+                        schema_json_str = json.dumps(schema_model_for_validation.model_json_schema(), indent=2)
+
                         correction_prompt = (
                             f"Your previous output for the final answer was malformed and could not be parsed as valid JSON. "
-                            f"The specific error was: {parsing_error_details['message']}\n\n"
-                            f"Your malformed output was:\n```\n{raw_response_text}\n```\n\n"
-                            f"Please regenerate the *entire* JSON object, ensuring it is syntactically correct and strictly adheres to the schema. "
-                            f"Do NOT include any conversational text or markdown outside the JSON block. "
-                            f"The schema is:\n\n"
-                            f"```json\n{{\n  \"COMMIT_MESSAGE\": \"<string>\",\n  \"RATIONALE\": \"<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>\",\n  \"CODE_CHANGES\": [\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"ADD | MODIFY | REMOVE\",\n      \"FULL_CONTENT\": \"<string>\" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\\".)\n    }},\n    {{\n      \"FILE_PATH\": \"<string>\",\n      \"ACTION\": \"REMOVE\",\n      \"LINES\": [\"<string>\", \"<string>\"] (Required for REMOVE action, representing the specific lines to be removed)\n    }}\n  ],\n  \"CONFLICT_RESOLUTION\": \"<string>\" (Optional),\n  \"UNRESOLVED_CONFLICT\": \"<string>\" (Optional)\n}}\n```\n\n"
-                            f"Ensure all double quotes within string values are escaped as `\\\"` and newlines as `\\n`. Pay extreme attention to commas (`,`) between all elements and key-value pairs."
+                            f"The specific error was: '{parsing_error_details['message']}'. "
+                            f"This indicates a syntax issue, likely a missing comma between JSON elements or incorrect structure. "
+                            f"Please review the schema and regenerate the *entire* JSON object. "
+                            f"Pay extreme attention to ensuring all key-value pairs and array elements are correctly separated by commas and that the overall structure is valid JSON.\n\n"
+                            f"The expected JSON schema is:\n```json\n{schema_json_str}\n```\n\n"
+                            f"Your previous malformed output snippet:\n```\n{raw_response_text}\n```\n\n"
+                            f"Please regenerate the JSON object ensuring strict adherence to the schema and valid JSON syntax. Do NOT include any conversational text or markdown outside the JSON block."
                         )
                         
                         # Store the correction prompt for debugging/intermediate steps
                         self.intermediate_steps[f"{current_output_key}_Correction_Prompt_Attempt_{json_repair_attempts}"] = correction_prompt
 
                         # Call LLM again with correction prompt
-                        # Use the same persona, but with the specific correction prompt
-                        raw_response_text, input_tokens, output_tokens = self.gemini_provider.generate(
+                        raw_response_text, input_tokens_corr, output_tokens_corr = self.gemini_provider.generate(
                             prompt=correction_prompt,
                             system_prompt=current_persona.system_prompt,
                             temperature=current_persona.temperature, # Keep original temperature
                             max_tokens=max_output_for_request, # Keep original max tokens
                             _status_callback=self.status_callback
                         )
-                        tokens_used_in_step += (input_tokens + output_tokens) # Add tokens from correction attempt
-                        cost_this_step += self.gemini_provider.calculate_usd_cost(input_tokens, output_tokens) # Add cost
+                        tokens_used_in_step += (input_tokens_corr + output_tokens_corr) # Add tokens from correction attempt
+                        cost_this_step += self.gemini_provider.calculate_usd_cost(input_tokens_corr, output_tokens_corr) # Add cost
                         self.intermediate_steps[f"{current_output_key}_Correction_Output_Attempt_{json_repair_attempts}"] = raw_response_text
-                        self._update_status(f"Self-correction attempt {json_repair_attempts} for '{current_persona_name}' completed. Used {input_tokens + output_tokens} tokens in this sub-step.",
+                        self._update_status(f"Self-correction attempt {json_repair_attempts} for '{current_persona_name}' completed. Used {input_tokens_corr + output_tokens_corr} tokens in this sub-step.",
                                             current_total_tokens=self.cumulative_token_usage + tokens_used_in_step, # Show cumulative including this sub-step
                                             current_total_cost=self.cumulative_usd_cost + cost_this_step) # Show cumulative including this sub-step
                     
@@ -409,13 +412,13 @@ class SocraticDebate:
                     self.intermediate_steps[current_output_key] = parsed_data
                     self.cumulative_token_usage += tokens_used_in_step
                     self.cumulative_usd_cost += cost_this_step
-                    self.final_answer = parsed_data
+                    if is_final_answer_step: self.final_answer = parsed_data
                     self._update_status(f"{current_persona_name} completed. Used {tokens_used_in_step} tokens.",
                                         current_total_tokens=self.cumulative_token_usage,
                                         current_total_cost=self.cumulative_usd_cost)
                     return parsed_data
                 # --- END JSON SELF-CORRECTION LOOP ---
-                else: # Not a final answer step, return raw text, no JSON parsing needed
+                else: # No schema_model_for_validation provided, just return raw text
                     if raw_response_text:
                         self.intermediate_steps[current_output_key] = raw_response_text
                     else:
@@ -509,7 +512,7 @@ class SocraticDebate:
                      f"--- END DEBATE ---"
                  )
             
-            arbitrator_output_dict = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True)
+            arbitrator_output_dict = self._execute_persona_step("Impartial_Arbitrator", arbitrator_prompt_gen, "Impartial_Arbitrator_Output", is_final_answer_step=True, schema_model_for_validation=LLMOutput)
             
             devil_advocate_input = json.dumps(arbitrator_output_dict, indent=2) if isinstance(arbitrator_output_dict, dict) else str(arbitrator_output_dict)
 
@@ -543,18 +546,12 @@ class SocraticDebate:
             raise
 
     def _validate_analysis_summary(self, summary: Dict[str, Any]) -> bool:
-        """REF_005: Validate the structure and content of the analysis summary."""
-        required_keys = ["key_modules", "security_concerns", "architectural_patterns", "performance_bottlenecks"]
-        if not isinstance(summary, dict):
+        """Validate the structure and content of the analysis summary using Pydantic."""
+        try:
+            ContextAnalysisOutput(**summary)
+            return True
+        except ValidationError:
             return False
-        if not all(key in summary for key in required_keys):
-            return False
-        if not isinstance(summary["key_modules"], list) or \
-           not isinstance(summary["security_concerns"], list) or \
-           not isinstance(summary["architectural_patterns"], list) or \
-           not isinstance(summary["performance_bottlenecks"], list):
-            return False
-        return True
 
     def _get_default_analysis_summary(self) -> Dict[str, Any]:
         """Provides a default summary if validation fails or analysis is skipped."""

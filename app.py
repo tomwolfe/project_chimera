@@ -12,8 +12,9 @@ import yaml
 import logging
 from rich.console import Console
 import core
-from src.utils import LLMOutputParser, validate_code_output_batch
-from src.models import PersonaConfig, ReasoningFrameworkConfig
+# Import models from src.models for consistency
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
+from src.utils import LLMOutputParser, validate_code_output_batch # Import LLMOutputParser
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -65,7 +66,7 @@ def strip_ansi_codes(text):
     return ansi_escape_re.sub('', text)
 
 # --- Helper function for Markdown Report Generation ---
-def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any]) -> str:
+def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_steps: Dict[str, Any], process_log_output: str, config_params: Dict[str, Any], persona_audit_log: List[Dict[str, Any]]) -> str:
     report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     md_content = f"# Project Chimera Socratic Debate Report\n\n"
     md_content += f"**Date:** {report_date}\n"
@@ -77,6 +78,17 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
     md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n"
     md_content += f"*   **Reasoning Framework:** {config_params.get('domain', 'N/A')}\n"
     md_content += "---\n\n"
+
+    if persona_audit_log:
+        md_content += "## Persona Configuration Audit Trail (Current Session)\n\n"
+        md_content += "| Timestamp | Persona | Parameter | Old Value | New Value |\n"
+        md_content += "|---|---|---|---|---|\n"
+        for entry in persona_audit_log:
+            old_val = str(entry.get('old_value')).replace('\n', '\\n')[:50] + '...' if len(str(entry.get('old_value'))) > 50 else str(entry.get('old_value')).replace('\n', '\\n')
+            new_val = str(entry.get('new_value')).replace('\n', '\\n')[:50] + '...' if len(str(entry.get('new_value'))) > 50 else str(entry.get('new_value')).replace('\n', '\\n')
+            md_content += f"| {entry.get('timestamp')} | {entry.get('persona')} | {entry.get('parameter')} | `{old_val}` | `{new_val}` |\n"
+        md_content += "\n---\n\n"
+
     md_content += "## Process Log\n\n"
     md_content += "```text\n"
     md_content += strip_ansi_codes(process_log_output)
@@ -157,6 +169,8 @@ def reset_app_state():
     st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
     st.session_state.example_selector_widget = st.session_state.selected_example_name
     st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
+    st.session_state.persona_audit_log = [] # Reset audit log
+    st.session_state.persona_edit_mode = False # Reset edit mode
 
 # --- Custom Framework File Management ---
 CUSTOM_FRAMEWORKS_DIR = "custom_frameworks"
@@ -215,14 +229,25 @@ def save_current_framework_to_file(name: str):
     if not framework_name_sanitized:
         st.error("Invalid framework name provided after sanitization.")
         return
+    
+    # Get the personas currently active in the selected framework, including any UI edits
+    current_persona_names_in_set = st.session_state.persona_sets.get(st.session_state.selected_persona_set, [])
+    current_personas_dict = {
+        p_name: st.session_state.all_personas[p_name].model_dump()
+        for p_name in current_persona_names_in_set if p_name in st.session_state.all_personas
+    }
+
+    # If this is an existing custom framework, increment its version
+    version = 1
+    if framework_name_sanitized in st.session_state.all_custom_frameworks_data:
+        version = st.session_state.all_custom_frameworks_data[framework_name_sanitized].get('version', 0) + 1
+
     try:
-        current_personas_dict = {p_name: p.model_dump() for p_name, p in st.session_state.all_personas.items() if p_name in st.session_state.personas}
-        current_persona_sets_dict = {set_name: members for set_name, members in st.session_state.persona_sets.items() if set_name == st.session_state.selected_persona_set}
         temp_config_validation = ReasoningFrameworkConfig(
             framework_name=name,
             personas={p_name: PersonaConfig(**p_data) for p_name, p_data in current_personas_dict.items()},
-            persona_sets=current_persona_sets_dict,
-            version=1
+            persona_sets={st.session_state.selected_persona_set: current_persona_names_in_set}, # Only save the current set
+            version=version
         )
         config_to_save = temp_config_validation.model_dump()
     except Exception as e:
@@ -234,16 +259,31 @@ def save_current_framework_to_file(name: str):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(config_to_save, f, indent=2)
         st.toast(f"Framework '{name}' saved successfully to '{filepath}'!")
-        if framework_name_sanitized not in st.session_state.all_custom_frameworks_data:
-             st.session_state.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
+        
+        # Update session state with the new/updated custom framework
+        st.session_state.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
+        if framework_name_sanitized not in st.session_state.available_domains:
              st.session_state.available_domains.append(framework_name_sanitized)
-        else:
-             st.session_state.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
+        
+        st.session_state.selected_persona_set = framework_name_sanitized # Select the newly saved framework
+        st.rerun() # Rerun to update UI with new framework selected
     except OSError as e:
         st.error(f"Error saving framework '{name}' to '{filepath}': {e}")
     except Exception as e:
         st.error(f"An unexpected error occurred while saving framework '{name}': {e}")
 
+# --- Persona Change Logging ---
+def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_value: Any):
+    """Logs a change to a persona parameter in the session audit log."""
+    st.session_state.persona_audit_log.append({
+        "timestamp": datetime.datetime.now().isoformat(),
+        "persona": persona_name,
+        "parameter": parameter,
+        "old_value": old_value,
+        "new_value": new_value
+    })
+
+# --- Initialize Session State ---
 if 'all_custom_frameworks_data' not in st.session_state:
     ensure_custom_frameworks_dir()
     st.session_state.all_custom_frameworks_data = {}
@@ -272,6 +312,7 @@ if "all_personas" not in st.session_state:
         st.session_state.available_domains = ["General"]
         st.session_state.selected_persona_set = "General"
 
+# Initialize other session state variables
 if "api_key_input" not in st.session_state:
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
 if "user_prompt_input" not in st.session_state:
@@ -304,6 +345,10 @@ if "example_selector_widget" not in st.session_state:
     st.session_state.example_selector_widget = st.session_state.selected_example_name
 if "selected_persona_set_widget" not in st.session_state:
     st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
+if "persona_audit_log" not in st.session_state: # NEW: Audit log
+    st.session_state.persona_audit_log = []
+if "persona_edit_mode" not in st.session_state: # NEW: Edit mode toggle
+    st.session_state.persona_edit_mode = False
 
 with st.sidebar:
     st.header("Configuration")
@@ -398,10 +443,13 @@ with col1:
     )
     st.session_state.selected_persona_set = selected_framework_for_widget
 
+    # Load personas for the selected framework
     if st.session_state.selected_persona_set:
         if st.session_state.selected_persona_set in st.session_state.all_custom_frameworks_data:
             custom_data = st.session_state.all_custom_frameworks_data[st.session_state.selected_persona_set]
-            st.session_state.all_personas.update({name: PersonaConfig(**data) for name, data in custom_data.get('personas', {}).items()})
+            # Update all_personas with custom framework's personas
+            for name, data in custom_data.get('personas', {}).items():
+                st.session_state.all_personas[name] = PersonaConfig(**data)
             st.session_state.persona_sets.update(custom_data.get('persona_sets', {}))
             try:
                 current_domain_persona_names = st.session_state.persona_sets.get(st.session_state.selected_persona_set, [])
@@ -420,7 +468,7 @@ with col1:
     new_framework_name_input = st.text_input("Enter a name for your current framework:", key='save_framework_input')
     if st.button("Save Current Framework") and new_framework_name_input:
         save_current_framework_to_file(new_framework_name_input)
-        st.rerun()
+        # Rerun is handled inside save_current_framework_to_file
 
     st.subheader("Load Framework")
     custom_framework_names = list(st.session_state.all_custom_frameworks_data.keys())
@@ -440,7 +488,9 @@ with col1:
     if st.button("Load Selected Framework") and selected_framework_to_load:
         if selected_framework_to_load in st.session_state.all_custom_frameworks_data:
             loaded_config_data = st.session_state.all_custom_frameworks_data[selected_framework_to_load]
-            st.session_state.all_personas.update({name: PersonaConfig(**data) for name, data in loaded_config_data.get('personas', {}).items()})
+            # Update all_personas with loaded custom framework's personas
+            for name, data in loaded_config_data.get('personas', {}).items():
+                st.session_state.all_personas[name] = PersonaConfig(**data)
             st.session_state.persona_sets.update(loaded_config_data.get('persona_sets', {}))
             try:
                 current_domain_persona_names = st.session_state.persona_sets.get(selected_framework_to_load, [])
@@ -501,6 +551,81 @@ with col2:
         st.session_state.codebase_context = {}
         st.session_state.uploaded_files = []
 
+# --- NEW: Persona Editing UI ---
+st.markdown("---")
+with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode):
+    st.session_state.persona_edit_mode = True # Keep expander open if user interacts
+    st.info("Edit persona parameters for the **currently selected framework**. Changes are temporary unless saved as a custom framework.")
+    
+    # Sort personas for consistent display
+    sorted_persona_names = sorted(st.session_state.personas.keys())
+
+    for p_name in sorted_persona_names:
+        persona: PersonaConfig = st.session_state.all_personas[p_name] # Get the PersonaConfig object
+
+        with st.expander(f"**{persona.name.replace('_', ' ')}**", expanded=False):
+            st.markdown(f"**Description:** {persona.description}")
+            
+            # System Prompt
+            new_system_prompt = st.text_area(
+                "System Prompt",
+                value=persona.system_prompt,
+                height=200,
+                key=f"system_prompt_{p_name}",
+                help="The core instructions for this persona."
+            )
+            if new_system_prompt != persona.system_prompt:
+                _log_persona_change(p_name, "system_prompt", persona.system_prompt, new_system_prompt)
+                persona.system_prompt = new_system_prompt
+
+            # Temperature
+            new_temperature = st.slider(
+                "Temperature",
+                min_value=0.0,
+                max_value=1.0,
+                value=persona.temperature,
+                step=0.05,
+                key=f"temperature_{p_name}",
+                help="Controls the randomness of the output. Lower values mean less random."
+            )
+            if new_temperature != persona.temperature:
+                _log_persona_change(p_name, "temperature", persona.temperature, new_temperature)
+                persona.temperature = new_temperature
+
+            # Max Tokens
+            new_max_tokens = st.number_input(
+                "Max Output Tokens",
+                min_value=1,
+                max_value=8192, # Max tokens for Gemini models can be higher
+                value=persona.max_tokens,
+                step=128,
+                key=f"max_tokens_{p_name}",
+                help="Maximum number of tokens the LLM can generate in response."
+            )
+            if new_max_tokens != persona.max_tokens:
+                _log_persona_change(p_name, "max_tokens", persona.max_tokens, new_max_tokens)
+                persona.max_tokens = new_max_tokens
+            
+            # Reset button for individual persona
+            if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}"):
+                # Reload original persona config from the initial load
+                original_personas, _, _, _ = core.load_personas() # Reload from personas.yaml
+                if p_name in original_personas:
+                    original_persona_config = original_personas[p_name]
+                    if persona.system_prompt != original_persona_config.system_prompt:
+                        _log_persona_change(p_name, "system_prompt", persona.system_prompt, original_persona_config.system_prompt)
+                        persona.system_prompt = original_persona_config.system_prompt
+                    if persona.temperature != original_persona_config.temperature:
+                        _log_persona_change(p_name, "temperature", persona.temperature, original_persona_config.temperature)
+                        persona.temperature = original_persona_config.temperature
+                    if persona.max_tokens != original_persona_config.max_tokens:
+                        _log_persona_change(p_name, "max_tokens", persona.max_tokens, original_persona_config.max_tokens)
+                        persona.max_tokens = original_persona_config.max_tokens
+                    st.toast(f"Persona '{p_name.replace('_', ' ')}' reset to default.")
+                    st.rerun() # Rerun to update UI widgets
+
+# --- END NEW: Persona Editing UI ---
+
 st.markdown("---")
 run_col, reset_col = st.columns([0.8, 0.2])
 with run_col:
@@ -552,23 +677,14 @@ if run_button_clicked:
             final_total_tokens = 0
             final_total_cost = 0.0
             try:
-                all_personas = st.session_state.all_personas
-                persona_sets = st.session_state.persona_sets
+                # Ensure personas_for_run uses the potentially modified PersonaConfig objects from all_personas
                 domain_for_run = st.session_state.selected_persona_set
-                if domain_for_run in st.session_state.all_custom_frameworks_data:
-                    custom_data = st.session_state.all_custom_frameworks_data[domain_for_run]
-                    current_personas_in_framework = {name: PersonaConfig(**data) for name, data in custom_data.get('personas', {}).items()}
-                    personas_for_run_names = custom_data.get('persona_sets', {}).get(domain_for_run, [])
-                    personas_for_run = {name: current_personas_in_framework[name] for name in personas_for_run_names if name in current_personas_in_framework}
-                elif domain_for_run in persona_sets:
-                    current_domain_persona_names = persona_sets.get(domain_for_run, [])
-                    personas_for_run = {name: all_personas[name] for name in current_domain_persona_names if name in all_personas}
-                else:
-                    personas_for_run = {}
+                current_domain_persona_names = st.session_state.persona_sets.get(domain_for_run, [])
+                personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
+
                 if not personas_for_run:
                     raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
                 
-                # MODIFIED: Removed _status_callback from GeminiProvider init
                 gemini_provider_instance = core.GeminiProvider(
                     api_key=st.session_state.api_key_input,
                     model_name=st.session_state.selected_model_selectbox
@@ -579,9 +695,9 @@ if run_button_clicked:
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
-                        personas=personas_for_run,
-                        all_personas=all_personas,
-                        persona_sets=persona_sets,
+                        personas=personas_for_run, # Pass the potentially modified personas
+                        all_personas=st.session_state.all_personas, # Pass all personas for fallback
+                        persona_sets=st.session_state.persona_sets,
                         persona_sequence=st.session_state.persona_sequence,
                         domain=domain_for_run,
                         gemini_provider=gemini_provider_instance,
@@ -611,7 +727,7 @@ if run_button_clicked:
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                # MODIFIED: final_answer_output is now a dict, so populate it with error info
+                # final_answer_output is now a dict, so populate it with error info
                 st.session_state.final_answer_output = {
                     "COMMIT_MESSAGE": "Debate Failed",
                     "RATIONALE": f"Error during debate: {e}",
@@ -639,7 +755,8 @@ if st.session_state.debate_ran:
             final_answer=st.session_state.final_answer_output,
             intermediate_steps=st.session_state.intermediate_steps_output,
             process_log_output=st.session_state.process_log_output_text,
-            config_params=st.session_state.last_config_params
+            config_params=st.session_state.last_config_params,
+            persona_audit_log=st.session_state.persona_audit_log # Pass audit log
         )
         st.download_button(
             label="Download Full Report (Markdown)",
@@ -664,7 +781,6 @@ if st.session_state.debate_ran:
     # --- END ADDED: Download Buttons ---
 
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
-        # MODIFIED: final_answer_output is now expected to be a dictionary
         parsed_data = st.session_state.final_answer_output 
         
         validation_results = {'issues': [], 'malformed_blocks': []}
@@ -672,7 +788,6 @@ if st.session_state.debate_ran:
         if isinstance(parsed_data, dict):
             validation_results['malformed_blocks'] = parsed_data.get('malformed_blocks', [])
             
-            # MODIFIED: Use uppercase key for CODE_CHANGES
             if isinstance(parsed_data.get('CODE_CHANGES'), list) and parsed_data.get('CODE_CHANGES'): 
                 try:
                     code_validation_issues_by_file = validate_code_output_batch(parsed_data, st.session_state.get('codebase_context', {}))
@@ -684,9 +799,9 @@ if st.session_state.debate_ran:
         else:
             st.error(f"Cannot display structured output: Final answer is not a valid structured dictionary. Raw output: {parsed_data}")
             parsed_data = {
-                "COMMIT_MESSAGE": "Error: Output not structured.", # MODIFIED: Use uppercase key
-                "RATIONALE": f"Error: Output not structured. Raw output: {parsed_data}", # MODIFIED: Use uppercase key
-                "CODE_CHANGES": [], # MODIFIED: Use uppercase key
+                "COMMIT_MESSAGE": "Error: Output not structured.",
+                "RATIONALE": f"Error: Output not structured. Raw output: {parsed_data}",
+                "CODE_CHANGES": [],
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,
                 "malformed_blocks": [f"Final answer was not a dictionary. Raw: {parsed_data}"]
@@ -697,7 +812,7 @@ if st.session_state.debate_ran:
         summary_col1, summary_col2 = st.columns(2)
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_data.get('COMMIT_MESSAGE', 'Not generated.'), language='text') # MODIFIED: Use uppercase key
+            st.code(parsed_data.get('COMMIT_MESSAGE', 'Not generated.'), language='text')
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -705,13 +820,13 @@ if st.session_state.debate_ran:
             st.metric("Total Tokens Consumed", f"{total_tokens:,}")
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         st.markdown("**Rationale**")
-        st.markdown(parsed_data.get('RATIONALE', 'Not generated.')) # MODIFIED: Use uppercase key
-        if parsed_data.get('CONFLICT_RESOLUTION'): # MODIFIED: Use uppercase key
+        st.markdown(parsed_data.get('RATIONALE', 'Not generated.'))
+        if parsed_data.get('CONFLICT_RESOLUTION'):
             st.markdown("**Conflict Resolution**")
-            st.info(parsed_data['CONFLICT_RESOLUTION']) # MODIFIED: Use uppercase key
-        if parsed_data.get('UNRESOLVED_CONFLICT'): # MODIFIED: Use uppercase key
+            st.info(parsed_data['CONFLICT_RESOLUTION'])
+        if parsed_data.get('UNRESOLVED_CONFLICT'):
             st.markdown("**Unresolved Conflict**")
-            st.warning(parsed_data['UNRESOLVED_CONFLICT']) # MODIFIED: Use uppercase key
+            st.warning(parsed_data['UNRESOLVED_CONFLICT'])
 
         with st.expander("✅ Validation & Quality Report", expanded=True):
             if not validation_results['issues'] and not validation_results['malformed_blocks']:
@@ -723,10 +838,8 @@ if st.session_state.debate_ran:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(validation_results['malformed_blocks'])} block(s) that could not be parsed. The raw output is provided as a fallback.")
 
         st.subheader("Proposed Code Changes")
-        # MODIFIED: Use uppercase key for CODE_CHANGES
         if not parsed_data.get('CODE_CHANGES') and not validation_results['malformed_blocks']: 
             st.info("No code changes were proposed.")
-        # MODIFIED: Use uppercase key for CODE_CHANGES
         for change in parsed_data.get('CODE_CHANGES', []): 
             with st.expander(f"📝 **{change.get('FILE_PATH', 'N/A')}** (`{change.get('ACTION', 'N/A')}`)", expanded=False):
                 st.write(f"**Action:** {change.get('ACTION')}")
@@ -760,7 +873,7 @@ if st.session_state.debate_ran:
                 token_count_key = f"{cleaned_step_key}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
                 with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
-                    # MODIFIED: If content is a dict (e.g., final answer), display as JSON
+                    # If content is a dict (e.g., final answer), display as JSON
                     if isinstance(content, dict):
                         st.json(content)
                     else:
