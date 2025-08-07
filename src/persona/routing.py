@@ -170,6 +170,27 @@ class PersonaRouter:
                         final_sequence.insert(arbitrator_index, persona_to_insert)
                         arbitrator_index += 1 # Adjust index for subsequent insertions
         
+        # --- Minimal 80/20 Refinement for Framework Selection ---
+        # Add a simple check to prevent common misclassifications based on prompt context.
+        # This avoids modifying personas.yaml or adding complex scoring.
+        
+        # prompt_lower is already defined earlier in the function scope.
+        
+        # Example: Prevent "building architect" from triggering Code_Architect
+        if "Code_Architect" in final_sequence:
+            if ("building architect" in prompt.lower() or "construction architect" in prompt.lower()) and \
+               ("software architect" not in prompt.lower() and "software" not in prompt.lower()):
+                
+                # logger is available from the top of the file
+                logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
+                final_sequence.remove("Code_Architect")
+                # Optionally, add a more general persona if a specific one is removed
+                if "Generalist_Assistant" not in final_sequence:
+                    final_sequence.append("Generalist_Assistant")
+        
+        # Add similar checks for other known problematic keyword overlaps if identified.
+        # --- End of Refinement ---
+
         # Ensure the final sequence is unique and maintains a logical order.
         # This step is important if multiple triggers add the same persona or if
         # the insertion logic creates duplicates.

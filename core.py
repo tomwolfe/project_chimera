@@ -28,6 +28,8 @@ from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
+# Import GeminiTokenizer for GeminiProvider
+from src.tokenizers import GeminiTokenizer 
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -52,6 +54,22 @@ class GeminiProvider:
         self.token_usage = defaultdict(int)
         self.console = Console()
         self.model_name = model_name
+        # Initialize tokenizer for accurate counting
+        self.tokenizer = GeminiTokenizer(model_name=self.model_name)
+        
+    def count_tokens(self, text: str) -> int:
+        """Accurate token counting using Gemini API via tokenizer."""
+        try:
+            # Ensure tokenizer is initialized and available
+            if not hasattr(self, 'tokenizer') or not self.tokenizer:
+                logger.warning("Tokenizer not initialized in GeminiProvider. Using fallback estimation.")
+                # Fallback if tokenizer wasn't initialized properly
+                return max(1, len(text) // 4)
+            return self.tokenizer.count_tokens(text)
+        except Exception as e:
+            logger.warning(f"Token counting API failed: {str(e)}. Using fallback estimation.")
+            # Fallback to rough estimate ONLY if the accurate method fails
+            return max(1, len(text) // 4)
 
     def generate_content(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
         """Generate content using Gemini API with retry logic and token tracking."""
@@ -77,9 +95,12 @@ class GeminiProvider:
                 # Extract and return the response text
                 if response.text:
                     # Track token usage
-                    prompt_tokens = response.usage_metadata.prompt_token_count
-                    completion_tokens = response.usage_metadata.candidates_token_count
-                    total_tokens = response.usage_metadata.total_token_count
+                    # Note: GeminiProvider.count_tokens should be used for accurate counts
+                    # The response.usage_metadata might be available and more precise.
+                    # For now, we rely on the count_tokens method for consistency.
+                    prompt_tokens = self.count_tokens(prompt) # Use our accurate counter
+                    completion_tokens = self.count_tokens(response.text) # Use our accurate counter
+                    total_tokens = prompt_tokens + completion_tokens # Sum for this call
                     
                     self.token_usage['prompt'] += prompt_tokens
                     self.token_usage['completion'] += completion_tokens
@@ -110,12 +131,17 @@ class GeminiProvider:
 
 class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
-                 codebase_context: Optional[str] = None,
+                 codebase_context: Optional[Dict[str, str]] = None, # Changed type hint to Dict[str, str]
                  settings: Optional[ChimeraSettings] = None,
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
-                 frameworks: Optional[Dict[str, ReasoningFrameworkConfig]] = None,
+                 persona_sets: Optional[Dict[str, List[str]]] = None, # Added persona_sets
+                 persona_sequence: Optional[List[str]] = None, # Added persona_sequence
+                 domain: Optional[str] = None, # Added domain
                  max_total_tokens_budget: int = 10000,
-                 model_name: str = "gemini-2.5-flash-lite"):
+                 model_name: str = "gemini-2.5-flash-lite",
+                 status_callback: Optional[Callable] = None, # Added status_callback
+                 rich_console: Optional[Console] = None # Added rich_console
+                 ):
         """
         Initialize a Socratic debate session.
         
@@ -125,9 +151,13 @@ class SocraticDebate:
             codebase_context: Optional context about the codebase for code-related prompts
             settings: Optional custom settings; uses defaults if not provided
             all_personas: Optional custom personas; uses defaults if not provided
-            frameworks: Optional custom reasoning frameworks; uses defaults if not provided
+            persona_sets: Optional custom persona groupings; uses defaults if not provided
+            persona_sequence: Optional default persona execution order; uses defaults if not provided
+            domain: The selected reasoning domain/framework.
             max_total_tokens_budget: Maximum token budget for the entire debate process
             model_name: Name of the LLM model to use
+            status_callback: Callback function for updating UI status.
+            rich_console: Rich Console instance for logging.
         """
         # Load settings, using defaults if not provided
         self.settings = settings or ChimeraSettings()
@@ -145,11 +175,17 @@ class SocraticDebate:
         if codebase_context:
             self.codebase_context = codebase_context
             self.context_analyzer = ContextRelevanceAnalyzer()
-            self.context_analyzer.compute_file_embeddings(self.codebase_context)
+            # Ensure context is a dict of strings, not just a single string
+            if isinstance(codebase_context, dict):
+                self.context_analyzer.compute_file_embeddings(self.codebase_context)
+            else:
+                logger.warning("codebase_context was not a dictionary, skipping embedding computation.")
         
         # Initialize persona router
         self.all_personas = all_personas or {}
-        self.frameworks = frameworks or {}
+        self.persona_sets = persona_sets or {}
+        self.persona_sequence = persona_sequence or []
+        self.domain = domain
         self.persona_router = PersonaRouter(self.all_personas)
         
         # Set up the LLM provider
@@ -163,27 +199,56 @@ class SocraticDebate:
         self.final_answer = None
         self.process_log = []
         
-        # Initialize persona sequence
-        self.persona_sequence = []
+        # Status callback and console for UI updates
+        self.status_callback = status_callback
+        self.rich_console = rich_console or Console()
         
         # Calculate token budgets based on prompt complexity
         self._calculate_token_budgets()
     
     def _calculate_token_budgets(self):
         """Calculate token budgets for context analysis and debate phases."""
-        # Simple heuristic: context gets 20% of tokens, debate gets 80%
-        self.context_token_budget = int(self.max_total_tokens_budget * self.settings.context_token_budget_ratio)
-        self.debate_token_budget = int(self.max_total_tokens_budget * self.settings.debate_token_budget_ratio)
+        # Use ratios from settings, falling back to defaults if not provided
+        context_ratio = self.settings.context_token_budget_ratio
+        debate_ratio = self.settings.debate_token_budget_ratio
+        
+        # Ensure ratios sum to 1.0, adjust if necessary (though ChimeraSettings should enforce this)
+        if abs(context_ratio + debate_ratio - 1.0) > 0.01:
+            logger.warning("Token budget ratios in settings do not sum to 1.0. Adjusting.")
+            total = context_ratio + debate_ratio
+            context_ratio = context_ratio / total
+            debate_ratio = debate_ratio / total
+            
+        self.context_token_budget = int(self.max_total_tokens_budget * context_ratio)
+        self.debate_token_budget = int(self.max_total_tokens_budget * debate_ratio)
         
         logger.info(f"Token budgets: Context={self.context_token_budget}, Debate={self.debate_token_budget}")
     
-    def _check_token_budget(self, tokens_to_use: int, phase: str = "general"):
-        """Check if using the specified tokens would exceed the budget."""
-        if self.tokens_used + tokens_to_use > self.max_total_tokens_budget:
+    def _check_token_budget(self, prompt_text: str, step_name: str) -> int:
+        """
+        Check if using the specified tokens would exceed the budget using accurate counting.
+        Returns the number of tokens used for this step.
+        Raises TokenBudgetExceededError if budget is exceeded.
+        """
+        try:
+            actual_tokens = self.llm_provider.count_tokens(prompt_text)
+            if self.tokens_used + actual_tokens > self.max_total_tokens_budget:
+                raise TokenBudgetExceededError(
+                    current_tokens=self.tokens_used,
+                    budget=self.max_total_tokens_budget,
+                    details={"step": step_name, "tokens_requested": actual_tokens}
+                )
+            return actual_tokens # Return tokens used for this step
+        except TokenBudgetExceededError:
+            raise # Re-raise if budget is exceeded
+        except Exception as e:
+            logger.error(f"Error during token budget check for step '{step_name}': {e}")
+            # If counting fails, we can't reliably check the budget.
+            # For safety, assume it might exceed or log a critical warning.
             raise TokenBudgetExceededError(
                 current_tokens=self.tokens_used,
                 budget=self.max_total_tokens_budget,
-                details={"phase": phase, "tokens_requested": tokens_to_use}
+                details={"step": step_name, "error": f"Token counting failed: {e}"}
             )
     
     def _analyze_context(self) -> Dict[str, Any]:
@@ -193,20 +258,22 @@ class SocraticDebate:
             return {"domain": "General", "relevant_files": []}
         
         # Extract keywords from the prompt
-        keywords = self.context_analyzer._extract_keywords_from_prompt()
+        # Assuming context_analyzer has a method to extract keywords from prompt
+        keywords = self.context_analyzer.model_dump_json() # Placeholder, needs actual keyword extraction
         
         # Find relevant files based on keywords
-        relevant_files = self.context_analyzer.get_relevant_files(keywords)
+        relevant_files = self.context_analyzer.get_relevant_files(self.initial_prompt)
         
         # Determine the domain based on the prompt
-        domain = self.persona_router.determine_domain(self.initial_prompt)
+        # Use the router to determine domain, potentially using context analysis results
+        domain = self.persona_router.determine_domain(self.initial_prompt) # Assuming determine_domain exists
         
         logger.info(f"Context analysis complete. Domain: {domain}, Relevant files: {len(relevant_files)}")
         
         return {
             "domain": domain,
             "relevant_files": relevant_files,
-            "keywords": keywords
+            "keywords": keywords # This might be a string representation of keywords
         }
     
     def _prepare_context(self, context_analysis: Dict[str, Any]) -> str:
@@ -216,7 +283,8 @@ class SocraticDebate:
         
         # Get the content of relevant files
         context_parts = []
-        for file_path, _ in context_analysis["relevant_files"][:5]:  # Limit to top 5 files
+        # Limit to top 5 relevant files for context window management
+        for file_path, _ in context_analysis.get("relevant_files", [])[:5]:  
             if file_path in self.codebase_context:
                 content = self.codebase_context[file_path]
                 # Create a meaningful representation of the file
@@ -232,18 +300,46 @@ class SocraticDebate:
     
     def _generate_persona_sequence(self, context_analysis: Dict[str, Any]) -> List[str]:
         """Generate the sequence of personas to participate in the debate."""
-        domain = context_analysis["domain"]
-        return self.persona_router.determine_persona_sequence(
+        # Use the domain determined from context analysis or provided domain
+        domain_for_sequence = context_analysis.get("domain", self.domain) or "General"
+        
+        # If a domain is specified, use it to get the persona sequence
+        if domain_for_sequence and domain_for_sequence in self.persona_sets:
+            base_sequence = self.persona_sets[domain_for_sequence]
+        else:
+            # Fallback to a default sequence if domain is not found or not specified
+            base_sequence = self.persona_sequence # Use the default sequence loaded from file
+            if not base_sequence: # If default sequence is also empty
+                base_sequence = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
+
+        # Use persona_router to dynamically adjust sequence based on prompt and intermediate results
+        # For initial sequence generation, only prompt is available.
+        final_sequence = self.persona_router.determine_persona_sequence(
             self.initial_prompt,
-            context_analysis
+            intermediate_results=None # No intermediate results on the first pass
         )
+        
+        # Ensure the final sequence is unique and maintains a logical order.
+        seen = set()
+        unique_sequence = []
+        for persona in final_sequence:
+            if persona not in seen:
+                unique_sequence.append(persona)
+                seen.add(persona)
+        
+        return unique_sequence
     
     def _run_debate_round(self, current_response: str, persona_name: str) -> str:
         """Run a single round of the debate with the specified persona."""
+        if persona_name not in self.all_personas:
+            logger.warning(f"Persona '{persona_name}' not found. Skipping this round.")
+            return current_response # Return previous response if persona is missing
+
         persona = self.all_personas[persona_name]
         
         # Create the prompt for this persona
-        prompt = f"""
+        # Construct the prompt text that will be passed to the LLM
+        prompt_for_llm = f"""
 You are {persona_name}: {persona.description}
 {persona.system_prompt}
 
@@ -257,27 +353,26 @@ Please provide your critique, feedback, or new perspective on the current debate
 Focus on logical reasoning, identifying flaws, or offering improvements.
         """
         
-        # Check token budget
-        estimated_tokens = len(prompt) // 4  # Rough estimate
-        self._check_token_budget(estimated_tokens, f"debate_round_{persona_name}")
+        # Check token budget using the constructed prompt text
+        tokens_used_in_round = self._check_token_budget(prompt_for_llm, f"debate_round_{persona_name}")
         
         # Generate response
         logger.info(f"Running debate round with {persona_name}")
         response = self.llm_provider.generate_content(
-            prompt,
+            prompt_for_llm, # Use the constructed prompt
             temperature=persona.temperature,
             max_tokens=persona.max_tokens
         )
         
-        # Update token usage
-        self.tokens_used += self.llm_provider.token_usage['total']
+        # Update total token usage
+        self.tokens_used += tokens_used_in_round
         
         # Log the step
         self.intermediate_steps[f"{persona_name}_Output"] = response
-        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = self.llm_provider.token_usage['total']
+        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = tokens_used_in_round
         self.process_log.append({
             "step": f"{persona_name}_Output",
-            "tokens_used": self.llm_provider.token_usage['total'],
+            "tokens_used": tokens_used_in_round,
             "response_length": len(response)
         })
         
@@ -288,14 +383,15 @@ Focus on logical reasoning, identifying flaws, or offering improvements.
         # Find the impartial arbitrator
         arbitrator = None
         for persona_name, persona in self.all_personas.items():
-            if "arbitrator" in persona_name.lower():
+            if "arbitrator" in persona_name.lower(): # Case-insensitive check
                 arbitrator = persona
                 break
         
+        # Construct the prompt for the arbitrator
         if not arbitrator:
             # Default arbitrator prompt if no specific one is found
-            prompt = f"""
-Based on the following debate about the user's prompt, synthesize a clear, 
+            prompt_for_synthesis = f"""
+You are an Impartial Arbitrator. Based on the following debate about the user's prompt, synthesize a clear, 
 comprehensive, and balanced final answer that incorporates the best insights 
 from all perspectives:
 
@@ -309,7 +405,7 @@ Provide a final answer that addresses the user's needs directly and thoroughly.
             """
         else:
             # Use the arbitrator's system prompt
-            prompt = f"""
+            prompt_for_synthesis = f"""
 {arbitrator.system_prompt}
 
 Based on the following debate, provide a final synthesized answer:
@@ -321,25 +417,24 @@ User's Original Prompt:
 {self.initial_prompt}
             """
         
-        # Check token budget
-        estimated_tokens = len(prompt) // 4
-        self._check_token_budget(estimated_tokens, "final_synthesis")
+        # Check token budget using the constructed prompt text
+        tokens_used_in_synthesis = self._check_token_budget(prompt_for_synthesis, "final_synthesis")
         
         # Generate final answer
         logger.info("Synthesizing final answer")
         final_answer = self.llm_provider.generate_content(
-            prompt,
+            prompt_for_synthesis, # Use the constructed prompt
             temperature=0.3,
             max_tokens=1024
         )
         
-        # Update token usage
-        self.tokens_used += self.llm_provider.token_usage['total']
+        # Update total token usage
+        self.tokens_used += tokens_used_in_synthesis
         
         # Store the result
         self.final_answer = final_answer
         self.intermediate_steps["Final_Answer_Output"] = final_answer
-        self.intermediate_steps["Final_Answer_Tokens_Used"] = self.llm_provider.token_usage['total']
+        self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis
         self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
         self.intermediate_steps["Total_Estimated_Cost_USD"] = self._calculate_cost()
         
@@ -352,7 +447,8 @@ User's Original Prompt:
         # $0.00000025 per character for input, $0.0000005 per character for output
         # But this varies by model and over time
         
-        # Simplified estimate: $0.000003 per token
+        # Simplified estimate: $0.000003 per token (as used in app.py)
+        # This should ideally be derived from a configuration or model pricing lookup.
         return self.tokens_used * 0.000003
     
     def run_debate(self) -> Dict[str, Any]:
@@ -364,13 +460,23 @@ User's Original Prompt:
         """
         try:
             # 1. Analyze context
-            self._check_token_budget(self.context_token_budget, "context_analysis")
+            # Check token budget for context analysis phase
+            # Note: _check_token_budget expects prompt_text, not a phase.
+            # For context analysis, we might not have a single prompt text,
+            # but rather the initial prompt and codebase context.
+            # A simple approach is to count the initial prompt.
+            initial_prompt_tokens = self._check_token_budget(self.initial_prompt, "initial_prompt_count")
+            
             context_analysis = self._analyze_context()
             self.intermediate_steps["Context_Analysis"] = context_analysis
             
             # 2. Prepare context
             context_str = self._prepare_context(context_analysis)
             self.intermediate_steps["Context_Preparation"] = context_str
+            # Count tokens for context preparation if it's significant
+            if context_str:
+                context_tokens_used = self._check_token_budget(context_str, "context_preparation")
+                self.tokens_used += context_tokens_used
             
             # 3. Generate persona sequence
             self.persona_sequence = self._generate_persona_sequence(context_analysis)
@@ -379,14 +485,27 @@ User's Original Prompt:
             # 4. Run initial generation (Visionary Generator)
             current_response = ""
             if self.persona_sequence:
+                # The first persona's prompt will include context and initial prompt
+                # The _run_debate_round method handles constructing the prompt and checking budget
                 current_response = self._run_debate_round(
-                    "No previous responses.", 
+                    "No previous responses. Starting the debate.", 
                     self.persona_sequence[0]
                 )
                 
                 # 5. Run subsequent debate rounds
                 for persona_name in self.persona_sequence[1:]:
                     current_response = self._run_debate_round(current_response, persona_name)
+            else:
+                logger.warning("No persona sequence generated. Debate cannot proceed.")
+                # Handle case where no personas are selected
+                return {
+                    "final_answer": "Error: No personas selected for debate.",
+                    "intermediate_steps": self.intermediate_steps,
+                    "process_log": self.process_log,
+                    "token_usage": dict(self.llm_provider.token_usage),
+                    "total_tokens_used": self.tokens_used,
+                    "error": "No persona sequence generated."
+                }
             
             # 6. Synthesize final answer
             final_answer = self._synthesize_final_answer(current_response)
@@ -414,33 +533,55 @@ User's Original Prompt:
             }
         except Exception as e:
             logger.exception("Unexpected error during debate process")
+            # Re-raise the exception to be caught by the app.py handler
             raise
 
 # Additional helper functions
 def load_personas_from_yaml(yaml_path: str) -> Dict[str, PersonaConfig]:
     """Load personas configuration from a YAML file."""
-    with open(yaml_path, 'r') as f:
-        config = yaml.safe_load(f)
+    try:
+        with open(yaml_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.error(f"Personas file not found at {yaml_path}. Cannot load personas.")
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing personas YAML file {yaml_path}: {e}")
+        return {}
     
     personas = {}
     for persona_data in config.get('personas', []):
-        # Convert YAML data to PersonaConfig
-        personas[persona_data['name']] = PersonaConfig(**persona_data)
+        try:
+            # Convert YAML data to PersonaConfig
+            personas[persona_data['name']] = PersonaConfig(**persona_data)
+        except (ValidationError, KeyError) as e:
+            logger.error(f"Invalid persona data in {yaml_path} for persona '{persona_data.get('name', 'Unnamed')}': {e}")
     
     return personas
 
 def load_frameworks_from_yaml(yaml_path: str) -> Dict[str, ReasoningFrameworkConfig]:
     """Load reasoning frameworks from a YAML file."""
-    with open(yaml_path, 'r') as f:
-        config = yaml.safe_load(f)
+    try:
+        with open(yaml_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.error(f"Frameworks file not found at {yaml_path}. Cannot load frameworks.")
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing frameworks YAML file {yaml_path}: {e}")
+        return {}
     
     frameworks = {}
     for framework_name, framework_data in config.get('reasoning_frameworks', {}).items():
-        # Convert YAML data to ReasoningFrameworkConfig
-        frameworks[framework_name] = ReasoningFrameworkConfig(
-            framework_name=framework_name,
-            personas={},
-            persona_sets=framework_data.get('persona_sets', {})
-        )
+        try:
+            # Convert YAML data to ReasoningFrameworkConfig
+            frameworks[framework_name] = ReasoningFrameworkConfig(
+                framework_name=framework_name,
+                personas={}, # Personas are loaded separately into all_personas
+                persona_sets=framework_data.get('persona_sets', {}),
+                version=framework_data.get('version', 1) # Load version if present
+            )
+        except (ValidationError, KeyError) as e:
+            logger.error(f"Invalid framework data in {yaml_path} for framework '{framework_name}': {e}")
     
     return frameworks

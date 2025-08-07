@@ -30,15 +30,9 @@ from src.config.persistence import ConfigPersistence
 # For now, let's assume core.py raises exceptions that are subclasses of ChimeraError.
 # If core.py directly raises TokenBudgetExceededError, we'll catch that too.
 # The LLM suggestion implies core.py will raise ChimeraError subclasses.
-# Let's add a placeholder for ChimeraError if it's not directly in core.py
-try:
-    from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError
-except ImportError:
-    # Define a placeholder if src.exceptions doesn't exist or isn't structured as expected
-    # This is a fallback if the suggested exception structure isn't fully implemented elsewhere.
-    class ChimeraError(Exception): pass
-    class LLMResponseValidationError(ChimeraError): pass
-    class TokenBudgetExceededError(ChimeraError): pass
+# REMOVED: The entire try-except block for importing exceptions.
+# We now rely on src.exceptions and core.py to provide these.
+from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError
 
 
 # --- Configuration Loading ---
@@ -373,7 +367,7 @@ with col1:
         }
         
         # Use PersonaManager's save_framework method (which internally uses ConfigPersistence)
-        if st.session_state.persona_manager.save_framework(new_framework_name_input, framework_config_to_save):
+        if st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data): # Pass current_active_personas_data
             # Update session state to reflect the newly saved framework
             # PersonaManager's save_framework should handle internal updates and reloading of custom frameworks
             # We might need to rerun to update the UI elements like the selectbox

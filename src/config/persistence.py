@@ -1,3 +1,4 @@
+# src/config/persistence.py
 """
 Configuration persistence system that synchronizes UI changes with YAML configuration.
 """
