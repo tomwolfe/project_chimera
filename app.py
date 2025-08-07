@@ -23,9 +23,6 @@ from src.config.persistence import ConfigPersistence
 # Assuming core.py now re-exports or defines these exceptions.
 # If core.py uses a separate exceptions module, import from there.
 # For this example, we'll assume they are accessible via core or a dedicated module.
-# If core.py raises its own exceptions, we might need to catch those.
-# Based on the LLM's suggestion, we'll catch ChimeraError and its subclasses.
-# Let's assume core.py raises exceptions that are subclasses of ChimeraError.
 # If core.py directly raises TokenBudgetExceededError, we'll catch that too.
 # The LLM suggestion implies core.py will raise ChimeraError subclasses.
 # REMOVED: The entire try-except block for importing exceptions.
@@ -348,7 +345,7 @@ with col1:
         st.session_state.personas = current_domain_personas # Store active personas for the current framework
 
     st.subheader("Save Current Framework")
-    new_framework_name_input = st.text_input("Enter a name for your current framework:", key='save_framework_input')
+    new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input')
     # Add a text area for framework description
     framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50)
 
@@ -601,8 +598,10 @@ if run_button_clicked:
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
-                        personas=personas_for_run, # Pass the currently active personas
-                        all_personas=st.session_state.all_personas, # Pass all loaded personas
+                        # --- FIX APPLIED HERE ---
+                        # Removed the 'personas=personas_for_run' argument.
+                        # The SocraticDebate class will now determine personas internally.
+                        all_personas=st.session_state.all_personas, # Pass the full set of personas
                         persona_sets=st.session_state.persona_sets,
                         persona_sequence=st.session_state.persona_sequence,
                         domain=domain_for_run,
