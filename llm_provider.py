@@ -1,9 +1,9 @@
 # llm_provider.py
-import google.genai as genai
+from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 import time
 import random
-from google.genai.errors import APIError
 import streamlit as st
 from collections import defaultdict
 import hashlib
