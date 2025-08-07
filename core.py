@@ -23,14 +23,19 @@ from google.genai.errors import APIError
 from rich.console import Console
 from pydantic import ValidationError
 
+# --- ADDED IMPORT ---
+# Import the corrected GeminiProvider from llm_provider.py
+from llm_provider import GeminiProvider
+# --- END ADDED IMPORT ---
+
 # Import models and settings
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
 from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
-# Import GeminiTokenizer for GeminiProvider
-from src.tokenizers import GeminiTokenizer
+# REMOVED: The GeminiTokenizer import is no longer needed here as GeminiProvider is imported
+# from src.tokenizers import GeminiTokenizer
 # NEW: Import LLMResponseValidationError
 from src.exceptions import LLMResponseValidationError, SchemaValidationError # Import SchemaValidationError
 
@@ -40,130 +45,22 @@ from src.constants import SELF_ANALYSIS_KEYWORDS
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class TokenBudgetExceededError(Exception):
-    """Custom exception for when token usage exceeds the budget."""
+# --- REMOVED THE FAULTY GeminiProvider CLASS DEFINITION ---
+# The GeminiProvider class definition that was here has been removed.
+# It has been replaced by importing the corrected version from llm_provider.py.
+# --- END REMOVED ---
+
+# --- Keep TokenBudgetExceededError definition as it's used by SocraticDebate ---
+class TokenBudgetExceededError(ChimeraError):
+    """Raised when token usage exceeds budget"""
     def __init__(self, current_tokens: int, budget: int, details: Optional[Dict[str, Any]] = None):
         error_details = {
             "current_tokens": current_tokens,
             "budget": budget,
             **(details or {})
         }
-        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used")
-        self.details = error_details
-        self.severity = "WARNING"
-        self.recoverable = True
-
-class GeminiProvider:
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
-        self.token_usage = defaultdict(int)
-        self.console = Console()
-        self.model_name = model_name
-        # Initialize tokenizer for accurate counting
-        self.tokenizer = GeminiTokenizer(model_name=self.model_name)
-        
-    def count_tokens(self, text: str) -> int:
-        """Accurate token counting using Gemini API via tokenizer, with an improved fallback."""
-        if not text:
-            return 0
-            
-        try:
-            # Ensure tokenizer is initialized and available
-            if not hasattr(self, 'tokenizer') or not self.tokenizer:
-                logger.warning("Tokenizer not initialized in GeminiProvider. Using improved fallback estimation.")
-                return self._improved_token_estimate(text) # Use improved fallback
-            
-            # Use the tokenizer for accurate counting
-            return self.tokenizer.count_tokens(text)
-        except Exception as e:
-            # Catch potential errors from the tokenizer itself or API issues
-            logger.warning(f"Token counting API failed: {str(e)}. Using improved fallback estimation.")
-            return self._improved_token_estimate(text) # Use improved fallback
-
-    def _improved_token_estimate(self, text: str) -> int:
-        """
-        Provides a more robust token estimation heuristic when the primary tokenizer fails.
-        This heuristic is designed to better approximate Gemini's tokenization behavior
-        than a simple character-to-token ratio.
-        """
-        if not text:
-            return 0
-            
-        # Heuristic: Estimate based on word count, considering common patterns.
-        # Gemini's tokenization is complex, but word count is a reasonable proxy.
-        # Average tokens per word can vary, but ~1.3 is a common estimate.
-        words = text.split()
-        estimated_tokens = len(words) * 1.3
-        
-        # Adjust for common code elements which might be tokenized differently
-        # (e.g., symbols, keywords, indentation). This is a simplified adjustment.
-        code_indicators = ['{', '}', '[', ']', '(', ')', '=', '+', '-', '*', '/', '#', '//', '/*', ':', ';']
-        code_density = sum(text.count(ind) for ind in code_indicators) / max(1, len(text))
-        
-        if code_density > 0.05: # If text appears to be code-heavy
-            estimated_tokens *= 1.2 # Increase estimate slightly for code
-        
-        # Ensure a minimum of 1 token for any non-empty text
-        return max(1, int(round(estimated_tokens)))
-
-    def generate_content(self, prompt: str, temperature: float = 0.3, max_tokens: int = 2048) -> str:
-        """Generate content using Gemini API with retry logic and token tracking."""
-        start_time = time.time()
-        retries = 0
-        max_retries = 3
-        
-        while retries < max_retries:
-            try:
-                # Log the request
-                logger.debug(f"Sending request to Gemini (model: {self.model_name})")
-                logger.debug(f"Prompt length: {len(prompt)} characters")
-                
-                # Generate content
-                response = self.model.generate_content(
-                    prompt,
-                    generation_config=types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens
-                    )
-                )
-                
-                # Extract and return the response text
-                if response.text:
-                    # Track token usage
-                    # Note: GeminiProvider.count_tokens should be used for accurate counts
-                    # The response.usage_metadata might be available and more precise.
-                    # For now, we rely on the count_tokens method for consistency.
-                    prompt_tokens = self.count_tokens(prompt) # Use our accurate counter
-                    completion_tokens = self.count_tokens(response.text) # Use our accurate counter
-                    total_tokens = prompt_tokens + completion_tokens # Sum for this call
-                    
-                    self.token_usage['prompt'] += prompt_tokens
-                    self.token_usage['completion'] += completion_tokens
-                    self.token_usage['total'] += total_tokens
-                    
-                    # Log token usage
-                    elapsed = time.time() - start_time
-                    logger.info(f"Generated response in {elapsed:.2f}s | "
-                               f"Tokens: {prompt_tokens}+{completion_tokens}={total_tokens}")
-                    
-                    return response.text
-                else:
-                    logger.warning("Gemini API returned empty response")
-                    return ""
-                    
-            except APIError as e:
-                logger.error(f"Gemini API error: {str(e)}")
-                retries += 1
-                if retries >= max_retries:
-                    raise
-                # Exponential backoff with jitter
-                wait_time = (2 ** retries) + random.uniform(0, 1)
-                logger.info(f"Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            except Exception as e:
-                logger.exception(f"Unexpected error in GeminiProvider: {str(e)}")
-                raise
+        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used", details=error_details)
+# --- END KEEP ---
 
 class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
@@ -197,7 +94,7 @@ class SocraticDebate:
         """
         # Load settings, using defaults if not provided
         self.settings = settings or ChimeraSettings()
-        self.max_total_tokens_budget = max_total_tokens_budget
+        self.max_total_tokens_budget = max_total_tokens
         self.tokens_used = 0 # Total tokens consumed across all LLM calls
         self.model_name = model_name
         
@@ -225,6 +122,7 @@ class SocraticDebate:
         self.persona_router = PersonaRouter(self.all_personas)
         
         # Set up the LLM provider
+        # This line now correctly instantiates the imported GeminiProvider
         self.llm_provider = GeminiProvider(api_key=api_key, model_name=model_name)
         
         # Store the initial prompt
@@ -242,6 +140,11 @@ class SocraticDebate:
         # Calculate token budgets based on settings and prompt analysis
         self._calculate_token_budgets()
     
+    # ... (rest of the SocraticDebate class remains unchanged) ...
+    # The methods like _calculate_token_budgets, _check_token_budget, etc.,
+    # will now use the imported GeminiProvider instance correctly.
+    # The TokenBudgetExceededError definition from core.py is preserved and used.
+
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
@@ -578,8 +481,9 @@ User's Original Prompt:
             # Count tokens for context preparation if it's significant
             if context_str:
                 # Use _check_token_budget to account for context preparation tokens
-                context_prep_tokens = self._check_token_budget(context_str, "context_preparation")
                 # Note: _check_token_budget already updates self.tokens_used
+                context_prep_tokens = self.llm_provider.count_tokens(context_str) # Use count_tokens directly here
+                self._check_token_budget(context_str, "context_preparation") # This call will update self.tokens_used
             
             # 3. Generate persona sequence
             self.persona_sequence = self.persona_router.determine_persona_sequence(

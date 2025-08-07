@@ -1,22 +1,22 @@
 # llm_provider.py
-from google import genai
+import streamlit as st
+import google.genai as genai
 from google.genai import types
 from google.genai.errors import APIError
 import time
-import random
-import streamlit as st
-from collections import defaultdict
 import hashlib
-import json
 import re
+import socket
+import abc
+from collections import defaultdict
+from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 import logging
 from pathlib import Path
-import socket
-from abc import ABC, abstractmethod # Import ABC and abstractmethod
 
 # --- Tokenizer Interface and Implementation ---
 # Import the Tokenizer ABC and GeminiTokenizer implementation
-from src.tokenizers import Tokenizer, GeminiTokenizer 
+from src.tokenizers.base import Tokenizer
+from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
@@ -60,7 +60,8 @@ class GeminiProvider:
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None):
         self._api_key = api_key # Store API key for hashing/equality
         self.model_name = model_name # This is part of the cache key
-        self.client = genai.Client(api_key=self._api_key) # Initialize client here
+        # Initialize client using the correct SDK pattern
+        self.client = genai.Client(api_key=self._api_key)
         
         # Use provided tokenizer or create a default GeminiTokenizer
         self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name)
@@ -96,13 +97,8 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    # Removed @st.cache_data from generate and count_tokens.
-    # The GeminiProvider instance itself is cached via @st.cache_resource.
-    # Caching individual method calls on a cached instance can be complex
-    # if the instance's internal state (like the tokenizer) is not part of the cache key.
-    # Relying on the cached instance is generally sufficient.
-
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, _status_callback=None) -> tuple[str, int, int]:
+        """Generate content using the updated SDK pattern with retry logic and token tracking."""
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
@@ -115,15 +111,31 @@ class GeminiProvider:
                 prompt_with_system = f"{system_prompt}\n\n{prompt}"
                 input_tokens = self.tokenizer.count_tokens(prompt_with_system)
                 
+                # CORRECTED: Use client.models.generate_content pattern
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
                     config=config
                 )
                 
-                output_tokens = self.tokenizer.count_tokens(response.text)
+                # Extract text response
+                generated_text = ""
+                if response.candidates and len(response.candidates) > 0:
+                    content = response.candidates[0].content
+                    if content and content.parts and len(content.parts) > 0:
+                        generated_text = content.parts[0].text
+                
+                # Get token usage from response metadata if available, otherwise use tokenizer
+                # The LLM response suggested using response.usage_metadata.prompt_token_count etc.
+                # However, the current google-genai SDK might not expose this directly in the same way.
+                # For consistency and to ensure we use our tokenizer, we'll rely on tokenizer.count_tokens.
+                # If response.usage_metadata becomes reliably available and more accurate, it can be integrated.
+                output_tokens = self.tokenizer.count_tokens(generated_text)
 
-                return response.text, input_tokens, output_tokens
+                # Log token usage
+                logger.debug(f"Generated response (input: {input_tokens}, output: {output_tokens} tokens)")
+                
+                return generated_text, input_tokens, output_tokens
                 
             except APIError as e:
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
@@ -166,8 +178,9 @@ class GeminiProvider:
 
         raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    def count_tokens(self, prompt: str, system_prompt: str, _status_callback=None) -> int:
-        full_text_for_counting = f"{system_prompt}\n\n{prompt}"
+    def count_tokens(self, prompt: str, system_prompt: str = "", _status_callback=None) -> int:
+        """Counts tokens using the tokenizer, including system prompt if provided."""
+        full_text_for_counting = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         
         # Use the tokenizer for counting
         try:
