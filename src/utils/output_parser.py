@@ -60,14 +60,7 @@ class LLMOutputParser:
         # Commenting out this problematic regex:
         # json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
 
-        # 6. Aggressive heuristics for missing commas between elements:
-        # These are highly heuristic and can sometimes cause issues.
-        # They are kept here as they were part of the original logic, but should be monitored.
-        json_str = re.sub(r'("[^"]*")\s*("([A-Z_]+)":)', r'\1,\n\2', json_str)
-        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*("([A-Z_]+)":)', r'\1,\n\2', json_str, flags=re.IGNORECASE)
-        json_str = re.sub(r'([}\]])\s*([{\[])', r'\1,\n\2', json_str)
-        json_str = re.sub(r'("[^"]*")\s*([{\[])', r'\1,\n\2', json_str)
-        json_str = re.sub(r'([}\]"\d]|true|false|null)\s*([{\[])', r'\1,\n\2', json_str, flags=re.IGNORECASE)
+        # Removed aggressive heuristics for missing commas. Rely on LLM self-correction.
         
         # 7. Attempt to trim non-JSON content from start/end if it's clearly not JSON
         # This is crucial: if after all sanitization, the string doesn't start with '{' or '[',

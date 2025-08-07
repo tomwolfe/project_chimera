@@ -78,11 +78,11 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         self.max_total_tokens_budget = max_total_tokens_budget
         self.model_name = model_name
-        self.personas = personas
+        self.personas = personas # Personas active in the current domain
         self.domain = domain
-        self.all_personas = all_personas
+        self.all_personas = all_personas # All loaded personas
         self.persona_sets = persona_sets
-        self.persona_sequence = persona_sequence
+        self.persona_sequence = persona_sequence # Default sequence if domain doesn't override
         self.status_callback = status_callback
         self.context_token_budget_ratio = context_token_budget_ratio
         if gemini_provider:
@@ -410,6 +410,7 @@ class SocraticDebate:
                     
                     # After the loop, parsed_data holds the successfully parsed data or the final error dict
                     self.intermediate_steps[current_output_key] = parsed_data
+                    self.intermediate_steps[f"{current_persona_name}_Tokens_Used"] = tokens_used_in_step # Store tokens for UI display
                     self.cumulative_token_usage += tokens_used_in_step
                     self.cumulative_usd_cost += cost_this_step
                     if is_final_answer_step: self.final_answer = parsed_data
@@ -426,6 +427,7 @@ class SocraticDebate:
                         tokens_used_in_step = input_tokens # If response is empty, only count input tokens
                         cost_this_step = self.gemini_provider.calculate_usd_cost(input_tokens, 0)
                     
+                    self.intermediate_steps[f"{current_persona_name}_Tokens_Used"] = tokens_used_in_step # Store tokens for UI display
                     self.cumulative_token_usage += tokens_used_in_step
                     self.cumulative_usd_cost += cost_this_step
                     if update_current_thought: self.current_thought = raw_response_text
@@ -479,52 +481,56 @@ class SocraticDebate:
             def skeptical_prompt_gen():
                 return f"Critique the following proposal from a highly skeptical, risk-averse perspective. Identify potential failure points, architectural flaws, or critical vulnerabilities:\n\n{visionary_output}"
             skeptical_critique = self._execute_persona_step("Skeptical_Generator", skeptical_prompt_gen, "Skeptical_Critique")
+            
             domain_critiques_text = ""
-            for persona_name_in_sequence in self.persona_sequence:
-                if persona_name_in_sequence in self.personas:
-                    if persona_name_in_sequence not in ["Visionary_Generator", "Skeptical_Generator", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant", "Context_Aware_Assistant"]:
-                        def expert_prompt_gen(name=persona_name_in_sequence, proposal=visionary_output):
-                            return (
-                                f"As a {name.replace('_', ' ')}, analyze the following proposal from your expert perspective. "
-                                f"Identify specific points of concern, risks, or areas for improvement relevant to your domain. "
-                                f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific. "
-                                f"Present your analysis in a structured format, using clear headings or bullet points for 'Concerns' and 'Recommendations'.\n\n"
-                                f"Proposal:\n{proposal}")
-                        critique = self._execute_persona_step(persona_name_in_sequence, expert_prompt_gen, f"{persona_name_in_sequence}_Critique")
-                        domain_critiques_text += f"\n\n--- {persona_name_in_sequence.replace('_', ' ')} Critique ---\n{critique}"
+            
+            # Define personas that are explicitly handled before or after this loop
+            explicitly_handled_personas = {
+                "Visionary_Generator", "Skeptical_Generator", "Constructive_Critic",
+                "Impartial_Arbitrator", "Devils_Advocate", "Generalist_Assistant",
+                "Context_Aware_Assistant"
+            }
+            
+            # Iterate over the personas *active in the current domain* (self.personas)
+            # and exclude the ones that are explicitly called before or after this loop.
+            sorted_domain_personas = sorted(self.personas.keys())
+
+            for persona_name_in_domain in sorted_domain_personas:
+                if persona_name_in_domain not in explicitly_handled_personas:
+                    def expert_prompt_gen(name=persona_name_in_domain, proposal=visionary_output, skeptical_critique=skeptical_critique):
+                        # Provide all previous critiques to the domain-specific persona
+                        return (
+                            f"As a {name.replace('_', ' ')}, analyze the following proposal and existing critiques from your expert perspective. "
+                            f"Original Proposal:\n{proposal}\n\n"
+                            f"Skeptical Critique:\n{skeptical_critique}\n\n"
+                            f"Identify specific points of concern, risks, or areas for improvement relevant to your domain. "
+                            f"Your insights will be crucial for subsequent synthesis and refinement steps, so be thorough and specific. "
+                            f"Present your analysis in a structured format, using clear headings or bullet points for 'Concerns' and 'Recommendations'.\n\n"
+                            f"Focus on your persona's specific expertise (e.g., for Code Architect: modularity, scalability; for Security Auditor: vulnerabilities, threat model; for DevOps: CI/CD, monitoring; for Test Engineer: test coverage, testability)."
+                        )
+                    critique = self._execute_persona_step(persona_name_in_domain, expert_prompt_gen, f"{persona_name_in_domain}_Critique")
+                    domain_critiques_text += f"\n\n--- {persona_name_in_domain.replace('_', ' ')} Critique ---\n{critique}"
+            
             def constructive_prompt_gen():
                 return (
                     f"Original Proposal:\n{visionary_output}\n\n"
-                    f"--- Skeptical Critique ---\n{skeptical_critique}\n"
+                    f"Skeptical Critique:\n{skeptical_critique}\n\n"
                     f"{domain_critiques_text}\n\n"
-                    f"Based on all the above inputs, provide specific, actionable improvements. Synthesize the critiques, resolve conflicts where possible, and propose a refined solution or code.")
+                    f"Constructive Critic Feedback:\n{constructive_feedback}\n\n"
+                    f"Synthesize all the above information into a single, balanced, and definitive final answer. Adhere strictly to the JSON output format and escaping rules provided in your system prompt. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability based on the Pareto principle.")
             constructive_feedback = self._execute_persona_step("Constructive_Critic", constructive_prompt_gen, "Constructive_Critic_Output")
             
-            # --- CORRECTED ARBITRATOR PROMPT GENERATOR ---
+            # The Impartial_Arbitrator's system prompt already contains the JSON schema and instructions.
+            # This prompt should provide the context for synthesis.
             def arbitrator_prompt_gen():
-                return f'''Synthesize all the following information into a single, balanced, and definitive final answer. Your output MUST be a JSON object with the following structure:
-
-```json
-{{
-  "COMMIT_MESSAGE": "<string>",
-  "RATIONALE": "<string, including CONFLICT_RESOLUTION: or UNRESOLVED_CONFLICT: if applicable>",
-  "CODE_CHANGES": [
-    {{
-      "FILE_PATH": "<string>",
-      "ACTION": "ADD | MODIFY | REMOVE",
-      "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions, REPRESENTING THE ENTIRE NEW FILE CONTENT OR MODIFIED FILE CONTENT. ENSURE ALL DOUBLE QUOTES WITHIN THE CONTENT ARE ESCAPED AS \\".)
-    }},
-    {{
-      "FILE_PATH": "<string>",
-      "ACTION": "REMOVE",
-      "LINES": ["<string>", "<string>"] (Required for REMOVE action, representing the specific lines to be removed)
-    }}
-  ]
-}}
-"''' # Changed from """ to ''' to fix SyntaxError
+                return (
+                    f"Original Proposal:\n{visionary_output}\n\n"
+                    f"Skeptical Critique:\n{skeptical_critique}\n\n"
+                    f"{domain_critiques_text}\n\n"
+                    f"Constructive Critic Feedback:\n{constructive_feedback}\n\n"
+                    f"Synthesize all the above information into a single, balanced, and definitive final answer. Adhere strictly to the JSON output format and escaping rules provided in your system prompt. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability based on the Pareto principle.")
             
             # The Impartial_Arbitrator will receive all previous outputs and synthesize the final answer.
-            # It needs to be instructed to output in the specific JSON format.
             arbitrator_output = self._execute_persona_step(
                 "Impartial_Arbitrator",
                 arbitrator_prompt_gen,
@@ -547,13 +553,9 @@ class SocraticDebate:
     def _get_default_analysis_summary(self) -> Dict[str, Any]:
         """Returns a default summary if context analysis fails or is skipped."""
         return {
-            "summary": "Codebase analysis could not be performed.",
-            "structure": "Unknown",
-            "style": "Unknown",
-            "patterns": "Unknown",
-            "dependencies": "Unknown",
-            "logic": "Unknown",
-            "potential_issues": [],
-            "recommendations": [],
+            "key_modules": [],
+            "security_concerns": [],
+            "architectural_patterns": [],
+            "performance_bottlenecks": [],
             "malformed_blocks": [] # Ensure this key exists even if empty
         }
