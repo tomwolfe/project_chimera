@@ -1,4 +1,4 @@
-# core.py
+# src/core.py
 import yaml
 import time
 import hashlib
@@ -236,23 +236,37 @@ class SocraticDebate:
         # Calculate token budgets based on prompt complexity
         self._calculate_token_budgets()
     
+    # --- MODIFIED METHOD START ---
     def _calculate_token_budgets(self):
-        """Calculate token budgets for context analysis and debate phases."""
-        # Use ratios from settings, falling back to defaults if not provided
-        context_ratio = self.settings.context_token_budget_ratio
-        debate_ratio = self.settings.debate_token_budget_ratio
+        """Calculate dynamic token budgets based on analysis type"""
+        # Base ratios from settings
+        base_context_ratio = self.settings.context_token_budget_ratio
+        base_debate_ratio = self.settings.debate_token_budget_ratio
         
-        # Ensure ratios sum to 1.0, adjust if necessary (though ChimeraSettings should enforce this)
-        if abs(context_ratio + debate_ratio - 1.0) > 0.01:
-            logger.warning("Token budget ratios in settings do not sum to 1.0. Adjusting.")
-            total = context_ratio + debate_ratio
+        # ADAPT FOR CODE ANALYSIS (NEW LOGIC)
+        prompt_lower = self.initial_prompt.lower()
+        # Check for keywords indicating code analysis or self-analysis
+        if "code" in prompt_lower or "analyze" in prompt_lower or "refactor" in prompt_lower or "chimera" in prompt_lower or "self-analysis" in prompt_lower:
+            # For code analysis, prioritize context understanding
+            # Scale up context ratio, ensuring it doesn't exceed a reasonable max (e.g., 70%)
+            context_ratio = min(0.7, base_context_ratio * 3.5)  # Example scaling factor
+            debate_ratio = 1.0 - context_ratio
+        else:
+            # Use default ratios if not a code analysis prompt
+            context_ratio = base_context_ratio
+            debate_ratio = base_debate_ratio
+        
+        # Normalize to ensure ratios sum to 1.0, respecting boundaries
+        total = context_ratio + debate_ratio
+        if abs(total - 1.0) > 0.01: # Handle potential floating point inaccuracies
             context_ratio = context_ratio / total
             debate_ratio = debate_ratio / total
-            
+        
         self.context_token_budget = int(self.max_total_tokens_budget * context_ratio)
         self.debate_token_budget = int(self.max_total_tokens_budget * debate_ratio)
         
         logger.info(f"Token budgets: Context={self.context_token_budget}, Debate={self.debate_token_budget}")
+    # --- MODIFIED METHOD END ---
     
     def _check_token_budget(self, prompt_text: str, step_name: str) -> int:
         """
@@ -292,7 +306,7 @@ class SocraticDebate:
         keywords = self.context_analyzer.model_dump_json() # Placeholder, needs actual keyword extraction
         
         # Find relevant files based on keywords
-        relevant_files = self.context_analyzer.get_relevant_files(self.initial_prompt)
+        relevant_files = self.context_analyzer.find_relevant_files(self.initial_prompt) # Corrected method name
         
         # Determine the domain based on the prompt
         # Use the router to determine domain, potentially using context analysis results

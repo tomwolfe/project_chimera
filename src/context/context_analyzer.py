@@ -48,13 +48,35 @@ class ContextRelevanceAnalyzer:
             elements.append(f"Imports: {', '.join(imports[:5])}")
         return " ".join(elements)
     
+    # --- NEW FUNCTION INSERTION START ---
+    def extract_relevant_code_segments(self, content: str, max_chars: int = 5000) -> str:
+        """Preserves structural elements while respecting token limits"""
+        # Keep imports and class/function definitions at top
+        structural_elements = re.findall(r'^(import|from|class|def) .+', content, re.MULTILINE)
+        if structural_elements:
+            # Find position of last structural element within limit
+            cutoff = 0
+            for i, match in enumerate(structural_elements): # Using the exact loop from prompt
+                pos = content.find(match)
+                if pos < max_chars:
+                    cutoff = pos + len(match)
+                else:
+                    break
+            return content[:cutoff]
+        return content[:max_chars]
+    # --- NEW FUNCTION INSERTION END ---
+
     def compute_file_embeddings(self, codebase_context: Dict[str, str]):
         """Compute embeddings for all files in the codebase context."""
         for file_path, content in codebase_context.items():
             # Create a meaningful representation of the file
             clean_content = self._clean_code_content(content)
             key_elements = self._extract_key_elements(content)
-            representation = f"File: {file_path}. {key_elements}. Content summary: {clean_content[:500]}"
+            
+            # --- MODIFIED LINE START ---
+            # Replace: representation = f"File: {file_path}. {key_elements}. Content summary: {clean_content[:500]}"
+            representation = f"File: {file_path}. {key_elements}. Content summary: {self.extract_relevant_code_segments(clean_content)}"
+            # --- MODIFIED LINE END ---
             
             # Generate embedding
             embedding = self.model.encode([representation], convert_to_numpy=True)[0]
