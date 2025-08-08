@@ -89,10 +89,6 @@ class SocraticDebate:
         self.tokens_used = 0 # Total tokens consumed across all LLM calls
         self.model_name = model_name
         
-        # Initialize token budgets based on settings and prompt analysis
-        self.context_token_budget = 0
-        self.debate_token_budget = 0
-        
         # Initialize context analyzer
         self.context_analyzer = None
         self.codebase_context = None
@@ -119,6 +115,22 @@ class SocraticDebate:
         # Store the initial prompt
         self.initial_prompt = initial_prompt
         
+        # --- FIX START ---
+        # Calculate initial prompt tokens and set self.initial_input_tokens.
+        # This must happen after llm_provider and initial_prompt are available.
+        try:
+            # Use the LLM provider's count_tokens method for accuracy.
+            # Pass None for system_prompt as it's not relevant for initial prompt token count.
+            self.initial_input_tokens = self.llm_provider.count_tokens(self.initial_prompt, system_prompt=None)
+        except Exception as e:
+            logger.error(f"Failed to count tokens for initial prompt: {e}. Setting initial_input_tokens to 0.")
+            self.initial_input_tokens = 0 # Fallback if token counting fails
+        # --- FIX END ---
+
+        # Calculate token budgets based on settings and prompt analysis
+        # This call now has self.initial_input_tokens available.
+        self._calculate_token_budgets()
+        
         # Track the debate progress
         self.intermediate_steps = {}
         self.final_answer = None
@@ -127,9 +139,6 @@ class SocraticDebate:
         # Status callback and console for UI updates
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
-        
-        # Calculate token budgets based on settings and prompt analysis
-        self._calculate_token_budgets()
     
     # ... (rest of the SocraticDebate class remains unchanged) ...
     # The methods like _calculate_token_budgets, _check_token_budget, etc.,
@@ -148,6 +157,7 @@ class SocraticDebate:
         debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
         
         # Calculate available tokens for the debate/synthesis phases
+        # This line now correctly uses the assigned self.initial_input_tokens
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
         # Calculate phase budgets, ensuring minimums for critical phases
@@ -522,11 +532,14 @@ User's Original Prompt:
             initial_prompt_tokens = self._check_token_budget(self.initial_prompt, "initial_prompt_count")
             
             context_analysis = self._analyze_context()
-            self.intermediate_steps["Context_Analysis"] = context_analysis
             
+            # The token budgets are now calculated correctly in __init__ because
+            # self.initial_input_tokens is set there.
+            # No need to call _calculate_token_budgets() here again.
+            
+            self.intermediate_steps["Context_Analysis"] = context_analysis
             # 2. Prepare context
             context_str = self._prepare_context(context_analysis)
-            self.intermediate_steps["Context_Preparation"] = context_str
             # Count tokens for context preparation if it's significant
             if context_str:
                 # Use _check_token_budget to account for context preparation tokens
