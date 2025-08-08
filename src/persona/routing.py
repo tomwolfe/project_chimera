@@ -215,9 +215,13 @@ class PersonaRouter:
        # Ensure SELF_ANALYSIS_KEYWORDS are correctly imported and used
        return any(keyword in prompt_lower for keyword in SELF_ANALYSIS_KEYWORDS)
 
-    # --- NEW HELPER METHOD: _apply_dynamic_adjustment ---
+    # --- MODIFIED HELPER METHOD: _apply_dynamic_adjustment ---
     def _apply_dynamic_adjustment(self, base_sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
         """Apply dynamic persona adjustments based on intermediate findings."""
+        # Handle case where intermediate_results is None (can happen during initial self-analysis)
+        if intermediate_results is None:
+            intermediate_results = {}
+        
         # Analyze previous outputs for specific trigger keywords
         triggered_personas_to_add = set()
         
