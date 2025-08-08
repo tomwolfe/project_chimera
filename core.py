@@ -127,6 +127,9 @@ class SocraticDebate:
             self.initial_input_tokens = 0 # Fallback if token counting fails
         # --- FIX END ---
 
+        # Initialize phase budgets dictionary - THIS IS THE FIX
+        self.phase_budgets = {}
+
         # Calculate token budgets based on settings and prompt analysis
         # This call now has self.initial_input_tokens available.
         self._calculate_token_budgets()
