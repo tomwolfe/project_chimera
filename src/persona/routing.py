@@ -89,6 +89,60 @@ class PersonaRouter:
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"] # Keywords indicating skepticism
         }
     
+    # --- NEW METHOD TO BE ADDED ---
+    def determine_domain(self, prompt: str) -> str:
+        """Determine the most appropriate domain for the given prompt.
+        
+        Returns the single most relevant domain based on keyword matching.
+        """
+        # First check if this is a self-analysis prompt using the class method
+        if self.is_self_analysis_prompt(prompt):
+            return "Software Engineering"
+        
+        prompt_lower = prompt.lower()
+        best_match = "General"  # Default domain
+        highest_score = 0
+        
+        # Define domain keywords for this specific method
+        domain_keywords = {
+            "General": {
+                "keywords": ["analyze", "explain", "discuss", "consider", "think about"],
+                "negative_keywords": []
+            },
+            "Science": {
+                "keywords": ["scientific", "experiment", "hypothesis", "research", "data"],
+                "negative_keywords": []
+            },
+            "Business": {
+                "keywords": ["market", "business", "financial", "economy", "strategy"],
+                "negative_keywords": []
+            },
+            "Creative": {
+                "keywords": ["creative", "write", "story", "poem", "artistic"],
+                "negative_keywords": []
+            },
+            "Software Engineering": {
+                "keywords": ["code", "program", "software", "developer", "algorithm", "debug", "architecture", "engineering"],
+                "negative_keywords": ["building", "construction"]  # Avoid confusion with building architecture
+            }
+        }
+        
+        for domain, config in domain_keywords.items():
+            keywords = config["keywords"]
+            negative_keywords = config["negative_keywords"]
+            
+            # Skip if any negative keyword is present
+            if any(neg_kw in prompt_lower for neg_kw in negative_keywords):
+                continue
+                
+            score = sum(1 for kw in keywords if kw in prompt_lower)
+            if score > highest_score:
+                highest_score = score
+                best_match = domain
+        
+        return best_match
+    # --- END OF NEW METHOD ---
+
     def _analyze_prompt_domain(self, prompt: str) -> Set[str]:
         """
         Analyze prompt to determine relevant domains, using negative keyword filtering
