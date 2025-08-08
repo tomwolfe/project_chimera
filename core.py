@@ -29,7 +29,7 @@ from llm_provider import GeminiProvider
 # --- END ADDED IMPORT ---
 
 # Import models and settings
-from src.models import PersonaConfig, ReasoningFrameworkConfig
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput # Assuming LLMOutput is defined here or accessible
 from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
@@ -404,7 +404,7 @@ User's original prompt:
         # Generate response using the new method
         logger.info(f"Running debate round with {persona_name}")
         # The generate method returns (response_text, input_tokens, output_tokens)
-        response_text, input_tokens_returned, output_tokens = self.llm_provider.generate(
+        generated_text, input_tokens_returned, output_tokens = self.llm_provider.generate(
             prompt=prompt_for_llm,
             system_prompt=persona.system_prompt,
             temperature=persona.temperature,
@@ -416,18 +416,18 @@ User's original prompt:
         self.tokens_used += output_tokens
         
         # Log the step details
-        self.intermediate_steps[f"{persona_name}_Output"] = response_text # Use response_text
+        self.intermediate_steps[f"{persona_name}_Output"] = generated_text # Use generated_text
         self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens_returned # Log input tokens returned by generate
         self.intermediate_steps[f"{persona_name}_Output_Tokens"] = output_tokens # Log output tokens
         self.process_log.append({
             "step": f"{persona_name}_Output",
             "input_tokens": input_tokens_returned, # Log input tokens
             "output_tokens": output_tokens, # Log output tokens
-            "response_length": len(response_text)
+            "response_length": len(generated_text)
         })
         
         # Return the generated text response
-        return response_text
+        return generated_text
     
     def _synthesize_final_answer(self, final_debate_state: str) -> Dict[str, Any]:
         """
@@ -478,23 +478,32 @@ User's Original Prompt:
                 system_prompt=arbitrator.system_prompt # Pass system prompt for accurate counting
             )
             
-            raw_final_answer = self.llm_provider.generate_content(
-                prompt_for_synthesis,
-                temperature=arbitrator.temperature, # Use arbitrator's temperature
-                max_tokens=arbitrator.max_tokens # Use arbitrator's max_tokens
+            # --- FIX APPLIED HERE ---
+            # Original: raw_final_answer = self.llm_provider.generate_content(...)
+            # Fixed: Use generate() and unpack the tuple. Add output_tokens to self.tokens_used.
+            generated_text, input_tokens, output_tokens = self.llm_provider.generate(
+                prompt=prompt_for_synthesis,
+                system_prompt=arbitrator.system_prompt, # Pass system_prompt
+                temperature=arbitrator.temperature,
+                max_tokens=arbitrator.max_tokens
             )
+            raw_final_answer = generated_text
+            # Add output tokens to the total count for consistency with _run_debate_round
+            self.tokens_used += output_tokens
+            # --- END FIX ---
             
             # Attempt to parse and validate the raw output
             try:
                 # Use LLMOutputParser to handle extraction and validation
                 llm_output_parser = LLMOutputParser()
+                # Assuming LLMOutput is correctly imported or defined elsewhere
                 validated_output_dict = llm_output_parser.parse_and_validate(raw_final_answer, LLMOutput)
                 
                 # If successful, store and return
                 self.final_answer = validated_output_dict
                 self.intermediate_steps["Final_Answer_Output"] = validated_output_dict
-                self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis
-                # Total tokens used is updated by _check_token_budget calls
+                self.intermediate_steps["Final_Answer_Tokens_Used"] = tokens_used_in_synthesis # This is input tokens for synthesis
+                # Total tokens used is updated by _check_token_budget calls (input) and the line above (output)
                 self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used 
                 self.intermediate_steps["Total_Estimated_Cost_USD"] = self._calculate_cost()
                 return validated_output_dict
@@ -561,10 +570,12 @@ User's Original Prompt:
             if context_str:
                 # Use _check_token_budget to account for context preparation tokens
                 # Note: _check_token_budget already updates self.tokens_used
-                context_prep_tokens = self.llm_provider.count_tokens(context_str) # Use count_tokens directly here
+                # The prompt_text for context preparation is the context_str itself.
                 self._check_token_budget(context_str, "context_preparation") # This call will update self.tokens_used
             
             # 3. Generate persona sequence
+            # The persona_router.determine_persona_sequence is called here.
+            # It might use context_analysis or other internal state.
             self.persona_sequence = self.persona_router.determine_persona_sequence(
                 self.initial_prompt,
                 intermediate_results=None # No intermediate results on the first pass
