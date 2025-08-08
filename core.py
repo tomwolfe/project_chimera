@@ -392,32 +392,42 @@ User's original prompt:
 {self.initial_prompt}
         """
         
-        # Check token budget using the constructed prompt text
-        # Pass system_prompt if it's part of the persona config and relevant
-        tokens_used_in_round = self._check_token_budget(
+        # Check token budget for the input prompt and system instruction.
+        # This call updates self.tokens_used with the input tokens.
+        # It returns the count of input tokens for this specific call.
+        input_tokens_for_call = self._check_token_budget(
             prompt_for_llm, 
             f"debate_round_{persona_name}", 
-            system_prompt=persona.system_prompt # Pass system prompt for accurate counting
+            system_prompt=persona.system_prompt
         )
         
-        # Generate response
+        # Generate response using the new method
         logger.info(f"Running debate round with {persona_name}")
-        response = self.llm_provider.generate_content(
-            prompt_for_llm, # Use the constructed prompt
+        # The generate method returns (response_text, input_tokens, output_tokens)
+        response_text, input_tokens_returned, output_tokens = self.llm_provider.generate(
+            prompt=prompt_for_llm,
+            system_prompt=persona.system_prompt,
             temperature=persona.temperature,
             max_tokens=persona.max_tokens
         )
         
-        # Log the step
-        self.intermediate_steps[f"{persona_name}_Output"] = response
-        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = tokens_used_in_round
+        # Update total tokens used with output tokens.
+        # input_tokens_returned should match input_tokens_for_call, which was already added to self.tokens_used by _check_token_budget.
+        self.tokens_used += output_tokens
+        
+        # Log the step details
+        self.intermediate_steps[f"{persona_name}_Output"] = response_text # Use response_text
+        self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens_returned # Log input tokens returned by generate
+        self.intermediate_steps[f"{persona_name}_Output_Tokens"] = output_tokens # Log output tokens
         self.process_log.append({
             "step": f"{persona_name}_Output",
-            "tokens_used": tokens_used_in_round,
-            "response_length": len(response)
+            "input_tokens": input_tokens_returned, # Log input tokens
+            "output_tokens": output_tokens, # Log output tokens
+            "response_length": len(response_text)
         })
         
-        return response
+        # Return the generated text response
+        return response_text
     
     def _synthesize_final_answer(self, final_debate_state: str) -> Dict[str, Any]:
         """
