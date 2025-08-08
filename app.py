@@ -824,8 +824,10 @@ if st.session_state.debate_ran:
                 if all_malformed_blocks:
                      st.error(f"**Malformed Output Detected:** The LLM produced {len(all_malformed_blocks)} block(s) that could not be parsed or validated correctly. Raw output snippets are provided below.")
                 for issue in all_issues:
-                    st.warning(f"**{issue['type']} in `{issue['file']}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
-
+                    # --- FIX APPLIED HERE ---
+                    file_info = issue.get('file', 'N/A')
+                    st.warning(f"**{issue['type']} in `{file_info}`:** {issue['message']} (Line: {issue.get('line', 'N/A')})")
+        
         st.subheader("Proposed Code Changes")
         if not parsed_llm_output.code_changes and not all_malformed_blocks:
             st.info("No code changes were proposed.")
