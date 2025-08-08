@@ -174,6 +174,24 @@ class SocraticDebate:
         Raises TokenBudgetExceededError if budget is exceeded.
         """
         try:
+            # --- FIX APPLIED HERE ---
+            # Ensure prompt_text is properly encoded as UTF-8 before token counting.
+            # This is a defensive measure to handle any non-ASCII characters that might cause
+            # issues in underlying libraries that might implicitly use ASCII encoding.
+            # The 'replace' strategy ensures that even if there are unencodable characters,
+            # the process continues by replacing them, preventing a crash.
+            try:
+                # This will validate that the string can be properly encoded in UTF-8
+                # and decode it back to ensure it's a clean UTF-8 string.
+                prompt_text = prompt_text.encode('utf-8').decode('utf-8')
+            except UnicodeEncodeError:
+                # If direct encode/decode fails (e.g., due to invalid surrogate pairs),
+                # use the 'replace' error handler to substitute problematic characters.
+                prompt_text = prompt_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
+                # Log a warning if replacements were made, indicating potential data alteration.
+                logger.warning(f"Fixed encoding issues in prompt for step '{step_name}' by replacing problematic characters.")
+            # --- END FIX ---
+
             # Use GeminiProvider's accurate count_tokens for both prompt and system prompt.
             # Pass system_prompt if it's relevant for the current call.
             actual_tokens = self.llm_provider.count_tokens(prompt_text, system_prompt=system_prompt)
@@ -404,7 +422,7 @@ User's original prompt:
         # Generate response using the new method
         logger.info(f"Running debate round with {persona_name}")
         # The generate method returns (response_text, input_tokens, output_tokens)
-        generated_text, input_tokens_returned, output_tokens = self.llm_provider.generate(
+        generated_text, input_tokens, output_tokens = self.llm_provider.generate(
             prompt=prompt_for_llm,
             system_prompt=persona.system_prompt,
             temperature=persona.temperature,
@@ -417,11 +435,11 @@ User's original prompt:
         
         # Log the step details
         self.intermediate_steps[f"{persona_name}_Output"] = generated_text # Use generated_text
-        self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens_returned # Log input tokens returned by generate
+        self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens # Log input tokens returned by generate
         self.intermediate_steps[f"{persona_name}_Output_Tokens"] = output_tokens # Log output tokens
         self.process_log.append({
             "step": f"{persona_name}_Output",
-            "input_tokens": input_tokens_returned, # Log input tokens
+            "input_tokens": input_tokens, # Log input tokens
             "output_tokens": output_tokens, # Log output tokens
             "response_length": len(generated_text)
         })
