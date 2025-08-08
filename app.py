@@ -747,16 +747,39 @@ if st.session_state.debate_ran:
         # --- REVISED: LLMOutput Handling and Validation Display ---
         parsed_llm_output: LLMOutput
         malformed_blocks_from_parser = []
+        
+        # Get the raw output from session state
+        raw_output_data = st.session_state.final_answer_output
 
-        if isinstance(st.session_state.final_answer_output, dict):
+        # --- APPLY FIX HERE ---
+        # Check if the raw output is a list, which is unexpected for direct LLMOutput instantiation
+        if isinstance(raw_output_data, list):
+            if not raw_output_data:
+                # Handle empty list case
+                logger.error("Parser returned an empty list, no valid output found.")
+                # Create an error structure that app.py can handle
+                st.session_state.final_answer_output = {
+                    "COMMIT_MESSAGE": "Debate Failed - No Output",
+                    "RATIONALE": "The LLM parser returned an empty list, indicating no valid output was found.",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "EMPTY_LIST_OUTPUT", "message": "Parser returned an empty list."}]
+                }
+                # Re-run to show the error message
+                st.rerun() 
+            else:
+                # Take the first item if it's a list of potential outputs
+                logger.debug(f"Parser returned {len(raw_output_data)} output blocks, using the first one for LLMOutput instantiation.")
+                # Update raw_output_data to be the first item
+                raw_output_data = raw_output_data[0]
+        # --- END FIX ---
+
+        # Now, proceed with the assumption that raw_output_data is either a dict or was handled if it was a list
+        if isinstance(raw_output_data, dict):
             try:
                 # Attempt to parse the final_answer_output into an LLMOutput model
-                # The LLMOutputParser's validate_response method should have already ensured this structure
-                # or returned a dict with 'malformed_blocks' if it failed.
-                # We still use the LLMOutput model for type hinting and structured access.
-                parsed_llm_output = LLMOutput(**st.session_state.final_answer_output)
+                parsed_llm_output = LLMOutput(**raw_output_data)
                 # Capture malformed blocks reported by the parser during the arbitrator's step
-                malformed_blocks_from_parser = st.session_state.final_answer_output.get('malformed_blocks', [])
+                malformed_blocks_from_parser = raw_output_data.get('malformed_blocks', [])
             except ValidationError as e:
                 st.error(f"Failed to parse final LLM output into LLMOutput model: {e}")
                 # Create a fallback LLMOutput instance with error details
@@ -764,24 +787,24 @@ if st.session_state.debate_ran:
                     COMMIT_MESSAGE="Parsing Error",
                     RATIONALE=f"Failed to parse final LLM output into expected structure. Error: {e}",
                     CODE_CHANGES=[],
-                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(st.session_state.final_answer_output)[:500]}]
+                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
                 )
                 malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks) # Add to the list
         else:
             # This case handles when final_answer_output is not a dictionary (e.g., a simple string error message)
-            st.error(f"Final answer is not a structured dictionary. Raw output: {st.session_state.final_answer_output}")
+            st.error(f"Final answer is not a structured dictionary or a list of dictionaries. Raw output type: {type(raw_output_data).__name__}")
             parsed_llm_output = LLMOutput(
                 COMMIT_MESSAGE="Error: Output not structured.",
-                RATIONALE=f"Error: Output not structured. Raw output: {st.session_state.final_answer_output}",
+                RATIONALE=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}",
                 CODE_CHANGES=[],
-                malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": "Final answer was not a dictionary.", "raw_string_snippet": str(st.session_state.final_answer_output)[:500]}]
+                malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}", "raw_string_snippet": str(raw_output_data)[:500]}]
             )
             malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks) # Add to the list
 
         # The validate_code_output_batch function expects a dictionary, so pass the model_dump
         # Ensure that the input to validate_code_output_batch is a dictionary, even if it's an error dict.
         validation_results_by_file = validate_code_output_batch(
-            parsed_llm_output.model_dump(by_alias=True) if isinstance(parsed_llm_output, LLMOutput) else st.session_state.final_answer_output, # Pass the dictionary representation
+            parsed_llm_output.model_dump(by_alias=True) if isinstance(parsed_llm_output, LLMOutput) else raw_output_data, # Pass the dictionary representation
             st.session_state.get('codebase_context', {})
         )
 
