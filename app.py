@@ -24,7 +24,6 @@ from src.config.persistence import ConfigPersistence
 # If core.py uses a separate exceptions module, import from there.
 # For this example, we'll assume they are accessible via core or a dedicated module.
 # If core.py directly raises TokenBudgetExceededError, we'll catch that too.
-# The LLM suggestion implies core.py will raise ChimeraError subclasses.
 # REMOVED: The entire try-except block for importing exceptions.
 # We now rely on src.exceptions and core.py to provide these.
 from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError, SchemaValidationError # Added SchemaValidationError import
@@ -413,7 +412,7 @@ with col2:
     st.subheader("Codebase Context (Optional)")
     if st.session_state.selected_persona_set == "Software Engineering":
         uploaded_files = st.file_uploader(
-            "Upload up to 25 relevant files",
+            "Upload up to 100 relevant files", # MODIFIED: Changed limit from 25 to 100
             accept_multiple_files=True,
             type=['py', 'js', 'ts', 'html', 'css', 'json', 'yaml', 'md', 'txt', 'java', 'go', 'rb', 'php'],
             help="Provide files for context. The AI will analyze them to generate consistent code.",
@@ -423,9 +422,9 @@ with col2:
             current_uploaded_file_info = [(f.name, f.size) for f in uploaded_files]
             previous_uploaded_file_info = [(f.name, f.size) for f in st.session_state.uploaded_files]
             if current_uploaded_file_info != previous_uploaded_file_info:
-                if len(uploaded_files) > 25:
-                    st.warning("Please upload a maximum of 25 files. Truncating to the first 25.")
-                    uploaded_files = uploaded_files[:25]
+                if len(uploaded_files) > 100: # MODIFIED: Changed limit from 25 to 100
+                    st.warning("Please upload a maximum of 100 files. Truncating to the first 100.") # MODIFIED: Changed message
+                    uploaded_files = uploaded_files[:100]
                 temp_context = {}
                 for file in uploaded_files:
                     try:
