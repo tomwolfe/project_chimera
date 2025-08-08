@@ -207,7 +207,11 @@ class SocraticDebate:
         
         # Extract keywords from the prompt
         # Assuming context_analyzer has a method to extract keywords from prompt
-        keywords = self.context_analyzer.model_dump_json() # Placeholder, needs actual keyword extraction
+        # --- FIX APPLIED HERE ---
+        # Proper keyword extraction - take first 5 unique words from prompt as placeholder
+        prompt_words = self.initial_prompt.lower().split()
+        keywords = list(dict.fromkeys(prompt_words))[:5]  # Remove duplicates, take first 5
+        # --- END FIX ---
         
         # Find relevant files based on keywords
         relevant_files = self.context_analyzer.find_relevant_files(self.initial_prompt) # Corrected method name
