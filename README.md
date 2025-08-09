@@ -1,220 +1,287 @@
-# Project Chimera
+# Project Chimera: Socratic Self-Debate Engine
 
-**The Iterative Socratic Arbitration Loop (ISAL) for Deeper AI Reasoning.**
+![Project Status](https://img.shields.io/badge/status-active-green)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-Project Chimera is a lightweight, powerful Python application that leverages a single Large Language Model (LLM) to adopt multiple reasoning personas. It orchestrates an **Iterative Socratic Arbitration Loop (ISAL)**, enabling complex problems to be explored from diverse angles, yielding more robust, nuanced, and well-reasoned answers than traditional single-query LLM approaches.
+An advanced reasoning engine that employs Socratic debate methodology between specialized AI personas to solve complex problems and generate high-quality code solutions. Project Chimera doesn't just provide answers—it debates them to ensure robustness, correctness, and optimal implementation through transparent, structured reasoning with comprehensive audit trails.
 
----
+## Overview
 
-## ✨ Why Project Chimera?
+Project Chimera implements a sophisticated self-debate framework where specialized AI personas critically analyze problems from multiple perspectives. Unlike traditional LLMs that generate single responses, Chimera engages in a structured debate process with:
 
-In a world of increasingly capable LLMs, achieving truly insightful and reliable outputs for complex challenges remains a hurdle. Project Chimera addresses this by simulating a dynamic, multi-perspective debate among AI personas.
+- **Dynamic Token Allocation**: Intelligent distribution of token budget across context analysis (10-30%), debate (60-80%), and synthesis (5-15%) phases based on prompt complexity, with minimum thresholds (e.g., `max(400, int(available_tokens * synthesis_ratio))`)
+- **Semantic Context Analysis**: Uses SentenceTransformer (`all-MiniLM-L6-v2`) with cosine similarity to identify relevant code files through semantic embeddings
+- **Multi-Persona Debate**: Specialized agents with defined roles, temperature settings, token limits, and dynamic sequencing
+- **Structured Validation**: Pydantic-based schema validation with multi-attempt recovery and detailed error reporting
+- **Comprehensive Audit Trail**: Complete tracking of persona parameter adjustments, intermediate steps, and process logs
+- **Domain-Aware Framework Selection**: Automatic framework detection using weighted keyword matching with negation handling
 
-*   **Uncover Nuance & Depth:** Move beyond surface-level answers by engaging AI in structured critique and synthesis.
-*   **Robust Problem Solving:** Leverage distinct AI viewpoints (Visionary, Skeptic, Critic, Arbitrator, Devil's Advocate, and domain-specific roles) to identify blind spots and refine ideas.
-*   **Domain-Specific Intelligence:** Tailor AI reasoning to your specific field—be it Science, Business, Creative arts, or general problem-solving—with curated persona frameworks.
-*   **Unprecedented Control & Transparency:** Customize AI reasoning workflows, view intermediate steps, track costs, and generate comprehensive reports to understand the AI's thought process.
+## Key Features
 
----
+### 🧠 Socratic Self-Debate Framework
+- **Adaptive Token Budgeting**:
+  - Context ratio dynamically adjusts between 10-30% based on prompt complexity
+  - Minimum token thresholds ensure critical phases always have sufficient resources
+  - Real-time token usage monitoring with budget enforcement via `TokenBudgetExceededError`
+  - Detailed cost tracking with `Total_Estimated_Cost_USD` in intermediate steps
+- **Multi-Phase Reasoning**:
+  - *Context Analysis*: Semantic codebase understanding using vector embeddings
+  - *Structured Debate*: Multiple specialized personas critique and improve proposals
+  - *Conflict Resolution*: Impartial Arbitrator synthesizes consensus from conflicting viewpoints
+- **Dynamic Persona Sequencing**:
+  - Base sequence adjusted based on prompt content and intermediate results
+  - Quality metrics trigger persona additions (e.g., adding `Devils_Advocate` if `reasoning_depth < 0.6`)
+  - Negation handling prevents misclassification (e.g., "not secure" doesn't trigger security analysis)
+  - Self-analysis prompts use specialized sequence: `["Context_Aware_Assistant", "Code_Architect", "Security_Auditor", "Constructive_Critic", "Test_Engineer", "DevOps_Engineer", "Impartial_Arbitrator"]`
+- **Comprehensive Audit Trail**:
+  - Full logging of persona parameter adjustments with before/after values
+  - Intermediate steps tracking with input/output token counts per persona
+  - Process logs with ANSI codes stripped for clean viewing
+  - Detailed error reporting with raw output snippets
 
-## 🚀 Try It Live!
+### 💻 Software Engineering Focus
+- **Context-Aware Code Analysis**:
+  - Semantic code relevance scoring with weighted keyword matching (e.g., +0.1 boost for path matches)
+  - Context ratio adapts based on prompt complexity: `context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))`
+  - File-specific analysis with line-number precision
+  - Quality metrics including:
+    - `code_quality_score` (0.0-1.0)
+    - `complexity_score`
+    - `maintainability_index`
+    - `test_coverage_estimate`
+- **Specialized Personas**:
+  - *Code_Architect*: Structural integrity, scalability (temp: 0.3, tokens: 1024)
+  - *Constructive_Critic*: Logical gaps, security vulnerabilities (temp: 0.45, tokens: 2048)
+  - *Security_Specialist*: Input validation, authentication (temp: 0.3, tokens: 2048)
+  - *Testing_Strategist*: Test coverage strategies (temp: 0.3, tokens: 2048)
+  - *Context_Aware_Assistant*: Codebase-specific analysis with quality metrics (temp: 0.1, tokens: 1024)
+  - *Devils_Advocate*: Challenges proposed improvements (temp: 0.6, tokens: 2048)
+  - *Impartial_Arbitrator*: Synthesizes final solution with conflict resolution (temp: 0.2, tokens: 4096)
+- **Structured Output Format**:
+  ```json
+  {
+    "COMMIT_MESSAGE": "Refactor context analyzer for improved token efficiency",
+    "RATIONALE": "CONFLICT_RESOLUTION: After debate, the team determined...",
+    "CONFLICT_RESOLUTION": "Resolved X vs Y by prioritizing security over performance",
+    "UNRESOLVED_CONFLICT": null,
+    "CODE_CHANGES": [
+      {
+        "FILE_PATH": "src/context_analyzer.py",
+        "ACTION": "MODIFY",
+        "FULL_CONTENT": "import numpy as np\n# Improved vectorization..."
+      }
+    ],
+    "quality_metrics": {
+      "code_quality_score": 0.85,
+      "complexity_score": 0.65,
+      "maintainability_index": 0.82,
+      "test_coverage_estimate": 0.65
+    }
+  }
+  ```
 
-Experience the power of multi-persona AI reasoning firsthand.
-
-➡️ **[Live Demo: Project Chimera](https://project-chimera-406972693661.us-central1.run.run.app)**
-
----
-
-## 🌟 Key Features
-
-*   **Multi-Persona Socratic Debate:** Employs distinct LLM personas (Visionary, Skeptic, Critic, Arbitrator, Devil's Advocate, plus domain-specific ones and a Generalist Assistant fallback) to generate, critique, and synthesize ideas iteratively.
-*   **Intelligent Reasoning Frameworks:** Select from predefined sets of personas tailored for specific problem domains (e.g., General, Science, Business, Creative). Includes an LLM-powered recommendation for the best framework based on your prompt.
-*   **In-UI Persona Configuration:** Temporarily adjust individual persona parameters (system prompt, temperature, max tokens) directly within the Streamlit web interface for session-specific experimentation.
-*   **Community Frameworks:** Save and load custom persona configurations as reusable "Community Frameworks" within your session, facilitating easy sharing and reuse of debate setups.
-*   **Cost & Token Tracking:** Monitors and displays total token usage and estimated USD cost for each debate session, including real-time updates and proactive warnings for the next step's estimated cost.
-*   **Real-time Status Updates:** Provides live feedback on the debate progress, including current step, token usage, and estimated cost for the next step.
-*   **Enhanced Robustness:** Implemented advanced error handling with retries, persona fallbacks (e.g., to `Generalist_Assistant`), and graceful degradation of token limits for a more stable and resilient user experience, especially during API interactions.
-*   **Intermediate Step Visibility:** Option to view the detailed output of each persona's contribution to the debate for full transparency.
-*   **Comprehensive Reporting:** Generates a full Markdown report of the debate, including prompt, configuration, process log, intermediate steps, and final answer, with options to download.
-*   **Flexible Deployment:** Usable as a command-line tool or a Streamlit web application.
-*   **User-Provided API Key:** Securely handles your Gemini API key, which is provided directly by the user at runtime and is not stored by the application.
-
----
-
-## 🧠 Core Concept: The Iterative Socratic Arbitration Loop (ISAL)
-
-The ISAL process involves a series of LLM calls where different personas interact to refine an initial prompt. Project Chimera now supports multiple "Reasoning Frameworks," which are curated sets of these personas, allowing the debate to be tailored to specific problem domains.
-
-Typically, the core debate flow involves:
-1.  **Visionary Generator:** Creates an initial, often bold, idea.
-2.  **Skeptical Generator:** Critiques the idea from a risk-averse perspective.
-3.  **Constructive Critic:** Provides actionable improvements based on the critique.
-4.  **Impartial Arbitrator:** Synthesizes all inputs into a final, balanced answer.
-5.  **Devil's Advocate:** Offers a final, sharp critique to expose any remaining fundamental flaws.
-
-In addition to these core roles, domain-specific personas (e.g., `Scientific_Analyst`, `Business_Strategist`) and a `Generalist_Assistant` for fallbacks are used within selected frameworks to enhance the debate's relevance and robustness. This iterative process aims to produce more robust, well-reasoned, and comprehensive outputs than a single LLM query.
-
----
-
-## 🛠️ Setup
-
-1.  **Clone this repository:**
-    ```bash
-    git clone https://github.com/tomwolfe/project_chimera.git
-    cd project_chimera
+### ⚙️ Advanced Technical Implementation
+- **Semantic Context Analysis**:
+  - Uses `SentenceTransformer("all-MiniLM-L6-v2")` with cosine similarity for code relevance scoring
+  - Implements weighted similarity with keyword boosting (e.g., +0.2 for test files)
+  - Context ratio adapts based on prompt complexity: `context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))`
+- **Validation System**:
+  - Pydantic models ensure schema compliance with multi-attempt processing
+  - Detailed error reporting with malformed block classification:
+    ```json
+    {
+      "type": "SCHEMA_VALIDATION_ERROR",
+      "message": "Field required",
+      "raw_string_snippet": "{\"COMMIT_MESSAGE\": \"Fix bug\"}"
+    }
     ```
-2.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  **Obtain a Gemini API Key:**
-    Project Chimera uses the Google Gemini API. You'll need an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+  - Automatic JSON extraction from markdown code blocks
+  - Fallback mechanisms for partial data recovery
+- **Domain Detection**:
+  - Weighted keyword-based framework selection with negation handling
+  - Self-analysis detection uses specific weighted phrases (e.g., "analyze the entire Project Chimera codebase": 1.0)
+  - Prevents misclassification using proximity-based negation analysis
+- **Error Handling**:
+  - Comprehensive exception hierarchy:
+    - `TokenBudgetExceededError`: Raised when token usage exceeds budget
+    - `SchemaValidationError`: Output fails schema validation
+    - `LLMResponseValidationError`: Response cannot be parsed
+    - `ChimeraError`: Base class for all custom exceptions
+  - Detailed error reporting with raw output snippets for debugging
 
-    **Important:** Your API key is provided directly by you at runtime and is **not stored** by the application.
+### 🖥️ Comprehensive Reporting
+- **Detailed Markdown Reports** including:
+  - Persona configuration audit trail showing parameter changes
+  - Process log with ANSI codes stripped for clean viewing
+  - Intermediate reasoning steps with token usage metrics
+  - Final synthesized answer with complete schema validation
+  - Quality metrics and cost analysis
+- **Multiple Output Formats**:
+  - Human-readable markdown reports with date stamps
+  - Machine-parsable JSON for integration
+  - Downloadable structured outputs with full context
 
----
+## Installation
 
-## 🚀 Usage
+```bash
+# Clone the repository
+git clone https://github.com/tomwolfe/project_chimera.git
+cd project_chimera
 
-### Command-Line Interface (CLI)
+# Create and activate virtual environment (Python 3.9+ recommended)
+python -m venv venv
+source venv/bin/activate  # Linux/MacOS
+# venv\Scripts\activate   # Windows
 
-The CLI tool `main.py` allows you to run a Socratic debate directly from your terminal.
+# Install dependencies
+pip install -r requirements.txt
 
-1.  **Set your Gemini API Key:**
-    It's recommended to set your Gemini API Key as an environment variable for convenience:
-    ```bash
-    export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-    ```
-    Alternatively, you can pass it directly using the `--api-key` or `-k` option.
-
-2.  **Run the Socratic Arbitration Loop:**
-    ```bash
-    python main.py reason "Your prompt goes here, e.g., Design a sustainable city for 1 million people on Mars."
-    ```
-
-3.  **CLI Options:**
-    *   `--verbose` or `-v`: Show all intermediate reasoning steps.
-        ```bash
-        python main.py reason "Your prompt goes here." --verbose
-        ```
-    *   `--api-key` or `-k`: Provide your API key directly (overrides environment variable).
-        ```bash
-        python main.py reason "Your prompt goes here." --api-key YOUR_GEMINI_API_KEY
-        ```
-    *   `--max-tokens` or `-m`: Set a maximum total token budget for the entire process (default: 10000).
-        ```bash
-        python main.py reason "Your prompt goes here." --max-tokens 20000
-        ```
-    *   `--model` or `-M`: Specify the Gemini model to use (default: `gemini-2.5-flash-lite`).
-        ```bash
-        python main.py reason "Your prompt goes here." --model gemini-2.5-pro
-        ```
-    *   `--domain` or `-d`: Specify a reasoning domain to use (e.g., `General`, `Science`, `Business`, `Creative`). Defaults to `auto` which attempts to recommend one based on the prompt.
-        ```bash
-        python main.py reason "Your prompt goes here." --domain Science
-        ```
-
-    The CLI output provides real-time status updates, including current token usage, estimated cost, and proactive warnings about the next step's token consumption relative to the budget.
-
-### Web Application (Streamlit)
-
-The Streamlit web application provides an interactive UI for Project Chimera.
-
-1.  **Run the Streamlit application:**
-    ```bash
-    streamlit run app.py
-    ```
-    Then open your web browser to the address provided by Streamlit (usually `http://localhost:8501`).
-
-2.  **Using the Web UI:**
-    *   Enter your Gemini API Key directly into the input field.
-    *   Type your prompt or select one from the "Choose an example prompt" dropdown.
-    *   Adjust the "Max Total Tokens Budget" to control the LLM's expenditure.
-    *   **Reasoning Framework Selection:** The app will recommend a framework based on your prompt. You can apply the recommendation or select a different one from the dropdown (e.g., `General`, `Science`, `Business`, `Creative`, or `Custom`).
-    *   Toggle "Show Intermediate Reasoning Steps" to see the full debate process.
-    *   Select your preferred LLM Model (`gemini-2.5-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`).
-    *   **Persona Configuration:** Expand the "View and Edit Personas" section to inspect or temporarily modify the parameters of the personas in the currently selected framework.
-    *   **Community Frameworks:** In the "Contribute Your Framework" expander, you can save your current persona configuration (including any edits you've made) as a named "Community Framework" for later use in the session. You can also apply existing community frameworks.
-    *   Click "Run Socratic Debate" to start the process.
-    *   Monitor the "Process Log" and "Intermediate Reasoning Steps" (if enabled) for real-time updates and detailed output from each persona.
-    *   Download the "Final Answer" or the "Full Report" in Markdown format.
-
----
-
-## 🔧 Customizing Personas & Frameworks
-
-Project Chimera's flexibility is powered by its `personas.yaml` configuration file and the in-UI customization options.
-
-### `personas.yaml` Configuration
-
-The personas and their groupings used in the Socratic debate are comprehensively defined in the `personas.yaml` file. This file allows you to:
-
-*   **Define Individual Personas:** Each persona has a `name`, `system_prompt`, `temperature`, and `max_tokens`.
-*   **Group Personas into Sets (Reasoning Frameworks):** The `persona_sets` section allows you to define different collections of personas. This enables the application to offer domain-specific reasoning frameworks (e.g., `Science`, `Business`, `Creative`) by activating a specific subset of personas for a given problem.
-
-**Example (`personas.yaml`):**
-```yaml
-personas:
-  # Core personas used across multiple domains
-  - name: "Visionary_Generator"
-    system_prompt: "You are a visionary futurist obsessed with innovation. Provide a bold, imaginative answer that explores uncharted possibilities. Ignore all practical constraints and risks."
-    temperature: 0.9
-    max_tokens: 2048
-
-  - name: "Skeptical_Generator"
-    system_prompt: "You are a meticulous, risk-averse pragmatist. Deliver a cautious, evidence-based answer. Your response MUST identify at least three potential failure points or critical vulnerabilities."
-    temperature: 0.2
-    max_tokens: 2048
-
-  # ... (other personas) ...
-
-persona_sets:
-  General:
-    - Visionary_Generator
-    - Skeptical_Generator
-    - Constructive_Critic
-    - Impartial_Arbitrator
-    - Generalist_Assistant
-    - Devils_Advocate
-  Science:
-    - Scientific_Visionary
-    - Scientific_Analyst
-    - Constructive_Critic
-    - Impartial_Arbitrator
-    - Devils_Advocate
-  # ... (other persona sets) ...
+# Set up environment variables
+echo "GEMINI_API_KEY=your_api_key_here" > .env
 ```
-If you add new personas to `personas.yaml`, they will automatically be available for inclusion in `persona_sets`.
 
-### In-UI Persona Configuration
+## Usage
 
-For temporary, session-specific adjustments, you can modify persona parameters directly within the Streamlit web UI under the "View and Edit Personas" expander. Changes made here are temporary for the current session and do not modify the `personas.yaml` file on disk.
+### Web Interface (Recommended)
+```bash
+streamlit run app.py
+```
 
-### Community Frameworks
+The web application provides:
+- Prompt input with example templates and automatic framework recommendation
+- Codebase context upload (up to 100 files with various extensions)
+- Configurable token budgets (5,000-128,000 tokens) and context ratio (5%-50%)
+- Real-time persona configuration editing with reset-to-default functionality
+- Visualized debate process with complete intermediate steps
+- Downloadable markdown reports and JSON outputs
+- Persona audit trail showing configuration changes
+- Process log with ANSI codes stripped for clean viewing
 
-The "Contribute Your Framework" section in the UI allows you to save your current persona configuration (including any UI edits) as a named "Community Framework." These saved frameworks appear in the "Community Frameworks" dropdown, enabling easy switching within the same session. To make a framework permanent or share it widely, you would manually add it to `personas.yaml` and potentially submit a pull request.
+### Basic CLI Usage
+```python
+from core import ChimeraEngine
 
----
+engine = ChimeraEngine(
+    api_key="your_gemini_key",
+    context_token_budget_ratio=0.25,  # 25% of tokens for context analysis
+    max_total_tokens_budget=8000
+)
 
-## 🤝 Contributing
+response = engine.run(
+    user_prompt="Implement a Python function to calculate Fibonacci sequence",
+    codebase_context={"fib.py": "def fib(n):..."},  # Optional code context
+    domain="Software Engineering"
+)
 
-We welcome contributions to Project Chimera! If you have ideas for new features, improvements, bug fixes, or new persona frameworks, please feel free to:
+print(response)
+```
 
-*   Open an issue to discuss your ideas or report bugs.
-*   Fork the repository and submit a pull request with your changes.
+## Reasoning Frameworks
 
-Please ensure your contributions align with the project's goal of providing a lightweight, effective Socratic debate tool.
+### Software Engineering Framework (Default)
+Specialized for code generation, analysis, and improvement with:
 
----
+| Persona | Focus Area | Temperature | Max Tokens | Key Responsibilities |
+|---------|------------|-------------|------------|----------------------|
+| Code_Architect | Structural integrity | 0.3 | 1024 | Modularity, scalability, maintainability |
+| Constructive_Critic | Improvement suggestions | 0.45 | 2048 | Logical gaps, security vulnerabilities |
+| Security_Specialist | Security analysis | 0.3 | 2048 | Input validation, authentication, authorization |
+| Testing_Strategist | Test coverage | 0.3 | 2048 | Comprehensive test strategies |
+| Context_Aware_Assistant | Code context | 0.1 | 1024 | Quality metrics, file-specific analysis |
+| Devils_Advocate | Critical challenge | 0.6 | 2048 | Identifies over-correction, hidden assumptions |
+| Impartial_Arbitrator | Synthesis | 0.2 | 4096 | Conflict resolution, final decision |
 
-## ⚖️ License
+### Self-Analysis Framework
+Triggered automatically for Project Chimera self-improvement with:
+
+| Persona | Focus Area | Temperature | Max Tokens | Key Responsibilities |
+|---------|------------|-------------|------------|----------------------|
+| Context_Aware_Assistant | Codebase context | 0.1 | 1024 | Quality metrics, file-specific analysis |
+| Code_Architect | Architecture | 0.3 | 1024 | Technical debt, separation of concerns |
+| Security_Auditor | Security | 0.3 | 2048 | Vulnerability analysis |
+| Constructive_Critic | Improvement | 0.45 | 2048 | Best practices, code quality |
+| Test_Engineer | Testing | 0.3 | 2048 | Test coverage strategies |
+| DevOps_Engineer | Deployment | 0.3 | 2048 | CI/CD, infrastructure, monitoring |
+| Impartial_Arbitrator | Synthesis | 0.2 | 4096 | Conflict resolution, final decision |
+
+### General Reasoning Framework
+For non-technical problem solving with:
+- Critical_Thinker
+- Creative_Innovator
+- Detail_Oriented_Analyst
+- Pragmatic_Implementer
+
+## Self-Improvement Capabilities
+
+Project Chimera can analyze and improve its own codebase using structured quality metrics:
+
+```text
+"Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."
+```
+
+The system generates detailed analysis including:
+- `key_modules` with responsibility, quality scores, and criticality
+- `architectural_pattern` identification
+- `quality_metrics` with numerical scores (0.0-1.0)
+- `critical_concerns` with specific file:line references
+- Automatic test file generation for code changes
+
+## Output Validation
+
+All outputs undergo rigorous multi-stage validation:
+1. **Schema Validation**: Pydantic models ensure required fields are present
+2. **Malformed Block Detection**: Identifies and categorizes problematic sections:
+   ```json
+   {
+     "type": "UI_PARSING_ERROR",
+     "message": "Final answer was not a dictionary or list",
+     "raw_string_snippet": "{\"COMMIT_MESSAGE\": \"Fix bug\"}"
+   }
+   ```
+3. **Multi-Attempt Processing**: Up to 2 retries for JSON formatting/schema issues
+4. **Fallback Mechanisms**: Partial data recovery for critical fields
+5. **Detailed Error Reporting**: Includes raw output snippets for debugging
+
+Example validation error handling:
+```json
+{
+  "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
+  "RATIONALE": "A schema validation error occurred",
+  "CODE_CHANGES": [],
+  "CONFLICT_RESOLUTION": null,
+  "UNRESOLVED_CONFLICT": null,
+  "error_details": {
+    "type": "SCHEMA_VALIDATION_ERROR",
+    "message": "Field required",
+    "raw_string_snippet": "{\"COMMIT_MESSAGE\": \"Fix bug\"}"
+  }
+}
+```
+
+## Contributing
+
+We welcome contributions! Please follow these steps:
+
+1. Fork the repository
+2. Create a new feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -am 'Add some feature'`)
+4. Push to the branch (`git push origin feature/your-feature`)
+5. Create a new Pull Request
+
+When contributing code improvements, please use Project Chimera itself to generate your proposed changes:
+1. Load the codebase in the web interface
+2. Use the "Critically analyze the entire Project Chimera codebase..." prompt
+3. Review the generated suggestions and rationale
+4. Implement the most impactful changes with proper justification
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## Acknowledgments
+
+Project Chimera builds upon the principles of Socratic dialogue and leverages Google's Gemini API for its language model capabilities. The project incorporates advanced NLP techniques including semantic embeddings with SentenceTransformer and structured output validation with Pydantic.
+
 ---
 
-## 🔗 Connect with Us
-
-*   **GitHub:** [https://github.com/tomwolfe/project_chimera](https://github.com/tomwolfe/project_chimera)
-*   **X (Twitter):** [https://x.com/Proj_Chimera](https://x.com/Proj_Chimera)
-*   **Live Demo:** [https://project-chimera-406972693661.us-central1.run.app](https://project-chimera-406972693661.us-central1.run.app)
+*Project Chimera: Where AI doesn't just answer questions—it debates them to find the best possible solutions, with transparent reasoning you can follow step by step.*
