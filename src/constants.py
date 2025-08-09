@@ -4,8 +4,9 @@
 SELF_ANALYSIS_KEYWORDS = [
     "chimera", "your code", "self-analysis", "codebase", "refactor this code",
     "improve your logic", "analyze your performance", "optimize this process",
-    "self-improvement", "system analysis", "critique your own output", "your reasoning",
-    "analyze the entire Project Chimera codebase" # Added from example prompt
+    # FIX: Expanded keyword set for comprehensive detection
+    "critique your own output", "analyze the entire Project Chimera codebase",
+    "system analysis", "self-improvement", "your reasoning"
 ]
 
 def is_self_analysis_prompt(prompt: str) -> bool:

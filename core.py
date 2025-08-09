@@ -34,8 +34,6 @@ from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.utils import LLMOutputParser
-# REMOVED: The GeminiTokenizer import is no longer needed here as GeminiProvider is imported
-# from src.tokenizers import GeminiTokenizer
 # NEW: Import LLMResponseValidationError and other exceptions
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError # Corrected import
 
@@ -152,6 +150,7 @@ class SocraticDebate:
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         
         # Check if this is a self-analysis prompt
+        # FIX: Ensure is_self_analysis_prompt is accessible and correctly called
         from src.constants import is_self_analysis_prompt
         is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
         
@@ -175,25 +174,15 @@ class SocraticDebate:
         """
         try:
             # --- FIX APPLIED HERE ---
-            # Ensure prompt_text is properly encoded as UTF-8 before token counting.
-            # This is a defensive measure to handle any non-ASCII characters that might cause
-            # issues in underlying libraries that might implicitly use ASCII encoding.
-            # The 'replace' strategy ensures that even if there are unencodable characters,
-            # the process continues by replacing them, preventing a crash.
+            # Proper encoding for token counting to prevent errors with special characters.
             try:
-                # This will validate that the string can be properly encoded in UTF-8
-                # and decode it back to ensure it's a clean UTF-8 string.
                 prompt_text = prompt_text.encode('utf-8').decode('utf-8')
             except UnicodeEncodeError:
-                # If direct encode/decode fails (e.g., due to invalid surrogate pairs),
-                # use the 'replace' error handler to substitute problematic characters.
                 prompt_text = prompt_text.encode('utf-8', 'replace').decode('utf-8', 'replace')
-                # Log a warning if replacements were made, indicating potential data alteration.
                 logger.warning(f"Fixed encoding issues in prompt for step '{step_name}' by replacing problematic characters.")
             # --- END FIX ---
 
             # Use GeminiProvider's accurate count_tokens for both prompt and system prompt.
-            # Pass system_prompt if it's relevant for the current call.
             actual_tokens = self.llm_provider.count_tokens(prompt_text, system_prompt=system_prompt)
 
             if self.tokens_used + actual_tokens > self.max_total_tokens_budget:
@@ -435,7 +424,7 @@ User's original prompt:
         
         # Log the step details
         self.intermediate_steps[f"{persona_name}_Output"] = generated_text # Use generated_text
-        self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens # Log input tokens returned by generate
+        self.intermediate_steps[f"{persona_name}_Input_Tokens"] = input_tokens # Log input tokens
         self.intermediate_steps[f"{persona_name}_Output_Tokens"] = output_tokens # Log output tokens
         self.process_log.append({
             "step": f"{persona_name}_Output",
