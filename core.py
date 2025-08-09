@@ -22,6 +22,7 @@ from google.genai import types
 from google.genai.errors import APIError
 from rich.console import Console
 from pydantic import ValidationError
+from functools import lru_cache # Import lru_cache for caching
 
 # --- ADDED IMPORT ---
 # Import the corrected GeminiProvider from llm_provider.py
@@ -146,10 +147,10 @@ class SocraticDebate:
     # will now use the imported GeminiProvider instance correctly.
     # The TokenBudgetExceededError definition from core.py is preserved and used.
 
+    # --- MODIFIED METHOD FOR SUGGESTION 3 ---
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         
-        # Check if this is a self-analysis prompt
         from src.constants import is_self_analysis_prompt
         is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
         
@@ -161,10 +162,36 @@ class SocraticDebate:
         # This line now correctly uses the assigned self.initial_input_tokens
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
-        # Calculate phase budgets, ensuring minimums for critical phases
+        # --- Apply semantic complexity for more dynamic ratio calculation ---
+        complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
+        
+        # Dynamic ratio adjustment based on complexity and type
+        synthesis_ratio = 0.10 # Fixed synthesis ratio for simplicity
+        
+        if is_self_analysis:
+            # Self-analysis needs more context for code understanding
+            context_ratio = max(0.2, min(0.35, context_ratio + complexity_score * 0.15))
+            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio) # Ensure debate ratio is at least 10%
+        elif "code" in self.initial_prompt.lower() or "refactor" in self.initial_prompt.lower():
+            # Code tasks need balanced context and debate
+            context_ratio = max(0.2, min(0.3, context_ratio + complexity_score * 0.1))
+            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio)
+        else:
+            # For general prompts, use default ratios adjusted by complexity
+            context_ratio = max(0.1, min(0.3, context_ratio + complexity_score * 0.05))
+            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio)
+
+        # Apply minimum context threshold and ensure ratios sum to 1.0
+        context_ratio = max(0.1, context_ratio) # Ensure context ratio is at least 10%
+        
+        # Re-calculate debate ratio to ensure sum is 1.0, considering synthesis ratio
+        debate_ratio = 1.0 - context_ratio - synthesis_ratio
+        
         self.phase_budgets["context"] = max(200, int(available_tokens * context_ratio))
         self.phase_budgets["debate"] = max(500, int(available_tokens * debate_ratio))
-    
+        self.phase_budgets["synthesis"] = max(400, int(available_tokens * synthesis_ratio)) # Ensure synthesis has a minimum budget
+        # --- END MODIFICATION ---
+
     def _check_token_budget(self, prompt_text: str, step_name: str, system_prompt: str = "") -> int:
         """
         Check if using the specified tokens would exceed the budget using accurate counting.
@@ -260,7 +287,7 @@ class SocraticDebate:
             # Pass a max_chars that is a fraction of remaining context budget
             # This is an estimate, actual tokens will be counted later.
             # A simple heuristic: 4 chars ~ 1 token.
-            remaining_budget_chars = (self.context_token_budget - current_context_tokens) * 4
+            remaining_budget_chars = (self.phase_budgets.get("context", 200) - current_context_tokens) * 4 # Use phase_budgets for context
             
             # Ensure at least some content is extracted if budget allows
             if remaining_budget_chars <= 0:
@@ -281,12 +308,15 @@ class SocraticDebate:
             
             # Check if adding this file's context would exceed the budget
             # Use the actual tokenizer for precise counting
-            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
+            # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+            # --- END MODIFICATION ---
             
-            if current_context_tokens + estimated_file_tokens > self.context_token_budget:
+            if current_context_tokens + estimated_file_tokens > self.phase_budgets.get("context", 200): # Use phase_budgets for context
                 logger.info(f"Skipping {file_path} due to context budget. "
                             f"Current: {current_context_tokens}, Estimated for file: {estimated_file_tokens}, "
-                            f"Budget: {self.context_token_budget}")
+                            f"Budget: {self.phase_budgets.get('context', 200)}")
                 break # Stop adding files if budget is exceeded
             
             context_parts.append(file_context_part)
@@ -295,6 +325,7 @@ class SocraticDebate:
         logger.info(f"Prepared context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
         return "\n".join(context_parts)
     
+    # --- MODIFIED METHOD FOR SUGGESTION 1 ---
     def _prepare_self_analysis_context(self, context_analysis: Dict[str, Any]) -> str:
         """Prepare specialized context for self-analysis with core files prioritized."""
         if not self.codebase_context or not context_analysis.get("relevant_files"):
@@ -306,11 +337,24 @@ class SocraticDebate:
             "src/persona/routing.py",
             "src/token_manager.py",
             "src/constants.py",
-            "src/exceptions.py"
+            "src/exceptions.py",
+            "src/models.py",
+            "src/llm_provider.py",
+            "src/utils/output_parser.py",
+            "src/utils/code_validator.py",
+            "src/utils/path_utils.py",
+            "src/config/settings.py",
+            "src/config/persistence.py",
+            "src/persona_manager.py",
+            "src/context/context_analyzer.py",
+            "src/tokenizers/base.py",
+            "src/tokenizers/gemini_tokenizer.py",
+            "app.py" # Include app.py itself for analysis of the UI/orchestration layer
         ]
         
         context_parts = []
         current_context_tokens = 0
+        context_budget = self.phase_budgets.get("context", 200) # Use phase budget for context
         
         # First add core files if they exist in the codebase context
         for file_path in core_files:
@@ -318,10 +362,14 @@ class SocraticDebate:
                 content = self.codebase_context[file_path]
                 # Add the entire file for self-analysis of core components
                 file_context_part = f"### {file_path}\n{content}\n"
-                estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+                # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
+                # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+                estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+                # --- END MODIFICATION ---
                 
                 # Check if adding this file would exceed budget
-                if current_context_tokens + estimated_file_tokens > self.phase_budgets["context"]:
+                if current_context_tokens + estimated_file_tokens > context_budget:
+                    logger.warning(f"Context budget exceeded while adding core file '{file_path}'. Stopping context preparation.")
                     break
                     
                 context_parts.append(file_context_part)
@@ -329,15 +377,20 @@ class SocraticDebate:
         
         # Then add other relevant files up to token budget
         for file_path, _ in context_analysis.get("relevant_files", []):
+            # Skip if file is already included as a core file or not in context
             if file_path in core_files or file_path not in self.codebase_context:
                 continue
                 
             content = self.codebase_context[file_path]
             file_context_part = f"### {file_path}\n{content}\n"
-            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
+            # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
+            estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+            # --- END MODIFICATION ---
             
             # Check if adding this file would exceed budget
-            if current_context_tokens + estimated_file_tokens > self.phase_budgets["context"]:
+            if current_context_tokens + estimated_file_tokens > context_budget:
+                logger.warning(f"Context budget exceeded while adding relevant file '{file_path}'. Stopping context preparation.")
                 break
                 
             context_parts.append(file_context_part)
@@ -345,6 +398,7 @@ class SocraticDebate:
         
         logger.info(f"Prepared self-analysis context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
         return "".join(context_parts)
+    # --- END MODIFICATION ---
     
     def _generate_persona_sequence(self, context_analysis: Dict[str, Any]) -> List[str]:
         """Generate the sequence of personas to participate in the debate."""
@@ -478,6 +532,7 @@ User's Original Prompt:
                 logger.warning(f"Retrying final answer synthesis (attempt {attempt+1}).")
 
             # Check token budget for the synthesis step
+            # Use phase budget for synthesis
             tokens_used_in_synthesis = self._check_token_budget(
                 prompt_for_synthesis, 
                 "final_synthesis", 
@@ -586,7 +641,9 @@ User's Original Prompt:
             "security_risk_score": 0.5, # Default
             "code_quality": 0.5, # Default
             "maintainability_index": 0.5, # Default
-            "test_coverage_estimate": 0.5 # Default
+            "test_coverage_estimate": 0.5, # Default
+            "reasoning_depth": 0.5, # Added for dynamic routing
+            "architectural_coherence": 0.5 # Added for dynamic routing
         }
         
         # Keywords for different metrics
@@ -594,7 +651,9 @@ User's Original Prompt:
             "code_quality": ["good code", "clean code", "readable", "well-structured", "efficient"],
             "security_risk_score": ["vulnerab", "risk", "exploit", "hack", "insecure", "threat", "malware", "attack"],
             "maintainability_index": ["maintainable", "easy to modify", "scalable", "modular", "well-documented"],
-            "test_coverage_estimate": ["tested", "coverage", "unit test", "integration test", "robust testing"]
+            "test_coverage_estimate": ["tested", "coverage", "unit test", "integration test", "robust testing"],
+            "reasoning_depth": ["deep analysis", "thorough", "comprehensive", "nuanced", "insightful", "detailed"],
+            "architectural_coherence": ["coherent architecture", "well-integrated", "consistent design", "logical structure"]
         }
         
         # Combine all intermediate results into a single text for analysis
@@ -624,15 +683,17 @@ User's Original Prompt:
         # Special handling for context quality based on Context_Aware_Assistant output if available
         if "Context_Aware_Assistant_Output" in intermediate_results:
             caa_output = intermediate_results["Context_Aware_Assistant_Output"]
-            if isinstance(caa_output, dict) and "quality_metrics" in caa_output:
-                if "overall_code_quality" in caa_output["quality_metrics"]:
-                    metrics["code_quality"] = max(metrics["code_quality"], caa_output["quality_metrics"]["overall_code_quality"])
-                if "security_risk_score" in caa_output["quality_metrics"]:
-                    metrics["security_risk_score"] = max(metrics["security_risk_score"], caa_output["quality_metrics"]["security_risk_score"])
-                if "maintainability_index" in caa_output["quality_metrics"]:
-                    metrics["maintainability_index"] = max(metrics["maintainability_index"], caa_output["quality_metrics"]["maintainability_index"])
-                if "test_coverage_estimate" in caa_output["quality_metrics"]:
-                    metrics["test_coverage_estimate"] = max(metrics["test_coverage_estimate"], caa_output["quality_metrics"]["test_coverage_estimate"])
+            if isinstance(caa_output, dict): # Check if it's a dict
+                if "quality_metrics" in caa_output and isinstance(caa_output["quality_metrics"], dict):
+                    quality_metrics_from_caa = caa_output["quality_metrics"]
+                    if "overall_code_quality" in quality_metrics_from_caa:
+                        metrics["code_quality"] = max(metrics["code_quality"], quality_metrics_from_caa["overall_code_quality"])
+                    if "security_risk_score" in quality_metrics_from_caa:
+                        metrics["security_risk_score"] = max(metrics["security_risk_score"], quality_metrics_from_caa["security_risk_score"])
+                    if "maintainability_index" in quality_metrics_from_caa:
+                        metrics["maintainability_index"] = max(metrics["maintainability_index"], quality_metrics_from_caa["maintainability_index"])
+                    if "test_coverage_estimate" in quality_metrics_from_caa:
+                        metrics["test_coverage_estimate"] = max(metrics["test_coverage_estimate"], quality_metrics_from_caa["test_coverage_estimate"])
         
         # Ensure scores are within bounds
         for key in metrics:
@@ -720,271 +781,22 @@ User's Original Prompt:
             # Re-raise the exception to be caught by the app.py handler
             raise
 
-    # --- MODIFIED METHOD FOR SUGGESTION 2 ---
-    def _calculate_token_budgets(self):
-        """Calculate dynamic token budgets based on settings and prompt analysis."""
-        
-        from src.constants import is_self_analysis_prompt
-        is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
-        
-        # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
-        context_ratio = self.settings.self_analysis_context_ratio if is_self_analysis else self.settings.context_token_budget_ratio
-        debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
-        
-        # Calculate available tokens for the debate/synthesis phases
-        # This line now correctly uses the assigned self.initial_input_tokens
-        available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
-        
-        # --- Apply semantic complexity for more dynamic ratio calculation ---
-        complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
-        
-        # Dynamic ratio adjustment based on complexity and type
-        if is_self_analysis:
-            # Self-analysis needs more context for code understanding
-            context_ratio = max(0.2, min(0.35, context_ratio + complexity_score * 0.15))
-            debate_ratio = 1.0 - context_ratio - (self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio) # Ensure sum is 1.0
-        elif "code" in self.initial_prompt.lower() or "refactor" in self.initial_prompt.lower():
-            # Code tasks need balanced context and debate
-            context_ratio = max(0.2, min(0.3, context_ratio + complexity_score * 0.1))
-            debate_ratio = 1.0 - context_ratio - (self.settings.debate_token_budget_ratio) # Ensure sum is 1.0
-        
-        # Apply minimum context threshold and ensure ratios sum to 1.0
-        context_ratio = max(0.1, context_ratio)
-        debate_ratio = 1.0 - context_ratio - (self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio) # Re-calculate debate ratio to ensure sum is 1.0
-        
-        self.phase_budgets["context"] = max(200, int(available_tokens * context_ratio))
-        self.phase_budgets["debate"] = max(500, int(available_tokens * debate_ratio))
-        # --- END MODIFICATION ---
-
-    # --- MODIFIED METHOD FOR SUGGESTION 3 ---
-    def _apply_dynamic_adjustment(self, sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
-        """Apply dynamic adjustments to persona sequence based on intermediate results quality metrics."""
-        if not intermediate_results:
-            return sequence
-        
-        # Extract quality metrics from intermediate results
-        quality_metrics = self._extract_quality_metrics(intermediate_results)
-        
-        # Priority adjustments based on detected needs
-        adjusted_sequence = sequence.copy()
-        
-        # If context quality is low, prioritize context-focused personas first
-        if quality_metrics.get('context_quality', 0.5) < 0.6:
-            # Ensure Context_Aware_Assistant is present and potentially moved earlier
-            if "Context_Aware_Assistant" not in adjusted_sequence:
-                adjusted_sequence.insert(0, "Context_Aware_Assistant")
-            else:
-                # Move it to the front if it's already there but quality is low
-                adjusted_sequence.remove("Context_Aware_Assistant")
-                adjusted_sequence.insert(0, "Context_Aware_Assistant")
-        
-        # If security concerns detected, prioritize security review
-        if quality_metrics.get('security_risk_score', 0) > 0.7:
-            # Ensure Security_Auditor is present and prioritized
-            if "Security_Auditor" not in adjusted_sequence:
-                adjusted_sequence.insert(1, "Security_Auditor") # Insert after initial Visionary/Skeptic
-            else:
-                # Move it earlier if it's present but quality is low
-                adjusted_sequence.remove("Security_Auditor")
-                adjusted_sequence.insert(1, "Security_Auditor")
-        
-        # If code quality concerns, prioritize code-focused personas
-        if quality_metrics.get('code_quality', 0.5) < 0.65 or \
-           quality_metrics.get('maintainability_index', 0.5) < 0.65 or \
-           quality_metrics.get('test_coverage_estimate', 0.5) < 0.65:
-            
-            # Define key code personas
-            code_personas = ["Code_Architect", "Test_Engineer", "DevOps_Engineer"]
-            
-            # Remove them from their current positions if they exist
-            for persona in code_personas:
-                if persona in adjusted_sequence:
-                    adjusted_sequence.remove(persona)
-            
-            # Insert them at the beginning of the sequence (or after core personas)
-            # Find insertion point after core personas (e.g., after Skeptical_Generator)
-            insertion_index = 2 # Default to after Skeptical_Generator
-            if "Impartial_Arbitrator" in adjusted_sequence:
-                arbitrator_index = adjusted_sequence.index("Impartial_Arbitrator")
-                insertion_index = min(insertion_index, arbitrator_index) # Don't insert after arbitrator if it's early
-
-            for persona in code_personas:
-                if persona not in adjusted_sequence: # Avoid duplicates
-                    adjusted_sequence.insert(insertion_index, persona)
-                    insertion_index += 1 # Adjust index for subsequent insertions
-        
-        # Ensure the final sequence is unique while preserving order
-        return list(dict.fromkeys(adjusted_sequence))
-
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 2 ---
-    def _calculate_semantic_complexity(self, prompt: str) -> float:
-        """
-        Placeholder for semantic complexity calculation.
-        A simple heuristic: longer prompts or prompts with more technical keywords
-        might be considered more complex.
-        """
-        prompt_lower = prompt.lower()
-        complexity = 0.0
-        
-        # Base complexity on length, normalized to 0-1
-        complexity += min(1.0, len(prompt) / 1000.0) 
-        
-        # Boost complexity for technical keywords
-        technical_keywords = [
-            "code", "algorithm", "architecture", "database", "api", "security",
-            "performance", "optimization", "refactor", "deploy", "ci/cd",
-            "scientific", "research", "hypothesis", "financial", "market"
-        ]
-        keyword_density = sum(1 for kw in technical_keywords if kw in prompt_lower) / len(technical_keywords) if technical_keywords else 0
-        complexity += min(0.5, keyword_density * 0.5) # Add up to 0.5 for keyword density
-        
-        # Ensure complexity is between 0 and 1
-        return max(0.0, min(1.0, complexity))
-
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 3 ---
-    def _extract_quality_metrics(self, intermediate_results: Dict[str, Any]) -> Dict[str, float]:
-        """
-        Placeholder for extracting quality metrics from intermediate results.
-        Analyzes text for keywords related to quality, security, etc.
-        """
-        metrics = {
-            "context_quality": 0.5, # Default
-            "security_risk_score": 0.5, # Default
-            "code_quality": 0.5, # Default
-            "maintainability_index": 0.5, # Default
-            "test_coverage_estimate": 0.5 # Default
-        }
-        
-        # Keywords for different metrics
-        quality_keywords = {
-            "code_quality": ["good code", "clean code", "readable", "well-structured", "efficient"],
-            "security_risk_score": ["vulnerab", "risk", "exploit", "hack", "insecure", "threat", "malware", "attack"],
-            "maintainability_index": ["maintainable", "easy to modify", "scalable", "modular", "well-documented"],
-            "test_coverage_estimate": ["tested", "coverage", "unit test", "integration test", "robust testing"]
-        }
-        
-        # Combine all intermediate results into a single text for analysis
-        all_results_text = ""
-        for step_name, result in intermediate_results.items():
-            if isinstance(result, str):
-                all_results_text += result.lower() + " "
-            elif isinstance(result, dict):
-                # Try to extract relevant text from dicts (e.g., rationale, concerns)
-                for key, value in result.items():
-                    if isinstance(value, str):
-                        all_results_text += value.lower() + " "
-                    elif isinstance(value, list): # For lists of concerns/modules
-                        all_results_text += " ".join(str(v).lower() for v in value) + " "
-        
-        # Calculate scores based on keyword presence
-        for metric_name, keywords in quality_keywords.items():
-            score_sum = 0
-            for keyword in keywords:
-                if keyword in all_results_text:
-                    score_sum += 1
-            
-            # Normalize score based on number of keywords for that metric
-            if keywords:
-                metrics[metric_name] = min(1.0, score_sum / len(keywords))
-        
-        # Special handling for context quality based on Context_Aware_Assistant output if available
-        if "Context_Aware_Assistant_Output" in intermediate_results:
-            caa_output = intermediate_results["Context_Aware_Assistant_Output"]
-            if isinstance(caa_output, dict) and "quality_metrics" in caa_output:
-                if "overall_code_quality" in caa_output["quality_metrics"]:
-                    metrics["code_quality"] = max(metrics["code_quality"], caa_output["quality_metrics"]["overall_code_quality"])
-                if "security_risk_score" in caa_output["quality_metrics"]:
-                    metrics["security_risk_score"] = max(metrics["security_risk_score"], caa_output["quality_metrics"]["security_risk_score"])
-                if "maintainability_index" in caa_output["quality_metrics"]:
-                    metrics["maintainability_index"] = max(metrics["maintainability_index"], caa_output["quality_metrics"]["maintainability_index"])
-                if "test_coverage_estimate" in caa_output["quality_metrics"]:
-                    metrics["test_coverage_estimate"] = max(metrics["test_coverage_estimate"], caa_output["quality_metrics"]["test_coverage_estimate"])
-        
-        # Ensure scores are within bounds
-        for key in metrics:
-            metrics[key] = max(0.0, min(1.0, metrics[key]))
-            
-        return metrics
-
-    def run_debate(self) -> Tuple[Any, Dict[str, Any]]: # Changed return type hint
-        """
-        Run the complete Socratic debate process and return the results.
-        
-        Returns:
-            A tuple containing the final answer and a dictionary of intermediate steps.
-        """
-        try:
-            # 1. Analyze context
-            # Check token budget for initial prompt and context analysis phase.
-            # The prompt_text for this check is the initial prompt.
-            initial_prompt_tokens = self._check_token_budget(self.initial_prompt, "initial_prompt_count")
-            
-            context_analysis = self._analyze_context()
-            
-            # The token budgets are now calculated correctly in __init__ because
-            # self.initial_input_tokens is set there.
-            # No need to call _calculate_token_budgets() here again.
-            
-            self.intermediate_steps["Context_Analysis"] = context_analysis
-            # 2. Prepare context
-            context_str = self._prepare_context(context_analysis)
-            # Count tokens for context preparation if it's significant
-            if context_str:
-                # Use _check_token_budget to account for context preparation tokens
-                # Note: _check_token_budget already updates self.tokens_used
-                # The prompt_text for context preparation is the context_str itself.
-                self._check_token_budget(context_str, "context_preparation") # This call will update self.tokens_used
-            
-            # 3. Generate persona sequence
-            # The persona_router.determine_persona_sequence is called here.
-            # It might use context_analysis or other internal state.
-            self.persona_sequence = self.persona_router.determine_persona_sequence(
-                self.initial_prompt,
-                intermediate_results=None # No intermediate results on the first pass
-            )
-            self.intermediate_steps["Persona_Sequence"] = self.persona_sequence
-            
-            # 4. Run initial generation (Visionary Generator)
-            current_response = ""
-            if self.persona_sequence:
-                # The _run_debate_round method handles constructing the prompt and checking budget
-                current_response = self._run_debate_round(
-                    "No previous responses. Starting the debate.", 
-                    self.persona_sequence[0]
-                )
-                
-                # 5. Run subsequent debate rounds
-                for persona_name in self.persona_sequence[1:]:
-                    current_response = self._run_debate_round(current_response, persona_name)
-            else:
-                logger.warning("No persona sequence generated. Debate cannot proceed.")
-                # Handle case where no personas are selected
-                return (
-                    "Error: No personas selected for debate.", # final_answer
-                    { # intermediate_steps
-                        "error": "No persona sequence generated.",
-                        "process_log": self.process_log,
-                        "Total_Tokens_Used": self.tokens_used,
-                        "Total_Estimated_Cost_USD": self._calculate_cost()
-                    }
-                )
-            
-            # 6. Synthesize final answer
-            final_answer = self._synthesize_final_answer(current_response)
-            
-            # 7. Return results as a tuple (final_answer, intermediate_steps)
-            # app.py expects this format and retrieves other details from intermediate_steps.
-            return final_answer, self.intermediate_steps
-            
-        except TokenBudgetExceededError as e:
-            logger.warning(f"Token budget exceeded: {str(e)}")
-            # Re-raise the exception to be caught by app.py's error handling.
-            # app.py is designed to populate session state with error details from the caught exception.
-            raise 
-        except Exception as e:
-            logger.exception("Unexpected error during debate process")
-            # Re-raise the exception to be caught by the app.py handler
-            raise
+# --- NEW HELPER FUNCTION FOR SUGGESTION 6 ---
+@lru_cache(maxsize=100) # Cache results for up to 100 unique calls
+def _count_tokens_cached(llm_provider, text: str) -> int:
+    """
+    Cached wrapper for LLM provider's count_tokens method.
+    This helps avoid redundant token counting for identical file contents.
+    """
+    # Ensure llm_provider is hashable for lru_cache. GeminiProvider is decorated with @st.cache_resource.
+    # The text content is the primary variable for caching.
+    try:
+        return llm_provider.count_tokens(text)
+    except Exception as e:
+        logger.error(f"Error in cached token counting: {e}")
+        # Return a large number or re-raise to indicate failure, depending on desired behavior.
+        # For safety, let's return a value that might trigger budget warnings.
+        return 10000 # Indicate a significant token count on error
 
 # Additional helper functions
 def load_personas_from_yaml(yaml_path: str) -> Dict[str, PersonaConfig]:

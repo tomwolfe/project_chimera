@@ -9,10 +9,11 @@ import re
 import json
 from pathlib import Path
 import logging # Ensure logging is imported
+from functools import lru_cache # Import lru_cache
 
 from src.models import PersonaConfig
-# NEW: Import SELF_ANALYSIS_KEYWORDS
-from src.constants import SELF_ANALYSIS_KEYWORDS
+# NEW: Import SELF_ANALYSIS_KEYWORDS and SELF_ANALYSIS_PERSONA_SEQUENCE
+from src.constants import SELF_ANALYSIS_KEYWORDS, SELF_ANALYSIS_PERSONA_SEQUENCE # Import standardized sequence
 
 logger = logging.getLogger(__name__) # Initialize logger
 
@@ -135,6 +136,7 @@ class PersonaRouter:
             if any(neg_kw in prompt_lower for neg_kw in negative_keywords):
                 continue
                 
+            # If no negative keywords matched, check for positive keywords.
             score = sum(1 for kw in keywords if kw in prompt_lower)
             if score > highest_score:
                 highest_score = score
@@ -211,81 +213,98 @@ class PersonaRouter:
     # --- NEW METHOD: is_self_analysis_prompt ---
     def is_self_analysis_prompt(self, prompt: str) -> bool:
        """Standardized method to detect self-analysis prompts using central constants"""
-       prompt_lower = prompt.lower()
-       # Ensure SELF_ANALYSIS_KEYWORDS are correctly imported and used
-       return any(keyword in prompt_lower for keyword in SELF_ANALYSIS_KEYWORDS)
+       # Use the imported function from constants.py
+       from src.constants import is_self_analysis_prompt # Import here for clarity
+       return is_self_analysis_prompt(prompt)
+       # The actual check is done via `from src.constants import is_self_analysis_prompt` in core.py
+       # and then called as `is_self_analysis_prompt(self.initial_prompt)`
+       # This method here is just a placeholder to satisfy the structure if it were called directly.
+       # The correct implementation is in core.py using the imported function.
+       # If this method were to be used, it would look like:
+       # from src.constants import is_self_analysis_prompt
+       # return is_self_analysis_prompt(prompt)
+       pass # This method should not be called directly, rely on import in core.py
 
     # --- MODIFIED HELPER METHOD: _apply_dynamic_adjustment ---
-    def _apply_dynamic_adjustment(self, base_sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
-        """Apply dynamic persona adjustments based on intermediate findings."""
+    def _apply_dynamic_adjustment(self, sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
+        """Apply dynamic adjustments to persona sequence based on intermediate results quality metrics."""
         # Handle case where intermediate_results is None (can happen during initial self-analysis)
-        if intermediate_results is None:
+        if not intermediate_results:
             intermediate_results = {}
         
-        # Analyze previous outputs for specific trigger keywords
-        triggered_personas_to_add = set()
-        
-        # Iterate through all intermediate steps
+        # Extract quality metrics from intermediate results
+        # This part needs to correctly parse the quality_metrics from the results.
+        # The structure might be nested, e.g., result['quality_metrics'].
+        quality_metrics = {}
         for step_name, result in intermediate_results.items():
-            # Skip steps that are not actual persona outputs (e.g., token counts, errors)
-            if not (step_name.endswith("_Output") or step_name.endswith("_Critique")):
-                continue
-
-            # Convert result to string for keyword searching. Handle dicts by serializing.
-            result_text = ""
+            # Look for results that contain quality metrics, often from specific personas
             if isinstance(result, dict):
-                try:
-                    result_text = json.dumps(result)
-                except TypeError: # Handle cases where result might not be JSON serializable
-                    result_text = str(result)
-            elif isinstance(result, str):
-                result_text = result
-            else:
-                result_text = str(result) # Fallback for other types
+                if 'quality_metrics' in result and isinstance(result['quality_metrics'], dict):
+                    # Merge metrics, prioritizing higher scores if multiple personas report on the same metric
+                    for metric_name, value in result['quality_metrics'].items():
+                        quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
+                # Also check for specific persona outputs that might contain metrics directly
+                elif step_name.endswith("_Output") and isinstance(result, str):
+                    # Simple keyword check for metrics within string outputs (less reliable)
+                    if "code_quality_score" in result: quality_metrics["code_quality"] = max(quality_metrics.get("code_quality", 0.0), 0.6) # Example heuristic
+                    if "security_risk" in result: quality_metrics["security_risk_score"] = max(quality_metrics.get("security_risk_score", 0.0), 0.7)
+                elif step_name.endswith("_Output") and isinstance(result, dict): # Handle if output is a dict itself
+                    if "quality_metrics" in result and isinstance(result["quality_metrics"], dict):
+                        for metric_name, value in result["quality_metrics"].items():
+                            quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
 
-            # Check for trigger keywords in the result text
-            for persona_name, keywords in self.trigger_keywords.items():
-                # Only consider adding personas not already in the sequence
-                if persona_name not in base_sequence: # Check against the base sequence
-                    for keyword in keywords:
-                        # Use word boundaries for more precise matching
-                        if re.search(rf'\b{keyword}\b', result_text, re.IGNORECASE):
-                            triggered_personas_to_add.add(persona_name)
-                            break # Found a trigger for this persona, move to the next persona
+        adjusted_sequence = sequence.copy()
         
-        # If new personas were triggered, insert them into the sequence.
-        # A good place is before the Impartial_Arbitrator, or based on their role.
-        # For simplicity, we'll insert them before the Arbitrator.
-        final_sequence = list(base_sequence) # Create a mutable copy
-        if triggered_personas_to_add:
-            # Sort triggered personas alphabetically for deterministic order
-            sorted_triggered_personas = sorted(list(triggered_personas_to_add))
-            
-            # Find the index where the Arbitrator is (or where it would be inserted)
-            arbitrator_index = len(final_sequence)
-            if "Impartial_Arbitrator" in final_sequence:
-                arbitrator_index = final_sequence.index("Impartial_Arbitrator")
-            
-            # Insert the triggered personas before the Arbitrator
-            for persona_to_insert in sorted_triggered_personas:
-                if persona_to_insert not in final_sequence: # Double check uniqueness
-                    final_sequence.insert(arbitrator_index, persona_to_insert)
-                    arbitrator_index += 1 # Adjust index for subsequent insertions
+        # --- Priority adjustments based on detected needs ---
         
+        # If code quality is low, prioritize code-focused personas
+        if quality_metrics.get('code_quality', 1.0) < 0.7:
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Code_Architect')
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor') # Security is often tied to code quality
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer') # Testing is key to quality
+        
+        # If reasoning depth is low, prioritize personas that can add depth
+        if quality_metrics.get('reasoning_depth', 1.0) < 0.6:
+            # Devils_Advocate can challenge and deepen the reasoning
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Devils_Advocate')
+            # Constructive_Critic can also help refine arguments
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Constructive_Critic')
+        
+        # If test coverage is low, prioritize testing personas
+        if quality_metrics.get('test_coverage_estimate', 1.0) < 0.5:
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer')
+        
+        # If security risk is high, prioritize security personas
+        if quality_metrics.get('security_risk_score', 0.0) > 0.7:
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor')
+            # Also consider DevOps for security operations
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'DevOps_Engineer')
+
+        # Remove redundant personas if certain quality thresholds are met
+        # Example: If architectural coherence is very high, Code_Architect might be less critical
+        if quality_metrics.get('architectural_coherence', 1.0) > 0.9 and 'Code_Architect' in adjusted_sequence:
+            logger.debug("Removing Code_Architect due to high architectural coherence.")
+            adjusted_sequence.remove('Code_Architect')
+        
+        # Example: If the prompt was simple and reasoning depth is high, maybe remove Devils_Advocate
+        if quality_metrics.get('reasoning_depth', 1.0) > 0.8 and len(prompt_lower.split()) < 50 and 'Devils_Advocate' in adjusted_sequence:
+            logger.debug("Removing Devils_Advocate for a simple prompt with high reasoning depth.")
+            adjusted_sequence.remove('Devils_Advocate')
+
         # --- Minimal 80/20 Refinement for Framework Selection ---
         # Add a simple check to prevent common misclassifications based on prompt context.
         # This avoids modifying personas.yaml or adding complex scoring.
         
         # Example: Prevent "building architect" from triggering Code_Architect
-        if "Code_Architect" in final_sequence:
+        if "Code_Architect" in adjusted_sequence:
             if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
-               ("software architect" not in prompt_lower and "software" not in prompt_lower):
+               ("software architect" not in prompt_lower and "software" not in prompt_lower and "code" not in prompt_lower):
                 
                 logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
-                final_sequence.remove("Code_Architect")
+                adjusted_sequence.remove("Code_Architect")
                 # Optionally, add a more general persona if a specific one is removed
-                if "Generalist_Assistant" not in final_sequence:
-                    final_sequence.append("Generalist_Assistant")
+                if "Generalist_Assistant" not in adjusted_sequence:
+                    self._insert_persona_before_arbitrator(adjusted_sequence, "Generalist_Assistant")
         
         # Add similar checks for other known problematic keyword overlaps if identified.
         # --- End of Refinement ---
@@ -295,25 +314,27 @@ class PersonaRouter:
         # the insertion logic creates duplicates.
         seen = set()
         unique_sequence = []
-        for persona in final_sequence:
+        for persona in adjusted_sequence:
             if persona not in seen:
                 unique_sequence.append(persona)
                 seen.add(persona)
         
         return unique_sequence
 
-    def _get_self_analysis_sequence(self) -> List[str]:
-        """Return standardized persona sequence for self-analysis prompts."""
-        # Standard sequence for deep codebase analysis
-        return [
-            "Context_Aware_Assistant",
-            "Code_Architect",
-            "Security_Auditor",
-            "Constructive_Critic",
-            "Test_Engineer",
-            "DevOps_Engineer",
-            "Impartial_Arbitrator"
-        ]
+    def _insert_persona_before_arbitrator(self, sequence: List[str], persona: str):
+        """Insert persona before the Impartial_Arbitrator in the sequence if not already present."""
+        if persona in sequence:
+            return  # Already in sequence
+        
+        # Find the index of the Arbitrator, or append if not found
+        arbitrator_index = len(sequence)
+        if 'Impartial_Arbitrator' in sequence:
+            arbitrator_index = sequence.index('Impartial_Arbitrator')
+        
+        # Insert the persona at the determined index
+        sequence.insert(arbitrator_index, persona)
+        logger.debug(f"Inserted persona '{persona}' before Arbitrator at index {arbitrator_index}.")
+
 
     def determine_persona_sequence(self, prompt: str, 
                                  intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
@@ -327,10 +348,12 @@ class PersonaRouter:
         prompt_lower = prompt.lower()
         
         # 1. Primary check: Is this a self-analysis prompt? Use the centralized method.
-        if self.is_self_analysis_prompt(prompt): # Use the new centralized method
+        # Ensure the import is correct and the function is called properly.
+        from src.constants import is_self_analysis_prompt # Import here for clarity
+        if is_self_analysis_prompt(prompt):
             logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
             # Start with the standardized, comprehensive self-analysis sequence
-            base_sequence = self._get_self_analysis_sequence()
+            base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE
             
             # Apply dynamic adjustment if intermediate results exist
             return self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
