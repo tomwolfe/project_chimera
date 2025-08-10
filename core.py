@@ -150,6 +150,7 @@ class SocraticDebate:
     #     # Apply consistent bounds: min 15%, max 35% for context ratio
     #     return max(0.15, min(0.35, calculated))
 
+    # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         
@@ -169,19 +170,23 @@ class SocraticDebate:
         
         # --- Apply semantic complexity for more dynamic ratio calculation ---
         # Use the existing method _calculate_semantic_complexity
-        complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
+        complexity_score = self._calculate_complexity_score(self.initial_prompt)
         
         # Dynamic adjustment with bounds as per suggestion
         # The bounds (0.15-0.35 for context, 0.55-0.75 for debate) are kept as per the LLM's rationale.
-        context_ratio = max(0.15, min(0.35, base_context_ratio + complexity_score * 0.05))
-        debate_ratio = max(0.55, min(0.75, base_debate_ratio - complexity_score * 0.03))
-        synthesis_ratio = 1.0 - context_ratio - debate_ratio
+        # The prompt specified: context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))
+        context_ratio = max(0.1, min(0.3, base_context_ratio + complexity_score * 0.05))
         
-        # Calculate token allocations with absolute minimums
+        # Distribute remaining budget between debate and synthesis
+        # Using a common split: 85% debate, 15% synthesis
+        remaining_budget_share = 1.0 - context_ratio
+        debate_ratio = remaining_budget_share * 0.85
+        synthesis_ratio = remaining_budget_share * 0.15
+        
+        # Calculate token allocations, ensuring minimums for critical phases
         context_tokens = max(400, int(available_tokens * context_ratio))
         debate_tokens = max(1000, int(available_tokens * debate_ratio))
-        # Ensure synthesis tokens are calculated to fill remaining budget, respecting its minimum
-        synthesis_tokens = max(400, available_tokens - context_tokens - debate_tokens)
+        synthesis_tokens = max(400, int(available_tokens * synthesis_ratio))
         
         # Assign budgets to self.phase_budgets
         self.phase_budgets["context"] = context_tokens
@@ -191,7 +196,7 @@ class SocraticDebate:
         logger.info(f"Token budgets calculated: Context={self.phase_budgets['context']} ({context_ratio:.2%}), "
                    f"Debate={self.phase_budgets['debate']} ({debate_ratio:.2%}), "
                    f"Synthesis={self.phase_budgets['synthesis']} ({synthesis_ratio:.2%})")
-    # --- END MODIFICATION ---
+    # --- END MODIFIED METHOD ---
     
     def _check_token_budget(self, prompt_text: str, step_name: str, system_prompt: str = "") -> int:
         """
@@ -606,28 +611,31 @@ User's Original Prompt:
         return self.tokens_used * 0.000003
     
     # --- NEW HELPER FUNCTION FOR SUGGESTION 2 ---\n
-    def _calculate_semantic_complexity(self, prompt: str) -> float:
+    def _calculate_complexity_score(self, prompt: str) -> float:
         """
-        Placeholder for semantic complexity calculation.
-        A simple heuristic: longer prompts or prompts with more technical keywords
-        might be considered more complex.
+        Calculate a semantic complexity score for the prompt (0.0 to 1.0).
+        This score influences the dynamic allocation of token budgets.
         """
         prompt_lower = prompt.lower()
         complexity = 0.0
         
-        # Base complexity on length, normalized to 0-1
-        complexity += min(1.0, len(prompt) / 1000.0) 
+        # Factor 1: Prompt length (normalized)
+        # Longer prompts are generally more complex.
+        length_factor = min(1.0, len(prompt) / 2000.0) # Normalize length to a 0-1 scale
+        complexity += length_factor * 0.5 # Contribute up to 0.5 to complexity
         
-        # Boost complexity for technical keywords
+        # Factor 2: Presence of technical keywords
+        # Keywords related to code, analysis, or specific domains increase complexity.
         technical_keywords = [
-            "code", "algorithm", "architecture", "database", "api", "security",
-            "performance", "optimization", "refactor", "deploy", "ci/cd",
-            "scientific", "research", "hypothesis", "financial", "market"
+            "code", "analyze", "refactor", "algorithm", "architecture", "system",
+            "science", "research", "business", "market", "creative", "art",
+            "security", "test", "deploy", "optimize", "debug"
         ]
-        keyword_density = sum(1 for kw in technical_keywords if kw in prompt_lower) / len(technical_keywords) if technical_keywords else 0
-        complexity += min(0.5, keyword_density * 0.5) # Add up to 0.5 for keyword density
+        keyword_count = sum(1 for kw in technical_keywords if kw in prompt_lower)
+        keyword_density = keyword_count / len(technical_keywords) if technical_keywords else 0
+        complexity += keyword_density * 0.5 # Contribute up to 0.5 for keyword density
         
-        # Ensure complexity is between 0 and 1
+        # Ensure complexity score is within the [0.0, 1.0] range
         return max(0.0, min(1.0, complexity))
 
     # --- NEW HELPER FUNCTION FOR SUGGESTION 3 ---\n

@@ -3,14 +3,12 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional # Added Optional
+import logging # Ensure logging is imported
+from functools import lru_cache # Import lru_cache
 
 # NEW: Import PersonaRouter to access its methods
 from src.persona.routing import PersonaRouter # CORRECTED PATH
-
-# --- ADDED IMPORT ---
-import logging # <-- This import was missing
-# --- END ADDED IMPORT ---
 
 logger = logging.getLogger(__name__)
 
@@ -150,11 +148,77 @@ class ContextRelevanceAnalyzer:
         if 'api' in key_terms and ('controller' in file_path_lower or 'service' in file_path_lower or 'route' in file_path_lower):
             boost += 0.15
         
-        # Example: If prompt mentions 'test' and file path starts with 'test_'
-        if 'test' in key_terms and file_path.startswith('tests/'):
-            boost += 0.2
-
+        # --- ADDED FOR REASONING QUALITY (#1 PRIORITY): Boost for test files ---
+        # If prompt keywords indicate a need for code analysis or testing,
+        # boost relevance for files within the 'tests/' directory.
+        if any(kw in key_terms for kw in ["test", "debug", "bug", "quality", "coverage", "refactor", "code"]):
+            if file_path.startswith('tests/'):
+                boost += 0.2 # Apply the specified 0.2 boost for test files
+        # --- END ADDED FOR REASONING QUALITY ---
+        
         # Combine base similarity with boost, capping at 1.0
         weighted_similarity = min(1.0, base_similarity + boost)
         
         return weighted_similarity
+
+    # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---
+    # This method implements the context_ratio formula as requested in the prompt.
+    def _get_adaptive_phase_ratios(self, prompt: str, context_present: bool) -> Dict[str, float]:
+        """
+        Dynamically adjust phase ratios using the context_ratio formula for Robustness.
+        This ensures stable token allocation based on prompt complexity.
+        """
+        # Base ratio from settings or default
+        base_ratio = 0.15 # Default base ratio, could be configurable
+        
+        # Calculate complexity score for the prompt
+        complexity_score = self._calculate_complexity_score(prompt)
+        
+        # Apply the formula: context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))
+        # This ensures context ratio is between 10% and 30% of available tokens.
+        context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))
+        
+        # The remaining budget is split between debate and synthesis.
+        # The prompt implies a split, but doesn't specify exact ratios for debate/synthesis.
+        # A common split is 85% to debate, 15% to synthesis.
+        remaining_budget_share = 1.0 - context_ratio
+        debate_ratio = remaining_budget_share * 0.85
+        synthesis_ratio = remaining_budget_share * 0.15
+        
+        logger.info(f"Calculated phase ratios: Context={context_ratio:.2%}, Debate={debate_ratio:.2%}, Synthesis={synthesis_ratio:.2%}")
+        
+        return {
+            "context": context_ratio,
+            "debate": debate_ratio,
+            "synthesis": synthesis_ratio
+        }
+    # --- END MODIFIED METHOD ---
+
+    # --- NEW HELPER FUNCTION FOR #2 PRIORITY (ROBUSTNESS) ---
+    def _calculate_complexity_score(self, prompt: str) -> float:
+        """
+        Calculate a semantic complexity score for the prompt (0.0 to 1.0).
+        This score influences the dynamic allocation of token budgets.
+        """
+        prompt_lower = prompt.lower()
+        complexity = 0.0
+        
+        # Factor 1: Prompt length (normalized)
+        # Longer prompts are generally more complex.
+        length_factor = min(1.0, len(prompt) / 2000.0) # Normalize length to a 0-1 scale
+        complexity += length_factor * 0.5 # Contribute up to 0.5 to complexity
+        
+        # Factor 2: Presence of technical keywords
+        # Keywords related to code, analysis, or specific domains increase complexity.
+        technical_keywords = [
+            "code", "analyze", "refactor", "algorithm", "architecture", "system",
+            "science", "research", "business", "market", "creative", "art",
+            "security", "test", "deploy", "optimize", "debug"
+        ]
+        keyword_count = sum(1 for kw in technical_keywords if kw in prompt_lower)
+        keyword_density = keyword_count / len(technical_keywords) if technical_keywords else 0
+        complexity += keyword_density * 0.5 # Contribute up to 0.5 for keyword density
+        
+        # Ensure complexity score is within the [0.0, 1.0] range
+        return max(0.0, min(1.0, complexity))
+    # --- END NEW HELPER FUNCTION ---

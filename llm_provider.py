@@ -1,4 +1,4 @@
-# llm_provider.py
+# src/llm_provider.py
 import streamlit as st
 import google.genai as genai
 from google.genai import types
@@ -12,6 +12,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 import logging
 from pathlib import Path
+import random # Needed for backoff jitter
 
 # --- Tokenizer Interface and Implementation ---
 # Import the Tokenizer ABC and GeminiTokenizer implementation
@@ -55,7 +56,10 @@ class GeminiProvider:
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
     MAX_BACKOFF_SECONDS = 60 # Maximum backoff time in seconds
-    RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+    
+    # Define retryable error codes and HTTP status codes at class level
+    RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504} # For API errors that are retryable
+    RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504} # For HTTP errors that are retryable
 
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None):
         self._api_key = api_key # Store API key for hashing/equality
@@ -77,7 +81,7 @@ class GeminiProvider:
         if not isinstance(other, GeminiProvider):
             return NotImplemented
         return (self.model_name == other.model_name and 
-                self._api_key == other._api_key and
+                self._api_key == other.api_key and
                 type(self.tokenizer) == type(other.tokenizer)) # Compare tokenizer types
 
     def _get_pricing_model_name(self) -> str:
@@ -98,6 +102,7 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
+    # --- MODIFIED METHOD FOR #3 PRIORITY (EFFICIENCY) ---
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, _status_callback=None) -> tuple[str, int, int]:
         """Generate content using the updated SDK pattern with retry logic and token tracking."""
         config = types.GenerateContentConfig(
@@ -106,10 +111,16 @@ class GeminiProvider:
             max_output_tokens=max_tokens
         )
 
+        # Use the modified _generate_with_retry method
+        return self._generate_with_retry(prompt, system_prompt, config, _status_callback)
+
+    def _generate_with_retry(self, prompt: str, system_prompt: str, config: types.GenerateContentConfig, _status_callback=None) -> tuple[str, int, int]:
+        """Handles content generation with retry logic."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                # Use the tokenizer for all token counts for consistency
-                prompt_with_system = f"{system_prompt}\n\n{prompt}"
+                # Use the tokenizer for all token counts for consistency.
+                # Combine system prompt and prompt for input token calculation.
+                prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
                 input_tokens = self.tokenizer.count_tokens(prompt_with_system)
                 
                 # CORRECTED: Use client.models.generate_content pattern
@@ -126,11 +137,7 @@ class GeminiProvider:
                     if content and content.parts and len(content.parts) > 0:
                         generated_text = content.parts[0].text
                 
-                # Get token usage from response metadata if available, otherwise use tokenizer
-                # The LLM response suggested using response.usage_metadata.prompt_token_count etc.
-                # However, the current google-genai SDK might not expose this directly in the same way.
-                # For consistency and to ensure we use our tokenizer, we'll rely on tokenizer.count_tokens.
-                # If response.usage_metadata becomes reliably available and more accurate, it can be integrated.
+                # Get output tokens using the tokenizer.
                 output_tokens = self.tokenizer.count_tokens(generated_text)
 
                 # Log token usage
@@ -138,59 +145,77 @@ class GeminiProvider:
                 
                 return generated_text, input_tokens, output_tokens
                 
-            except APIError as e:
-                error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
-                http_status_code = getattr(e, 'response', None)
-                if http_status_code: http_status_code = http_status_code.status_code
-
-                if http_status_code is not None and http_status_code in self.RETRYABLE_HTTP_CODES and attempt < self.MAX_RETRIES:
-                    backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
-                    jitter = random.uniform(0, 0.5 * backoff_time)
-                    sleep_time = backoff_time + jitter
-                    if _status_callback:
-                        _status_callback(message=f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
-                    else:
-                        logger.warning(f"Gemini API Error (Status: {http_status_code}, Message: {error_msg}). Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})")
-                    time.sleep(sleep_time)
-                else:
-                    raise GeminiAPIError(error_msg, http_status_code if http_status_code is not None else getattr(e, 'code', None)) from e
             except Exception as e:
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                 
-                if isinstance(e, socket.gaierror):
-                    user_friendly_error = (
-                        f"Network error during API call: Could not resolve hostname. "
-                        f"This might be due to DNS issues or proxy misconfiguration. "
-                        f"Details: {error_msg}"
-                    )
-                    raise LLMProviderError(user_friendly_error) from e
+                # --- MODIFIED FOR #4 PRIORITY (MAINTAINABILITY) ---
+                # Standardize retry decision logic and backoff calculation.
+                should_retry = False
+                # Check for specific retryable error codes from Gemini API errors
+                if isinstance(e, APIError):
+                    if e.code in self.RETRYABLE_ERROR_CODES:
+                        should_retry = True
+                    # Also check HTTP status code if available in the APIError response
+                    http_status_code = getattr(e, 'response', None)
+                    if http_status_code and http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
+                        should_retry = True
+                # Handle network resolution errors (DNS issues)
+                elif isinstance(e, socket.gaierror):
+                    should_retry = True
                 
-                if attempt < self.MAX_RETRIES:
-                    backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** (attempt - 1)), self.MAX_BACKOFF_SECONDS)
-                    jitter = random.uniform(0, 0.5 * backoff_time)
+                if should_retry and attempt < self.MAX_RETRIES:
+                    # Calculate backoff time with jitter for exponential backoff
+                    # Use 'attempt' directly for exponential backoff calculation
+                    backoff_time = min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** attempt), self.MAX_BACKOFF_SECONDS)
+                    jitter = random.uniform(0, 0.5 * backoff_time) # Add random jitter
                     sleep_time = backoff_time + jitter
+                    
+                    log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
                     if _status_callback:
-                        _status_callback(message=f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})", state="running")
+                        _status_callback(message=log_message, state="running")
                     else:
-                        logger.error(f"Unexpected error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})")
+                        logger.warning(log_message)
                     time.sleep(sleep_time)
                 else:
-                    raise LLMUnexpectedError(error_msg) from e
-
-        raise LLMUnexpectedError("Max retries exceeded for generate call.")
-
-    def count_tokens(self, prompt: str, system_prompt: str = "", _status_callback=None) -> int:
-        """Counts tokens using the tokenizer, including system prompt if provided."""
-        full_text_for_counting = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+                    # If not retryable or max retries exceeded, raise a specific error
+                    if isinstance(e, APIError):
+                        raise GeminiAPIError(error_msg, getattr(e, 'code', None)) from e
+                    else:
+                        raise LLMUnexpectedError(error_msg) from e
         
-        # Use the tokenizer for counting
+        # If loop finishes without returning, it means max retries were exceeded
+        raise LLMUnexpectedError("Max retries exceeded for generate call.")
+    # --- END MODIFIED METHOD ---
+
+    # --- MODIFIED METHOD FOR #3 PRIORITY (EFFICIENCY) ---
+    def count_tokens(self, prompt: str, system_prompt: str = "", _status_callback=None) -> int:
+        """Counts tokens consistently and robustly using the tokenizer."""
+        # Combine system prompt and prompt for accurate token counting.
+        # Ensure consistent handling of empty system prompts.
+        prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        
+        # Use the tokenizer for counting.
         try:
-            return self.tokenizer.count_tokens(full_text_for_counting)
+            # --- ADDED FOR ROBUSTNESS: Ensure text is properly encoded for token counting ---
+            # This prevents errors with special characters or unexpected byte sequences.
+            try:
+                # Encode to UTF-8, then decode back to ensure valid string for API.
+                # 'replace' error handling ensures that any problematic characters are handled gracefully.
+                text_encoded = prompt_with_system.encode('utf-8')
+                text_for_tokenizer = text_encoded.decode('utf-8', errors='replace') 
+            except UnicodeEncodeError:
+                # Fallback if encoding itself fails, replace problematic chars
+                text_for_tokenizer = prompt_with_system.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+                logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
+            # --- END ADDED FOR ROBUSTNESS ---
+            
+            return self.tokenizer.count_tokens(text_for_tokenizer)
         except Exception as e:
             # Handle potential errors from the tokenizer itself
             error_msg = f"Error using tokenizer to count tokens: {str(e)}"
             logger.error(error_msg)
             if _status_callback:
                 _status_callback(message=f"[red]{error_msg}[/red]", state="error")
-            # Re-raise as a provider error
+            # Re-raise as a provider error to be handled by core.py
             raise LLMProviderError(error_msg) from e
+    # --- END MODIFIED METHOD ---
