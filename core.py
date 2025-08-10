@@ -24,8 +24,7 @@ from rich.console import Console
 from pydantic import ValidationError
 from functools import lru_cache # Import lru_cache for caching
 
-# --- ADDED IMPORT ---
-# Import the corrected GeminiProvider from llm_provider.py
+# --- ADDED IMPORT ---\n# Import the corrected GeminiProvider from llm_provider.py
 from llm_provider import GeminiProvider
 # --- END ADDED IMPORT ---
 
@@ -78,6 +77,8 @@ class SocraticDebate:
         # Load settings, using defaults if not provided
         self.settings = settings or ChimeraSettings()
         # Apply the passed context_token_budget_ratio to settings
+        # NOTE: This line in the original code might be redundant if settings are loaded and validated later.
+        # However, it ensures the passed ratio is considered if settings are initialized here.
         self.settings.context_token_budget_ratio = context_token_budget_ratio # ADDED THIS LINE
         self.max_total_tokens_budget = max_total_tokens_budget # FIXED: Changed from 'max_total_tokens'
         self.tokens_used = 0 # Total tokens consumed across all LLM calls
@@ -137,15 +138,17 @@ class SocraticDebate:
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
     
-    # --- MODIFIED METHOD FOR SUGGESTION 1 ---
-    def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
-        """
-        Placeholder for context ratio calculation, applying complexity and bounds.
-        This function encapsulates the logic previously scattered and inconsistently applied.
-        """
-        calculated = base_ratio + (complexity_score * 0.05)
-        # Apply consistent bounds: min 15%, max 35% for context ratio
-        return max(0.15, min(0.35, calculated))
+    # --- MODIFIED METHOD FOR SUGGESTION 1 ---\n
+    # This method was part of the original code, not a new suggestion.
+    # The LLM's suggestion was to modify _calculate_token_budgets.
+    # def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
+    #     """
+    #     Placeholder for context ratio calculation, applying complexity and bounds.
+    #     This function encapsulates the logic previously scattered and inconsistently applied.
+    #     """
+    #     calculated = base_ratio + (complexity_score * 0.05)
+    #     # Apply consistent bounds: min 15%, max 35% for context ratio
+    #     return max(0.15, min(0.35, calculated))
 
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
@@ -154,21 +157,22 @@ class SocraticDebate:
         from src.constants import is_self_analysis_prompt
         is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
         
-        # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
-        # These are base ratios that will be adjusted by complexity.
-        # The original code uses self.settings.context_token_budget_ratio and self.settings.debate_token_budget_ratio
-        # The suggestion uses fixed base ratios and then adjusts them. I will follow the suggestion's logic.
-        base_context_ratio = 0.15 # Suggestion's base ratio
-        base_debate_ratio = 0.75 # Suggestion's base ratio
+        # --- Enhancement: Use ratios from ChimeraSettings as base, then adjust by complexity ---
+        # The original code used hardcoded base ratios (0.15, 0.75). This change leverages
+        # the configurable ratios from ChimeraSettings for more flexibility.
+        base_context_ratio = self.settings.context_token_budget_ratio
+        base_debate_ratio = self.settings.debate_token_budget_ratio
+        # --- END ENHANCEMENT ---
         
         # Calculate available tokens for the debate/synthesis phases
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
-        # --- Apply semantic complexity for more dynamic ratio calculation ---\n
+        # --- Apply semantic complexity for more dynamic ratio calculation ---
         # Use the existing method _calculate_semantic_complexity
         complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
         
         # Dynamic adjustment with bounds as per suggestion
+        # The bounds (0.15-0.35 for context, 0.55-0.75 for debate) are kept as per the LLM's rationale.
         context_ratio = max(0.15, min(0.35, base_context_ratio + complexity_score * 0.05))
         debate_ratio = max(0.55, min(0.75, base_debate_ratio - complexity_score * 0.03))
         synthesis_ratio = 1.0 - context_ratio - debate_ratio
@@ -179,7 +183,7 @@ class SocraticDebate:
         # Ensure synthesis tokens are calculated to fill remaining budget, respecting its minimum
         synthesis_tokens = max(400, available_tokens - context_tokens - debate_tokens)
         
-        # Assign budgets to self.phase_budgets as per original method's structure
+        # Assign budgets to self.phase_budgets
         self.phase_budgets["context"] = context_tokens
         self.phase_budgets["debate"] = debate_tokens
         self.phase_budgets["synthesis"] = synthesis_tokens
@@ -318,11 +322,10 @@ class SocraticDebate:
             
             context_parts.append(file_context_part)
             current_context_tokens += estimated_file_tokens
-            
+        
         logger.info(f"Prepared context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
-        return "\n".join(context_parts)
-    
-    # --- MODIFIED METHOD FOR SUGGESTION 1 ---
+        return "".join(context_parts)
+
     def _prepare_self_analysis_context(self, context_analysis: Dict[str, Any]) -> str:
         """Prepare specialized context for self-analysis with core files prioritized."""
         if not self.codebase_context or not context_analysis.get("relevant_files"):
@@ -447,7 +450,7 @@ Current debate state:
 
 User's original prompt:
 {self.initial_prompt}
-        """
+"""
         
         # Check token budget for the input prompt and system instruction.
         # This call updates self.tokens_used with the input tokens.
@@ -602,7 +605,7 @@ User's Original Prompt:
         # This should ideally be derived from a configuration or model pricing lookup.
         return self.tokens_used * 0.000003
     
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 2 ---
+    # --- NEW HELPER FUNCTION FOR SUGGESTION 2 ---\n
     def _calculate_semantic_complexity(self, prompt: str) -> float:
         """
         Placeholder for semantic complexity calculation.
@@ -627,7 +630,7 @@ User's Original Prompt:
         # Ensure complexity is between 0 and 1
         return max(0.0, min(1.0, complexity))
 
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 3 ---
+    # --- NEW HELPER FUNCTION FOR SUGGESTION 3 ---\n
     def _extract_quality_metrics(self, intermediate_results: Dict[str, Any]) -> Dict[str, float]:
         """
         Placeholder for extracting quality metrics from intermediate results.
