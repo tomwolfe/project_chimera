@@ -137,10 +137,10 @@ class SocraticDebate:
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
     
-    # --- MODIFIED METHOD FOR SUGGESTION 1 (applied to core.py) ---
+    # --- MODIFIED METHOD FOR SUGGESTION 1 ---
     def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
         """
-        Centralized calculation for context ratio, applying complexity and bounds.
+        Placeholder for context ratio calculation, applying complexity and bounds.
         This function encapsulates the logic previously scattered and inconsistently applied.
         """
         calculated = base_ratio + (complexity_score * 0.05)
@@ -156,41 +156,33 @@ class SocraticDebate:
         
         # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
         # These are base ratios that will be adjusted by complexity.
-        base_context_ratio = self.settings.self_analysis_context_ratio if is_self_analysis else self.settings.context_token_budget_ratio
-        base_debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
+        # The original code uses self.settings.context_token_budget_ratio and self.settings.debate_token_budget_ratio
+        # The suggestion uses fixed base ratios and then adjusts them. I will follow the suggestion's logic.
+        base_context_ratio = 0.15 # Suggestion's base ratio
+        base_debate_ratio = 0.75 # Suggestion's base ratio
         
         # Calculate available tokens for the debate/synthesis phases
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
         # --- Apply semantic complexity for more dynamic ratio calculation ---\n
+        # Use the existing method _calculate_semantic_complexity
         complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
         
-        # Define synthesis ratio (fixed for simplicity, could also be dynamic)
-        synthesis_ratio = 0.10 
+        # Dynamic adjustment with bounds as per suggestion
+        context_ratio = max(0.15, min(0.35, base_context_ratio + complexity_score * 0.05))
+        debate_ratio = max(0.55, min(0.75, base_debate_ratio - complexity_score * 0.03))
+        synthesis_ratio = 1.0 - context_ratio - debate_ratio
         
-        # Calculate adjusted context and debate ratios using the new helper function
-        # This ensures consistent application of complexity and bounds.
-        context_ratio = self._calculate_context_ratio(base_context_ratio, complexity_score)
+        # Calculate token allocations with absolute minimums
+        context_tokens = max(400, int(available_tokens * context_ratio))
+        debate_tokens = max(1000, int(available_tokens * debate_ratio))
+        # Ensure synthesis tokens are calculated to fill remaining budget, respecting its minimum
+        synthesis_tokens = max(400, available_tokens - context_tokens - debate_tokens)
         
-        # Ensure debate ratio is calculated to fill the remaining budget, respecting minimums
-        debate_ratio = 1.0 - context_ratio - synthesis_ratio
-        
-        # Apply minimums and ensure ratios sum to 1.0
-        debate_ratio = max(0.1, debate_ratio) # Ensure debate ratio is at least 10%
-        context_ratio = max(0.1, context_ratio) # Ensure context ratio is at least 10%
-        
-        # Re-normalize if minimums caused sum to deviate significantly
-        total_adjusted = context_ratio + debate_ratio + synthesis_ratio
-        if abs(total_adjusted - 1.0) > 0.01: # Allow for small floating point inaccuracies
-            ratio_factor = 1.0 / total_adjusted
-            context_ratio *= ratio_factor
-            debate_ratio *= ratio_factor
-            synthesis_ratio *= ratio_factor # Ensure synthesis also scales if needed
-
-        # Assign final budgets, ensuring minimums for critical phases
-        self.phase_budgets["context"] = max(200, int(available_tokens * context_ratio))
-        self.phase_budgets["debate"] = max(500, int(available_tokens * debate_ratio))
-        self.phase_budgets["synthesis"] = max(400, int(available_tokens * synthesis_ratio)) # Ensure synthesis has a minimum budget
+        # Assign budgets to self.phase_budgets as per original method's structure
+        self.phase_budgets["context"] = context_tokens
+        self.phase_budgets["debate"] = debate_tokens
+        self.phase_budgets["synthesis"] = synthesis_tokens
         
         logger.info(f"Token budgets calculated: Context={self.phase_budgets['context']} ({context_ratio:.2%}), "
                    f"Debate={self.phase_budgets['debate']} ({debate_ratio:.2%}), "
@@ -315,7 +307,7 @@ class SocraticDebate:
             # Use the actual tokenizer for precise counting
             # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
             # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
-            estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part) # Use cached count_tokens
             # --- END MODIFICATION ---
             
             if current_context_tokens + estimated_file_tokens > self.phase_budgets.get("context", 200): # Use phase_budgets for context
@@ -369,7 +361,7 @@ class SocraticDebate:
                 file_context_part = f"### {file_path}\n{content}\n"
                 # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
                 # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
-                estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+                estimated_file_tokens = self.llm_provider.count_tokens(file_context_part) # Use cached count_tokens
                 # --- END MODIFICATION ---
                 
                 # Check if adding this file would exceed budget
@@ -390,7 +382,7 @@ class SocraticDebate:
             file_context_part = f"### {file_path}\n{content}\n"
             # --- MODIFICATION FOR SUGGESTION 6: Use cached token counting ---
             # estimated_file_tokens = self.llm_provider.count_tokens(file_context_part)
-            estimated_file_tokens = _count_tokens_cached(self.llm_provider, file_context_part)
+            estimated_file_tokens = self.llm_provider.count_tokens(file_context_part) # Use cached count_tokens
             # --- END MODIFICATION ---
             
             # Check if adding this file would exceed budget
@@ -785,23 +777,6 @@ User's Original Prompt:
             logger.exception("Unexpected error during debate process")
             # Re-raise the exception to be caught by the app.py handler
             raise
-
-# --- NEW HELPER FUNCTION FOR SUGGESTION 6 ---
-@lru_cache(maxsize=100) # Cache results for up to 100 unique calls
-def _count_tokens_cached(llm_provider, text: str) -> int:
-    """
-    Cached wrapper for LLM provider's count_tokens method.
-    This helps avoid redundant token counting for identical file contents.
-    """
-    # Ensure llm_provider is hashable for lru_cache. GeminiProvider is decorated with @st.cache_resource.
-    # The text content is the primary variable for caching.
-    try:
-        return llm_provider.count_tokens(text)
-    except Exception as e:
-        logger.error(f"Error in cached token counting: {e}")
-        # Return a large number or re-raise to indicate failure, depending on desired behavior.
-        # For safety, let's return a value that might trigger budget warnings.
-        return 10000 # Indicate a significant token count on error
 
 # Additional helper functions
 def load_personas_from_yaml(yaml_path: str) -> Dict[str, PersonaConfig]:

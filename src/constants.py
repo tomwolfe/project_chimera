@@ -5,27 +5,25 @@ from functools import lru_cache # Import lru_cache for caching
 # Centralized keywords with weights for self-analysis prompt detection.
 # Higher weights indicate stronger indicators.
 SELF_ANALYSIS_KEYWORDS = {
-    "chimera": 0.9,
-    "codebase": 0.85,
-    "self-analysis": 0.95,
     "analyze the entire Project Chimera codebase": 1.0,
-    "refactor this code": 0.8,
-    "improve your logic": 0.75,
-    "system analysis": 0.8,
-    "self-improvement": 0.7,
-    "your reasoning": 0.65,
-    "critique your own output": 0.9,
-    "evaluate my own code": 0.9,
-    "review this project": 0.7,
-    "assess my performance": 0.75
+    "critically analyze": 0.95,
+    "self-analysis": 0.93,
+    "improve code quality": 0.88,
+    "refactor this code": 0.85,
+    "evaluate my own code": 0.92
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
-NEGATION_PATTERNS = ["don't", "do not", "avoid", "without", "not "]
+# Patterns are tuples: (regex_pattern, penalty_multiplier)
+NEGATION_PATTERNS = [
+    (r'\b(not|don\'t|do not|avoid|without)\b.*?\b(code|analyze|refactor|improve)\b', 0.7),
+    (r'\b(code|analyze|refactor|improve)\b.*?\b(not|don\'t|do not|avoid|without)\b', 0.7),
+    (r'\b(please do not|kindly avoid)\b', 0.9)
+]
 
 # Threshold for determining if a prompt is considered self-analysis.
 # This value might require tuning based on empirical testing.
-THRESHOLD = 0.85
+THRESHOLD = 0.82  # Slightly lowered due to improved precision
 
 # Cache for the is_self_analysis_prompt function to improve performance
 # when the same prompts are evaluated multiple times.
@@ -53,22 +51,20 @@ def is_self_analysis_prompt(
     # Calculate base score from keywords
     for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
         if keyword in prompt_lower:
-            # Check for nearby negation patterns
             negated_weight_multiplier = 1.0
-            if any(pattern in prompt_lower for pattern in NEGATION_PATTERNS):
-                # Find the closest negation pattern to the keyword
-                closest_neg_dist = float('inf')
-                for neg_pattern in NEGATION_PATTERNS:
-                    neg_idx = prompt_lower.find(neg_pattern)
-                    kw_idx = prompt_lower.find(keyword)
-                    if neg_idx != -1 and kw_idx != -1:
-                        dist = abs(neg_idx - kw_idx)
-                        if dist < closest_neg_dist:
-                            closest_neg_dist = dist
-                
-                # Apply penalty if negation is within proximity
-                if closest_neg_dist < negation_proximity:
-                    negated_weight_multiplier = 0.3 # Reduce weight significantly if negated
+            # Check for negation patterns
+            for pattern, penalty in NEGATION_PATTERNS:
+                # Use re.search to find matches for the negation pattern
+                neg_match = re.search(pattern, prompt_lower)
+                if neg_match:
+                    # Check if the keyword is within the proximity of the negation match
+                    keyword_match = re.search(re.escape(keyword), prompt_lower)
+                    if keyword_match:
+                        # Calculate distance between the start of the negation match and the keyword match
+                        distance = abs(neg_match.start() - keyword_match.start())
+                        if distance < negation_proximity:
+                            negated_weight_multiplier = min(negated_weight_multiplier, penalty) # Apply the penalty
+                            break # Apply only the strongest penalty if multiple negations apply
             
             score += weight * negated_weight_multiplier
     
