@@ -33,17 +33,30 @@ class GeminiTokenizer(Tokenizer):
             The total number of tokens.
             
         Raises:
-            Exception: If token counting fails (e.g., API error, network issue).
+            Exception: If token counting fails.
         """
         if not text:
             return 0
         try:
-            # As per Google Gen AI SDK documentation, count_tokens accepts raw text
-            response = self.genai_client.models.count_tokens(model=self.model_name, contents=text)
+            # --- MODIFICATION START ---
+            # Ensure text is properly encoded for token counting to prevent errors
+            # with special characters or unexpected byte sequences.
+            try:
+                text_encoded = text.encode('utf-8')
+                # Re-decode to ensure it's a valid string for the API call
+                text_for_api = text_encoded.decode('utf-8', errors='replace') 
+            except UnicodeEncodeError:
+                # Fallback if encoding itself fails, replace problematic chars
+                text_for_api = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+                logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
+            # --- MODIFICATION END ---
+            
+            response = self.genai_client.models.count_tokens(model=self.model_name, contents=text_for_api)
             return response.total_tokens
         except Exception as e:
             # Catch potential API errors or network issues during token counting
             logger.error(f"Gemini token counting failed for model '{self.model_name}': {e}")
+            # Re-raise to allow higher-level error handling (e.g., in core.py)
             raise
 
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:

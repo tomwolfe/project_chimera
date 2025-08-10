@@ -41,11 +41,6 @@ from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValid
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# --- REMOVED THE FAULTY GeminiProvider CLASS DEFINITION ---
-# The GeminiProvider class definition that was here has been removed.
-# It has been replaced by importing the corrected version from llm_provider.py.
-# --- END REMOVED ---
-
 # The definition of TokenBudgetExceededError is now correctly imported from src.exceptions.py
 # and does not need to be redefined here.
 
@@ -142,11 +137,6 @@ class SocraticDebate:
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
     
-    # ... (rest of the SocraticDebate class remains unchanged) ...
-    # The methods like _calculate_token_budgets, _check_token_budget, etc.,
-    # will now use the imported GeminiProvider instance correctly.
-    # The TokenBudgetExceededError definition from core.py is preserved and used.
-
     # --- MODIFIED METHOD FOR SUGGESTION 1 (applied to core.py) ---
     def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
         """
@@ -172,7 +162,7 @@ class SocraticDebate:
         # Calculate available tokens for the debate/synthesis phases
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
-        # --- Apply semantic complexity for more dynamic ratio calculation ---
+        # --- Apply semantic complexity for more dynamic ratio calculation ---\n
         complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
         
         # Define synthesis ratio (fixed for simplicity, could also be dynamic)

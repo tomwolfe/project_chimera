@@ -90,7 +90,6 @@ class PersonaRouter:
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"] # Keywords indicating skepticism
         }
     
-    # --- NEW METHOD TO BE ADDED ---
     def determine_domain(self, prompt: str) -> str:
         """Determine the most appropriate domain for the given prompt.
         
@@ -143,8 +142,7 @@ class PersonaRouter:
                 best_match = domain
         
         return best_match
-    # --- END OF NEW METHOD ---
-
+    
     def _analyze_prompt_domain(self, prompt: str) -> Set[str]:
         """
         Analyze prompt to determine relevant domains, using negative keyword filtering
@@ -216,25 +214,13 @@ class PersonaRouter:
        # Use the imported function from constants.py
        from src.constants import is_self_analysis_prompt # Import here for clarity
        return is_self_analysis_prompt(prompt)
-       # The actual check is done via `from src.constants import is_self_analysis_prompt` in core.py
-       # and then called as `is_self_analysis_prompt(self.initial_prompt)`
-       # This method here is just a placeholder to satisfy the structure if it were called directly.
-       # The correct implementation is in core.py using the imported function.
-       # If this method were to be used, it would look like:
-       # from src.constants import is_self_analysis_prompt
-       # return is_self_analysis_prompt(prompt)
-       pass # This method should not be called directly, rely on import in core.py
 
     # --- MODIFIED HELPER METHOD: _apply_dynamic_adjustment ---
     def _apply_dynamic_adjustment(self, sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
         """Apply dynamic adjustments to persona sequence based on intermediate results quality metrics."""
-        # Handle case where intermediate_results is None (can happen during initial self-analysis)
         if not intermediate_results:
             intermediate_results = {}
         
-        # Extract quality metrics from intermediate results
-        # This part needs to correctly parse the quality_metrics from the results.
-        # The structure might be nested, e.g., result['quality_metrics'].
         quality_metrics = {}
         for step_name, result in intermediate_results.items():
             # Look for results that contain quality metrics, often from specific personas
@@ -244,10 +230,6 @@ class PersonaRouter:
                     for metric_name, value in result['quality_metrics'].items():
                         quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
                 # Also check for specific persona outputs that might contain metrics directly
-                elif step_name.endswith("_Output") and isinstance(result, str):
-                    # Simple keyword check for metrics within string outputs (less reliable)
-                    if "code_quality_score" in result: quality_metrics["code_quality"] = max(quality_metrics.get("code_quality", 0.0), 0.6) # Example heuristic
-                    if "security_risk" in result: quality_metrics["security_risk_score"] = max(quality_metrics.get("security_risk_score", 0.0), 0.7)
                 elif step_name.endswith("_Output") and isinstance(result, dict): # Handle if output is a dict itself
                     if "quality_metrics" in result and isinstance(result["quality_metrics"], dict):
                         for metric_name, value in result["quality_metrics"].items():
@@ -255,20 +237,16 @@ class PersonaRouter:
 
         adjusted_sequence = sequence.copy()
         
-        # --- Priority adjustments based on detected needs ---
-        
+        # --- Dynamic adjustments based on detected needs ---\n
         # If code quality is low, prioritize code-focused personas
         if quality_metrics.get('code_quality', 1.0) < 0.7:
             self._insert_persona_before_arbitrator(adjusted_sequence, 'Code_Architect')
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor') # Security is often tied to code quality
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer') # Testing is key to quality
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor')
+            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer')
         
-        # If reasoning depth is low, prioritize personas that can add depth
+        # If reasoning depth is low, prioritize Devils_Advocate
         if quality_metrics.get('reasoning_depth', 1.0) < 0.6:
-            # Devils_Advocate can challenge and deepen the reasoning
             self._insert_persona_before_arbitrator(adjusted_sequence, 'Devils_Advocate')
-            # Constructive_Critic can also help refine arguments
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Constructive_Critic')
         
         # If test coverage is low, prioritize testing personas
         if quality_metrics.get('test_coverage_estimate', 1.0) < 0.5:
@@ -277,41 +255,19 @@ class PersonaRouter:
         # If security risk is high, prioritize security personas
         if quality_metrics.get('security_risk_score', 0.0) > 0.7:
             self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor')
-            # Also consider DevOps for security operations
             self._insert_persona_before_arbitrator(adjusted_sequence, 'DevOps_Engineer')
 
-        # Remove redundant personas if certain quality thresholds are met
-        # Example: If architectural coherence is very high, Code_Architect might be less critical
-        if quality_metrics.get('architectural_coherence', 1.0) > 0.9 and 'Code_Architect' in adjusted_sequence:
-            logger.debug("Removing Code_Architect due to high architectural coherence.")
-            adjusted_sequence.remove('Code_Architect')
-        
-        # Example: If the prompt was simple and reasoning depth is high, maybe remove Devils_Advocate
-        if quality_metrics.get('reasoning_depth', 1.0) > 0.8 and len(prompt_lower.split()) < 50 and 'Devils_Advocate' in adjusted_sequence:
-            logger.debug("Removing Devils_Advocate for a simple prompt with high reasoning depth.")
-            adjusted_sequence.remove('Devils_Advocate')
-
         # --- Minimal 80/20 Refinement for Framework Selection ---
-        # Add a simple check to prevent common misclassifications based on prompt context.
-        # This avoids modifying personas.yaml or adding complex scoring.
-        
-        # Example: Prevent "building architect" from triggering Code_Architect
+        # Prevent misclassification of \"building architect\" as \"software architect\"
         if "Code_Architect" in adjusted_sequence:
             if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
                ("software architect" not in prompt_lower and "software" not in prompt_lower and "code" not in prompt_lower):
-                
                 logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
                 adjusted_sequence.remove("Code_Architect")
-                # Optionally, add a more general persona if a specific one is removed
                 if "Generalist_Assistant" not in adjusted_sequence:
                     self._insert_persona_before_arbitrator(adjusted_sequence, "Generalist_Assistant")
         
-        # Add similar checks for other known problematic keyword overlaps if identified.
-        # --- End of Refinement ---
-
         # Ensure the final sequence is unique and maintains a logical order.
-        # This step is important if multiple triggers add the same persona or if
-        # the insertion logic creates duplicates.
         seen = set()
         unique_sequence = []
         for persona in adjusted_sequence:
@@ -326,15 +282,12 @@ class PersonaRouter:
         if persona in sequence:
             return  # Already in sequence
         
-        # Find the index of the Arbitrator, or append if not found
         arbitrator_index = len(sequence)
         if 'Impartial_Arbitrator' in sequence:
             arbitrator_index = sequence.index('Impartial_Arbitrator')
         
-        # Insert the persona at the determined index
         sequence.insert(arbitrator_index, persona)
         logger.debug(f"Inserted persona '{persona}' before Arbitrator at index {arbitrator_index}.")
-
 
     def determine_persona_sequence(self, prompt: str, 
                                  intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
@@ -344,33 +297,28 @@ class PersonaRouter:
         
         Returns a list of persona names in execution order.
         """
-        
         prompt_lower = prompt.lower()
         
-        # 1. Primary check: Is this a self-analysis prompt? Use the centralized method.
-        # Ensure the import is correct and the function is called properly.
+        # 1. Primary check: Is this a self-analysis prompt?
+        # Use the imported function from constants.py
         from src.constants import is_self_analysis_prompt # Import here for clarity
         if is_self_analysis_prompt(prompt):
             logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
-            # Start with the standardized, comprehensive self-analysis sequence
             base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE
-            
-            # Apply dynamic adjustment if intermediate results exist
+            # Apply dynamic adjustment
             return self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
         
-        # --- Domain-specific routing continues below (original logic) ---
-        # 2. Initial domain-based sequence
+        # --- Domain-specific routing ---\n
         domains = self._analyze_prompt_domain(prompt)
         base_sequence = self._get_domain_specific_personas(domains)
         
-        # Get core personas and domain experts
         core_order = ["Visionary_Generator", "Skeptical_Generator"]
         domain_experts = [p for p in base_sequence
                          if p not in core_order and p != "Impartial_Arbitrator"]
         
         final_sequence = core_order + domain_experts
-        if "Impartial_Arbitrator" in base_sequence: # Ensure Arbitrator is included if it was in the base set
+        if "Impartial_Arbitrator" in base_sequence:
             final_sequence.append("Impartial_Arbitrator")
         
-        # 3. Apply dynamic adjustment based on intermediate results (using the helper method)
+        # Apply dynamic adjustment based on intermediate results
         return self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)
