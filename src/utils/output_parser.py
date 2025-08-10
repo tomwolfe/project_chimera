@@ -25,6 +25,53 @@ class LLMOutputParser:
     # REMOVED: _escape_json_string_value is problematic and not needed.
     # json.dumps handles all necessary escaping when serializing Python objects to JSON strings.
 
+    def _extract_json_from_markdown(self, text: str) -> Optional[str]:
+        """
+        Extracts the outermost valid JSON object or array from markdown code blocks.
+        Handles various markdown formats and potential LLM quirks like missing closing fences.
+        """
+        self.logger.debug("Attempting to extract JSON from markdown code blocks...")
+
+        # Patterns to match JSON within markdown code blocks.
+        # Prioritize blocks that are clearly marked with ```json or ```.
+        # Handles cases with leading/trailing whitespace and different fence styles.
+        patterns = [
+            r'```json\s*({.*?})\s*```',  # Standard ```json block
+            r'```\s*({.*?})\s*```',      # Standard ``` block
+            r'```json\s*(\[.*?\])\s*```', # Standard ```json array block
+            r'```\s*(\[.*?\])\s*```',      # Standard ``` array block
+            r'```json\s*({.*?})',         # ```json block without closing fence
+            r'```\s*({.*?})',             # ``` block without closing fence
+            r'({.*?})\s*```',             # Block ending with ```
+            r'```json\s*(\[.*?\])',       # ```json array block without closing fence
+            r'```\s*(\[.*?\])',           # ``` array block without closing fence
+            r'(\[.*?\])\s*```'            # Array block ending with ```
+        ]
+        
+        # Iterate through patterns to find the first match.
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL | re.MULTILINE)
+            if match:
+                json_str = match.group(1).strip()
+                self.logger.debug(f"Extracted potential JSON string: {json_str[:100]}...")
+                
+                # Basic sanitization: remove trailing commas before closing braces/brackets
+                # This helps with minor LLM formatting quirks.
+                json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+                
+                # Attempt to validate the extracted string by parsing it.
+                try:
+                    json.loads(json_str)
+                    self.logger.debug("Successfully extracted and validated JSON block.")
+                    return json_str
+                except json.JSONDecodeError:
+                    self.logger.debug("Extracted string is not valid JSON, trying next pattern.")
+                    # Continue to the next pattern if this one yielded invalid JSON.
+                    continue
+        
+        self.logger.debug("No valid JSON block found in markdown code blocks.")
+        return None
+
     def _extract_and_sanitize_json_string(self, text: str) -> Optional[str]:
         """
         Attempts to extract the outermost valid JSON object or array from text.
@@ -131,15 +178,19 @@ class LLMOutputParser:
 
         malformed_blocks_list = []
 
-        # Apply robust extraction and sanitization
-        sanitized_json_str = self._extract_and_sanitize_json_string(raw_output)
+        # First, try extracting JSON from markdown code blocks using the new helper
+        extracted_json_str = self._extract_json_from_markdown(raw_output)
+        
+        # If not found in markdown, try the more general extraction
+        if not extracted_json_str:
+            extracted_json_str = self._extract_and_sanitize_json_string(raw_output)
         
         parsed_data = {}
-        if not sanitized_json_str:
+        if not extracted_json_str:
             self.logger.error("Failed to extract any JSON structure from the output.")
             malformed_blocks_list.append({
                 "type": "JSON_EXTRACTION_FAILED",
-                "message": "Could not find or extract a valid JSON structure.",
+                "message": "Could not find or extract a valid JSON structure from the output.",
                 "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "") # Use raw_output directly
             })
             # Return a structured error dictionary that app.py can interpret
@@ -153,19 +204,19 @@ class LLMOutputParser:
             }
 
         try:
-            # Attempt to parse the sanitized string as JSON
-            parsed_data = json.loads(sanitized_json_str)
+            # Attempt to parse the extracted string as JSON
+            parsed_data = json.loads(extracted_json_str)
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON decoding failed after extraction: {e}")
             malformed_blocks_list.append({
                 "type": "JSON_DECODE_ERROR",
                 "message": str(e),
-                "raw_string_snippet": sanitized_json_str[:1000] + ("..." if len(sanitized_json_str) > 1000 else "") # Use sanitized_json_str directly
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "") # Use extracted_json_str directly
             })
             # Return a structured error dictionary that app.py can interpret
             return {
                 "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {sanitized_json_str[:500]}...",
+                "RATIONALE": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {extracted_json_str[:500]}...",
                 "CODE_CHANGES": [], # Default empty list for CODE_CHANGES
                 "CONFLICT_RESOLUTION": None,
                 "UNRESOLVED_CONFLICT": None,

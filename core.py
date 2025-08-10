@@ -147,51 +147,66 @@ class SocraticDebate:
     # will now use the imported GeminiProvider instance correctly.
     # The TokenBudgetExceededError definition from core.py is preserved and used.
 
-    # --- MODIFIED METHOD FOR SUGGESTION 3 ---
+    # --- MODIFIED METHOD FOR SUGGESTION 1 (applied to core.py) ---
+    def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
+        """
+        Centralized calculation for context ratio, applying complexity and bounds.
+        This function encapsulates the logic previously scattered and inconsistently applied.
+        """
+        calculated = base_ratio + (complexity_score * 0.05)
+        # Apply consistent bounds: min 15%, max 35% for context ratio
+        return max(0.15, min(0.35, calculated))
+
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         
+        # Import is_self_analysis_prompt here to ensure it's available
         from src.constants import is_self_analysis_prompt
         is_self_analysis = is_self_analysis_prompt(self.initial_prompt)
         
         # Use ratios directly from ChimeraSettings, which are normalized by its model_validator.
-        context_ratio = self.settings.self_analysis_context_ratio if is_self_analysis else self.settings.context_token_budget_ratio
-        debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
+        # These are base ratios that will be adjusted by complexity.
+        base_context_ratio = self.settings.self_analysis_context_ratio if is_self_analysis else self.settings.context_token_budget_ratio
+        base_debate_ratio = self.settings.self_analysis_debate_ratio if is_self_analysis else self.settings.debate_token_budget_ratio
         
         # Calculate available tokens for the debate/synthesis phases
-        # This line now correctly uses the assigned self.initial_input_tokens
         available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
         
         # --- Apply semantic complexity for more dynamic ratio calculation ---
         complexity_score = self._calculate_semantic_complexity(self.initial_prompt)
         
-        # Dynamic ratio adjustment based on complexity and type
-        synthesis_ratio = 0.10 # Fixed synthesis ratio for simplicity
+        # Define synthesis ratio (fixed for simplicity, could also be dynamic)
+        synthesis_ratio = 0.10 
         
-        if is_self_analysis:
-            # Self-analysis needs more context for code understanding
-            context_ratio = max(0.2, min(0.35, context_ratio + complexity_score * 0.15))
-            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio) # Ensure debate ratio is at least 10%
-        elif "code" in self.initial_prompt.lower() or "refactor" in self.initial_prompt.lower():
-            # Code tasks need balanced context and debate
-            context_ratio = max(0.2, min(0.3, context_ratio + complexity_score * 0.1))
-            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio)
-        else:
-            # For general prompts, use default ratios adjusted by complexity
-            context_ratio = max(0.1, min(0.3, context_ratio + complexity_score * 0.05))
-            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio)
-
-        # Apply minimum context threshold and ensure ratios sum to 1.0
-        context_ratio = max(0.1, context_ratio) # Ensure context ratio is at least 10%
+        # Calculate adjusted context and debate ratios using the new helper function
+        # This ensures consistent application of complexity and bounds.
+        context_ratio = self._calculate_context_ratio(base_context_ratio, complexity_score)
         
-        # Re-calculate debate ratio to ensure sum is 1.0, considering synthesis ratio
+        # Ensure debate ratio is calculated to fill the remaining budget, respecting minimums
         debate_ratio = 1.0 - context_ratio - synthesis_ratio
         
+        # Apply minimums and ensure ratios sum to 1.0
+        debate_ratio = max(0.1, debate_ratio) # Ensure debate ratio is at least 10%
+        context_ratio = max(0.1, context_ratio) # Ensure context ratio is at least 10%
+        
+        # Re-normalize if minimums caused sum to deviate significantly
+        total_adjusted = context_ratio + debate_ratio + synthesis_ratio
+        if abs(total_adjusted - 1.0) > 0.01: # Allow for small floating point inaccuracies
+            ratio_factor = 1.0 / total_adjusted
+            context_ratio *= ratio_factor
+            debate_ratio *= ratio_factor
+            synthesis_ratio *= ratio_factor # Ensure synthesis also scales if needed
+
+        # Assign final budgets, ensuring minimums for critical phases
         self.phase_budgets["context"] = max(200, int(available_tokens * context_ratio))
         self.phase_budgets["debate"] = max(500, int(available_tokens * debate_ratio))
         self.phase_budgets["synthesis"] = max(400, int(available_tokens * synthesis_ratio)) # Ensure synthesis has a minimum budget
-        # --- END MODIFICATION ---
-
+        
+        logger.info(f"Token budgets calculated: Context={self.phase_budgets['context']} ({context_ratio:.2%}), "
+                   f"Debate={self.phase_budgets['debate']} ({debate_ratio:.2%}), "
+                   f"Synthesis={self.phase_budgets['synthesis']} ({synthesis_ratio:.2%})")
+    # --- END MODIFICATION ---
+    
     def _check_token_budget(self, prompt_text: str, step_name: str, system_prompt: str = "") -> int:
         """
         Check if using the specified tokens would exceed the budget using accurate counting.

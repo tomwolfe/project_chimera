@@ -1,5 +1,7 @@
 # src/constants.py
 
+from functools import lru_cache # Import lru_cache for caching
+
 # Centralized keywords with weights for self-analysis prompt detection.
 # Higher weights indicate stronger indicators.
 SELF_ANALYSIS_KEYWORDS = {
@@ -18,44 +20,58 @@ SELF_ANALYSIS_KEYWORDS = {
     "assess my performance": 0.75
 }
 
+# Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
+NEGATION_PATTERNS = ["don't", "do not", "avoid", "without", "not "]
+
 # Threshold for determining if a prompt is considered self-analysis.
 # This value might require tuning based on empirical testing.
 THRESHOLD = 0.85
 
-def is_self_analysis_prompt(prompt: str) -> bool:
+# Cache for the is_self_analysis_prompt function to improve performance
+# when the same prompts are evaluated multiple times.
+@lru_cache(maxsize=128) # Cache up to 128 unique prompts
+def is_self_analysis_prompt(
+    prompt: str,
+    threshold: float = THRESHOLD,
+    negation_proximity: int = 20 # How close negation needs to be to affect score
+) -> bool:
     """
     Checks if weighted keyword score meets threshold for self-analysis,
     incorporating negation handling and context-aware weighting.
+    
+    Args:
+        prompt: The user's input prompt string.
+        threshold: The minimum score required to classify as self-analysis.
+        negation_proximity: The character distance within which negation affects keyword weight.
+        
+    Returns:
+        True if the prompt is classified as self-analysis, False otherwise.
     """
     prompt_lower = prompt.lower()
     score = 0.0
     
-    # Check for negation patterns that should suppress self-analysis
-    negation_patterns = ["don't", "do not", "avoid", "without", "not "]
-    # Determine the effective threshold based on presence of negation
-    base_threshold = THRESHOLD
-    if any(pattern in prompt_lower for pattern in negation_patterns):
-        # If negation is present, we need a stronger signal to override it.
-        # Increase the threshold significantly.
-        base_threshold = THRESHOLD * 1.5
-    
-    # Calculate score based on keyword presence and their weights
+    # Calculate base score from keywords
     for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
         if keyword in prompt_lower:
-            # Reduce weight if negation pattern appears nearby the keyword
-            negation_proximity = 20  # characters: how close negation needs to be to affect weight
-            negated = False
-            for neg_pattern in negation_patterns:
-                neg_idx = prompt_lower.find(neg_pattern)
-                kw_idx = prompt_lower.find(keyword)
-                if neg_idx != -1 and kw_idx != -1 and abs(neg_idx - kw_idx) < negation_proximity:
-                    # Reduce weight significantly if negation is nearby
-                    weight *= 0.3  
-                    negated = True
-                    break # Found a nearby negation for this keyword
+            # Check for nearby negation patterns
+            negated_weight_multiplier = 1.0
+            if any(pattern in prompt_lower for pattern in NEGATION_PATTERNS):
+                # Find the closest negation pattern to the keyword
+                closest_neg_dist = float('inf')
+                for neg_pattern in NEGATION_PATTERNS:
+                    neg_idx = prompt_lower.find(neg_pattern)
+                    kw_idx = prompt_lower.find(keyword)
+                    if neg_idx != -1 and kw_idx != -1:
+                        dist = abs(neg_idx - kw_idx)
+                        if dist < closest_neg_dist:
+                            closest_neg_dist = dist
+                
+                # Apply penalty if negation is within proximity
+                if closest_neg_dist < negation_proximity:
+                    negated_weight_multiplier = 0.3 # Reduce weight significantly if negated
             
-            score += weight
-            
+            score += weight * negated_weight_multiplier
+    
     # Apply context bonuses for meaningful keyword combinations
     # These bonuses help disambiguate general prompts from specific self-analysis requests.
     if "code" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower):
@@ -63,7 +79,7 @@ def is_self_analysis_prompt(prompt: str) -> bool:
     if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
         score += 0.15 # Boost for prompts explicitly mentioning the project name for analysis
     
-    # Check for explicit self-analysis phrases that should guarantee triggering
+    # Explicit phrases that should strongly indicate self-analysis
     explicit_phrases = [
         "analyze the entire Project Chimera codebase",
         "critically analyze the codebase",
@@ -73,8 +89,8 @@ def is_self_analysis_prompt(prompt: str) -> bool:
     if any(phrase in prompt_lower for phrase in explicit_phrases):
         score = max(score, 1.0)  # Ensure explicit requests always trigger if score is below 1.0
     
-    # Return True if the calculated score meets or exceeds the effective threshold
-    return score >= base_threshold
+    # Return True if the calculated score meets or exceeds the threshold
+    return score >= threshold
 
 # Standardized persona sequence for self-analysis prompts
 SELF_ANALYSIS_PERSONA_SEQUENCE = [
