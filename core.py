@@ -476,10 +476,8 @@ class SocraticDebate:
         # Determine the synthesis persona (usually the last one in sequence if designated)
         if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "Constructive_Critic"]: # Add other synthesis personas if needed
             synthesis_persona_name = persona_sequence[-1]
-        elif persona_sequence: # Fallback: use the last persona if no specific synthesis persona found
-            synthesis_persona_name = persona_sequence[-1]
-            logger.warning(f"No explicit synthesis persona found. Using last persona in sequence '{synthesis_persona_name}' for synthesis.")
-        
+        # Removed the problematic elif block that incorrectly assigned the last persona as synthesizer.
+
         if synthesis_persona_name and synthesis_persona_name in self.all_personas:
             synthesis_persona_config = self.all_personas[synthesis_persona_name]
             
@@ -515,7 +513,7 @@ class SocraticDebate:
                 self.check_budget("synthesis", 0, f"Error handling {synthesis_persona_name} synthesis")
         else:
             logger.warning("No synthesis persona found or sequence is empty. Final answer may be incomplete.")
-        return None
+        return None # Return None if no explicit synthesis persona was found or executed.
 
     def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Optional[Dict[str, Any]]:
         """Executes a single LLM turn for a given persona, handling generation, token tracking, and parsing."""
