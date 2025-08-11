@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 from .base import Tokenizer
 import hashlib
 import re
+import sys # Import sys for sys.stderr
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +97,9 @@ class GeminiTokenizer(Tokenizer):
         except Exception as e:
             logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
             # Fallback to approximate count if API fails, to prevent crashing the budget calculation
-            approx_tokens = len(text.split()) # Simple word count as fallback
-            logger.warning(f"Falling back to approximate token count ({approx_tokens}) due to error.")
+            # IMPROVED FALLBACK: Use a more accurate approximation (e.g., 4 chars per token)
+            approx_tokens = max(1, int(len(text) / 4))  # More accurate fallback
+            logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}")
             return approx_tokens
 
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:

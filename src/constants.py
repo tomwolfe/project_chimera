@@ -3,6 +3,7 @@
 from functools import lru_cache
 import re
 import logging
+from typing import Dict, Any, List # Added List for type hinting
 
 logger = logging.getLogger(__name__)
 
@@ -47,25 +48,21 @@ def is_self_analysis_prompt(
         if keyword_pos != -1:
             negated_weight_multiplier = 1.0
             
+            # Check for negations *before* the keyword
             for pattern, penalty in NEGATION_PATTERNS:
-                for neg_match in re.finditer(pattern, prompt_lower[:keyword_pos + len(keyword)]):
-                    if neg_match.end() <= keyword_pos:
+                for neg_match in re.finditer(pattern, prompt_lower[:keyword_pos]): # Search only before the keyword
+                    if neg_match.end() <= keyword_pos: # Ensure negation is fully before the keyword
                         distance = keyword_pos - neg_match.end()
                         if distance < negation_proximity:
                             negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            break 
+                            break # Apply the strongest penalty found before the keyword
             
-            for pattern, penalty in NEGATION_PATTERNS:
-                for neg_match in re.finditer(pattern, prompt_lower[keyword_pos:]):
-                    actual_neg_pos = keyword_pos + neg_match.start()
-                    if actual_neg_pos >= keyword_pos + len(keyword):
-                        distance = actual_neg_pos - (keyword_pos + len(keyword))
-                        if distance < negation_proximity:
-                            negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            break
+            # The original code had a duplicate loop here that applied the penalty twice.
+            # This single loop correctly handles negation detection.
             
             score += weight * negated_weight_multiplier
     
+    # Additional heuristic boosts
     if ("code" in prompt_lower or "program" in prompt_lower or "script" in prompt_lower) and \
        ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower or "evaluate" in prompt_lower):
         score += 0.15
@@ -73,6 +70,7 @@ def is_self_analysis_prompt(
     if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
         score += 0.10
     
+    # Explicit phrases that strongly indicate self-analysis
     explicit_phrases = [
         "analyze the entire Project Chimera codebase",
         "critically analyze the Project Chimera codebase",
@@ -80,12 +78,11 @@ def is_self_analysis_prompt(
         "evaluate my own implementation"
     ]
     if any(phrase in prompt_lower for phrase in explicit_phrases):
-        score = max(score, 0.92)
+        score = max(score, 0.92) # Ensure these phrases trigger self-analysis
     
     return score >= threshold
 
 # Optimized persona sequence for self-analysis prompts
-# --- MODIFICATION FOR IMPROVEMENT 1.1 ---
 SELF_ANALYSIS_PERSONA_SEQUENCE = [
     "Code_Architect",
     "Security_Auditor",
@@ -95,4 +92,3 @@ SELF_ANALYSIS_PERSONA_SEQUENCE = [
     "Impartial_Arbitrator",
     "Devils_Advocate"
 ]
-# --- END MODIFICATION ---

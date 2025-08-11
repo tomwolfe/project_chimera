@@ -16,7 +16,7 @@ from rich.console import Console
 from core import SocraticDebate
 # --- FIX END ---
 
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path # Added sanitize_and_validate_file_path
 from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
 from src.persona_manager import PersonaManager
@@ -282,7 +282,8 @@ if "initialized" not in st.session_state:
 def sanitize_user_input(prompt: str) -> str:
     """Basic sanitization to mitigate prompt injection risks."""
     # Remove common injection keywords and sequences
-    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system)\b', '', prompt)
+    # This is a basic sanitization. For robust security, more advanced techniques might be needed.
+    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system|__import__)\b', '', prompt)
     # Limit length to prevent excessive input
     return sanitized[:4000].strip() if sanitized else ""
 # --- END NEW HELPER FUNCTION ---
@@ -340,7 +341,7 @@ def recommend_domain_from_keywords(prompt: str, all_domain_keywords: Dict[str, L
     # A score of 1.0 means at least one keyword matched.
     RECOMMENDATION_THRESHOLD = 1.0 
     
-    if max_score >= RECOMMENDATION_THRESHOLD:
+    if max_score >= RECOMMENDENDATION_THRESHOLD:
         return best_domain
     else:
         return "General" # Fallback if no strong domain signal
@@ -804,6 +805,14 @@ if run_button_clicked:
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
     else:
+        # --- SANITIZE USER PROMPT BEFORE PASSING TO DEBATE ---
+        sanitized_prompt = sanitize_user_input(user_prompt)
+        if sanitized_prompt != user_prompt:
+            st.warning("User prompt was sanitized to mitigate potential injection risks.")
+            st.session_state.user_prompt_input = sanitized_prompt # Update session state with sanitized prompt
+            user_prompt = sanitized_prompt # Use the sanitized prompt for the debate
+        # --- END SANITIZATION ---
+
         st.session_state.debate_ran = False
         # --- MODIFICATION FOR IMPROVEMENT 2.1 ---
         # Enhancing status feedback for multi-stage processes
@@ -868,7 +877,7 @@ if run_button_clicked:
                     # Changed 'core.SocraticDebate' to 'SocraticDebate' after importing it directly
                     debate_instance = SocraticDebate(
                     # --- FIX END ---
-                        initial_prompt=user_prompt,
+                        initial_prompt=user_prompt, # Use the potentially sanitized prompt
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
