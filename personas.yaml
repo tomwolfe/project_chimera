@@ -191,30 +191,26 @@ persona_sets:
     - Visionary_Generator
     - Skeptical_Generator
     - Constructive_Critic
-    - Impartial_Arbitrator
-    - Generalist_Assistant
+    - General_Synthesizer # Changed from Impartial_Arbitrator
     - Devils_Advocate
   Science:
     - Scientific_Visionary
     - Scientific_Analyst
     - Constructive_Critic
-    - Impartial_Arbitrator
+    - General_Synthesizer # Changed from Impartial_Arbitrator
     - Devils_Advocate
   Business:
     - Business_Innovator
     - Business_Strategist
     - Constructive_Critic
-    - Impartial_Arbitrator
+    - General_Synthesizer # Changed from Impartial_Arbitrator
     - Devils_Advocate
   Creative:
-    # --- MODIFICATION: Reordered to place Impartial_Arbitrator last ---
     - Creative_Visionary
     - Creative_Thinker
     - Constructive_Critic
     - Devils_Advocate
-    - Impartial_Arbitrator # Now last in sequence
-    # --- END MODIFICATION ---
-  # --- Software Engineering Persona Set ---
+    - General_Synthesizer # Changed from Impartial_Arbitrator
   Software Engineering:
     - Visionary_Generator
     - Skeptical_Generator
@@ -223,5 +219,5 @@ persona_sets:
     - DevOps_Engineer
     - Test_Engineer
     - Constructive_Critic
-    - Devils_Advocate # Moved up
-    - Impartial_Arbitrator # Moved to the last position
+    - Devils_Advocate
+    - Impartial_Arbitrator # Remains Impartial_Arbitrator for SE

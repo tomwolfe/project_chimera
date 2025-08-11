@@ -760,6 +760,7 @@ if st.session_state.debate_ran:
             use_container_width=True
         )
     with download_cols[1]:
+        # Only offer JSON download if the final answer is actually a dictionary
         if isinstance(st.session_state.final_answer_output, dict):
             final_answer_json = json.dumps(st.session_state.final_answer_output, indent=2)
             st.download_button(
@@ -770,7 +771,7 @@ if st.session_state.debate_ran:
                 use_container_width=True
             )
         else:
-            st.info("Final answer is not in JSON format for download.")
+            st.info("Final answer is not in JSON format for direct download.")
 
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         parsed_llm_output: LLMOutput
@@ -881,11 +882,22 @@ if st.session_state.debate_ran:
                 st.error(f"This block was malformed and could not be parsed correctly. Message: {block_info.get('message', 'N/A')}")
                 raw_snippet = block_info.get('raw_string_snippet', block_info.get('raw_item', 'N/A'))
                 st.code(raw_snippet[:1000] + ('...' if len(raw_snippet) > 1000 else ''), language='text')
-    else:
+    else: # Not Software Engineering domain
         st.subheader("Final Synthesized Answer")
-        if isinstance(st.session_state.final_answer_output, dict):
+        # Check if the output is a dictionary containing 'general_output' (from General_Synthesizer)
+        if isinstance(st.session_state.final_answer_output, dict) and "general_output" in st.session_state.final_answer_output:
+            # Render the general output as markdown
+            st.markdown(st.session_state.final_answer_output["general_output"])
+            # Optionally, display malformed_blocks if any, even for general output
+            if st.session_state.final_answer_output.get("malformed_blocks"):
+                with st.expander("Malformed Blocks (General Output)"):
+                    st.json(st.session_state.final_answer_output["malformed_blocks"])
+        elif isinstance(st.session_state.final_answer_output, dict):
+            # If it's a dict but not the general_output format (e.g., still LLMOutput from an error, or another schema)
+            # display it as JSON.
             st.json(st.session_state.final_answer_output)
         else:
+            # If it's not a dict at all (e.g., raw string from an earlier error), display as markdown.
             st.markdown(st.session_state.final_answer_output)
 
     with st.expander("Show Intermediate Steps & Process Log"):
