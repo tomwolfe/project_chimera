@@ -167,7 +167,9 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
+    # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
+    # --- END MODIFICATION ---
     st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
     
     st.session_state.persona_manager = pm # Store the cached instance
@@ -221,9 +223,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Security Note: Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
     st.markdown("---")
-    st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro"], key="selected_model_selectbox")
+    # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
+    st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], key="selected_model_selectbox")
+    # --- END MODIFICATION ---
     st.markdown("---")
-    st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite`.")
+    st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite` or `gemini-2.5-flash`.")
     st.markdown("---")
     st.number_input("Max Total Tokens Budget:", min_value=1000, max_value=1000000, step=1000, key="max_tokens_budget_input")
     st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
@@ -791,8 +795,14 @@ if st.session_state.debate_ran:
                 st.write(f"**File Path:** {change.file_path}")
                 if change.action in ['ADD', 'MODIFY']:
                     st.write("**Content:**")
+                    # --- FIX START ---
+                    # Breaking down the complex string concatenation to avoid SyntaxError
                     display_content = change.full_content or ''
-                    st.code(display_content[:2000] + ('...' if len(display_content) > 2000 else ''), language='python')
+                    content_to_display = display_content[:2000]
+                    if len(display_content) > 2000:
+                        content_to_display += "..."
+                    st.code(content_to_display, language='python')
+                    # --- FIX END ---
                 elif change.action == 'REMOVE':
                     st.write("**Lines to Remove:**")
                     st.write(change.lines)
