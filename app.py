@@ -374,18 +374,17 @@ for i, tab_name in enumerate(tab_names):
                 current_selected_prompt_in_category_idx = list(category_options.keys()).index(st.session_state.selected_example_name)
             
             # Use a unique key for each radio button group to avoid conflicts
-            selected_radio_key = st.radio(
-                f"Choose a {tab_name.lower()} task:",
-                options=[item[0] for item in radio_options_with_desc],
-                index=current_selected_prompt_in_category_idx if current_selected_prompt_in_category_idx != -1 else 0,
-                # --- MODIFICATION FOR SUGGESTION 4.1 ---
-                # Display only the prompt name as the radio button label for better density.
-                # Details will be shown below.
-                format_func=lambda x: x, 
-                # --- END MODIFICATION ---
+            # --- MODIFICATION FOR IMPROVEMENT 2.2: Replace st.radio with st.selectbox ---
+            # --- MODIFICATION FOR IMPROVEMENT 2.1: Update format_func and key ---
+            options_with_desc = [(key, details["description"]) for key, details in category_options.items()]
+
+            selected_radio_key = st.selectbox("Select task:",
+                options=[item[0] for item in options_with_desc],
+                # Display prompt name and a truncated description for better scanning
+                format_func=lambda x: f"{x} - {next(item[1] for item in options_with_desc if item[0] == x)[:60]}...",
                 label_visibility="collapsed",
-                key=f"radio_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}" # Unique key for each tab's radio
-            )
+                key=f"select_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}") # Changed widget type and key
+            # --- END MODIFICATION ---
             
             # Update session state based on the selected radio button
             if selected_radio_key:
@@ -412,21 +411,22 @@ for i, tab_name in enumerate(tab_names):
                     if st.session_state.selected_persona_set == "Software Engineering":
                         st.session_state.selected_persona_set = "General"
             
-            # --- MODIFICATION FOR SUGGESTION 4.1: Display details and add Copy button ---
+            # --- MODIFICATION FOR IMPROVEMENT 3.1: Display details and add Copy button ---
             if selected_radio_key:
                 selected_prompt_details = category_options[selected_radio_key]
                 st.info(f"**Description:** {selected_prompt_details['description']}")
                 with st.expander("View Full Prompt Text"):
                     st.code(selected_prompt_details['prompt'], language='text')
-                    # Note: Streamlit doesn't have a direct copy-to-clipboard button.
-                    # This button serves as an instruction/trigger to copy from the code block.
+                    # --- FALLBACK FOR COPY FUNCTIONALITY ---
+                    # Revert to st.button with enhanced help text if st.clipboard_button is unavailable
                     st.button(
-                        "Copy Prompt", 
-                        key=f"copy_prompt_{selected_radio_key}", 
-                        use_container_width=True, 
-                        help="Copy the prompt text from the code block above to your clipboard.",
-                        type="secondary"
-                    )
+                        "Copy Prompt",
+                        help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
+                        use_container_width=True,
+                        type="secondary",
+                        key=f"copy_prompt_{selected_radio_key}")
+                    # COMMENT: Reverts to a button that instructs manual copy if clipboard functionality is unavailable.
+                    # --- END FALLBACK ---
             # --- END MODIFICATION ---
 
 # The main user_prompt text_area is now managed within the tabs, so remove the global one.
@@ -906,8 +906,7 @@ if st.session_state.debate_ran:
     st.markdown("---")
     st.header("Results")
 
-    # --- MODIFICATION FOR IMPROVEMENT 3.1 ---
-    # Consolidating download options for clarity and space efficiency
+    # --- MODIFICATION FOR IMPROVEMENT 3.1: Consolidating download options for clarity and space efficiency ---
     with st.expander("📥 Download Analysis", expanded=True):
         st.markdown("**Report format:**")
         # Radio buttons for clear format selection
