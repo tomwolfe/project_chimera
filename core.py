@@ -137,19 +137,11 @@ class SocraticDebate:
         # Status callback and console for UI updates
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
+        
+        # --- ADDED FOR IMPROVEMENT #1 ---
+        self._prev_context_ratio = None # Initialize previous context ratio for hysteresis
+        # --- END ADDED ---
     
-    # --- MODIFIED METHOD FOR SUGGESTION 1 ---\n
-    # This method was part of the original code, not a new suggestion.
-    # The LLM's suggestion was to modify _calculate_token_budgets.
-    # def _calculate_context_ratio(self, base_ratio: float, complexity_score: float) -> float:
-    #     """
-    #     Placeholder for context ratio calculation, applying complexity and bounds.
-    #     This function encapsulates the logic previously scattered and inconsistently applied.
-    #     """
-    #     calculated = base_ratio + (complexity_score * 0.05)
-    #     # Apply consistent bounds: min 15%, max 35% for context ratio
-    #     return max(0.15, min(0.35, calculated))
-
     # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---\n
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
@@ -185,7 +177,20 @@ class SocraticDebate:
         # Dynamic adjustment with bounds as per suggestion
         # The bounds (0.1-0.3 for context) are kept as per the LLM's rationale.
         # The prompt specified: context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))
-        context_ratio = max(0.1, min(0.3, base_context_ratio + complexity_score * 0.05))
+        # --- MODIFIED FOR IMPROVEMENT #1 ---
+        # Use the new logic with hysteresis and non-linear scaling
+        adjusted_ratio = base_context_ratio + (complexity_score ** 1.5) * 0.15 # Non-linear scaling
+        
+        # Apply hysteresis: limit change to +/- 0.05 from previous ratio
+        if self._prev_context_ratio is not None:
+            max_change = 0.05  # Maximum 5% change from previous ratio
+            adjusted_ratio = max(self._prev_context_ratio - max_change, 
+                                  min(self._prev_context_ratio + max_change, adjusted_ratio))
+        
+        # Final bounds with tighter constraints for stability
+        context_ratio = max(0.15, min(0.25, adjusted_ratio))
+        self._prev_context_ratio = context_ratio  # Store for next iteration
+        # --- END MODIFIED ---
         
         # Distribute remaining budget between debate and synthesis
         # Using a common split: 85% debate, 15% synthesis
@@ -694,7 +699,7 @@ User's Original Prompt:
         # Ensure complexity score is within the [0.0, 1.0] range
         return max(0.0, min(1.0, complexity))
 
-    # --- NEW HELPER FUNCTION FOR #3 PRIORITY (EFFICIENCY) ---\n
+    # --- NEW HELPER FUNCTION FOR #2 PRIORITY (ROBUSTNESS) ---
     def _extract_quality_metrics(self, intermediate_results: Dict[str, Any]) -> Dict[str, float]:
         """
         Placeholder for extracting quality metrics from intermediate results.
@@ -840,6 +845,210 @@ User's Original Prompt:
             # Re-raise the exception to be caught by app.py's error handling.
             # app.py is designed to populate session state with error details from the caught exception.
             raise 
+        except Exception as e:
+            logger.exception("Unexpected error during debate process")
+            # Re-raise the exception to be caught by the app.py handler
+            raise
+
+    # --- MODIFIED METHOD FOR IMPROVEMENT #3 ---
+    def run_debate_process(self):
+        """Helper method to retry debate with adjusted parameters after budget exceeded."""
+        # This method encapsulates the retry logic, allowing run_debate to be cleaner.
+        # It essentially re-runs the core debate logic with potentially modified state.
+        # NOTE: This is a conceptual addition. In a real app, you might pass modified
+        # parameters or re-initialize parts of the SocraticDebate object.
+        # For simplicity here, we assume the state (like context_token_budget_ratio,
+        # persona_sequence) has been modified in __init__ or directly, and we just
+        # re-enter the main logic flow.
+        
+        # Re-calculate budgets based on potentially modified ratios/sequences
+        self._calculate_token_budgets() # Recalculate budgets
+        
+        # Re-analyze context and prepare context with new budget constraints
+        context_analysis = self._analyze_context()
+        context_str = self._prepare_context(context_analysis)
+        if context_str:
+            self._check_token_budget(context_str, "context_preparation_retry")
+        
+        # Re-generate persona sequence if it was modified
+        self.persona_sequence = self.persona_router.determine_persona_sequence(
+            self.initial_prompt,
+            intermediate_results=self.intermediate_steps # Pass current intermediate steps for dynamic adjustments
+        )
+        self.intermediate_steps["Persona_Sequence"] = self.persona_sequence # Update sequence in steps
+        
+        # Re-run debate rounds
+        current_response = ""
+        if self.persona_sequence:
+            current_response = self._run_debate_round("Retrying debate after budget adjustment.", self.persona_sequence[0])
+            for persona_name in self.persona_sequence[1:]:
+                current_response = self._run_debate_round(current_response, persona_name)
+        else:
+            logger.warning("No persona sequence generated during retry. Debate cannot proceed.")
+            return "Error: No persona sequence generated during retry.", self.intermediate_steps
+        
+        # Synthesize final answer
+        final_answer = self._synthesize_final_answer(current_response)
+        return final_answer, self.intermediate_steps
+
+    def _synthesize_partial_results(self) -> str:
+        """
+        Synthesizes available intermediate steps into a partial result string.
+        This is a fallback when full debate cannot complete due to token limits.
+        """
+        partial_output = "--- Partial Debate Results ---\n\n"
+        partial_output += f"Original Prompt: {self.initial_prompt}\n\n"
+        
+        # Include key intermediate steps, prioritizing output from personas
+        persona_outputs = sorted([
+            (name, result) for name, result in self.intermediate_steps.items()
+            if name.endswith("_Output") and isinstance(result, str)
+        ])
+        
+        for persona_name, output_text in persona_outputs:
+            partial_output += f"### {persona_name.replace('_Output', '')}:\n"
+            partial_output += f"{output_text[:300]}...\n\n" # Truncate output for brevity
+        
+        partial_output += f"Total Tokens Used (approx): {self.tokens_used}\n"
+        partial_output += f"Estimated Cost (approx): ${self._calculate_cost():.4f}\n"
+        
+        return partial_output
+
+    # --- MODIFIED METHOD FOR IMPROVEMENT #3 ---
+    # The original error handling block in run_debate is replaced by this method's logic.
+    # The try-except block in run_debate will now catch TokenBudgetExceededError and call this.
+    def handle_token_budget_exceeded(self, e: TokenBudgetExceededError) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Handles TokenBudgetExceededError with multi-stage graceful degradation.
+        Returns the final answer and intermediate steps.
+        """
+        logger.warning(f"Token budget exceeded: {str(e)}. Attempting graceful degradation.")
+        
+        # Stage 1: Reduce context ratio (if possible)
+        if self.context_token_budget_ratio > 0.15:
+            self.context_token_budget_ratio = max(0.15, self.context_token_budget_ratio * 0.8)
+            logger.info(f"Reducing context ratio to {self.context_token_budget_ratio} and retrying.")
+            # Re-calculate budgets and retry the debate process
+            return self.run_debate_process()
+        
+        # Stage 2: Simplify persona sequence (if too long)
+        elif len(self.persona_sequence) > 3 and 'Impartial_Arbitrator' in self.persona_sequence:
+            # Keep core personas and arbitrator
+            core_personas = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
+            self.persona_sequence = [p for p in self.persona_sequence if p in core_personas]
+            logger.info(f"Simplifying persona sequence to core personas and retrying.")
+            # Re-calculate budgets and retry the debate process
+            return self.run_debate_process()
+        
+        # Stage 3: Return partial results if available
+        elif self.intermediate_steps:
+            logger.warning("Returning partial results due to token constraints.")
+            partial_result = self._synthesize_partial_results()
+            # Add warning to results about partial processing
+            partial_result += "\n\n[WARNING: Output truncated due to token constraints - full analysis not possible]"
+            # Update intermediate steps with this partial result
+            self.intermediate_steps["Partial_Result_Warning"] = partial_result
+            return partial_result, self.intermediate_steps
+        
+        # Final fallback: Re-raise with enhanced error details
+        else:
+            logger.error("Graceful degradation failed. Re-raising with diagnostic info.", exc_info=True)
+            # Add diagnostic info to the original exception's details
+            e.details = {
+                **(e.details or {}),
+                "degradation_failed": True,
+                "context_ratio": self.context_token_budget_ratio,
+                "persona_sequence_length": len(self.persona_sequence),
+                "token_usage_breakdown": self._get_token_usage_breakdown()
+            }
+            raise
+    # --- END MODIFIED METHOD ---
+
+    def _get_token_usage_breakdown(self) -> Dict[str, int]:
+        """Helper to provide token usage details for error reporting."""
+        return {
+            "initial_input": self.initial_input_tokens,
+            "context_phase": self.tokens_used - (self.intermediate_steps.get("Total_Tokens_Used", self.tokens_used) - self.tokens_used), # Approximation
+            "debate_phase": self.phase_budgets.get("debate", 0), # This is budget, not used tokens. Need to track used debate tokens separately if needed.
+            "synthesis_phase": self.phase_budgets.get("synthesis", 0), # Same as above
+            "total_used": self.tokens_used
+        }
+
+    def run_debate(self) -> Tuple[Any, Dict[str, Any]]: # Changed return type hint
+        """
+        Run the complete Socratic debate process and return the results.
+        
+        Returns:
+            A tuple containing the final answer and a dictionary of intermediate steps.
+        """
+        try:
+            # 1. Analyze context
+            # Check token budget for initial prompt and context analysis phase.
+            # The prompt_text for this check is the initial prompt.
+            initial_prompt_tokens = self._check_token_budget(self.initial_prompt, "initial_prompt_count")
+            
+            context_analysis = self._analyze_context()
+            
+            # The token budgets are now calculated correctly in __init__ because
+            # self.initial_input_tokens is set there.
+            # No need to call _calculate_token_budgets() here again.
+            
+            self.intermediate_steps["Context_Analysis"] = context_analysis
+            # 2. Prepare context
+            context_str = self._prepare_context(context_analysis)
+            # Count tokens for context preparation if it's significant
+            if context_str:
+                # Use _check_token_budget to account for context preparation tokens
+                # Note: _check_token_budget already updates self.tokens_used
+                # The prompt_text for context preparation is the context_str itself.
+                self._check_token_budget(context_str, "context_preparation") # This call will update self.tokens_used
+            
+            # 3. Generate persona sequence
+            # The persona_router.determine_persona_sequence is called here.
+            # It might use context_analysis or other internal state.
+            self.persona_sequence = self.persona_router.determine_persona_sequence(
+                self.initial_prompt,
+                intermediate_results=None # No intermediate results on the first pass
+            )
+            self.intermediate_steps["Persona_Sequence"] = self.persona_sequence
+            
+            # 4. Run initial generation (Visionary Generator)
+            current_response = ""
+            if self.persona_sequence:
+                # The _run_debate_round method handles constructing the prompt and checking budget
+                current_response = self._run_debate_round(
+                    "No previous responses. Starting the debate.", 
+                    self.persona_sequence[0]
+                )
+                
+                # 5. Run subsequent debate rounds
+                for persona_name in self.persona_sequence[1:]:
+                    current_response = self._run_debate_round(current_response, persona_name)
+            else:
+                logger.warning("No persona sequence generated. Debate cannot proceed.")
+                # Handle case where no personas are selected
+                return (
+                    "Error: No personas selected for debate.", # final_answer
+                    { # intermediate_steps
+                        "error": "No persona sequence generated.",
+                        "process_log": self.process_log,
+                        "Total_Tokens_Used": self.tokens_used,
+                        "Total_Estimated_Cost_USD": self._calculate_cost()
+                    }
+                )
+            
+            # 6. Synthesize final answer
+            final_answer = self._synthesize_final_answer(current_response)
+            
+            # 7. Return results as a tuple (final_answer, intermediate_steps)
+            # app.py expects this format and retrieves other details from intermediate_steps.
+            return final_answer, self.intermediate_steps
+            
+        except TokenBudgetExceededError as e:
+            # --- MODIFIED ERROR HANDLING ---
+            # Call the new handler method for graceful degradation
+            return self.handle_token_budget_exceeded(e)
+            # --- END MODIFIED ---
         except Exception as e:
             logger.exception("Unexpected error during debate process")
             # Re-raise the exception to be caught by the app.py handler

@@ -17,10 +17,14 @@ SELF_ANALYSIS_KEYWORDS = {
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
 # Patterns are tuples: (regex_pattern, penalty_multiplier)
+# MODIFIED: Added more specific patterns and directional logic hints.
 NEGATION_PATTERNS = [
-    (r'\b(not|don\'t|do not|avoid|without)\b.*?\b(code|analyze|refactor|improve)\b', 0.7),
-    (r'\b(code|analyze|refactor|improve)\b.*?\b(not|don\'t|do not|avoid|without)\b', 0.7),
-    (r'\b(please do not|kindly avoid)\b', 0.9)
+    # Negation appearing before the keyword, with proximity check
+    (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
+    # Negation appearing after the keyword (less common, but possible)
+    (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
+    # Phrases that strongly negate analysis intent
+    (r'\b(please do not|kindly avoid|do not intend to)\b', 0.9)
 ]
 
 # Threshold for determining if a prompt is considered self-analysis.
@@ -51,21 +55,37 @@ def is_self_analysis_prompt(
     
     # Calculate base score from keywords
     for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
-        if keyword in prompt_lower:
+        keyword_pos = prompt_lower.find(keyword)
+        if keyword_pos != -1:
             negated_weight_multiplier = 1.0
             
-            # Check for negation patterns
+            # MODIFIED: Directional negation analysis
+            # Check for negation patterns appearing BEFORE the keyword
             for pattern, penalty in NEGATION_PATTERNS:
-                neg_match = re.search(pattern, prompt_lower)
-                if neg_match:
-                    # Check if the keyword is within the proximity of the negation match
-                    keyword_match = re.search(re.escape(keyword), prompt_lower)
-                    if keyword_match:
-                        # Calculate distance between the start of the negation match and the keyword match
-                        distance = abs(neg_match.start() - keyword_match.start())
+                # Iterate through all matches of the pattern in the prompt up to the keyword's position
+                for neg_match in re.finditer(pattern, prompt_lower[:keyword_pos + len(keyword)]):
+                    # Ensure the negation match ends before or at the start of the keyword
+                    if neg_match.end() <= keyword_pos:
+                        distance = keyword_pos - neg_match.end()
                         if distance < negation_proximity:
                             negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            break  # Apply only the strongest penalty
+                            # Apply the strongest penalty found before the keyword and break
+                            break 
+            
+            # Check for negation patterns appearing AFTER the keyword (less common, but possible)
+            # This part is less critical for the specific "do not analyze" case but adds robustness.
+            for pattern, penalty in NEGATION_PATTERNS:
+                # Iterate through all matches of the pattern starting from the keyword's position
+                for neg_match in re.finditer(pattern, prompt_lower[keyword_pos:]):
+                    # Calculate the actual start position of the negation in the original string
+                    actual_neg_pos = keyword_pos + neg_match.start()
+                    # Ensure the negation starts after the keyword ends
+                    if actual_neg_pos >= keyword_pos + len(keyword):
+                        distance = actual_neg_pos - (keyword_pos + len(keyword))
+                        if distance < negation_proximity:
+                            negated_weight_multiplier = min(negated_weight_multiplier, penalty)
+                            # Apply the strongest penalty found after the keyword and break
+                            break
             
             score += weight * negated_weight_multiplier
     
