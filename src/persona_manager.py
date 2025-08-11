@@ -9,6 +9,10 @@ from typing import Dict, Any, List, Optional, Tuple
 from pydantic import ValidationError
 import streamlit as st
 
+# --- MODIFICATION: Added import for PersonaRouter ---
+from src.persona.routing import PersonaRouter
+# --- END MODIFICATION ---
+
 from src.models import PersonaConfig, ReasoningFrameworkConfig
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 
@@ -27,9 +31,15 @@ class PersonaManager:
         self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
         self._original_personas: Dict[str, PersonaConfig] = {}
+        self.persona_router: Optional[PersonaRouter] = None # Initialize persona_router attribute
+
         self._load_initial_data()
         self._load_custom_frameworks_on_init()
         self._load_original_personas()
+        # --- MODIFICATION: Instantiate PersonaRouter ---
+        # Initialize PersonaRouter with all loaded personas
+        self.persona_router = PersonaRouter(self.all_personas)
+        # --- END MODIFICATION ---
 
     def _load_original_personas(self):
         """Loads the initial, default persona configurations for reset purposes."""
