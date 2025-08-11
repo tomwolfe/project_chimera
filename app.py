@@ -26,6 +26,7 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import
 import traceback # Needed for error handling in app.py
 import difflib # For Suggestion 3.1
 from collections import defaultdict # For Suggestion 3.2
+from pydantic import ValidationError # Import ValidationError for parsing errors
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -216,13 +217,15 @@ def get_persona_manager():
     return PersonaManager()
 
 persona_manager_instance = get_persona_manager()
-# --- END MODIFICATION ---
 
 # --- Session State Initialization ---
-st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
-
+# Moved this function definition BEFORE its first call.
 def _initialize_session_state(pm: PersonaManager):
     """Initializes or resets all session state variables to their default values."""
+    # --- FIX: Ensure initialization flag is set first ---
+    st.session_state.initialized = True
+    # --- END FIX ---
+
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
     # Set default to the first example prompt from the first category
     st.session_state.user_prompt_input = list(EXAMPLE_PROMPTS.values())[0][list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]]["prompt"]
@@ -237,9 +240,11 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.persona_manager = pm # Store the cached instance
     st.session_state.all_personas = pm.all_personas
     st.session_state.persona_sets = pm.persona_sets
+    # --- FIX: Add this line to initialize available_domains ---
+    # This list is derived from the keys of the loaded persona sets, used for framework selection.
+    st.session_state.available_domains = list(pm.persona_sets.keys())
     # REMOVED: st.session_state.persona_sequence = pm.persona_sequence # This is now determined dynamically
-    st.session_state.available_domains = pm.available_domains
-    st.session_state.selected_persona_set = pm.default_persona_set_name
+    st.session_state.selected_persona_set = pm.default_persona_set_name # Use default from manager
 
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
@@ -254,17 +259,98 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.persona_edit_mode = False
     st.session_state.persona_changes_detected = False # For Improvement 4.1
     
+    # --- FIX: Initialize context_token_budget_ratio in session state ---
+    # This variable is used in the sidebar slider's 'value' parameter before the widget itself
+    # might create it in session state.
+    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
+    # --- END FIX ---
+
     st.session_state.save_framework_input = ""
     st.session_state.framework_description = ""
     st.session_state.load_framework_select = ""
     st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area
+# --- END Session State Initialization ---
 
-if "api_key_input" not in st.session_state:
+# --- Session State Initialization Call ---
+# Ensure session state is initialized on first run
+if "initialized" not in st.session_state:
     _initialize_session_state(persona_manager_instance)
+# --- END Session State Initialization Call ---
+
+
+# --- NEW HELPER FUNCTION FOR SANITIZATION ---
+def sanitize_user_input(prompt: str) -> str:
+    """Basic sanitization to mitigate prompt injection risks."""
+    # Remove common injection keywords and sequences
+    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system)\b', '', prompt)
+    # Limit length to prevent excessive input
+    return sanitized[:4000].strip() if sanitized else ""
+# --- END NEW HELPER FUNCTION ---
+
+# --- START: Enhanced Framework Recommendation Function ---
+# Moved this function definition to the top level, before UI elements and session state initialization.
+def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
+    """Analyze prompt to recommend the most appropriate reasoning framework."""
+    if not prompt or len(prompt.strip()) < 5:  # Skip very short prompts
+        return None
+        
+    prompt_lower = prompt.lower().strip()
+    score = 0.5  # Base score
+    
+    # Define keywords and weights for 'Software Engineering'
+    se_keywords = {
+        "code": 0.25, "coding": 0.20, "program": 0.15, "implementation": 0.20,
+        "refactor": 0.30, "debug": 0.25, "optimize": 0.20, "performance": 0.15,
+        "architecture": 0.25, "design": 0.20, "pattern": 0.15, "algorithm": 0.20,
+        "test": 0.15, "testing": 0.15, "unittest": 0.20, "integration": 0.15,
+        "bug": 0.20, "error": 0.15, "exception": 0.15, "crash": 0.15,
+        "python": 0.10, "javascript": 0.10, "java": 0.10, "c++": 0.10,
+        "api": 0.15, "endpoint": 0.15, "database": 0.15, "sql": 0.10,
+        "security": 0.20, "vulnerab": 0.25, "encrypt": 0.15, "auth": 0.15,
+        "deploy": 0.15, "ci/cd": 0.15, "pipeline": 0.15, "infra": 0.15,
+        "monitor": 0.10, "cloud": 0.10, "docker": 0.10, "k8s": 0.10,
+        "release": 0.10, "scalability": 0.15, "reliability": 0.10, "logging": 0.10
+    }
+    
+    # Calculate score based on keyword matches
+    for keyword, weight in se_keywords.items():
+        if keyword in prompt_lower:
+            score += weight
+    
+    # Check for negation patterns that might reduce the score
+    negation_patterns = [
+        (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
+        (r'\b(please do not|kindly avoid|do not intend to)\b', 0.9)
+    ]
+    
+    for pattern, reduction in negation_patterns:
+        if re.search(pattern, prompt_lower):
+            score *= reduction
+    
+    # Special handling for explicit self-analysis requests
+    explicit_phrases = [
+        "analyze the entire project chimera codebase",
+        "critically analyze the project chimera codebase",
+        "perform self-analysis on the code",
+        "evaluate my own implementation",
+        "improve code quality",
+        "refactor this code",
+        "identify code improvements",
+        "suggest code enhancements"
+    ]
+    
+    if any(phrase in prompt_lower for phrase in explicit_phrases):
+        score = max(score, 0.92)
+    
+    # Return appropriate framework based on score
+    return "Software Engineering" if score >= 0.75 else "General"
+# --- END: Enhanced Framework Recommendation Function ---
+
 
 def reset_app_state():
     """Resets all session state variables to their default values."""
-    _initialize_session_state(st.session_state.persona_manager)
+    # Pass the current persona_manager_instance to ensure it's re-initialized correctly
+    _initialize_session_state(persona_manager_instance) 
     st.rerun()
 
 # --- Persona Change Logging ---
@@ -278,15 +364,6 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
         "new_value": new_value
     })
     st.session_state.persona_changes_detected = True # Mark changes for Improvement 4.1
-
-# --- NEW HELPER FUNCTION FOR SANITIZATION ---
-def sanitize_user_input(prompt: str) -> str:
-    """Basic sanitization to mitigate prompt injection risks."""
-    # Remove common injection keywords and sequences
-    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system)\b', '', prompt)
-    # Limit length to prevent excessive input
-    return sanitized[:4000].strip() if sanitized else ""
-# --- END NEW HELPER FUNCTION ---
 
 # --- MODIFICATIONS FOR SIDEBAR GROUPING (Suggestion 4.2) ---
 with st.sidebar:
@@ -308,10 +385,13 @@ with st.sidebar:
         st.number_input("Max Total Tokens Budget:", min_value=1000, max_value=1000000, step=1000, key="max_tokens_budget_input")
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
         st.markdown("---")
+        # --- FIX: Ensure context_token_budget_ratio is initialized before use ---
+        # The value parameter should correctly reference the session state variable
         st.slider(
             "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=st.session_state.context_token_budget_ratio,
             step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis."
         )
+        # --- END FIX ---
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 
 st.header("Project Setup & Input")
@@ -354,8 +434,18 @@ for i, tab_name in enumerate(tab_names):
             st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
             st.session_state.codebase_context = {} # Clear context for custom prompts
             st.session_state.uploaded_files = []
-            if st.session_state.selected_persona_set == "Software Engineering":
-                st.session_state.selected_persona_set = "General" # Default to General for custom
+            
+            # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING ---
+            # Analyze the custom prompt to determine the appropriate framework
+            # This call is now valid because recommend_domain_from_keywords is defined earlier.
+            suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area)
+            
+            # Only change if a suggestion is made and it's different from the current selection
+            if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
+                st.session_state.selected_persona_set = suggested_domain_for_custom
+                # Rerun to reflect the framework change immediately for custom prompts
+                st.rerun()
+            # --- END FIX ---
             
         else:
             st.markdown(f"Explore example prompts for **{tab_name}**:")
@@ -411,14 +501,13 @@ for i, tab_name in enumerate(tab_names):
                 else:
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
-                    # Only update if the framework is actually changing
-                    if st.session_state.selected_persona_set == "Software Engineering":
-                        st.session_state.selected_persona_set = "General"
-                        framework_changed = True
+                    # No automatic framework change is needed here if it's not a coding/self-analysis prompt.
+                    # The user's manual selection or the recommendation logic will handle it.
+                    pass
                 
-                # --- FIX: Removed the aggressive rerun call here ---
-                # if framework_changed:
-                #     st.rerun()
+                # --- FIX: Uncomment and use the framework_changed flag to trigger UI update ---
+                if framework_changed:
+                    st.rerun()
                 # --- END FIX ---
             
             # --- MODIFICATION FOR IMPROVEMENT 3.1: Display details and add Copy button ---
@@ -445,49 +534,51 @@ for i, tab_name in enumerate(tab_names):
 # Use the user_prompt_input from session state for the actual prompt value
 user_prompt = st.session_state.user_prompt_input
 
+# --- START: UI Layout for Framework and Context ---
+# This block is now placed after the tabs, but before the main run button.
+# The function definition is now at the top, so this call is valid.
 col1, col2 = st.columns(2, gap="medium") # ADDED: gap="medium" for better spacing and mobile responsiveness
 with col1:
     st.subheader("Reasoning Framework")
-    def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
-        prompt_lower = prompt.lower()
-        scores = {domain: sum(1 for keyword in keywords if keyword in prompt_lower) for domain, keywords in DOMAIN_KEYWORDS.items()}
-        if not any(scores.values()): return None
-        return max(scores, key=scores.get)
-
+    
     if user_prompt.strip():
         suggested_domain = recommend_domain_from_keywords(user_prompt)
-        if suggested_domain and suggested_domain != st.session_state.selected_persona_set and suggested_domain in st.session_state.available_domains:
-            st.info(f"💡 Recommendation: Use the **'{suggested_domain}'** framework for this prompt.")
+        # --- FIX: Update the primary session state variable directly ---
+        if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
+            st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
-                st.session_state.selected_persona_set_widget = suggested_domain
+                st.session_state.selected_persona_set = suggested_domain
                 st.rerun()
-
+    
     available_framework_options = st.session_state.available_domains
     unique_framework_options = sorted(list(set(available_framework_options)))
     
     current_framework_selection = st.session_state.selected_persona_set
     if current_framework_selection not in unique_framework_options:
+        # Fallback to the first available option if current selection is invalid
         current_framework_selection = unique_framework_options[0] if unique_framework_options else "General"
         st.session_state.selected_persona_set = current_framework_selection
         
+    # --- FIX: Use the primary session state variable as the key for direct updates ---
     selected_framework_for_widget = st.selectbox(
         "Select Framework",
         options=unique_framework_options,
         index=unique_framework_options.index(current_framework_selection) if current_framework_selection in unique_framework_options else 0,
-        key="selected_persona_set_widget",
+        key="selected_persona_set", # Changed key to directly manage state
         help="Choose a domain-specific reasoning framework or a custom saved framework."
     )
-    if selected_framework_for_widget != st.session_state.selected_persona_set:
-        st.session_state.selected_persona_set = selected_framework_for_widget
-        st.rerun()
+    # The 'if selected_framework_for_widget != st.session_state.selected_persona_set: st.rerun()'
+    # logic is now implicitly handled by Streamlit when the key matches the session state variable.
+    # The explicit st.rerun() calls in the recommendation button and auto-switching logic are still needed.
+    # --- END FIX ---
 
     if st.session_state.selected_persona_set:
-        current_domain_personas = st.session_state.persona_manager.all_personas.get(st.session_state.selected_persona_set, {})
-        if not current_domain_personas:
-            # Use the persona manager to get the sequence for the selected framework
-            current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
-            current_domain_personas = {name: st.session_state.persona_manager.all_personas[name] for name in current_domain_persona_names if name in st.session_state.persona_manager.all_personas}
+        # Get persona sequence using the persona manager, which now uses persona_sets
+        current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
+        # Filter personas to only include those defined for the current framework
+        current_domain_personas = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
         
+        # Update session state with the personas relevant to the selected framework
         st.session_state.personas = current_domain_personas
 
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
@@ -518,7 +609,12 @@ with col1:
                 }
                 
                 if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
+                    st.toast(f"Framework '{new_framework_name_input}' saved successfully!")
+                    # Update available_domains to include the new framework
+                    st.session_state.available_domains = list(st.session_state.persona_manager.persona_sets.keys())
                     st.rerun()
+                else:
+                    st.error(f"Failed to save framework '{new_framework_name_input}'. It might already exist or there was an internal error.")
         
         # --- FIX START ---
         with tabs[1]: # Corresponds to "Load/Manage Frameworks"
@@ -545,7 +641,11 @@ with col1:
                     st.session_state.all_personas.update(loaded_personas_dict)
                     st.session_state.persona_sets.update(loaded_persona_sets_dict)
                     st.session_state.selected_persona_set = new_selected_framework_name
+                    # Reset persona changes detected flag after loading
+                    st.session_state.persona_changes_detected = False 
                     st.rerun()
+                else:
+                    st.error(f"Failed to load framework '{selected_framework_to_load}'. It might not exist or there was an internal error.")
     # --- END MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION ---
 
 with col2:
@@ -595,15 +695,17 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
     st.info("Edit persona parameters for the **currently selected framework**. Changes are temporary unless saved as a custom framework.")
     
     # Track if any changes were made to prompt user to save/reset
+    # Re-check for changes if not already flagged
     if not st.session_state.persona_changes_detected:
-        # Re-check for changes if not already flagged
         for p_name in st.session_state.personas.keys(): # Iterate over currently loaded personas for the framework
             persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name)
-            original_persona = st.session_state.persona_manager._original_personas.get(p_name)
-            if persona and original_persona:
-                if persona.system_prompt != original_persona.system_prompt or \
-                   persona.temperature != original_persona.temperature or \
-                   persona.max_tokens != original_persona.max_tokens:
+            # Get the original persona configuration from the manager's cache
+            original_persona_config = st.session_state.persona_manager._get_original_persona_config(p_name)
+            
+            if persona and original_persona_config:
+                if persona.system_prompt != original_persona_config.system_prompt or \
+                   persona.temperature != original_persona_config.temperature or \
+                   persona.max_tokens != original_persona_config.max_tokens:
                     st.session_state.persona_changes_detected = True
                     break
 
@@ -639,10 +741,12 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                 help="The core instructions for this persona."
             )
             if new_system_prompt != persona.system_prompt:
-                if st.session_state.persona_manager.update_persona_config(p_name, "system_prompt", new_system_prompt):
-                    pass # Update handled by manager
-                else:
-                    st.error(f"Failed to update system prompt for {p_name}.")
+                # Log the change before updating
+                _log_persona_change(p_name, "system_prompt", persona.system_prompt, new_system_prompt)
+                # Update the persona object directly
+                persona.system_prompt = new_system_prompt
+                # The persona_manager.update_persona_config is no longer needed here as we are modifying the object directly
+                # and the save_framework will pick up these changes.
             
             # Temperature
             new_temperature = st.slider(
@@ -655,10 +759,8 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                 help="Controls the randomness of the output. Lower values mean less random."
             )
             if new_temperature != persona.temperature:
-                if st.session_state.persona_manager.update_persona_config(p_name, "temperature", new_temperature):
-                    pass
-                else:
-                    st.error(f"Failed to update temperature for {p_name}.")
+                _log_persona_change(p_name, "temperature", persona.temperature, new_temperature)
+                persona.temperature = new_temperature
             
             # Max Tokens
             new_max_tokens = st.number_input(
@@ -671,10 +773,8 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                 help="Maximum number of tokens the LLM can generate in response."
             )
             if new_max_tokens != persona.max_tokens:
-                if st.session_state.persona_manager.update_persona_config(p_name, "max_tokens", new_max_tokens):
-                    pass
-                else:
-                    st.error(f"Failed to update max tokens for {p_name}.")
+                _log_persona_change(p_name, "max_tokens", persona.max_tokens, new_max_tokens)
+                persona.max_tokens = new_max_tokens
             
             # Reset button for individual persona
             if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}"):
@@ -817,7 +917,6 @@ if run_button_clicked:
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             
             except TokenBudgetExceededError as e:
-                # ... (existing error handling for TokenBudgetExceededError)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -841,7 +940,6 @@ if run_button_clicked:
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
             except (LLMResponseValidationError, SchemaValidationError) as e:
-                # ... (existing error handling for validation errors)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -862,7 +960,6 @@ if run_button_clicked:
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             except ChimeraError as ce:
-                # ... (existing error handling for ChimeraError)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -883,7 +980,6 @@ if run_button_clicked:
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             except Exception as e:
-                # ... (existing error handling for generic Exception)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -925,9 +1021,7 @@ if st.session_state.debate_ran:
             label_visibility="collapsed")
         
         # Dynamically generate content based on selection
-        # NOTE: Assuming create_summary_report exists or can be adapted from generate_markdown_report
-        # For now, using a placeholder for summary report generation.
-        # A real implementation would need a dedicated function or logic here.
+        # A real implementation would need a dedicated function or logic here for summary.
         report_content = generate_markdown_report(
             user_prompt=user_prompt,
             final_answer=st.session_state.final_answer_output,
@@ -935,7 +1029,7 @@ if st.session_state.debate_ran:
             process_log_output=st.session_state.process_log_output_text,
             config_params=st.session_state.last_config_params,
             persona_audit_log=st.session_state.persona_audit_log
-        ) if "Complete" in format_choice else "This is a placeholder for the summary report." # Placeholder for summary
+        ) if "Complete" in format_choice else "This is a placeholder for the summary report. Implement summary generation logic here." # Placeholder for summary
         
         file_name = f"chimera_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}{'_full' if 'Complete' in format_choice else '_summary'}.{'md' if 'Complete' in format_choice else 'txt'}"
         
@@ -964,11 +1058,13 @@ if st.session_state.debate_ran:
                 }
                 st.rerun()
             else:
+                # If it's a list, assume the first element is the primary output
                 raw_output_data = raw_output_data[0]
         
         if isinstance(raw_output_data, dict):
             try:
-                parsed_llm_output = LLMOutput(**raw_output_data)
+                # Use model_validate to handle potential Pydantic v2 changes
+                parsed_llm_output = LLMOutput.model_validate(raw_output_data)
                 malformed_blocks_from_parser = raw_output_data.get('malformed_blocks', [])
             except ValidationError as e:
                 st.error(f"Failed to parse final LLM output into LLMOutput model: {e}")
@@ -995,12 +1091,14 @@ if st.session_state.debate_ran:
         )
 
         all_issues = []
-        for file_issues_list in validation_results_by_file.values():
-            if isinstance(file_issues_list, list):
-                all_issues.extend(file_issues_list)
-
+        # Ensure validation_results_by_file is a dict before iterating
+        if isinstance(validation_results_by_file, dict):
+            for file_issues_list in validation_results_by_file.values():
+                if isinstance(file_issues_list, list):
+                    all_issues.extend(file_issues_list)
+        
         all_malformed_blocks = malformed_blocks_from_parser
-        if 'malformed_blocks' in validation_results_by_file:
+        if isinstance(validation_results_by_file, dict) and 'malformed_blocks' in validation_results_by_file:
             all_malformed_blocks.extend(validation_results_by_file['malformed_blocks'])
 
         st.subheader("Structured Summary")
@@ -1108,13 +1206,6 @@ if st.session_state.debate_ran:
                     st.code("\n".join(change.lines), language='text')
         # --- END MODIFICATION ---
         
-        # Display malformed blocks if any were generated by the parser or validation
-        # This part is now handled within the Validation & Quality Report expander (Suggestion 3.2)
-        # for block_info in all_malformed_blocks:
-        #     with st.expander(f"⚠️ Malformed Block ({block_info.get('type', 'Unknown')})", expanded=True):
-        #         st.error(f"This block was malformed and could not be parsed correctly. Message: {block_info.get('message', 'N/A')}")
-        #         raw_snippet = block_info.get('raw_string_snippet', block_info.get('raw_item', 'N/A'))
-        #         st.code(raw_snippet[:1000] + ('...' if len(raw_snippet) > 1000 else ''), language='text')
     else: # Not Software Engineering domain
         st.subheader("Final Synthesized Answer")
         # Check if the output is a dictionary containing 'general_output' (from General_Synthesizer)
