@@ -46,17 +46,17 @@ logger = logging.getLogger(__name__)
 
 class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
-                 codebase_context: Optional[Dict[str, str]] = None, # Changed type hint to Dict[str, str]
+                 codebase_context: Optional[Dict[str, str]] = None,
                  settings: Optional[ChimeraSettings] = None,
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
-                 persona_sets: Optional[Dict[str, List[str]]] = None, # Added persona_sets
-                 persona_sequence: Optional[List[str]] = None, # Added persona_sequence
-                 domain: Optional[str] = None, # Added domain
+                 persona_sets: Optional[Dict[str, List[str]]] = None,
+                 persona_sequence: Optional[List[str]] = None,
+                 domain: Optional[str] = None,
                  max_total_tokens_budget: int = 10000,
-                 model_name: str = "gemini-2.5-flash-lite", # Default model name
-                 status_callback: Optional[Callable] = None, # Added status_callback
-                 rich_console: Optional[Console] = None, # Added rich_console
-                 context_token_budget_ratio: float = 0.25, # ADDED THIS LINE
+                 model_name: str = "gemini-2.5-flash-lite",
+                 status_callback: Optional[Callable] = None,
+                 rich_console: Optional[Console] = None,
+                 context_token_budget_ratio: float = 0.25,
                  context_analyzer: Optional[ContextRelevanceAnalyzer] = None
                  ):
         """
@@ -78,12 +78,17 @@ class SocraticDebate:
             context_analyzer: An optional pre-initialized and cached ContextRelevanceAnalyzer instance.
         """
         self.settings = settings or ChimeraSettings()
-        # Ensure the ratio from settings is used, or the provided default if settings is None
         self.context_token_budget_ratio = context_token_budget_ratio
         self.max_total_tokens_budget = max_total_tokens_budget
         self.tokens_used = 0
-        self.model_name = model_name # Store the model name selected by the user
-
+        self.model_name = model_name
+        
+        # --- FIX START: Assign initial_prompt before it's used in token budget calculation ---
+        # The original code called _calculate_token_budgets() before assigning self.initial_prompt,
+        # leading to an AttributeError. This line is moved up to resolve that.
+        self.initial_prompt = initial_prompt
+        # --- FIX END ---
+        
         # --- FIX START ---
         # Initialize _prev_context_ratio BEFORE calling _calculate_token_budgets
         # This prevents an AttributeError in _calculate_token_budgets when it checks `if self._prev_context_ratio is not None:`
@@ -115,7 +120,8 @@ class SocraticDebate:
         
         self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
         
-        self.initial_prompt = initial_prompt
+        # The following line was moved up to be before _calculate_token_budgets
+        # self.initial_prompt = initial_prompt
         
         try:
             # Count tokens for the initial prompt. This is separate from phase budget calculation.
@@ -178,6 +184,7 @@ class SocraticDebate:
             # A more sophisticated approach might involve summarizing or embedding.
             context_str = "\n".join(f"{fname}:\n{content}" for fname, content in self.codebase_context.items())
         
+        # --- IMPORTANT: self.initial_prompt is now guaranteed to be set here ---
         prompt_for_estimation = self.initial_prompt if self.initial_prompt else ""
 
         try:
