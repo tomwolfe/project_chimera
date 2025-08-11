@@ -19,6 +19,11 @@ import random # Needed for backoff jitter
 from src.tokenizers.base import Tokenizer
 from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 
+# --- MODIFICATION: Import PersonaConfig from src.models ---
+# This import was missing, causing the NameError in the GeminiProvider class definition.
+from src.models import PersonaConfig
+# --- END MODIFICATION ---
+
 # --- Custom Exceptions ---
 class LLMProviderError(Exception):
     """Base exception for LLM provider errors."""

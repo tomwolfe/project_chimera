@@ -11,9 +11,13 @@ from typing import Dict, Any, List, Optional
 import yaml
 import logging
 from rich.console import Console
-# Removed core import as core.py is excluded
+# --- FIX START ---
+# Import SocraticDebate directly from the core module
+from core import SocraticDebate
+# --- FIX END ---
+
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
-from src.utils import LLMOutputParser, validate_code_output_batch
+from src.utils import LLMOutputParser
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError, SchemaValidationError
 from src.constants import SELF_ANALYSIS_KEYWORDS # Added import for suggestion 1.1
@@ -604,7 +608,10 @@ if run_button_clicked:
 
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                     # Pass the context_analyzer_instance to SocraticDebate
-                    debate_instance = core.SocraticDebate(
+                    # --- FIX START ---
+                    # Changed 'core.SocraticDebate' to 'SocraticDebate' after importing it directly
+                    debate_instance = SocraticDebate(
+                    # --- FIX END ---
                         initial_prompt=user_prompt,
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
