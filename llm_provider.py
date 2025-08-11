@@ -2,7 +2,7 @@
 import streamlit as st
 import google.genai as genai
 from google.genai import types
-from google.genai.errors import APIError
+from google.genai.errors import APIError # Import APIError
 import time
 import hashlib
 import re
@@ -24,15 +24,20 @@ from src.models import PersonaConfig
 # --- END MODIFICATION ---
 
 # --- Custom Exceptions ---
-class LLMProviderError(Exception):
+# Correcting the inheritance for LLMProviderError
+from src.exceptions import ChimeraError # Import ChimeraError
+
+class LLMProviderError(ChimeraError): # Inherit from ChimeraError
     """Base exception for LLM provider errors."""
-    pass
+    def __init__(self, message: str, provider_error_code: Any = None, details: Optional[dict] = None):
+        full_details = (details or {}).copy()
+        full_details["provider_error_code"] = provider_error_code
+        super().__init__(message, details=full_details)
 
 class GeminiAPIError(LLMProviderError):
     """Specific exception for Gemini API errors."""
-    def __init__(self, message: str, code: int = None):
-        super().__init__(message)
-        self.code = code
+    def __init__(self, message: str, code: int = None, response_details: Any = None):
+        super().__init__(message, provider_error_code=code, details={"response_details": response_details})
 
 class LLMUnexpectedError(LLMProviderError):
     """Specific exception for unexpected LLM errors."""
@@ -71,11 +76,30 @@ class GeminiProvider:
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None):
         self._api_key = api_key
         self.model_name = model_name
-        self.client = genai.Client(api_key=self._api_key)
         
-        # FIX: Pass the genai_client instance to the GeminiTokenizer
-        self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
+        # --- FIX START ---
+        try:
+            # Attempt to initialize the genai client. This is where API key validation might fail.
+            self.client = genai.Client(api_key=self._api_key)
+        except Exception as e: # Catching a broad exception here to handle various potential init failures
+            logger.error(f"Failed to initialize genai.Client: {e}")
+            # Raise a specific LLMProviderError indicating the issue.
+            # Check if the error message suggests an invalid API key.
+            error_msg_lower = str(e).lower()
+            if "api key not valid" in error_msg_lower or "invalid_argument" in error_msg_lower or "invalid_api_key" in error_msg_lower:
+                raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY") from e
+            else:
+                raise LLMProviderError(f"Failed to initialize Gemini client: {e}") from e
         
+        # Ensure tokenizer is initialized only if client is successful
+        try:
+            self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
+        except Exception as e:
+            logger.error(f"Failed to initialize GeminiTokenizer: {e}")
+            # Raise an error if tokenizer initialization fails
+            raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}") from e
+        # --- FIX END ---
+
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
         return hash((self.model_name, hashlib.sha256(self._api_key.encode()).hexdigest(), tokenizer_type_hash))

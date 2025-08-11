@@ -19,7 +19,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError
+from google.genai.errors import APIError # Import APIError
 from rich.console import Console
 from pydantic import ValidationError
 from functools import lru_cache # Import lru_cache for caching
@@ -39,7 +39,7 @@ from src.config.settings import ChimeraSettings
 from src.persona.routing import PersonaRouter
 from src.utils import LLMOutputParser
 # NEW: Import LLMResponseValidationError and other exceptions
-from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError # Corrected import
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -89,13 +89,20 @@ class SocraticDebate:
         self.codebase_context = codebase_context
 
         # --- FIX START ---
-        # Initialize the LLM provider *before* calling methods that depend on it.
-        # The original code called _calculate_token_budgets() before initializing self.llm_provider,
-        # leading to an AttributeError when count_tokens() was accessed.
-        self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
+        # Initialize phase_budgets directly before calling _calculate_token_budgets
+        self.phase_budgets = {"context": 0, "debate": 0, "synthesis": 0}
+        
+        # Initialize the LLM provider. This might raise LLMProviderError if API key is invalid.
+        try:
+            self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
+        except LLMProviderError as e:
+            logger.error(f"Failed to initialize LLM provider: {e}")
+            # Re-raise as ChimeraError for consistent error handling in the app
+            raise ChimeraError(f"LLM provider initialization failed: {e}") from e
         # --- FIX END ---
 
         # Now that llm_provider is initialized, we can safely calculate token budgets.
+        # This method itself handles potential errors during token calculation.
         self._calculate_token_budgets()
 
         self.context_analyzer = context_analyzer # Use the provided analyzer instance
@@ -105,10 +112,6 @@ class SocraticDebate:
         self.persona_sequence = persona_sequence or []
         self.domain = domain
         self.persona_router = PersonaRouter(self.all_personas)
-        
-        # Initialize phase_budgets dictionary if it doesn't exist
-        if not hasattr(self, 'phase_budgets'):
-            self.phase_budgets = {"context": 0, "debate": 0, "synthesis": 0}
         
         # If codebase_context was provided, compute embeddings now if context_analyzer is available.
         # This ensures embeddings are ready if context is used early.
@@ -127,6 +130,7 @@ class SocraticDebate:
         """
         Calculates token budgets for different phases of the debate using
         max_total_tokens_budget and context_token_budget_ratio.
+        Handles potential errors during LLM provider interactions.
         """
         # Ensure context_token_budget_ratio is within reasonable bounds
         context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio)) # Clamp between 5% and 50%
@@ -149,7 +153,15 @@ class SocraticDebate:
         try:
             # Use the LLM provider's count_tokens method to estimate tokens for the combined input.
             combined_input_text = f"{context_str}\n\n{prompt_for_estimation}" if context_str else prompt_for_estimation
+            
+            # --- FIX START ---
+            # Ensure llm_provider and its tokenizer are properly initialized before calling count_tokens.
+            # The GeminiProvider.__init__ should raise LLMProviderError if it fails.
+            if not hasattr(self.llm_provider, 'tokenizer') or not self.llm_provider.tokenizer:
+                 raise ChimeraError("LLM provider or its tokenizer is not properly initialized.")
+
             self.initial_input_tokens = self.llm_provider.count_tokens(combined_input_text)
+            # --- FIX END ---
 
             # Calculate available tokens for debate and synthesis phases
             available_tokens_for_phases = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
@@ -159,28 +171,32 @@ class SocraticDebate:
             self.phase_budgets["debate"] = max(500, int(available_tokens_for_phases * debate_ratio))
             self.phase_budgets["synthesis"] = max(400, int(available_tokens_for_phases * synthesis_ratio))
 
-            # Sanity check: Ensure phase budgets don't exceed total available tokens
-            total_phase_budget = sum(self.phase_budgets.values())
-            if total_phase_budget > available_tokens_for_phases:
-                # Simple scaling to fit within available tokens if necessary
-                scale_factor = available_tokens_for_phases / total_phase_budget
-                for phase in self.phase_budgets:
-                    self.phase_budgets[phase] = int(self.phase_budgets[phase] * scale_factor)
-
             logger.info(f"SocraticDebate token budgets initialized: "
                        f"Initial Input={self.initial_input_tokens}, "
                        f"Context={self.phase_budgets['context']}, "
                        f"Debate={self.phase_budgets['debate']}, "
                        f"Synthesis={self.phase_budgets['synthesis']}")
 
-        except AttributeError as e:
-            logger.error(f"Missing method in LLM provider: {e}. Cannot calculate token budgets.")
+        # Catch specific errors from Gemini API or token counting
+        except LLMProviderError as e:
+            logger.error(f"LLM Provider Error during token calculation: {e}")
+            # If the error is related to API key, provide specific feedback.
+            if "api key not valid" in str(e).lower() or "API_KEY_INVALID" in str(e) or "INVALID_ARGUMENT" in str(e):
+                 raise ChimeraError("LLM provider failed: Invalid API Key. Please check your Gemini API Key.") from e
+            else:
+                # For other LLMProviderErrors, use a generic message.
+                # Fallback to default budgets if LLM provider methods are missing or other API errors occur
+                self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
+                self.initial_input_tokens = 0
+                raise ChimeraError(f"LLM provider error: {e}") from e
+        except AttributeError as e: # Keep AttributeError catch for other potential issues (e.g., llm_provider not initialized)
+            logger.error(f"AttributeError during token calculation: {e}. Cannot calculate token budgets.")
             # Fallback to default budgets if LLM provider methods are missing
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError("LLM provider is missing required methods for token calculation.") from e
-        except Exception as e:
-            logger.error(f"Error calculating token budgets: {e}")
+        except Exception as e: # Catch any other unexpected errors
+            logger.error(f"An unexpected error occurred calculating token budgets: {e}")
             # Fallback to default budgets on any other error
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
