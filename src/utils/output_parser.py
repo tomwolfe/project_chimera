@@ -50,6 +50,7 @@ class LLMOutputParser:
                 json_str = match.group(1).strip()
                 self.logger.debug(f"Extracted potential JSON string: {json_str[:100]}...")
                 
+                # Basic sanitization for trailing commas before closing braces/brackets
                 json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
                 
                 try:
@@ -71,9 +72,11 @@ class LLMOutputParser:
         """
         self.logger.debug("Attempting robust JSON extraction and sanitization...")
 
+        # Remove markdown code block fences first
         text_cleaned = re.sub(r'```(?:json)?\s*', '', text, flags=re.MULTILINE)
         text_cleaned = re.sub(r'\s*```', '', text_cleaned, flags=re.MULTILINE)
         
+        # Find potential start of JSON (either '{' or '[')
         potential_starts = []
         for i, char in enumerate(text_cleaned):
             if char == '{' or char == '[':
@@ -83,6 +86,7 @@ class LLMOutputParser:
             self.logger.debug("No JSON start delimiters found.")
             return None
 
+        # Iterate through potential start points and try to find a balanced JSON structure
         for start_index in potential_starts:
             balance = 0
             expected_closers_stack = [] 
@@ -93,7 +97,7 @@ class LLMOutputParser:
             elif text_cleaned[start_index] == '[':
                 balance = 1
                 expected_closers_stack.append(']')
-            else:
+            else: # Should not happen due to previous check, but for safety
                 continue 
 
             end_index = -1
@@ -110,29 +114,32 @@ class LLMOutputParser:
                     balance -= 1
                     if expected_closers_stack and expected_closers_stack[-1] == '}':
                         expected_closers_stack.pop()
-                    else:
-                        balance = -999
+                    else: # Mismatched closer or unbalanced
+                        balance = -999 # Mark as invalid
                         break
                 elif char == ']':
                     balance -= 1
                     if expected_closers_stack and expected_closers_stack[-1] == ']':
                         expected_closers_stack.pop()
-                    else:
-                        balance = -999
+                    else: # Mismatched closer or unbalanced
+                        balance = -999 # Mark as invalid
                         break
                 
+                # Check for balanced state and empty stack
                 if balance == 0 and not expected_closers_stack:
                     end_index = i + 1
                     potential_json_str = text_cleaned[start_index:end_index]
+                    
+                    # Basic sanitization for trailing commas before closing braces/brackets
+                    potential_json_str = re.sub(r',\s*([\}\]])', r'\1', potential_json_str)
+                    
                     try:
-                        json.loads(potential_json_str)
+                        json.loads(potential_json_str) # Validate if it's parseable JSON
                         self.logger.debug(f"Successfully extracted valid JSON block: {potential_json_str[:100]}...")
-                        
-                        potential_json_str = re.sub(r',\s*([\}\]])', r'\1', potential_json_str)
                         return potential_json_str.strip()
                     except json.JSONDecodeError:
                         self.logger.debug("Extracted block is not valid JSON, continuing search.")
-                        continue 
+                        continue # Try next potential start or pattern
             
         self.logger.debug("Failed to extract a valid JSON block after all attempts.")
         return None
@@ -140,19 +147,21 @@ class LLMOutputParser:
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
-        Returns a dictionary representation of the validated model, or a dictionary
-        containing 'malformed_blocks' if parsing/validation fails.
+        Handles JSON extraction, parsing, and schema validation.
+        Ensures the returned structure is a dictionary, even if LLM output is a JSON array.
         """
         self.logger.debug(f"Attempting to parse raw output: {raw_output[:500]}...")
 
         malformed_blocks_list = []
+        extracted_json_str = None
+        parsed_data = None
+        data_to_validate = None
 
+        # 1. Extract JSON string
         extracted_json_str = self._extract_json_from_markdown(raw_output)
-        
         if not extracted_json_str:
             extracted_json_str = self._extract_and_sanitize_json_string(raw_output)
         
-        parsed_data = {}
         if not extracted_json_str:
             self.logger.error("Failed to extract any JSON structure from the output.")
             malformed_blocks_list.append({
@@ -167,6 +176,7 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
+        # 2. Parse JSON string
         try:
             parsed_data = json.loads(extracted_json_str)
         except json.JSONDecodeError as e:
@@ -183,33 +193,90 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
+        # 3. Handle cases where JSON is a list (e.g., LLM returns an array of outputs)
+        if isinstance(parsed_data, list):
+            self.logger.debug(f"Parsed JSON is a list. Attempting to process the first element.")
+            if not parsed_data:
+                self.logger.error("Parsed JSON list is empty.")
+                malformed_blocks_list.append({
+                    "type": "EMPTY_JSON_LIST",
+                    "message": "The LLM returned an empty JSON list.",
+                    "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+                })
+                return {
+                    "COMMIT_MESSAGE": "Parsing error",
+                    "RATIONALE": "Failed to parse LLM output: Returned an empty JSON list.",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": malformed_blocks_list
+                }
+            
+            # Take the first element for validation
+            data_to_validate = parsed_data[0]
+            self.logger.debug(f"Using first element of the list for validation.")
+        elif isinstance(parsed_data, dict):
+            data_to_validate = parsed_data
+        else:
+            # If parsed_data is neither a list nor a dict, it's malformed.
+            self.logger.error(f"Parsed JSON is neither a list nor a dictionary: {type(parsed_data).__name__}")
+            malformed_blocks_list.append({
+                "type": "INVALID_JSON_STRUCTURE",
+                "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}.",
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+            })
+            return {
+                "COMMIT_MESSAGE": "Parsing error",
+                "RATIONALE": f"Failed to parse LLM output into a valid JSON structure.",
+                "CODE_CHANGES": [],
+                "malformed_blocks": malformed_blocks_list
+            }
+
+        # Ensure data_to_validate is not None (e.g., if list was empty, though handled above)
+        if data_to_validate is None:
+             self.logger.error("No data available for validation after JSON processing.")
+             malformed_blocks_list.append({
+                "type": "NO_DATA_FOR_VALIDATION",
+                "message": "No valid data could be extracted for schema validation.",
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+            })
+             return {
+                "COMMIT_MESSAGE": "Parsing error",
+                "RATIONALE": "Failed to extract valid data for validation.",
+                "CODE_CHANGES": [],
+                "malformed_blocks": malformed_blocks_list
+            }
+
+        # 4. Validate against schema
         try:
-            validated_output = schema_model(**parsed_data)
+            # data_to_validate should now be a dictionary
+            validated_output = schema_model(**data_to_validate)
             self.logger.info(f"LLM output successfully validated against {schema_model.__name__} schema.")
             result_dict = validated_output.model_dump(by_alias=True)
-            result_dict["malformed_blocks"] = malformed_blocks_list
+            # Add any malformed blocks found during extraction/parsing
+            result_dict["malformed_blocks"] = malformed_blocks_list 
             return result_dict
         except ValidationError as validation_e:
             self.logger.error(f"Schema validation failed for {schema_model.__name__}: {validation_e}")
             malformed_blocks_list.append({
                 "type": "SCHEMA_VALIDATION_ERROR",
                 "message": str(validation_e),
-                "raw_string_snippet": raw_output
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "") # Use extracted JSON for context
             })
             
+            # Construct a fallback output dictionary
             fallback_output = {
                 "COMMIT_MESSAGE": "Schema validation failed",
-                "RATIONALE": f"Original output: {raw_output[:500]}...\nValidation Error: {str(validation_e)}",
+                "RATIONALE": f"Original output: {extracted_json_str[:500]}...\nValidation Error: {str(validation_e)}",
                 "CODE_CHANGES": [],
                 "malformed_blocks": malformed_blocks_list
             }
             
-            if schema_model == LLMOutput and isinstance(parsed_data, dict):
-                fallback_output["COMMIT_MESSAGE"] = parsed_data.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"])
-                if "RATIONALE" in parsed_data:
-                    fallback_output["RATIONALE"] = parsed_data["RATIONALE"]
+            # If the schema is LLMOutput, try to salvage parts of the response
+            if schema_model == LLMOutput and isinstance(data_to_validate, dict):
+                fallback_output["COMMIT_MESSAGE"] = data_to_validate.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"])
+                if "RATIONALE" in data_to_validate:
+                    fallback_output["RATIONALE"] = data_to_validate["RATIONALE"]
                 
-                original_code_changes = parsed_data.get("CODE_CHANGES")
+                original_code_changes = data_to_validate.get("CODE_CHANGES")
                 processed_code_changes = []
                 if isinstance(original_code_changes, list):
                     for index, item in enumerate(original_code_changes):
@@ -222,6 +289,7 @@ class LLMOutputParser:
                                 malformed_blocks_list.append({
                                     "type": "MALFORMED_CODE_CHANGE_ITEM", "index": index, "message": str(inner_val_e), "raw_item": str(item)
                                 })
+                                # Add a placeholder for the malformed item to indicate the issue
                                 processed_code_changes.append({
                                     "FILE_PATH": f"malformed_entry_{index}", "ACTION": "ADD", 
                                     "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", "LINES": []
@@ -249,11 +317,11 @@ class LLMOutputParser:
             malformed_blocks_list.append({
                 "type": "UNEXPECTED_VALIDATION_ERROR",
                 "message": str(general_e),
-                "raw_string_snippet": raw_output
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
             return {
                 "COMMIT_MESSAGE": "Unexpected validation error",
-                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {raw_output[:500]}...",
+                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {extracted_json_str[:500]}...",
                 "CODE_CHANGES": [],
                 "malformed_blocks": malformed_blocks_list
             }
