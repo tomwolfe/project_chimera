@@ -392,24 +392,34 @@ for i, tab_name in enumerate(tab_names):
                 st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
                 
                 # Logic for codebase context and persona set based on selected prompt
-                # Check if the selected prompt is a coding task or the self-analysis prompt
                 is_coding_or_self_analysis = (
                     selected_radio_key in EXAMPLE_PROMPTS["Coding & Implementation"] or
                     "Critically analyze the entire Project Chimera codebase" in selected_radio_key
                 )
 
+                framework_changed = False # Flag to track if framework state was modified
                 if is_coding_or_self_analysis:
                     st.session_state.codebase_context = load_demo_codebase_context()
                     st.session_state.uploaded_files = [
                         type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
                         for k, v in st.session_state.codebase_context.items()
                     ]
-                    st.session_state.selected_persona_set = "Software Engineering"
+                    # Only update if the framework is actually changing
+                    if st.session_state.selected_persona_set != "Software Engineering":
+                        st.session_state.selected_persona_set = "Software Engineering"
+                        framework_changed = True
                 else:
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
+                    # Only update if the framework is actually changing
                     if st.session_state.selected_persona_set == "Software Engineering":
                         st.session_state.selected_persona_set = "General"
+                        framework_changed = True
+                
+                # --- FIX: Removed the aggressive rerun call here ---
+                # if framework_changed:
+                #     st.rerun()
+                # --- END FIX ---
             
             # --- MODIFICATION FOR IMPROVEMENT 3.1: Display details and add Copy button ---
             if selected_radio_key:
