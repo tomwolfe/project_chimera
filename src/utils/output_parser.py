@@ -24,6 +24,46 @@ class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
+    def _extract_json_with_markers(self, text: str, start_marker: str = "START_JSON_OUTPUT", end_marker: str = "END_JSON_OUTPUT") -> Optional[str]:
+        """
+        Extracts JSON content explicitly delimited by start and end markers.
+        """
+        self.logger.debug(f"Attempting to extract JSON using markers '{start_marker}' and '{end_marker}'...")
+        start_match = re.search(re.escape(start_marker), text)
+        if not start_match:
+            self.logger.debug("Start marker not found.")
+            return None
+
+        # Search for the end marker *after* the start marker
+        end_match = re.search(re.escape(end_marker), text[start_match.end():])
+        if not end_match:
+            self.logger.debug("End marker not found after start marker.")
+            return None
+        
+        # Extract the content between the end of the start marker and the start of the end marker
+        json_content_raw = text[start_match.end() : start_match.end() + end_match.start()].strip()
+        
+        # Attempt to find the actual JSON object/array within the raw content
+        # This handles cases where the LLM might put some whitespace or minor text
+        # between the marker and the actual JSON.
+        json_match_within_markers = re.search(r'(\{.*\}|\[.*\])', json_content_raw, re.DOTALL)
+        if json_match_within_markers:
+            json_str = json_match_within_markers.group(0).strip()
+            
+            # Basic sanitization for trailing commas before closing braces/brackets
+            json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+            
+            try:
+                json.loads(json_str) # Validate if it's parseable JSON
+                self.logger.debug("Successfully extracted and validated JSON block using markers.")
+                return json_str
+            except json.JSONDecodeError:
+                self.logger.debug("Content within markers is not valid JSON.")
+                return None
+        
+        self.logger.debug("No JSON object/array found within the markers.")
+        return None
+        
     def _extract_json_from_markdown(self, text: str) -> Optional[str]:
         """
         Extracts the outermost valid JSON object or array from markdown code blocks.
@@ -158,7 +198,9 @@ class LLMOutputParser:
         data_to_validate = None
 
         # 1. Extract JSON string
-        extracted_json_str = self._extract_json_from_markdown(raw_output)
+        extracted_json_str = self._extract_json_with_markers(raw_output) # Try with markers first
+        if not extracted_json_str:
+            extracted_json_str = self._extract_json_from_markdown(raw_output)
         if not extracted_json_str:
             extracted_json_str = self._extract_and_sanitize_json_string(raw_output)
         
@@ -320,19 +362,6 @@ class LLMOutputParser:
                 fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", [])
 
             return fallback_output
-        except Exception as general_e:
-            self.logger.error(f"An unexpected error occurred during schema validation: {general_e}")
-            malformed_blocks_list.append({
-                "type": "UNEXPECTED_VALIDATION_ERROR",
-                "message": str(general_e),
-                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
-            })
-            return {
-                "COMMIT_MESSAGE": "Unexpected validation error",
-                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {extracted_json_str[:500]}...",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
         except Exception as general_e:
             self.logger.error(f"An unexpected error occurred during schema validation: {general_e}")
             malformed_blocks_list.append({
