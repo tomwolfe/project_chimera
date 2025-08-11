@@ -23,19 +23,24 @@ import traceback # Needed for error handling in app.py
 # --- Configuration Loading ---
 @st.cache_resource
 def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
-    """Loads configuration from a YAML file with enhanced error handling."""
+    """Load config with validation and user-friendly errors."""
+    if not os.path.exists(file_path):
+        st.error(f"❌ Config file not found at '{file_path}'.")
+        st.info("Please create `config.yaml` from the `config.example.yaml` template.")
+        st.stop()
     try:
         with open(file_path, 'r') as f:
             config = yaml.safe_load(f)
-        # st.success(f"Configuration loaded successfully from {file_path}.") # Removed for cleaner UI on load
-        return config
-    except FileNotFoundError:
-        st.error(f"Configuration file not found at '{file_path}'. Please ensure it exists.")
+            if not isinstance(config, dict):
+                st.error(f"❌ Invalid config format in '{file_path}'. Expected a dictionary.")
+                st.stop()
+            return config
     except yaml.YAMLError as e:
-        st.error(f"Error parsing configuration file '{file_path}'. Please check its format: {e}")
+        st.error(f"❌ Error parsing config file '{file_path}'. Please check YAML syntax: {e}")
+        st.stop()
     except IOError as e:
-        st.error(f"IO error reading configuration file '{file_path}'. Check permissions: {e}")
-    return {}
+        st.error(f"❌ IO error reading config file '{file_path}'. Check permissions: {e}")
+        st.stop()
 
 app_config = load_config()
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
@@ -215,6 +220,15 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
         "new_value": new_value
     })
     st.session_state.persona_changes_detected = True # Mark changes for Improvement 4.1
+
+# --- NEW HELPER FUNCTION FOR SANITIZATION ---
+def sanitize_user_input(prompt: str) -> str:
+    """Basic sanitization to mitigate prompt injection risks."""
+    # Remove common injection keywords and sequences
+    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system)\b', '', prompt)
+    # Limit length to prevent excessive input
+    return sanitized[:4000].strip() if sanitized else ""
+# --- END NEW HELPER FUNCTION ---
 
 with st.sidebar:
     st.header("Configuration")
@@ -434,13 +448,13 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                     break
 
     if st.session_state.persona_changes_detected:
-        st.warning("Unsaved changes detected in persona configurations. Please save or reset.")
+        st.warning("Unsaved changes detected in persona configurations. Please save as a custom framework to persist them.")
         # Add a button to save all detected changes
-        if st.button("Save All Persona Changes", key="save_all_persona_changes_button"):
+        # if st.button("Save All Persona Changes", key="save_all_persona_changes_button"):
             # This would ideally save all modified personas to a temporary override or directly to custom framework
             # For simplicity, we'll rely on the "Save Current Framework" button to persist changes.
             # A more robust solution would involve a dedicated "Save Changes" for the current session.
-            st.toast("Changes are tracked. Save as a custom framework to persist them.")
+            # st.toast("Changes are tracked. Save as a custom framework to persist them.")
 
     for p_name in sorted_persona_names:
         persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name)
@@ -603,33 +617,37 @@ if run_button_clicked:
                     final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             
-            except (TokenBudgetExceededError, LLMResponseValidationError, ChimeraError) as e:
+            except TokenBudgetExceededError as e:
+                # Provide user-friendly feedback for token budget issues
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
                     st.session_state.process_log_output_text = ""
 
-                status.update(label=f"Socratic Debate Failed: {e}", state="error", expanded=True)
-                st.error(f"**Error:** {e}")
+                status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
+                st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
+                         f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
+                         f"Details: {str(e)}")
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
                 
                 st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed",
-                    "RATIONALE": f"An error occurred during the Socratic debate: {str(e)}",
+                    "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
+                    "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please adjust budget or prompt complexity. Error: {str(e)}",
                     "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "DEBATE_ERROR", "message": str(e), "error_details": getattr(e, 'details', {})}]
+                    "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            except SchemaValidationError as e:
+            
+            except (LLMResponseValidationError, SchemaValidationError) as e:
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
                     st.session_state.process_log_output_text = ""
 
-                status.update(label=f"Socratic Debate Failed: Schema Validation Error", state="error", expanded=True)
+                status.update(label=f"Socratic Debate Failed: Validation Error", state="error", expanded=True)
                 st.error(f"**Schema Validation Error:** {e}")
                 st.session_state.debate_ran = True
                 if debate_instance:
@@ -640,6 +658,26 @@ if run_button_clicked:
                     "RATIONALE": f"A schema validation error occurred: {str(e)}",
                     "CODE_CHANGES": [],
                     "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR", "message": str(e), "details": e.details}]
+                }
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            except ChimeraError as ce:
+                if 'rich_output_buffer' in locals():
+                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                else:
+                    st.session_state.process_log_output_text = ""
+
+                status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
+                st.error(f"**Chimera Error:** {ce}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                st.session_state.final_answer_output = {
+                    "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
+                    "RATIONALE": f"A Chimera-specific error occurred: {str(ce)}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)

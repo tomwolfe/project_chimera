@@ -1,23 +1,22 @@
 # Use a lightweight Python image as the base
-FROM python:3.9-slim-buster
-
-# Set the working directory inside the container
+FROM python:3.9-slim-buster AS builder
 WORKDIR /app
-
-# Copy the requirements file first to leverage Docker's build cache
 COPY requirements.txt .
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your application files into the container
-# This includes app.py, core.py, llm_provider.py, personas.yaml, main.py, LICENSE, README.md
+# Use a non-root user for security
+RUN useradd -m -u 1000 appuser
+USER appuser
+
+# Copy application code
 COPY . .
 
-# Cloud Run services listen on the port defined by the PORT environment variable,
-# which is typically 8080. Streamlit must be configured to use this port.
-# The EXPOSE instruction is for documentation and not strictly required by Cloud Run.
+# Expose the port Streamlit will run on (Cloud Run default is 8080)
 EXPOSE 8080
 
-# Command to run the Streamlit application.
-# Using the shell form of CMD to allow $PORT environment variable expansion.
-CMD streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+# Healthcheck for container orchestration
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8080/_stcore/health || exit 1
+
+# Command to run the Streamlit application
+CMD ["streamlit", "run", "app.py", "--server.port", "8080", "--server.headless", "true"]

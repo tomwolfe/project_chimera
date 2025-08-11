@@ -1,4 +1,5 @@
 # src/llm_provider.py
+# src/providers/gemini_provider.py
 import streamlit as st
 import google.genai as genai
 from google.genai import types
@@ -184,8 +185,8 @@ class GeminiProvider:
                         raise GeminiAPIError(error_msg, getattr(e, 'code', None)) from e
                     else:
                         raise LLMUnexpectedError(error_msg) from e
-        
-        raise LLMUnexpectedError("Max retries exceeded for generate call.")
+            
+            raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
     def count_tokens(self, prompt: str, system_prompt: str = "", _status_callback=None) -> int:
         """Counts tokens consistently and robustly using the tokenizer."""

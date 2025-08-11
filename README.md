@@ -49,46 +49,45 @@ Powered by Google's Gemini API, Chimera offers a unique approach to AI-assisted 
 ## 🌐 Live Demo
 
 Experience Project Chimera in action:
-[**Project Chimera Live Demo**](https://project-chimera-406972693661.us-central1.run.app)
+[**Project Chimera Live Demo**](https://project-chimera-406972693661.run.app)
 
-## 🛠️ Getting Started
+## 🚀 Getting Started (5 Minutes)
 
-### Prerequisites
-
+### 1. Prerequisites
 *   **Python:** Version 3.9 or higher.
-*   **Gemini API Key:** Obtain an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+*   **Gemini API Key:** Obtain from [Google AI Studio](https://aistudio.google.com/apikey).
 
-### Installation
+### 2. Setup & Installation
+```bash
+# Clone the repository
+git clone https://github.com/tomwolfe/project_chimera.git
+cd project_chimera
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/tomwolfe/project_chimera.git
-    cd project_chimera
-    ```
+# Create a virtual environment (recommended)
+python -m venv venv
+# Activate it:
+# On Windows: venv\Scripts\activate
+# On macOS/Linux: source venv/bin/activate
 
-2.  **Create a virtual environment (recommended):**
-    ```bash
-    python -m venv venv
-    # On Windows: venv\Scripts\activate
-    # On macOS/Linux: source venv/bin/activate
-    source venv/bin/activate
-    ```
+# Install dependencies
+pip install -r requirements.txt
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+# Configure API Key (Choose ONE method)
+# Method A: Set environment variable (recommended for security)
+export GEMINI_API_KEY='your_actual_gemini_api_key'
+# Method B: Create a .env file in the project root
+# echo "GEMINI_API_KEY=your_actual_gemini_api_key" > .env
+```
 
-4.  **Configure API Key:**
-    *   You can enter your Gemini API key directly in the Streamlit app's sidebar.
-    *   Alternatively, set it as an environment variable: `export GEMINI_API_KEY='YOUR_API_KEY'` (or `set GEMINI_API_KEY=YOUR_API_KEY` on Windows).
-
-### Running the Application
-
-Start the Streamlit application:
+### 3. Running the Application
 ```bash
 streamlit run app.py
 ```
+
+### 4. Using the Self-Analysis Feature
+For Project Chimera's self-analysis capability:
+1.  Select the **"Software Engineering"** framework in the UI.
+2.  Use a prompt like: "Critically analyze the entire Project Chimera codebase..."
 
 ## 📝 Usage
 
