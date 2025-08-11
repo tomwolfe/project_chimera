@@ -289,46 +289,30 @@ def sanitize_user_input(prompt: str) -> str:
 
 # --- START: Enhanced Framework Recommendation Function ---
 # Moved this function definition to the top level, before UI elements and session state initialization.
-def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
-    """Analyze prompt to recommend the most appropriate reasoning framework."""
-    if not prompt or len(prompt.strip()) < 5:  # Skip very short prompts
+def recommend_domain_from_keywords(prompt: str, all_domain_keywords: Dict[str, List[str]]) -> Optional[str]:
+    """
+    Analyze prompt to recommend the most appropriate reasoning framework
+    based on keyword matching across multiple domains.
+    """
+    if not prompt or len(prompt.strip()) < 5:
         return None
         
     prompt_lower = prompt.lower().strip()
-    score = 0.5  # Base score
     
-    # Define keywords and weights for 'Software Engineering'
-    se_keywords = {
-        "code": 0.25, "coding": 0.20, "program": 0.15, "implementation": 0.20,
-        "refactor": 0.30, "debug": 0.25, "optimize": 0.20, "performance": 0.15,
-        "architecture": 0.25, "design": 0.20, "pattern": 0.15, "algorithm": 0.20,
-        "test": 0.15, "testing": 0.15, "unittest": 0.20, "integration": 0.15,
-        "bug": 0.20, "error": 0.15, "exception": 0.15, "crash": 0.15,
-        "python": 0.10, "javascript": 0.10, "java": 0.10, "c++": 0.10,
-        "api": 0.15, "endpoint": 0.15, "database": 0.15, "sql": 0.10,
-        "security": 0.20, "vulnerab": 0.25, "encrypt": 0.15, "auth": 0.15,
-        "deploy": 0.15, "ci/cd": 0.15, "pipeline": 0.15, "infra": 0.15,
-        "monitor": 0.10, "cloud": 0.10, "docker": 0.10, "k8s": 0.10,
-        "release": 0.10, "scalability": 0.15, "reliability": 0.10, "logging": 0.10
-    }
+    domain_scores = defaultdict(float)
     
-    # Calculate score based on keyword matches
-    for keyword, weight in se_keywords.items():
-        if keyword in prompt_lower:
-            score += weight
+    # Calculate scores for each domain
+    for domain, keywords in all_domain_keywords.items():
+        current_domain_score = 0.0
+        for keyword in keywords:
+            # Use word boundaries to avoid partial matches (e.g., "code" matching "decoder")
+            # and count occurrences for stronger signals
+            current_domain_score += len(re.findall(r'\b' + re.escape(keyword) + r'\b', prompt_lower))
+            
+        domain_scores[domain] = current_domain_score
     
-    # Check for negation patterns that might reduce the score
-    negation_patterns = [
-        (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
-        (r'\b(please do not|kindly avoid|do not intend to)\b', 0.9)
-    ]
-    
-    for pattern, reduction in negation_patterns:
-        if re.search(pattern, prompt_lower):
-            score *= reduction
-    
-    # Special handling for explicit self-analysis requests
-    explicit_phrases = [
+    # Special handling for explicit self-analysis requests (strong override)
+    explicit_self_analysis_phrases = [
         "analyze the entire project chimera codebase",
         "critically analyze the project chimera codebase",
         "perform self-analysis on the code",
@@ -339,11 +323,27 @@ def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
         "suggest code enhancements"
     ]
     
-    if any(phrase in prompt_lower for phrase in explicit_phrases):
-        score = max(score, 0.92)
+    if any(phrase in prompt_lower for phrase in explicit_self_analysis_phrases):
+        # Assign a very high score to ensure "Software Engineering" is chosen for self-analysis
+        domain_scores["Software Engineering"] = max(domain_scores["Software Engineering"], 100.0) 
     
-    # Return appropriate framework based on score
-    return "Software Engineering" if score >= 0.75 else "General"
+    # Find the domain with the highest score
+    best_domain = "General" # Default fallback
+    max_score = 0.0
+    
+    for domain, score in domain_scores.items():
+        if score > max_score:
+            max_score = score
+            best_domain = domain
+            
+    # Define a minimum threshold for a specific domain to be recommended over "General"
+    # A score of 1.0 means at least one keyword matched.
+    RECOMMENDATION_THRESHOLD = 1.0 
+    
+    if max_score >= RECOMMENDATION_THRESHOLD:
+        return best_domain
+    else:
+        return "General" # Fallback if no strong domain signal
 # --- END: Enhanced Framework Recommendation Function ---
 
 
@@ -438,13 +438,12 @@ for i, tab_name in enumerate(tab_names):
             # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING ---
             # Analyze the custom prompt to determine the appropriate framework
             # This call is now valid because recommend_domain_from_keywords is defined earlier.
-            suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area)
+            suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area, DOMAIN_KEYWORDS)
             
             # Only change if a suggestion is made and it's different from the current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.session_state.selected_persona_set = suggested_domain_for_custom
-                # Rerun to reflect the framework change immediately for custom prompts
-                st.rerun()
+                # REMOVED: st.rerun() # Removed to prevent potential loops
             # --- END FIX ---
             
         else:
@@ -501,13 +500,17 @@ for i, tab_name in enumerate(tab_names):
                 else:
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
-                    # No automatic framework change is needed here if it's not a coding/self-analysis prompt.
-                    # The user's manual selection or the recommendation logic will handle it.
-                    pass
+                    # --- FIX: Apply recommendation for non-coding example prompts ---
+                    suggested_domain_for_example = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
+                    if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
+                        st.session_state.selected_persona_set = suggested_domain_for_example
+                        framework_changed = True
+                    # --- END FIX ---
                 
                 # --- FIX: Uncomment and use the framework_changed flag to trigger UI update ---
                 if framework_changed:
-                    st.rerun()
+                    # REMOVED: st.rerun() # Removed to prevent potential loops
+                    pass # Let Streamlit handle the re-render due to session state change
                 # --- END FIX ---
             
             # --- MODIFICATION FOR IMPROVEMENT 3.1: Display details and add Copy button ---
@@ -542,13 +545,15 @@ with col1:
     st.subheader("Reasoning Framework")
     
     if user_prompt.strip():
-        suggested_domain = recommend_domain_from_keywords(user_prompt)
+        # --- FIX: Pass DOMAIN_KEYWORDS to the recommendation function ---
+        suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
+        # --- END FIX ---
         # --- FIX: Update the primary session state variable directly ---
         if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
             st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
                 st.session_state.selected_persona_set = suggested_domain
-                st.rerun()
+                # REMOVED: st.rerun() # Removed to prevent potential loops
     
     available_framework_options = st.session_state.available_domains
     unique_framework_options = sorted(list(set(available_framework_options)))
@@ -869,7 +874,7 @@ if run_button_clicked:
                         model_name=st.session_state.selected_model_selectbox,
                         all_personas=st.session_state.all_personas,
                         persona_sets=st.session_state.persona_sets, # Pass persona_sets
-                        # REMOVED: persona_sequence=st.session_state.persona_sequence, # This is now determined dynamically
+                        # REMOVED: persona_sequence from arguments
                         domain=domain_for_run, # Pass the domain
                         status_callback=update_status, # Use the new update_status helper
                         rich_console=rich_console_instance,
