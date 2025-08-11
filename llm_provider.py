@@ -1,5 +1,4 @@
 # src/llm_provider.py
-# src/providers/gemini_provider.py
 import streamlit as st
 import google.genai as genai
 from google.genai import types
@@ -54,8 +53,11 @@ TOKEN_COSTS_PER_1K_TOKENS = {
 logger = logging.getLogger(__name__)
 
 # Apply st.cache_resource to the class itself
-@st.cache_resource
+# --- FIX START ---
+# Removed @st.cache_resource decorator as genai.Client is not serializable/cacheable
+# @st.cache_resource
 class GeminiProvider:
+# --- FIX END ---
     # Retry parameters
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
