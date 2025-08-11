@@ -1,18 +1,18 @@
-# src/persona/routing.py
 """
 Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
 from typing import List, Dict, Set, Optional, Any
-import re
+import re # Import re for regular expressions
 import json
 from pathlib import Path
 import logging
-from functools import lru_cache
+from functools import lru_cache # Import lru_cache for caching
 
 from src.models import PersonaConfig
 from src.constants import SELF_ANALYSIS_KEYWORDS, SELF_ANALYSIS_PERSONA_SEQUENCE
+from src.constants import is_self_analysis_prompt # Import the function for prompt analysis
 
 logger = logging.getLogger(__name__)
 
