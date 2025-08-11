@@ -91,6 +91,21 @@ personas:
     max_tokens: 1024
     description: "Provides context-specific analysis and explanations."
  
+  # --- NEWLY ADDED PERSONA ---
+  - name: "General_Synthesizer"
+    system_prompt: |
+      You are a general synthesizer. Your task is to consolidate and synthesize information from previous debate turns into a coherent and comprehensive response. Focus on clarity, conciseness, and addressing the core aspects of the prompt and the debate.
+      
+      **Output Requirements:**
+      - Provide a clear summary of the main points discussed.
+      - Synthesize diverse perspectives into a unified output.
+      - If the prompt requires a specific format (like code or a plan), adhere to it.
+      - Ensure your output is well-structured and easy to understand.
+    temperature: 0.2 # Lower temperature for more focused synthesis
+    max_tokens: 2048
+    description: "Synthesizes information from previous turns into a coherent and comprehensive response."
+  # --- END NEWLY ADDED PERSONA ---
+
   # Domain-specific personas
   - name: "Scientific_Visionary"
     system_prompt: "You are a research scientist exploring innovative solutions. Provide evidence-based hypotheses that push boundaries while acknowledging methodological constraints."
@@ -191,26 +206,26 @@ persona_sets:
     - Visionary_Generator
     - Skeptical_Generator
     - Constructive_Critic
-    - General_Synthesizer # Changed from Impartial_Arbitrator
+    - General_Synthesizer # Corrected reference
     - Devils_Advocate
   Science:
     - Scientific_Visionary
     - Scientific_Analyst
     - Constructive_Critic
-    - General_Synthesizer # Changed from Impartial_Arbitrator
+    - General_Synthesizer # Corrected reference
     - Devils_Advocate
   Business:
     - Business_Innovator
     - Business_Strategist
     - Constructive_Critic
-    - General_Synthesizer # Changed from Impartial_Arbitrator
+    - General_Synthesizer # Corrected reference
     - Devils_Advocate
   Creative:
     - Creative_Visionary
     - Creative_Thinker
     - Constructive_Critic
     - Devils_Advocate
-    - General_Synthesizer # Changed from Impartial_Arbitrator
+    - General_Synthesizer # Corrected reference
   Software Engineering:
     - Visionary_Generator
     - Skeptical_Generator
