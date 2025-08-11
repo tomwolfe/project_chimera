@@ -150,7 +150,7 @@ class SocraticDebate:
     #     # Apply consistent bounds: min 15%, max 35% for context ratio
     #     return max(0.15, min(0.35, calculated))
 
-    # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---
+    # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---\n
     def _calculate_token_budgets(self):
         """Calculate dynamic token budgets based on settings and prompt analysis."""
         
@@ -166,14 +166,24 @@ class SocraticDebate:
         # --- END ENHANCEMENT ---
         
         # Calculate available tokens for the debate/synthesis phases
-        available_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
+        # --- FIX START: Handle case where initial tokens exceed total budget ---
+        # This is the critical fix identified by the LLM.
+        if self.initial_input_tokens >= self.max_total_tokens_budget:
+            logger.warning(f"Initial tokens ({self.initial_input_tokens}) exceed total budget ({self.max_total_tokens_budget}). "
+                          "Adjusting max_total_tokens_budget to accommodate context phase and prevent negative allocations.")
+            # Adjust the budget to be just enough to cover initial tokens plus a small buffer for context phase.
+            # This prevents negative available_tokens and ensures at least some budget for context.
+            self.max_total_tokens_budget = self.initial_input_tokens + 500 # Add a small buffer
+        # --- FIX END ---
+        
+        available_tokens = self.max_total_tokens_budget - self.initial_input_tokens
         
         # --- Apply semantic complexity for more dynamic ratio calculation ---
-        # Use the existing method _calculate_semantic_complexity
+        # Use the existing method _calculate_complexity_score
         complexity_score = self._calculate_complexity_score(self.initial_prompt)
         
         # Dynamic adjustment with bounds as per suggestion
-        # The bounds (0.15-0.35 for context, 0.55-0.75 for debate) are kept as per the LLM's rationale.
+        # The bounds (0.1-0.3 for context) are kept as per the LLM's rationale.
         # The prompt specified: context_ratio = max(0.1, min(0.3, base_ratio + complexity_score * 0.05))
         context_ratio = max(0.1, min(0.3, base_context_ratio + complexity_score * 0.05))
         
@@ -184,11 +194,57 @@ class SocraticDebate:
         synthesis_ratio = remaining_budget_share * 0.15
         
         # Calculate token allocations, ensuring minimums for critical phases
-        context_tokens = max(400, int(available_tokens * context_ratio))
-        debate_tokens = max(1000, int(available_tokens * debate_ratio))
-        synthesis_tokens = max(400, int(available_tokens * synthesis_ratio))
+        # LLM suggested specific minimums: context=300, debate=800, synthesis=300
+        context_tokens = max(300, int(available_tokens * context_ratio))
+        debate_tokens = max(800, int(available_tokens * debate_ratio))
+        synthesis_tokens = max(300, int(available_tokens * synthesis_ratio))
         
-        # Assign budgets to self.phase_budgets
+        # --- Final validation - ensure no negative values and minimums are met ---
+        # This block ensures that even if ratios are extreme, minimums are respected
+        # and the total doesn't exceed the (potentially adjusted) max_total_tokens_budget.
+        # It also handles the case where synthesis_tokens might be less than its minimum.
+        
+        # Recalculate total allocated to ensure it doesn't exceed available_tokens
+        total_allocated = context_tokens + debate_tokens + synthesis_tokens
+        if total_allocated > available_tokens:
+            # Scale down proportionally if over budget
+            scale_factor = available_tokens / total_allocated
+            context_tokens = int(context_tokens * scale_factor)
+            debate_tokens = int(debate_tokens * scale_factor)
+            synthesis_tokens = int(synthesis_tokens * scale_factor)
+        
+        # Ensure minimums are still met after scaling, adjusting from the largest phase (debate) first
+        if synthesis_tokens < 300:
+            needed = 300 - synthesis_tokens
+            debate_reduction = min(needed, debate_tokens - 800)
+            context_reduction = needed - debate_reduction
+            
+            debate_tokens = max(800, debate_tokens - debate_reduction)
+            context_tokens = max(300, context_tokens - context_reduction)
+            synthesis_tokens = 300
+        elif debate_tokens < 800:
+            needed = 800 - debate_tokens
+            context_reduction = min(needed, context_tokens - 300)
+            debate_tokens = max(800, debate_tokens - context_reduction)
+            context_tokens = max(300, context_tokens - context_reduction)
+        elif context_tokens < 300:
+            needed = 300 - context_tokens
+            debate_tokens = max(800, debate_tokens - needed)
+            context_tokens = 300
+        
+        # Final check to ensure total doesn't exceed budget due to rounding or minimums
+        final_total = context_tokens + debate_tokens + synthesis_tokens
+        if final_total > available_tokens:
+            # If still over, trim from the largest phase (debate)
+            trim_amount = final_total - available_tokens
+            debate_tokens = max(800, debate_tokens - trim_amount) # Ensure debate doesn't go below its minimum
+            # Re-check if trimming debate made it too small, then trim context
+            if debate_tokens < 800:
+                debate_tokens = 800
+                trim_amount = final_total - available_tokens - (debate_tokens - 800)
+                context_tokens = max(300, context_tokens - trim_amount)
+        
+        # Assign budgets
         self.phase_budgets["context"] = context_tokens
         self.phase_budgets["debate"] = debate_tokens
         self.phase_budgets["synthesis"] = synthesis_tokens
@@ -330,7 +386,7 @@ class SocraticDebate:
         
         logger.info(f"Prepared context with {len(context_parts)} files, total estimated tokens: {current_context_tokens}")
         return "".join(context_parts)
-
+    
     def _prepare_self_analysis_context(self, context_analysis: Dict[str, Any]) -> str:
         """Prepare specialized context for self-analysis with core files prioritized."""
         if not self.codebase_context or not context_analysis.get("relevant_files"):
@@ -610,7 +666,7 @@ User's Original Prompt:
         # This should ideally be derived from a configuration or model pricing lookup.
         return self.tokens_used * 0.000003
     
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 2 ---\n
+    # --- NEW HELPER FUNCTION FOR #2 PRIORITY (ROBUSTNESS) ---\n
     def _calculate_complexity_score(self, prompt: str) -> float:
         """
         Calculate a semantic complexity score for the prompt (0.0 to 1.0).
@@ -638,7 +694,7 @@ User's Original Prompt:
         # Ensure complexity score is within the [0.0, 1.0] range
         return max(0.0, min(1.0, complexity))
 
-    # --- NEW HELPER FUNCTION FOR SUGGESTION 3 ---\n
+    # --- NEW HELPER FUNCTION FOR #3 PRIORITY (EFFICIENCY) ---\n
     def _extract_quality_metrics(self, intermediate_results: Dict[str, Any]) -> Dict[str, float]:
         """
         Placeholder for extracting quality metrics from intermediate results.

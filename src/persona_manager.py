@@ -10,6 +10,8 @@ from pydantic import ValidationError
 import streamlit as st # For st.cache_resource, st.toast, st.error
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig
+# Import the updated SELF_ANALYSIS_PERSONA_SEQUENCE from constants
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ class PersonaManager:
     def __init__(self):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
-        self.persona_sequence: List[str] = []
+        self.persona_sequence: List[str] = [] # Default sequence if no domain/self-analysis is detected
         self.available_domains: List[str] = []
         self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
@@ -50,10 +52,13 @@ class PersonaManager:
             all_personas_list = [PersonaConfig(**p_data) for p_data in data.get('personas', [])]
             self.all_personas = {p.name: p for p in all_personas_list}
             self.persona_sets = data.get('persona_sets', {"General": []})
+            # Load the default sequence from the file
             self.persona_sequence = data.get('persona_sequence', [
                 "Visionary_Generator", "Skeptical_Generator", "Constructive_Critic",
                 "Impartial_Arbitrator", "Devils_Advocate"
             ])
+            
+            # Validate loaded data
             for set_name, persona_names_in_set in self.persona_sets.items():
                 if not isinstance(persona_names_in_set, list):
                     raise ValueError(f"Persona set '{set_name}' must be a list of persona names.")
@@ -63,17 +68,25 @@ class PersonaManager:
             for p_name in self.persona_sequence:
                 if p_name not in self.all_personas:
                     raise ValueError(f"Persona '{p_name}' in persona_sequence not found in 'personas' list.")
+            
             self.default_persona_set_name = "General" if "General" in self.persona_sets else next(iter(self.persona_sets.keys()))
             self.available_domains = list(self.persona_sets.keys())
             logger.info(f"Initial personas loaded successfully from {file_path}.")
-        except (FileNotFoundError, ValidationError, yaml.YAMLError) as e:
+        except (FileNotFoundError, ValidationError, yaml.YAMLError, ValueError) as e:
             logger.error(f"Error loading initial personas from {file_path}: {e}")
             st.error(f"Failed to load default personas from {file_path}: {e}")
-            self.all_personas = {}
-            self.persona_sets = {}
-            self.persona_sequence = []
-            self.available_domains = ["General"]
+            # Provide a minimal fallback to allow the app to run
+            self.all_personas = {
+                "Visionary_Generator": PersonaConfig(name="Visionary_Generator", system_prompt="You are a visionary.", temperature=0.7, max_tokens=1024),
+                "Skeptical_Generator": PersonaConfig(name="Skeptical_Generator", system_prompt="You are a skeptic.", temperature=0.3, max_tokens=1024),
+                "Impartial_Arbitrator": PersonaConfig(name="Impartial_Arbitrator", system_prompt="You are an arbitrator.", temperature=0.2, max_tokens=1024)
+            }
+            self.persona_sets = {"General": ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]}
+            self.persona_sequence = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
             self.default_persona_set_name = "General"
+            self.available_domains = ["General"]
+            logger.warning("Loaded minimal fallback personas due to initial loading error.")
+
 
     def _load_custom_frameworks_on_init(self):
         self._ensure_custom_frameworks_dir()
@@ -135,6 +148,7 @@ class PersonaManager:
             version = self.all_custom_frameworks_data[framework_name_sanitized].get('version', 0) + 1
 
         try:
+            # Validate the data structure before saving
             temp_config_validation = ReasoningFrameworkConfig(
                 framework_name=name,
                 personas={p_name: PersonaConfig(**p_data) for p_name, p_data in current_personas_dict.items()},
@@ -190,3 +204,22 @@ class PersonaManager:
         else:
             st.error(f"Framework '{framework_name}' not found.")
             return {}, {}, ""
+
+    # --- MODIFIED METHOD ---
+    def get_persona_sequence_for_framework(self, framework_name: str) -> List[str]:
+        """
+        Retrieves the persona sequence for a given framework name.
+        Returns the default sequence if the framework is not found or is invalid.
+        """
+        if framework_name in self.persona_sets:
+            return self.persona_sets[framework_name]
+        elif framework_name in self.all_custom_frameworks_data:
+            # Custom frameworks might define their own persona sets
+            custom_sets = self.all_custom_frameworks_data[framework_name].get('persona_sets', {})
+            if framework_name in custom_sets:
+                return custom_sets[framework_name]
+        
+        # Fallback to the default sequence if framework or its sequence is not found
+        logger.warning(f"Persona sequence not found for framework '{framework_name}'. Falling back to default sequence.")
+        return self.persona_sequence
+    # --- END MODIFIED METHOD ---

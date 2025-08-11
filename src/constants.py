@@ -5,12 +5,14 @@ from functools import lru_cache # Import lru_cache for caching
 # Centralized keywords with weights for self-analysis prompt detection.
 # Higher weights indicate stronger indicators.
 SELF_ANALYSIS_KEYWORDS = {
-    "analyze the entire Project Chimera codebase": 1.0,
-    "critically analyze": 0.95,
-    "self-analysis": 0.93,
-    "improve code quality": 0.88,
-    "refactor this code": 0.85,
-    "evaluate my own code": 0.92
+    "analyze the entire Project Chimera codebase": 0.95,
+    "critically analyze": 0.88,
+    "self-analysis": 0.85,
+    "improve code quality": 0.75,
+    "refactor this code": 0.70,
+    "evaluate my own code": 0.82,
+    "identify code improvements": 0.78,
+    "suggest code enhancements": 0.73
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
@@ -22,16 +24,15 @@ NEGATION_PATTERNS = [
 ]
 
 # Threshold for determining if a prompt is considered self-analysis.
-# This value might require tuning based on empirical testing.
-THRESHOLD = 0.82  # Slightly lowered due to improved precision
+THRESHOLD = 0.75
 
 # Cache for the is_self_analysis_prompt function to improve performance
 # when the same prompts are evaluated multiple times.
-@lru_cache(maxsize=128) # Cache up to 128 unique prompts
+@lru_cache(maxsize=256) # Cache up to 256 unique prompts
 def is_self_analysis_prompt(
     prompt: str,
     threshold: float = THRESHOLD,
-    negation_proximity: int = 20 # How close negation needs to be to affect score
+    negation_proximity: int = 100 # Increased proximity for better context
 ) -> bool:
     """
     Checks if weighted keyword score meets threshold for self-analysis,
@@ -52,9 +53,9 @@ def is_self_analysis_prompt(
     for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
         if keyword in prompt_lower:
             negated_weight_multiplier = 1.0
+            
             # Check for negation patterns
             for pattern, penalty in NEGATION_PATTERNS:
-                # Use re.search to find matches for the negation pattern
                 neg_match = re.search(pattern, prompt_lower)
                 if neg_match:
                     # Check if the keyword is within the proximity of the negation match
@@ -63,38 +64,36 @@ def is_self_analysis_prompt(
                         # Calculate distance between the start of the negation match and the keyword match
                         distance = abs(neg_match.start() - keyword_match.start())
                         if distance < negation_proximity:
-                            negated_weight_multiplier = min(negated_weight_multiplier, penalty) # Apply the penalty
-                            break # Apply only the strongest penalty if multiple negations apply
+                            negated_weight_multiplier = min(negated_weight_multiplier, penalty)
+                            break  # Apply only the strongest penalty
             
             score += weight * negated_weight_multiplier
     
     # Apply context bonuses for meaningful keyword combinations
-    # These bonuses help disambiguate general prompts from specific self-analysis requests.
     if "code" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower):
-        score += 0.2 # Boost for code-related analysis/improvement prompts
+        score += 0.2
     if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
-        score += 0.15 # Boost for prompts explicitly mentioning the project name for analysis
+        score += 0.15
     
     # Explicit phrases that should strongly indicate self-analysis
     explicit_phrases = [
         "analyze the entire Project Chimera codebase",
-        "critically analyze the codebase",
-        "perform self-analysis",
-        "evaluate my own code"
+        "critically analyze the Project Chimera codebase",
+        "perform self-analysis on the code",
+        "evaluate my own implementation"
     ]
     if any(phrase in prompt_lower for phrase in explicit_phrases):
-        score = max(score, 1.0)  # Ensure explicit requests always trigger if score is below 1.0
+        score = max(score, 0.92)
     
-    # Return True if the calculated score meets or exceeds the threshold
     return score >= threshold
 
-# Standardized persona sequence for self-analysis prompts
+# Optimized persona sequence for self-analysis prompts
+# KNOWLEDGE BASE REFERENCE: Lines 120-150 (persona definitions and focus areas)
 SELF_ANALYSIS_PERSONA_SEQUENCE = [
-    "Context_Aware_Assistant",
     "Code_Architect",
     "Security_Auditor",
+    "Test_Engineer", # Moved earlier per knowledge base focus on code quality
     "Constructive_Critic",
-    "Test_Engineer",
     "DevOps_Engineer",
     "Impartial_Arbitrator"
 ]
