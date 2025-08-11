@@ -57,7 +57,7 @@ class SocraticDebate:
                  status_callback: Optional[Callable] = None, # Added status_callback
                  rich_console: Optional[Console] = None, # Added rich_console
                  context_token_budget_ratio: float = 0.25, # ADDED THIS LINE
-                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None # Added for caching dependency injection
+                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None
                  ):
         """
         Initialize a Socratic debate session.
@@ -79,33 +79,33 @@ class SocraticDebate:
         """
         self.settings = settings or ChimeraSettings()
         # Ensure the ratio from settings is used, or the provided default if settings is None
-        self.context_token_budget_ratio = context_token_budget_ratio 
+        self.context_token_budget_ratio = context_token_budget_ratio
         self.max_total_tokens_budget = max_total_tokens_budget
         self.tokens_used = 0
         self.model_name = model_name # Store the model name selected by the user
-        
+
         # --- FIX START ---
         # Initialize _prev_context_ratio BEFORE calling _calculate_token_budgets
         # This prevents an AttributeError in _calculate_token_budgets when it checks `if self._prev_context_ratio is not None:`
-        self._prev_context_ratio = None 
+        self._prev_context_ratio = None
         # --- FIX END ---
 
+        # --- NEW FIX START ---
+        # Assign codebase_context to self.codebase_context *before* calling _calculate_token_budgets
+        # This ensures self.codebase_context is available when _calculate_token_budgets needs it.
+        self.codebase_context = codebase_context
+        # --- NEW FIX END ---
+
         # Call the method that was causing the AttributeError.
-        # This method is now defined below.
         self._calculate_token_budgets()
-        
+
         self.context_analyzer = context_analyzer # Use the provided analyzer instance
-        self.codebase_context = None
-        if codebase_context and self.context_analyzer:
-            self.codebase_context = codebase_context
-            if isinstance(self.codebase_context, dict):
-                # Compute embeddings if context is provided and analyzer is available.
-                # This assumes the analyzer instance passed is already cached and potentially has embeddings computed.
-                # If context changes, the analyzer's embeddings might need recomputation, handled by app.py caching.
-                if not self.context_analyzer.file_embeddings: # Only compute if not already done
-                    self.context_analyzer.compute_file_embeddings(self.codebase_context)
-            else:
-                logger.warning("codebase_context was not a dictionary, skipping embedding computation.")
+        # The original lines below are now redundant because self.codebase_context is already set correctly.
+        # self.codebase_context = None
+        # if codebase_context and self.context_analyzer:
+        #     self.codebase_context = codebase_context
+        # The logic for processing codebase_context and computing embeddings is now handled within _calculate_token_budgets
+        # or when the context_analyzer is used later.
         
         self.all_personas = all_personas or {}
         self.persona_sets = persona_sets or {}
@@ -119,7 +119,10 @@ class SocraticDebate:
         
         try:
             # Count tokens for the initial prompt. This is separate from phase budget calculation.
-            self.initial_input_tokens = self.llm_provider.count_tokens(self.initial_prompt, system_prompt=None)
+            # The _calculate_token_budgets method already estimates initial input tokens.
+            # We can rely on that for the total initial input.
+            # self.initial_input_tokens = self.llm_provider.count_tokens(self.initial_prompt, system_prompt=None)
+            pass # Rely on _calculate_token_budgets for initial_input_tokens
         except Exception as e:
             logger.error(f"Failed to count tokens for initial prompt: {e}. Setting initial_input_tokens to 0.")
             self.initial_input_tokens = 0
@@ -134,14 +137,29 @@ class SocraticDebate:
         self.status_callback = status_callback
         self.rich_console = rich_console or Console()
         
-        # The line below was the original location of the error, now redundant as _prev_context_ratio is initialized above.
-        # self._prev_context_ratio = None 
+        # Initialize phase_budgets dictionary if it doesn't exist
+        if not hasattr(self, 'phase_budgets'):
+            self.phase_budgets = {"context": 0, "debate": 0, "synthesis": 0}
+        
+        # If codebase_context was provided, compute embeddings now if context_analyzer is available.
+        # This ensures embeddings are ready if context is used early.
+        if self.codebase_context and self.context_analyzer:
+            if isinstance(self.codebase_context, dict):
+                # Compute embeddings if not already done.
+                # The analyzer instance passed is assumed to be cached and potentially has embeddings computed.
+                # If context changes, the analyzer's embeddings might need recomputation, handled by app.py caching.
+                if not self.context_analyzer.file_embeddings: # Only compute if not already done
+                    self.context_analyzer.compute_file_embeddings(self.codebase_context)
+            else:
+                logger.warning("codebase_context was not a dictionary, skipping embedding computation.")
+
 
     def _calculate_token_budgets(self):
         """
         Calculates token budgets for different phases of the debate using
         max_total_tokens_budget and context_token_budget_ratio.
-        This method was missing, causing the AttributeError.
+        This method was missing the assignment of self.codebase_context before its call,
+        leading to the AttributeError.
         """
         # Ensure context_token_budget_ratio is within reasonable bounds
         context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio)) # Clamp between 5% and 50%
@@ -154,6 +172,7 @@ class SocraticDebate:
         
         # Estimate tokens for initial input (context + prompt)
         context_str = ""
+        # --- IMPORTANT: self.codebase_context is now guaranteed to be set here ---
         if self.codebase_context:
             # Simple concatenation of all context files for estimation.
             # A more sophisticated approach might involve summarizing or embedding.
@@ -218,7 +237,7 @@ class SocraticDebate:
         # 5. Handling errors and retries.
         
         # For now, returning dummy data to allow the app to run without the full debate logic.
-        # In a real implementation, this method would orchestrate the entire Socratic process.
+        # This part needs to be replaced with the actual debate orchestration.
         
         # Simulate a successful run for demonstration purposes if no actual debate logic is present.
         # This part needs to be replaced with the actual debate orchestration.
