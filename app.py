@@ -156,6 +156,25 @@ EXAMPLE_PROMPTS = {
 
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
+# Define the function to get a cached instance of ContextRelevanceAnalyzer
+# and inject the persona_router from the PersonaManager.
+@st.cache_resource
+def get_context_analyzer():
+    """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
+    # Access the persona manager instance from session state
+    pm = st.session_state.persona_manager
+    if pm and pm.persona_router:
+        # Instantiate ContextRelevanceAnalyzer and inject the persona router
+        analyzer = ContextRelevanceAnalyzer()
+        analyzer.set_persona_router(pm.persona_router)
+        return analyzer
+    else:
+        # Fallback if persona_manager or its router is not available
+        # This might lead to reduced context relevance if persona context is important
+        logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
+        return ContextRelevanceAnalyzer()
+
+# Get the persona manager instance (also cached)
 @st.cache_resource
 def get_persona_manager():
     return PersonaManager()
