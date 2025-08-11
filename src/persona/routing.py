@@ -1,3 +1,4 @@
+# src/persona/routing.py
 """
 Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
@@ -163,20 +164,37 @@ class PersonaRouter:
                                  context_analysis_results: Optional[Dict[str, Any]] = None) -> List[str]:
         """
         Determine the optimal sequence of personas for processing the prompt.
-        Dynamically adjusts the sequence based on intermediate results and context analysis.
+        Dynamically adjusts the sequence based on prompt keywords, domain,
+        intermediate results, and context analysis.
         """
         prompt_lower = prompt.lower()
         
+        # --- LLM SUGGESTION 2: Dynamic Persona Sequence for Self-Analysis ---
+        # Check if it's a self-analysis prompt and apply specific sequences.
         if self.is_self_analysis_prompt(prompt):
-            logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
-            base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE
+            logger.info("Detected self-analysis prompt. Applying dynamic persona sequence.")
+            
+            # Define sequences based on security keywords
+            security_keywords = ["security", "vulnerability", "exploit", "authentication", "threat", "risk", "malware", "penetration", "compliance"]
+            
+            # Check if prompt contains security-related keywords
+            contains_security_keywords = any(kw in prompt_lower for kw in security_keywords)
+            
+            if contains_security_keywords:
+                # Sequence for security-focused self-analysis
+                base_sequence = ["Code_Architect", "Security_Auditor", "Test_Engineer", "Impartial_Arbitrator"]
+                logger.info("Self-analysis prompt is security-focused. Using sequence: %s", base_sequence)
+            else:
+                # Default sequence for general self-analysis
+                base_sequence = ["Code_Architect", "Test_Engineer", "Impartial_Arbitrator"]
+                logger.info("Self-analysis prompt is general. Using sequence: %s", base_sequence)
         else:
-            # Use the persona_sets directly from personas.yaml as the base sequence
+        # --- END LLM SUGGESTION 2 ---
+            # Use the persona_sets directly from personas.yaml as the base sequence for non-self-analysis prompts
             if domain not in self.persona_sets:
                 logger.warning(f"Domain '{domain}' not found in persona_sets. Falling back to 'General' sequence.")
                 domain = "General" # Fallback to General if selected domain is not found
             
-            # Retrieve the base sequence directly from the loaded persona_sets
             base_sequence = self.persona_sets.get(domain, [])
             
             if not base_sequence: # Fallback if the domain's sequence is empty or not found

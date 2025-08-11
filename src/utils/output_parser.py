@@ -287,6 +287,17 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
+        # --- LLM SUGGESTION 1: Fix CODE_CHANGES type mismatch ---
+        # Ensure CODE_CHANGES is a list if it exists and is not already a list.
+        if isinstance(data_to_validate, dict) and "CODE_CHANGES" in data_to_validate:
+            if not isinstance(data_to_validate["CODE_CHANGES"], list):
+                self.logger.warning("Fixing CODE_CHANGES type mismatch: Expected list, got dictionary or other type.")
+                if isinstance(data_to_validate["CODE_CHANGES"], dict):
+                    data_to_validate["CODE_CHANGES"] = [data_to_validate["CODE_CHANGES"]]
+                else:
+                    data_to_validate["CODE_CHANGES"] = [] # Fallback to empty list
+        # --- END LLM SUGGESTION 1 ---
+
         # 4. Validate against schema
         try:
             # data_to_validate should now be a dictionary
@@ -337,7 +348,7 @@ class LLMOutputParser:
                                     "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", "LINES": []
                                 })
                         else:
-                            logger.logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
+                            logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
                             malformed_blocks_list.append({
                                 "type": "NON_DICT_CODE_CHANGE_ITEM", "index": index, "message": "Item is not a dictionary.", "raw_item": str(item)
                             })

@@ -8,6 +8,9 @@ import logging
 from functools import lru_cache
 
 from src.persona.routing import PersonaRouter
+# --- MODIFICATION FOR SUGGESTION 3: Import NEGATION_PATTERNS ---
+from src.constants import NEGATION_PATTERNS
+# --- END MODIFICATION ---
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +99,7 @@ class ContextRelevanceAnalyzer:
         for file_path, embedding in self.file_embeddings.items():
             base_similarity = cosine_similarity([prompt_embedding], [embedding])[0][0]
             
-            # --- MODIFICATION FOR IMPROVEMENT 1.2 ---
+            # --- MODIFICATION FOR SUGGESTION 3 ---
             weighted_similarity = self._apply_keyword_boost(file_path, base_similarity, key_terms, active_personas)
             # --- END MODIFICATION ---
             
@@ -115,33 +118,29 @@ class ContextRelevanceAnalyzer:
         ]
         return keywords
 
+    # --- MODIFICATION FOR SUGGESTION 3: Implement 7-line negation proximity check ---
     def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str], active_personas: Optional[List[str]] = None) -> float:
         """
-        Applies a boost to the similarity score based on keyword matches in the file path,
-        semantic relevance of file content/key elements, and active personas.
+        Applies a boost to the similarity score based on keyword matches,
+        negation proximity, and active personas.
         """
         boost = 0.0
         file_path_lower = file_path.lower()
-        
-        for term in key_terms:
-            if term in file_path_lower:
-                boost += 0.1
+        prompt_lower = " ".join(key_terms).lower() # Reconstruct prompt for negation search
 
-        if 'api' in key_terms and ('controller' in file_path_lower or 'service' in file_path_lower or 'route' in file_path_lower):
-            boost += 0.15
-        
-        if any(kw in key_terms for kw in ["test", "debug", "bug", "quality", "coverage", "refactor", "code"]):
-            if file_path.startswith('tests/'):
-                boost += 0.2
-        
-        # --- NEW: Semantic relevance boost based on file content/key elements ---
-        # This part requires access to file content or pre-computed embeddings of key elements.
-        # For simplicity, we'll simulate a boost based on the presence of key elements in the path.
-        # A more advanced implementation would involve embedding file content summaries.
-        # Example: If key_elements extracted from file content are semantically similar to prompt keywords.
-        # For now, we'll rely on the existing path and persona boosts.
-        
-        # --- NEW: Persona-specific relevance boost ---
+        # Check for negation presence in the prompt
+        negation_penalty = 1.0
+        for neg_pattern, penalty in NEGATION_PATTERNS:
+            if re.search(neg_pattern, prompt_lower):
+                negation_penalty *= penalty
+                break # Apply the strongest penalty if multiple negations apply
+
+        for term in key_terms:
+            # Use regex for exact word match in file path
+            if re.search(r'\b' + re.escape(term) + r'\b', file_path_lower):
+                boost += (0.1 * negation_penalty) # Apply boost, modified by negation
+
+        # --- Persona-specific relevance boost ---
         if active_personas:
             persona_focus_boost = 0.0
             if "Test_Engineer" in active_personas and file_path.startswith('tests/'):
@@ -155,3 +154,4 @@ class ContextRelevanceAnalyzer:
         weighted_similarity = min(1.0, base_similarity + boost)
         
         return weighted_similarity
+    # --- END MODIFICATION ---
