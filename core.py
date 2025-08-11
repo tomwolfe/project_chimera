@@ -1,4 +1,3 @@
-# core.py
 # -*- coding: utf-8 -*-
 # core.py
 import yaml
@@ -30,6 +29,8 @@ from functools import lru_cache # Import lru_cache for caching
 from llm_provider import GeminiProvider
 # Import ContextRelevanceAnalyzer for dependency injection
 from src.context.context_analyzer import ContextRelevanceAnalyzer
+# Import TokenManager for token budget calculations (though not directly instantiated here, its logic is mimicked)
+# from src.token_manager import TokenManager # Not directly used in SocraticDebate, but its logic is implemented here.
 # --- END IMPORT MODIFICATIONS ---
 
 # Import models and settings
@@ -78,7 +79,7 @@ class SocraticDebate:
         """
         self.settings = settings or ChimeraSettings()
         # Ensure the ratio from settings is used, or the provided default if settings is None
-        self.settings.context_token_budget_ratio = context_token_budget_ratio 
+        self.context_token_budget_ratio = context_token_budget_ratio 
         self.max_total_tokens_budget = max_total_tokens_budget
         self.tokens_used = 0
         self.model_name = model_name # Store the model name selected by the user
@@ -89,6 +90,10 @@ class SocraticDebate:
         self._prev_context_ratio = None 
         # --- FIX END ---
 
+        # Call the method that was causing the AttributeError.
+        # This method is now defined below.
+        self._calculate_token_budgets()
+        
         self.context_analyzer = context_analyzer # Use the provided analyzer instance
         self.codebase_context = None
         if codebase_context and self.context_analyzer:
@@ -113,17 +118,15 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         
         try:
+            # Count tokens for the initial prompt. This is separate from phase budget calculation.
             self.initial_input_tokens = self.llm_provider.count_tokens(self.initial_prompt, system_prompt=None)
         except Exception as e:
             logger.error(f"Failed to count tokens for initial prompt: {e}. Setting initial_input_tokens to 0.")
             self.initial_input_tokens = 0
         
-        self.phase_budgets = {}
         self.tokens_used_per_phase = {"context": 0, "debate": 0, "synthesis": 0}
         self.tokens_used_per_step = {}
 
-        self._calculate_token_budgets()
-        
         self.intermediate_steps = {}
         self.final_answer = None
         self.process_log = []
@@ -133,3 +136,180 @@ class SocraticDebate:
         
         # The line below was the original location of the error, now redundant as _prev_context_ratio is initialized above.
         # self._prev_context_ratio = None 
+
+    def _calculate_token_budgets(self):
+        """
+        Calculates token budgets for different phases of the debate using
+        max_total_tokens_budget and context_token_budget_ratio.
+        This method was missing, causing the AttributeError.
+        """
+        # Ensure context_token_budget_ratio is within reasonable bounds
+        context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio)) # Clamp between 5% and 50%
+        
+        # Calculate remaining ratio for debate and synthesis
+        remaining_ratio = 1.0 - context_ratio
+        # Split remaining ratio for debate and synthesis (e.g., 50/50)
+        debate_ratio = remaining_ratio / 2.0
+        synthesis_ratio = remaining_ratio / 2.0
+        
+        # Estimate tokens for initial input (context + prompt)
+        context_str = ""
+        if self.codebase_context:
+            # Simple concatenation of all context files for estimation.
+            # A more sophisticated approach might involve summarizing or embedding.
+            context_str = "\n".join(f"{fname}:\n{content}" for fname, content in self.codebase_context.items())
+        
+        prompt_for_estimation = self.initial_prompt if self.initial_prompt else ""
+
+        try:
+            # Use the LLM provider's count_tokens method to estimate tokens for the combined input.
+            # This assumes llm_provider.count_tokens can handle combined context and prompt.
+            combined_input_text = f"{context_str}\n\n{prompt_for_estimation}" if context_str else prompt_for_estimation
+            self.initial_input_tokens = self.llm_provider.count_tokens(combined_input_text)
+
+            # Calculate available tokens for debate and synthesis phases
+            available_tokens_for_phases = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
+            
+            # Distribute budgets, ensuring minimums for critical phases
+            self.phase_budgets["context"] = max(200, int(available_tokens_for_phases * context_ratio))
+            self.phase_budgets["debate"] = max(500, int(available_tokens_for_phases * debate_ratio))
+            self.phase_budgets["synthesis"] = max(400, int(available_tokens_for_phases * synthesis_ratio))
+
+            # Sanity check: Ensure phase budgets don't exceed total available tokens
+            # This can happen if minimums are too high or ratios are miscalculated.
+            total_phase_budget = sum(self.phase_budgets.values())
+            if total_phase_budget > available_tokens_for_phases:
+                # Simple scaling to fit within available tokens if necessary
+                scale_factor = available_tokens_for_phases / total_phase_budget
+                for phase in self.phase_budgets:
+                    self.phase_budgets[phase] = int(self.phase_budgets[phase] * scale_factor)
+
+            logger.info(f"SocraticDebate token budgets initialized: "
+                       f"Initial Input={self.initial_input_tokens}, "
+                       f"Context={self.phase_budgets['context']}, "
+                       f"Debate={self.phase_budgets['debate']}, "
+                       f"Synthesis={self.phase_budgets['synthesis']}")
+
+        except AttributeError as e:
+            logger.error(f"Missing method in LLM provider: {e}. Cannot calculate token budgets.")
+            # Fallback to default budgets if LLM provider methods are missing
+            self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
+            self.initial_input_tokens = 0
+            raise ChimeraError("LLM provider is missing required methods for token calculation.") from e
+        except Exception as e:
+            logger.error(f"Error calculating token budgets: {e}")
+            # Fallback to default budgets on any other error
+            self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
+            self.initial_input_tokens = 0
+            raise ChimeraError("Failed to calculate token budgets due to an unexpected error.") from e
+    
+    def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Executes the Socratic debate process.
+        This is a placeholder for the actual debate logic which would involve
+        iteratively calling personas, analyzing responses, and synthesizing results.
+        """
+        # Placeholder for the actual debate execution logic.
+        # This would involve:
+        # 1. Initializing the persona router.
+        # 2. Determining the persona sequence based on the prompt and domain.
+        # 3. Iteratively calling personas for context analysis, debate, and synthesis.
+        # 4. Tracking token usage per phase and step.
+        # 5. Handling errors and retries.
+        
+        # For now, returning dummy data to allow the app to run without the full debate logic.
+        # In a real implementation, this method would orchestrate the entire Socratic process.
+        
+        # Simulate a successful run for demonstration purposes if no actual debate logic is present.
+        # This part needs to be replaced with the actual debate orchestration.
+        
+        # Example of how token tracking might be used:
+        # try:
+        #     # Simulate token usage for context analysis
+        #     context_tokens_used = self.llm_provider.count_tokens("Analyzing context...")
+        #     self.track_token_usage("context", context_tokens_used)
+        #     self.check_budget("context", context_tokens_used, "Context Analysis")
+        #
+        #     # Simulate token usage for debate phase
+        #     debate_tokens_used = self.llm_provider.count_tokens("Debating the prompt...")
+        #     self.track_token_usage("debate", debate_tokens_used)
+        #     self.check_budget("debate", debate_tokens_used, "Debate Phase")
+        #
+        #     # Simulate token usage for synthesis phase
+        #     synthesis_tokens_used = self.llm_provider.count_tokens("Synthesizing results...")
+        #     self.track_token_usage("synthesis", synthesis_tokens_used)
+        #     self.check_budget("synthesis", synthesis_tokens_used, "Synthesis Phase")
+        #
+        # except TokenBudgetExceededError as e:
+        #     logger.error(f"Token budget exceeded during run_debate: {e}")
+        #     # Handle budget exceeded error appropriately, e.g., return an error state
+        #     raise e
+        # except Exception as e:
+        #     logger.error(f"An error occurred during run_debate: {e}")
+        #     # Handle other exceptions
+        #     raise ChimeraError(f"An error occurred during debate execution: {e}")
+
+        # Dummy return values for now
+        dummy_final_answer = {
+            "COMMIT_MESSAGE": "Debate Simulation Complete",
+            "RATIONALE": "This is a simulated response. The actual debate logic needs to be implemented.",
+            "CODE_CHANGES": [],
+            "malformed_blocks": []
+        }
+        dummy_intermediate_steps = {
+            "Total_Tokens_Used": self.initial_input_tokens, # Placeholder
+            "Total_Estimated_Cost_USD": 0.0, # Placeholder
+            "Initial_Prompt_Tokens": self.initial_input_tokens,
+            "Context_Analysis_Tokens": self.phase_budgets.get("context", 0),
+            "Debate_Phase_Tokens": self.phase_budgets.get("debate", 0),
+            "Synthesis_Phase_Tokens": self.phase_budgets.get("synthesis", 0),
+        }
+        
+        # Update total tokens used based on initial input
+        self.tokens_used = self.initial_input_tokens
+        
+        return dummy_final_answer, dummy_intermediate_steps
+
+    def track_token_usage(self, phase: str, tokens: int):
+        """Tracks token usage for a specific phase and updates total used tokens."""
+        if phase in self.tokens_used_per_phase:
+            self.tokens_used_per_phase[phase] += tokens
+            self.tokens_used += tokens
+        else:
+            logger.warning(f"Attempted to track tokens for unknown phase: {phase}")
+            self.tokens_used += tokens # Still track if phase is unknown
+
+    def check_budget(self, phase: str, tokens_needed: int, step_name: str):
+        """Checks if adding tokens_needed would exceed the budget for the given phase."""
+        if phase not in self.phase_budgets:
+            logger.warning(f"Phase '{phase}' not found in budget configuration.")
+            return # Cannot check budget if phase is not configured
+
+        current_phase_usage = self.tokens_used_per_phase.get(phase, 0)
+        phase_budget = self.phase_budgets.get(phase, 0)
+        
+        if current_phase_usage + tokens_needed > phase_budget:
+            raise TokenBudgetExceededError(
+                current_tokens=current_phase_usage,
+                budget=phase_budget,
+                details={"phase": phase, "step": step_name, "tokens_requested": tokens_needed}
+            )
+
+    def get_total_used_tokens(self) -> int:
+        """Returns the total tokens used across all phases and initial input."""
+        return self.tokens_used
+
+    def get_total_estimated_cost(self) -> float:
+        """Calculates the total estimated cost based on token usage and LLM provider pricing."""
+        # This requires access to the LLM provider's cost calculation method.
+        # For now, it's a placeholder.
+        try:
+            total_tokens = self.get_total_used_tokens()
+            # This calculation is simplified; ideally, it would sum costs per phase based on input/output tokens.
+            # For demonstration, we'll use a rough estimate.
+            # A more accurate calculation would track input/output tokens separately for each LLM call.
+            cost = self.llm_provider.calculate_usd_cost(total_tokens, 0) # Assuming output tokens are not yet tracked accurately here
+            return cost
+        except Exception as e:
+            logger.error(f"Could not estimate total cost: {e}")
+            return 0.0
