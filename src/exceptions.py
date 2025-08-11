@@ -13,6 +13,22 @@ class ChimeraError(Exception):
         self.details = details or {}
         self.timestamp = datetime.datetime.now()
 
+class LLMProviderError(ChimeraError):
+    """Base exception for LLM provider errors."""
+    def __init__(self, message: str, provider_error_code: Any = None, details: Optional[dict] = None):
+        full_details = (details or {}).copy()
+        full_details["provider_error_code"] = provider_error_code
+        super().__init__(message, details=full_details)
+
+class GeminiAPIError(LLMProviderError):
+    """Specific exception for Gemini API errors."""
+    def __init__(self, message: str, code: int = None, response_details: Any = None):
+        super().__init__(message, provider_error_code=code, details={"response_details": response_details})
+
+class LLMUnexpectedError(LLMProviderError):
+    """Specific exception for unexpected LLM errors."""
+    pass
+
 class ValidationPhaseError(ChimeraError):
     """Base for errors occurring during response validation."""
     def __init__(self, message: str, invalid_response: Any = None, 
@@ -36,11 +52,6 @@ class SchemaValidationError(ValidationPhaseError):
             "invalid_value": invalid_value
         })
         super().__init__(message, details=full_details)
-# --- MODIFIED CLASS END ---
-
-# Note: The 'ContextAnalysisError' class from the original code is omitted here
-# as the Iteration #3 suggestion for error handling focused on a minimal set
-# of core exceptions.
 
 # The TokenBudgetExceededError is kept simple as per previous iterations,
 # but could be enhanced to inherit from ChimeraError with details if needed.
@@ -56,10 +67,6 @@ class TokenBudgetExceededError(ChimeraError):
 
 # LLMResponseValidationError is now superseded by SchemaValidationError for schema issues,
 # but might be kept for other non-schema-related LLM errors if they arise.
-# For this update, we'll assume SchemaValidationError covers the primary need.
-# If LLMResponseValidationError is still used elsewhere, it might need to be updated
-# to inherit from ChimeraError and include details.
-# For now, we'll keep it minimal as per the prompt's focus.
 class LLMResponseValidationError(ValidationPhaseError):
     """Raised when LLM response fails validation, with code-specific guidance."""
     # This class now inherits from ValidationPhaseError for better structure.
@@ -67,3 +74,4 @@ class LLMResponseValidationError(ValidationPhaseError):
     # core.py's _analyze_validation_error, which is more context-aware.
     # This class primarily serves as a structured wrapper for validation errors.
     pass
+# --- MODIFIED CLASS END ---

@@ -12,18 +12,16 @@ SELF_ANALYSIS_KEYWORDS = {
     "refactor this code": 0.70,
     "evaluate my own code": 0.82,
     "identify code improvements": 0.78,
-    "suggest code enhancements": 0.73
+    "suggest code enhancements": 0.73,
+    "analyze my own implementation": 0.80, # Added more specific phrase
+    "critique my code": 0.77
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
 # Patterns are tuples: (regex_pattern, penalty_multiplier)
-# MODIFIED: Added more specific patterns and directional logic hints.
 NEGATION_PATTERNS = [
-    # Negation appearing before the keyword, with proximity check
+    # Patterns and their penalty multipliers (lower multiplier = stronger negation)
     (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
-    # Negation appearing after the keyword (less common, but possible)
-    (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
-    # Phrases that strongly negate analysis intent
     (r'\b(please do not|kindly avoid|do not intend to)\b', 0.9)
 ]
 
@@ -59,7 +57,6 @@ def is_self_analysis_prompt(
         if keyword_pos != -1:
             negated_weight_multiplier = 1.0
             
-            # MODIFIED: Directional negation analysis
             # Check for negation patterns appearing BEFORE the keyword
             for pattern, penalty in NEGATION_PATTERNS:
                 # Iterate through all matches of the pattern in the prompt up to the keyword's position
@@ -73,7 +70,6 @@ def is_self_analysis_prompt(
                             break 
             
             # Check for negation patterns appearing AFTER the keyword (less common, but possible)
-            # This part is less critical for the specific "do not analyze" case but adds robustness.
             for pattern, penalty in NEGATION_PATTERNS:
                 # Iterate through all matches of the pattern starting from the keyword's position
                 for neg_match in re.finditer(pattern, prompt_lower[keyword_pos:]):
@@ -89,11 +85,15 @@ def is_self_analysis_prompt(
             
             score += weight * negated_weight_multiplier
     
-    # Apply context bonuses for meaningful keyword combinations
-    if "code" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower):
-        score += 0.2
-    if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
+    # --- NEW: Apply bonuses for keyword combinations ---
+    # Bonus for prompts that combine analysis/improvement with code context
+    if ("code" in prompt_lower or "program" in prompt_lower or "script" in prompt_lower) and \
+       ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower or "evaluate" in prompt_lower):
         score += 0.15
+    
+    # Bonus for explicit mentions of the project name in a self-analysis context
+    if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
+        score += 0.10
     
     # Explicit phrases that should strongly indicate self-analysis
     explicit_phrases = [
@@ -103,16 +103,15 @@ def is_self_analysis_prompt(
         "evaluate my own implementation"
     ]
     if any(phrase in prompt_lower for phrase in explicit_phrases):
-        score = max(score, 0.92)
+        score = max(score, 0.92) # Ensure these phrases always trigger if score is below
     
     return score >= threshold
 
 # Optimized persona sequence for self-analysis prompts
-# KNOWLEDGE BASE REFERENCE: Lines 120-150 (persona definitions and focus areas)
 SELF_ANALYSIS_PERSONA_SEQUENCE = [
     "Code_Architect",
     "Security_Auditor",
-    "Test_Engineer", # Moved earlier per knowledge base focus on code quality
+    "Test_Engineer",
     "Constructive_Critic",
     "DevOps_Engineer",
     "Impartial_Arbitrator"

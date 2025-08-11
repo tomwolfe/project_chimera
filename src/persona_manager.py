@@ -29,6 +29,17 @@ class PersonaManager:
         self.default_persona_set_name: str = "General"
         self._load_initial_data()
         self._load_custom_frameworks_on_init()
+        # Store original persona configs for reset functionality
+        self._original_personas: Dict[str, PersonaConfig] = {}
+        self._load_original_personas()
+
+    def _load_original_personas(self):
+        """Loads the initial, default persona configurations for reset purposes."""
+        # This method should be called after _load_initial_data to capture the defaults.
+        if self.all_personas:
+            # Use model_copy() to create deep copies of Pydantic models
+            self._original_personas = {name: p.model_copy() for name, p in self.all_personas.items()}
+            logger.info(f"Captured {len(self._original_personas)} original persona configurations for reset.")
 
     def _ensure_custom_frameworks_dir(self):
         if not os.path.exists(CUSTOM_FRAMEWORKS_DIR):
@@ -223,3 +234,51 @@ class PersonaManager:
         logger.warning(f"Persona sequence not found for framework '{framework_name}'. Falling back to default sequence.")
         return self.persona_sequence
     # --- END MODIFIED METHOD ---
+
+    # --- NEW METHODS FOR PERSONA EDITING ---
+    def update_persona_config(self, persona_name: str, parameter: str, new_value: Any):
+        """Updates a specific parameter of a persona."""
+        if persona_name not in self.all_personas:
+            logger.warning(f"Persona '{persona_name}' not found for update.")
+            return False
+        
+        if not hasattr(self.all_personas[persona_name], parameter):
+            logger.warning(f"Persona '{persona_name}' has no attribute '{parameter}'.")
+            return False
+        
+        old_value = getattr(self.all_personas[persona_name], parameter)
+        
+        try:
+            # Attempt to set the new value. Pydantic validation will occur if the model is re-instantiated or validated.
+            # For direct attribute update, ensure the type is compatible.
+            setattr(self.all_personas[persona_name], parameter, new_value)
+            logger.info(f"Updated persona '{persona_name}' parameter '{parameter}' from '{old_value}' to '{new_value}'.")
+            # In a real app, you might also log this change for an audit trail.
+            # e.g., self.log_persona_change(persona_name, parameter, old_value, new_value)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update persona '{persona_name}' parameter '{parameter}' with value '{new_value}': {e}")
+            return False
+
+    def reset_persona_to_default(self, persona_name: str):
+        """Resets a persona to its original default configuration."""
+        if persona_name not in self._original_personas:
+            logger.warning(f"Original configuration for persona '{persona_name}' not found. Cannot reset.")
+            return False
+        
+        if persona_name not in self.all_personas:
+            logger.warning(f"Persona '{persona_name}' not found in current active personas. Cannot reset.")
+            return False
+            
+        original_config = self._original_personas[persona_name]
+        current_persona = self.all_personas[persona_name]
+        
+        # Update all relevant attributes from the original config
+        current_persona.system_prompt = original_config.system_prompt
+        current_persona.temperature = original_config.temperature
+        current_persona.max_tokens = original_config.max_tokens
+        # Add other attributes as needed if PersonaConfig grows
+        
+        logger.info(f"Persona '{persona_name}' reset to default configuration.")
+        return True
+    # --- END NEW METHODS ---

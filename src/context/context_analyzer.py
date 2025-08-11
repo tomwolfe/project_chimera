@@ -92,7 +92,7 @@ class ContextRelevanceAnalyzer:
             embedding = self.model.encode([representation], convert_to_numpy=True)[0]
             self.file_embeddings[file_path] = embedding
     
-    def find_relevant_files(self, prompt: str, top_k: int = 5) -> List[Tuple[str, float]]:
+    def find_relevant_files(self, prompt: str, top_k: int = 5, active_personas: Optional[List[str]] = None) -> List[Tuple[str, float]]:
         """
         Find the most relevant files to the prompt with enhanced weighting.
         Incorporates prompt keyword analysis to boost similarity scores.
@@ -111,7 +111,8 @@ class ContextRelevanceAnalyzer:
             base_similarity = cosine_similarity([prompt_embedding], [embedding])[0][0]
             
             # 2. Apply keyword-based relevance boost
-            weighted_similarity = self._apply_keyword_boost(file_path, base_similarity, key_terms)
+            # Pass active_personas to the boost method
+            weighted_similarity = self._apply_keyword_boost(file_path, base_similarity, key_terms, active_personas)
             
             similarities.append((file_path, float(weighted_similarity)))
         
@@ -131,10 +132,11 @@ class ContextRelevanceAnalyzer:
         ]
         return keywords
 
-    def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str]) -> float:
+    # --- MODIFIED METHOD FOR REASONING QUALITY (#1 PRIORITY) ---
+    def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str], active_personas: Optional[List[str]] = None) -> float:
         """
-        Applies a boost to the similarity score based on keyword matches in the file path.
-        This function can be extended for more sophisticated relevance scoring.
+        Applies a boost to the similarity score based on keyword matches in the file path,
+        semantic relevance of file content/key elements, and active personas.
         """
         boost = 0.0
         file_path_lower = file_path.lower()
@@ -148,18 +150,36 @@ class ContextRelevanceAnalyzer:
         if 'api' in key_terms and ('controller' in file_path_lower or 'service' in file_path_lower or 'route' in file_path_lower):
             boost += 0.15
         
-        # --- ADDED FOR REASONING QUALITY (#1 PRIORITY): Boost for test files ---
-        # If prompt keywords indicate a need for code analysis or testing,
-        # boost relevance for files within the 'tests/' directory.
+        # Boost for test files if prompt indicates testing/debugging needs
         if any(kw in key_terms for kw in ["test", "debug", "bug", "quality", "coverage", "refactor", "code"]):
             if file_path.startswith('tests/'):
                 boost += 0.2 # Apply the specified 0.2 boost for test files
-        # --- END ADDED FOR REASONING QUALITY ---
         
+        # --- NEW: Semantic relevance boost based on file content/key elements ---
+        # This requires access to file content or pre-computed embeddings of key elements.
+        # For simplicity, we'll assume a method `_get_semantic_relevance` exists that
+        # uses embeddings or keyword analysis of file content.
+        # Example:
+        # file_content_summary = self.get_file_summary(file_path) # Hypothetical method
+        # semantic_relevance_score = self._calculate_semantic_relevance(key_terms, file_content_summary)
+        # boost += semantic_relevance_score * 0.3 # Add a boost based on semantic match
+
+        # --- NEW: Persona-specific relevance boost ---
+        if active_personas:
+            persona_focus_boost = 0.0
+            if "Test_Engineer" in active_personas and file_path.startswith('tests/'):
+                persona_focus_boost += 0.15
+            if "Security_Auditor" in active_personas and ('security' in file_path_lower or 'auth' in file_path_lower or 'crypto' in file_path_lower):
+                persona_focus_boost += 0.15
+            if "Code_Architect" in active_personas and ('model' in file_path_lower or 'schema' in file_path_lower or 'dto' in file_path_lower or 'entity' in file_path_lower):
+                persona_focus_boost += 0.10
+            boost += persona_focus_boost
+
         # Combine base similarity with boost, capping at 1.0
         weighted_similarity = min(1.0, base_similarity + boost)
         
         return weighted_similarity
+    # --- END MODIFIED METHOD ---
 
     # --- MODIFIED METHOD FOR #2 PRIORITY (ROBUSTNESS) ---
     # This method implements the context_ratio formula as requested in the prompt.

@@ -61,15 +61,11 @@ class PersonaRouter:
                 "negative": []
             },
             "scientific": {
-                "positive": ["science", "research", "experiment", "data", "model", "hypothesis", 
-                             "biology", "physics", "chemistry", "astronomy", "engineering", 
-                             "algorithm", "computation", "genetics", "ecology", "neuroscience"],
+                "positive": ["scientific", "experiment", "hypothesis", "research", "data"],
                 "negative": []
             },
             "business": {
-                "positive": ["business", "market", "strategy", "finance", "investment", 
-                             "startup", "profit", "revenue", "marketing", "sales", "operations", 
-                             "management", "economy", "entrepreneurship", "product", "customer"],
+                "positive": ["market", "business", "financial", "economy", "strategy"],
                 "negative": []
             },
             "creative": {
@@ -192,11 +188,9 @@ class PersonaRouter:
                 relevant_personas.update(domain_persona_map[domain])
         
         # Ensure all personas exist in the provided all_personas dictionary
-        # This is a safeguard; ideally, the persona sets in personas.yaml are consistent.
         valid_personas = {p for p in relevant_personas if p in self.all_personas}
         
         # Return a list, maintaining a sensible default order
-        # Core personas first, then domain-specific ones.
         ordered_sequence = []
         for p in core_personas:
             if p in valid_personas:
@@ -258,7 +252,7 @@ class PersonaRouter:
             self._insert_persona_before_arbitrator(adjusted_sequence, 'DevOps_Engineer')
 
         # --- Minimal 80/20 Refinement for Framework Selection ---
-        # Prevent misclassification of \"building architect\" as \"software architect\"
+        # Prevent misclassification of "building architect" as "software architect"
         if "Code_Architect" in adjusted_sequence:
             if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
                ("software architect" not in prompt_lower and "software" not in prompt_lower and "code" not in prompt_lower):
@@ -290,25 +284,24 @@ class PersonaRouter:
         logger.debug(f"Inserted persona '{persona}' before Arbitrator at index {arbitrator_index}.")
 
     def determine_persona_sequence(self, prompt: str, 
-                                 intermediate_results: Optional[Dict[str, Any]] = None) -> List[str]:
+                                 intermediate_results: Optional[Dict[str, Any]] = None,
+                                 context_analysis_results: Optional[Dict[str, Any]] = None) -> List[str]: # Added context_analysis_results parameter
         """
         Determine the optimal sequence of personas for processing the prompt.
-        Dynamically adjusts the sequence based on intermediate results.
+        Dynamically adjusts the sequence based on intermediate results and context analysis.
         
         Returns a list of persona names in execution order.
         """
         prompt_lower = prompt.lower()
         
         # 1. Primary check: Is this a self-analysis prompt?
-        # Use the imported function from constants.py
-        from src.constants import is_self_analysis_prompt # Import here for clarity
-        if is_self_analysis_prompt(prompt):
+        if self.is_self_analysis_prompt(prompt):
             logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
             base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE
             # Apply dynamic adjustment
             return self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
         
-        # --- Domain-specific routing ---\n
+        # --- Domain-specific routing ---
         domains = self._analyze_prompt_domain(prompt)
         base_sequence = self._get_domain_specific_personas(domains)
         
@@ -320,5 +313,108 @@ class PersonaRouter:
         if "Impartial_Arbitrator" in base_sequence:
             final_sequence.append("Impartial_Arbitrator")
         
+        # --- NEW: Incorporate Context Analysis Results ---
+        if context_analysis_results:
+            relevant_files = context_analysis_results.get("relevant_files", [])
+            # Count file types to influence persona selection
+            test_file_count = sum(1 for file_path, _ in relevant_files if file_path.startswith('tests/'))
+            code_file_count = sum(1 for file_path, _ in relevant_files if file_path.endswith(('.py', '.js', '.ts', '.java', '.go'))) # Add other code extensions
+            
+            # If many test files are relevant, boost Test_Engineer
+            if test_file_count > 3 and "Test_Engineer" not in final_sequence: # Threshold of 3 test files
+                self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
+            
+            # If many code files are relevant, boost Code_Architect/Security_Auditor
+            if code_file_count > 5: # Threshold of 5 code files
+                if "Code_Architect" not in final_sequence:
+                    self._insert_persona_before_arbitrator(final_sequence, "Code_Architect")
+                if "Security_Auditor" not in final_sequence:
+                    self._insert_persona_before_arbitrator(final_sequence, "Security_Auditor")
+        # --- END NEW ---
+
         # Apply dynamic adjustment based on intermediate results
         return self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)
+```
+
+---
+
+### 10. `src/models.py`
+
+```python
+# src/models.py
+from typing import Dict, Any, Optional, List
+from pydantic import BaseModel, Field, validator, model_validator
+
+# --- Pydantic Models for Schema Validation ---
+class PersonaConfig(BaseModel):
+    name: str
+    description: Optional[str] = None
+    system_prompt: str
+    temperature: float = Field(..., ge=0.0, le=1.0)
+    max_tokens: int = Field(..., gt=0)
+
+class ReasoningFrameworkConfig(BaseModel):
+    framework_name: str
+    personas: Dict[str, PersonaConfig]
+    persona_sets: Dict[str, List[str]]
+    version: int = 1 # Application's current framework schema version
+
+    @model_validator(mode='after')
+    def validate_persona_sets_references(self):
+        # This validation is more relevant in core.py where all_personas are known
+        return self
+
+# NEW: Pydantic model for Context_Aware_Assistant's output
+class ContextAnalysisOutput(BaseModel):
+    key_modules: List[str] = Field(..., alias="key_modules", description="List of important modules/files and their purpose.")
+    security_concerns: List[str] = Field(..., alias="security_concerns", description="List of potential security issues or patterns.")
+    architectural_patterns: List[str] = Field(..., alias="architectural_patterns", description="List of observed architectural patterns or design principles.")
+    performance_bottlenecks: List[str] = Field(..., alias="performance_bottlenecks", description="List of potential performance issues or areas for optimization.")
+
+# Existing models for LLMOutput and CodeChange (assuming they are already defined in output_parser.py
+# but for clarity and central definition, they should ideally be here too.
+# For this exercise, I'll assume they are imported from output_parser.py as per the original code,
+# but if they were defined here, output_parser.py would import them.)
+# Let's move them here for better architecture.
+
+class CodeChange(BaseModel):
+    file_path: str = Field(..., alias="FILE_PATH")
+    action: str = Field(..., alias="ACTION")
+    full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
+    lines: List[str] = Field(default_factory=list, alias="LINES")
+
+    @validator('file_path')
+    def validate_file_path(cls, v):
+        """Validates and sanitizes the file path."""
+        # This validator relies on src.utils.path_utils.sanitize_and_validate_file_path
+        # which is imported in output_parser.py. For a clean model, this dependency
+        # should be handled, e.g., by passing a callable or making it a method of a class
+        # that holds this logic. For now, we'll keep it as is, assuming the context.
+        from src.utils.path_utils import sanitize_and_validate_file_path # Local import to avoid circular
+        return sanitize_and_validate_file_path(v)
+        
+    @validator('action')
+    def validate_action(cls, v):
+        """Validates the action type."""
+        valid_actions = ["ADD", "MODIFY", "REMOVE"]
+        if v not in valid_actions:
+            raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
+        return v
+
+    @model_validator(mode='after')
+    def check_content_based_on_action(self) -> 'CodeChange':
+        """Ensures that full_content is provided for ADD/MODIFY and lines for REMOVE."""
+        if self.action in ["ADD", "MODIFY"] and self.full_content is None:
+            raise ValueError(f"full_content is required for action '{self.action}' on file '{self.file_path}'.")
+        if self.action == "REMOVE" and not isinstance(self.lines, list):
+            raise ValueError(f"lines must be a list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__}.")
+        return self
+
+class LLMOutput(BaseModel):
+    commit_message: str = Field(alias="COMMIT_MESSAGE")
+    rationale: str = Field(alias="RATIONALE")
+    code_changes: List[CodeChange] = Field(alias="CODE_CHANGES")
+    conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION")
+    unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
+    # Add malformed_blocks field for parser feedback
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
