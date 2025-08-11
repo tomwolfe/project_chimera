@@ -25,6 +25,7 @@ from src.constants import SELF_ANALYSIS_KEYWORDS # Added import for suggestion 1
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import for caching
 import traceback # Needed for error handling in app.py
 import difflib # For Suggestion 3.1
+from collections import defaultdict # For Suggestion 3.2
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -481,53 +482,60 @@ with col1:
 
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
-        with st.tabs(["Save Current Framework", "Load/Manage Frameworks"]):
-            with st.tab("Save Current Framework"):
-                st.info("This will save the *currently selected framework* along with any *unsaved persona edits* made in the 'View and Edit Personas' section.")
-                new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input')
-                framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50)
+        # --- FIX START ---
+        # Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:'
+        tab_names = ["Save Current Framework", "Load/Manage Frameworks"]
+        tabs = st.tabs(tab_names)
 
-                # --- MODIFICATION FOR IMPROVEMENT 4.1 (Persona Changes Detected) ---
-                if st.session_state.persona_changes_detected:
-                    st.warning("Unsaved persona changes detected. Save as a custom framework to persist them.")
-                # --- END MODIFICATION ---
+        with tabs[0]: # Corresponds to "Save Current Framework"
+        # --- FIX END ---
+            st.info("This will save the *currently selected framework* along with any *unsaved persona edits* made in the 'View and Edit Personas' section.")
+            new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input')
+            framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50)
 
-                if st.button("Save Current Framework") and new_framework_name_input:
-                    current_framework_name = st.session_state.selected_persona_set
-                    # Get the currently active personas for the selected framework
-                    current_active_personas_data = {
-                        p_name: st.session_state.persona_manager.all_personas[p_name]
-                        for p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
-                        if p_name in st.session_state.persona_manager.all_personas
-                    }
-                    
-                    if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
-                        st.rerun()
+            # --- MODIFICATION FOR IMPROVEMENT 4.1 (Persona Changes Detected) ---
+            if st.session_state.persona_changes_detected:
+                st.warning("Unsaved persona changes detected. Save as a custom framework to persist them.")
+            # --- END MODIFICATION ---
+
+            if st.button("Save Current Framework") and new_framework_name_input:
+                current_framework_name = st.session_state.selected_persona_set
+                # Get the currently active personas for the selected framework
+                current_active_personas_data = {
+                    p_name: st.session_state.persona_manager.all_personas[p_name]
+                    for p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
+                    if p_name in st.session_state.persona_manager.all_personas
+                }
+                
+                if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
+                    st.rerun()
+        
+        # --- FIX START ---
+        with tabs[1]: # Corresponds to "Load/Manage Frameworks"
+        # --- FIX END ---
+            all_available_frameworks_for_load = [""] + st.session_state.available_domains
+            unique_framework_options_for_load = sorted(list(set(all_available_frameworks_for_load)))
             
-            with st.tab("Load/Manage Frameworks"):
-                all_available_frameworks_for_load = [""] + st.session_state.available_domains
-                unique_framework_options_for_load = sorted(list(set(all_available_frameworks_for_load)))
+            current_selection_for_load = ""
+            if st.session_state.selected_persona_set in unique_framework_options_for_load:
+                current_selection_for_load = st.session_state.selected_persona_set
+            elif st.session_state.selected_persona_set in st.session_state.persona_manager.all_custom_frameworks_data:
+                current_selection_for_load = st.session_state.selected_persona_set
+            
+            selected_framework_to_load = st.selectbox(
+                "Select a framework to load:",
+                options=unique_framework_options_for_load,
+                index=unique_framework_options_for_load.index(current_selection_for_load) if current_selection_for_load in unique_framework_options_for_load else 0,
+                key='load_framework_select'
+            )
+            if st.button("Load Selected Framework") and selected_framework_to_load:
+                loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
                 
-                current_selection_for_load = ""
-                if st.session_state.selected_persona_set in unique_framework_options_for_load:
-                    current_selection_for_load = st.session_state.selected_persona_set
-                elif st.session_state.selected_persona_set in st.session_state.persona_manager.all_custom_frameworks_data:
-                    current_selection_for_load = st.session_state.selected_persona_set
-                
-                selected_framework_to_load = st.selectbox(
-                    "Select a framework to load:",
-                    options=unique_framework_options_for_load,
-                    index=unique_framework_options_for_load.index(current_selection_for_load) if current_selection_for_load in unique_framework_options_for_load else 0,
-                    key='load_framework_select'
-                )
-                if st.button("Load Selected Framework") and selected_framework_to_load:
-                    loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
-                    
-                    if loaded_personas_dict:
-                        st.session_state.all_personas.update(loaded_personas_dict)
-                        st.session_state.persona_sets.update(loaded_persona_sets_dict)
-                        st.session_state.selected_persona_set = new_selected_framework_name
-                        st.rerun()
+                if loaded_personas_dict:
+                    st.session_state.all_personas.update(loaded_personas_dict)
+                    st.session_state.persona_sets.update(loaded_persona_sets_dict)
+                    st.session_state.selected_persona_set = new_selected_framework_name
+                    st.rerun()
     # --- END MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION ---
 
 with col2:
