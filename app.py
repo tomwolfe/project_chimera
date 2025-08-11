@@ -20,16 +20,18 @@ from src.persona_manager import PersonaManager
 # Import ConfigPersistence for unified configuration management
 from src.config.persistence import ConfigPersistence
 # Import custom exceptions from core.py (or a dedicated exceptions module if refactored)
+# Assuming core.py now re-exports or defines these exceptions.
+# If core.py uses a separate exceptions module, import from there.
+# For this example, we'll assume they are accessible via core or a dedicated module.
+# If core.py directly raises TokenBudgetExceededError, we'll catch that too.
+# REMOVED: The entire try-except block for importing exceptions.
+# We now rely on src.exceptions and core.py to provide these.
 from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError, SchemaValidationError # Added SchemaValidationError import
 # --- ADDED IMPORT FOR SUGGESTION 1 ---
 from src.constants import SELF_ANALYSIS_KEYWORDS
 # --- END ADDED IMPORT ---
 
 import traceback # Needed for error handling in app.py
-
-# Configure logging for app.py
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -113,7 +115,7 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
         step_keys_to_process = sorted([k for k in intermediate_steps.keys()
-                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("Final_Answer_") and not k.startswith("Context_Analysis") and not k.startswith("Persona_Sequence") and not k.startswith("Partial_Result_Warning")],
+                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"],
                                       key=lambda x: (x.split('_')[0], x))
         
         for step_key in step_keys_to_process:
@@ -145,14 +147,6 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"
     md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
-    
-    # Add phase breakdown to report
-    if "Tokens_Used_Per_Phase" in intermediate_steps:
-        md_content += "\n### Token Usage Breakdown by Phase:\n"
-        for phase, tokens in intermediate_steps["Tokens_Used_Per_Phase"].items():
-            budget = intermediate_steps.get("phase_budgets", {}).get(phase, "N/A")
-            md_content += f"*   **{phase.capitalize()}**: {tokens:,} tokens (Budget: {budget:,})\n"
-            
     return md_content
 
 st.set_page_config(layout="wide", page_title="Project Chimera Web App")
@@ -172,8 +166,12 @@ EXAMPLE_PROMPTS = {
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 persona_manager_instance = PersonaManager()
 
+# Initialize ConfigPersistence instance (managed by PersonaManager, but can be accessed here if needed)
+# config_persistence_instance = ConfigPersistence() # PersonaManager now holds this internally
+
 # --- Session State Initialization ---
 # Initialize context_token_budget_ratio unconditionally at the top level
+# This ensures it's available when the slider is rendered, even if other states aren't initialized yet.
 st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
 
 def _initialize_session_state(pm: PersonaManager):
@@ -239,7 +237,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Security Note: Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
     st.markdown("---")
-    st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"], key="selected_model_selectbox")
+    st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-pro"], key="selected_model_selectbox")
+    st.markdown("---")
+    # --- ADDED UI MESSAGE FOR MODEL ACCESS ---
+    st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite`.")
+    # --- END ADDED UI MESSAGE ---
     st.markdown("---")
     st.number_input("Max Total Tokens Budget:", min_value=1000, max_value=1000000, step=1000, key="max_tokens_budget_input")
     st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
@@ -355,14 +357,23 @@ with col1:
         current_framework_name = st.session_state.selected_persona_set
         current_domain_persona_names = st.session_state.persona_sets.get(current_framework_name, [])
         current_active_personas_data = {
-            p_name: st.session_state.all_personas[p_name] # Pass PersonaConfig objects directly
+            p_name: st.session_state.all_personas[p_name].model_dump() # Use model_dump for Pydantic v2+
             for p_name in current_domain_persona_names
             if p_name in st.session_state.all_personas
         }
 
-        # Use PersonaManager's save_framework method
-        if st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
-            st.rerun() # Rerun to update UI elements like the selectbox
+        # Construct framework config for persistence
+        framework_config_to_save = {
+            "description": st.session_state.framework_description,
+            "personas": list(current_active_personas_data.values()) # Save as a list of persona dicts
+        }
+        
+        # Use PersonaManager's save_framework method (which internally uses ConfigPersistence)
+        if st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, st.session_state.all_personas): # Pass current_active_personas_data
+            # Update session state to reflect the newly saved framework
+            # PersonaManager's save_framework should handle internal updates and reloading of custom frameworks
+            # We might need to rerun to update the UI elements like the selectbox
+            st.rerun()
 
     st.subheader("Load Framework")
     # Get all available frameworks (default + custom) from PersonaManager
@@ -394,6 +405,8 @@ with col1:
             st.rerun()
     
     st.subheader("Context Budget")
+    # This slider now safely accesses st.session_state.context_token_budget_ratio
+    # because it was initialized unconditionally above.
     st.slider(
         "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=st.session_state.context_token_budget_ratio,
         step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis."
@@ -443,11 +456,11 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
     st.info("Edit persona parameters for the **currently selected framework**. Changes are temporary unless saved as a custom framework.")
     
     # Sort personas for consistent display
-    sorted_persona_names = sorted(st.session_state.personas.keys()) # Assuming st.session_state.personas is populated correctly
+    sorted_persona_names = sorted(st.session_state.personas.keys())
 
     for p_name in sorted_persona_names:
-        # Access PersonaConfig object via PersonaManager
-        persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name)
+        # Ensure we are editing the correct PersonaConfig object from the session state's all_personas
+        persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name) # Access via manager
         if not persona:
             st.warning(f"Persona '{p_name}' not found in manager. Skipping.")
             continue
@@ -570,6 +583,7 @@ if run_button_clicked:
                     next_step_warning_placeholder.empty()
 
             debate_instance = None
+            # gemini_provider_instance = None # This line is removed as gemini_provider is no longer passed
             final_total_tokens = 0
             final_total_cost = 0.0
             try:
@@ -582,24 +596,32 @@ if run_button_clicked:
                 if not personas_for_run:
                     raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
                 
+                # Removed the creation of gemini_provider_instance here as it's handled internally by SocraticDebate
+                # gemini_provider_instance = core.GeminiProvider(
+                #     api_key=st.session_state.api_key_input,
+                #     model_name=st.session_state.selected_model_selectbox
+                # )
                 with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
                     debate_instance = core.SocraticDebate(
                         initial_prompt=user_prompt,
                         api_key=st.session_state.api_key_input,
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
-                        model_name=st.session_state.selected_model_selectbox,
+                        model_name=st.session_state.selected_model_selectbox, # Pass user's selected model
+                        # --- FIX APPLIED HERE ---
+                        # Removed the 'gemini_provider=gemini_provider_instance' argument.
+                        # The SocraticDebate class will now determine personas internally.
                         all_personas=st.session_state.all_personas, # Pass the full set of personas
                         persona_sets=st.session_state.persona_sets,
                         persona_sequence=st.session_state.persona_sequence,
                         domain=domain_for_run,
+                        # gemini_provider=gemini_provider_instance, # REMOVED THIS LINE
                         status_callback=streamlit_status_callback,
                         rich_console=rich_console_instance,
                         codebase_context=st.session_state.get('codebase_context', {}),
                         context_token_budget_ratio=st.session_state.context_token_budget_ratio
                     )
-                    # Pass context_analysis_results to run_debate if available
-                    context_analysis_results = debate_instance.intermediate_steps.get("Context_Analysis") # This will be populated inside run_debate
-                    
+                    # Pass context analysis results to run_debate for persona routing
+                    context_analysis_results = debate_instance.intermediate_steps.get("Context_Analysis", {})
                     final_answer, intermediate_steps = debate_instance.run_debate()
                     
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -607,7 +629,7 @@ if run_button_clicked:
                     st.session_state.intermediate_steps_output = intermediate_steps
                     st.session_state.last_config_params = {
                         "max_tokens_budget": st.session_state.max_tokens_budget_input,
-                        "model_name": st.session_state.selected_model_selectbox,
+                        "model_name": st.session_state.selected_model_selectbox, # Store user's selected model
                         "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox,
                         "domain": domain_for_run
                     }
@@ -615,9 +637,9 @@ if run_button_clicked:
                     status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
                     final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
-            
             # --- UPDATED ERROR HANDLING ---
-            except (TokenBudgetExceededError, SchemaValidationError, ChimeraError, GeminiAPIError, LLMProviderError) as e:
+            # Catch specific ChimeraError subclasses and general Exceptions
+            except (TokenBudgetExceededError, LLMResponseValidationError, ChimeraError) as e:
                 # Capture any output buffer if it exists
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
@@ -637,15 +659,40 @@ if run_button_clicked:
                     "CODE_CHANGES": [],
                     "CONFLICT_RESOLUTION": None,
                     "UNRESOLVED_CONFLICT": None,
-                    "malformed_blocks": [{"type": "DEBATE_ERROR", "message": str(e), "details": getattr(e, 'details', {})}] # Add details from exception
+                    # Add specific error details if available from the exception
+                    "error_details": getattr(e, 'details', {})
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            except Exception as e: # Catch any other unexpected errors not covered by specific exceptions
+            except SchemaValidationError as e: # Catch the new specific validation error
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
                     st.session_state.process_log_output_text = ""
+
+                status.update(label=f"Socratic Debate Failed: Schema Validation Error", state="error", expanded=True)
+                st.error(f"**Schema Validation Error:** {e}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                # Populate final_answer_output with error details
+                st.session_state.final_answer_output = {
+                    "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
+                    "RATIONALE": f"A schema validation error occurred: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "CONFLICT_RESOLUTION": None,
+                    "UNRESOLVED_CONFLICT": None,
+                    "error_details": e.details # Use details from the specific exception
+                }
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            except Exception as e: # Catch any other unexpected errors not covered by ChimeraError
+                # Capture any output buffer if it exists
+                if 'rich_output_buffer' in locals():
+                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                else:
+                    st.session_state.process_log_output_text = "" # Ensure it's empty if buffer wasn't created
 
                 status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
                 st.error(f"**Unexpected Error:** {e}")
@@ -660,7 +707,7 @@ if run_button_clicked:
                     "CODE_CHANGES": [],
                     "CONFLICT_RESOLUTION": None,
                     "UNRESOLVED_CONFLICT": None,
-                    "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "details": {"traceback": traceback.format_exc()}}] # Include traceback for unexpected errors
+                    "error_details": {"traceback": traceback.format_exc()} # Include traceback for unexpected errors
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
@@ -720,6 +767,7 @@ if st.session_state.debate_ran:
         # Check if the raw output is a list, which is unexpected for direct LLMOutput instantiation
         if isinstance(raw_output_data, list):
             if not raw_output_data:
+                # Handle empty list case
                 logger.error("Parser returned an empty list, no valid output found.")
                 # Create an error structure that app.py can handle
                 st.session_state.final_answer_output = {
@@ -848,9 +896,8 @@ if st.session_state.debate_ran:
     with st.expander("Show Intermediate Steps & Process Log"):
         if st.session_state.show_intermediate_steps_checkbox:
             st.subheader("Intermediate Reasoning Steps")
-            # Filter out non-step related items for display
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items()
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("Final_Answer_") and not k.startswith("Context_Analysis") and not k.startswith("Persona_Sequence") and not k.startswith("Partial_Result_Warning") and not k.startswith("Tokens_Used_Per_Phase") and not k.startswith("Tokens_Used_Per_Step")}
+                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"}
             sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x))
             for step_key in sorted_step_keys:
                 persona_name = step_key.split('_')[0]
@@ -865,23 +912,5 @@ if st.session_state.debate_ran:
                         st.json(content)
                     else:
                         st.markdown(f"```markdown\n{content}\n```")
-        
         st.subheader("Process Log")
         st.code(strip_ansi_codes(st.session_state.process_log_output_text), language='text')
-        
-        # Display token usage breakdown if available
-        if "Tokens_Used_Per_Phase" in st.session_state.intermediate_steps_output:
-            st.subheader("Token Usage Breakdown")
-            token_usage_data = st.session_state.intermediate_steps_output
-            
-            col_phase_1, col_phase_2, col_phase_3 = st.columns(3)
-            with col_phase_1:
-                st.metric("Context Phase", f"{token_usage_data['Tokens_Used_Per_Phase'].get('context', 0):,} / {token_usage_data['phase_budgets'].get('context', 0):,}")
-            with col_phase_2:
-                st.metric("Debate Phase", f"{token_usage_data['Tokens_Used_Per_Phase'].get('debate', 0):,} / {token_usage_data['phase_budgets'].get('debate', 0):,}")
-            with col_phase_3:
-                st.metric("Synthesis Phase", f"{token_usage_data['Tokens_Used_Per_Phase'].get('synthesis', 0):,} / {token_usage_data['phase_budgets'].get('synthesis', 0):,}")
-            
-            st.markdown("**Step-by-Step Token Usage:**")
-            for step_name, tokens in token_usage_data.get("Tokens_Used_Per_Step", {}).items():
-                st.write(f"- {step_name}: {tokens:,} tokens")
