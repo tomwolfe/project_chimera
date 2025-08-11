@@ -97,6 +97,11 @@ class SocraticDebate:
         self.status_callback = status_callback
         self.rich_console = rich_console
         
+        # --- FIX START ---
+        # Initialize logger for the class
+        self.logger = logging.getLogger(self.__class__.__name__)
+        # --- FIX END ---
+        
         self.initial_prompt = initial_prompt
         self.codebase_context = codebase_context
 
@@ -109,14 +114,14 @@ class SocraticDebate:
             if self.rich_console:
                 self.rich_console.print(f"[red]Failed to initialize LLM provider: {e}[/red]")
             else:
-                logger.error(f"Failed to initialize LLM provider: {e}")
+                self.logger.error(f"Failed to initialize LLM provider: {e}")
             # Re-raise as ChimeraError for consistent error handling in the app
             raise ChimeraError(f"LLM provider initialization failed: {e}") from e
         except Exception as e: # Catch any other unexpected errors during initialization
             if self.rich_console:
                 self.rich_console.print(f"[red]An unexpected error occurred during LLM provider initialization: {e}[/red]")
             else:
-                logger.error(f"An unexpected error occurred during LLM provider initialization: {e}")
+                self.logger.error(f"An unexpected error occurred during LLM provider initialization: {e}")
             raise ChimeraError(f"LLM provider initialization failed unexpectedly: {e}") from e
 
         # Ensure tokenizer is initialized only if client is successful
@@ -147,11 +152,11 @@ class SocraticDebate:
                     if not self.context_analyzer.file_embeddings:
                         self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 except Exception as e:
-                    logger.error(f"Failed to compute embeddings for codebase context: {e}")
+                    self.logger.error(f"Failed to compute embeddings for codebase context: {e}")
                     if self.status_callback:
                         self.status_callback(message=f"[red]Error computing context embeddings: {e}[/red]", state="warning")
             else:
-                logger.warning("codebase_context was not a dictionary, skipping embedding computation.")
+                self.logger.warning("codebase_context was not a dictionary, skipping embedding computation.")
 
     def _calculate_token_budgets(self):
         """
@@ -188,19 +193,19 @@ class SocraticDebate:
                 "synthesis": max(400, int(available_tokens_for_phases * synthesis_ratio))
             }
 
-            logger.info(f"SocraticDebate token budgets initialized: "
+            self.logger.info(f"SocraticDebate token budgets initialized: "
                        f"Initial Input={self.initial_input_tokens}, "
                        f"Context={self.phase_budgets['context']}, "
                        f"Debate={self.phase_budgets['debate']}, "
                        f"Synthesis={self.phase_budgets['synthesis']}")
 
         except LLMProviderError as e:
-            logger.error(f"LLM Provider Error during token calculation: {e}")
+            self.logger.error(f"LLM Provider Error during token calculation: {e}")
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError(f"LLM provider error: {e}") from e
         except Exception as e:
-            logger.error(f"An unexpected error occurred calculating token budgets: {e}")
+            self.logger.error(f"An unexpected error occurred calculating token budgets: {e}")
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.") from e
@@ -210,13 +215,13 @@ class SocraticDebate:
         if phase in self.tokens_used_per_phase:
             self.tokens_used_per_phase[phase] += tokens
         else:
-            logger.warning(f"Attempted to track tokens for unknown phase: {phase}")
+            self.logger.warning(f"Attempted to track tokens for unknown phase: {phase}")
         self.tokens_used += tokens # Always update total tokens used
 
     def check_budget(self, phase: str, tokens_needed: int, step_name: str):
         """Checks if adding tokens_needed would exceed the budget for the given phase."""
         if phase not in self.phase_budgets:
-            logger.warning(f"Phase '{phase}' not found in budget configuration.")
+            self.logger.warning(f"Phase '{phase}' not found in budget configuration.")
             return # Cannot check budget if phase is not configured
 
         current_phase_usage = self.tokens_used_per_phase.get(phase, 0)
@@ -242,7 +247,7 @@ class SocraticDebate:
             )
             return cost
         except Exception as e:
-            logger.error(f"Could not estimate total cost: {e}")
+            self.logger.error(f"Could not estimate total cost: {e}")
             return 0.0
 
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
@@ -390,13 +395,15 @@ class SocraticDebate:
             self._update_intermediate_steps_with_totals()
             return final_answer, self.intermediate_steps
 
+        return final_answer, self.intermediate_steps # Return final answer and steps
+
     def _initialize_debate_state(self):
         """Initializes state variables for a new debate run."""
         self.intermediate_steps = {}
         self.final_answer = None
         self.tokens_used_per_phase = {"context": 0, "debate": 0, "synthesis": 0}
         self.tokens_used = self.initial_input_tokens # Start with initial input tokens
-        logger.debug("Debate state initialized.")
+        self.logger.debug("Debate state initialized.")
         
         # Ensure intermediate_steps is always a dictionary
         if not isinstance(self.intermediate_steps, dict):
@@ -431,7 +438,7 @@ class SocraticDebate:
                 )
                 context_analysis_results = {"relevant_files": relevant_files_info}
                 self.intermediate_steps["Relevant_Files_Context"] = {"relevant_files": relevant_files_info}
-                logger.info(f"Context analysis completed. Found {len(relevant_files_info)} relevant files.")
+                self.logger.info(f"Context analysis completed. Found {len(relevant_files_info)} relevant files.")
                 if self.status_callback:
                     self.status_callback(
                         message=f"Context analysis complete. Found [bold]{len(relevant_files_info)}[/bold] relevant files.",
@@ -440,12 +447,12 @@ class SocraticDebate:
                         current_total_cost=self.get_total_estimated_cost()
                     )
             except Exception as e:
-                logger.error(f"Error during context analysis file finding: {e}")
+                self.logger.error(f"Error during context analysis file finding: {e}")
                 self.intermediate_steps["Context_Analysis_Error"] = {"error": str(e)}
                 if self.status_callback:
                     self.status_callback(message=f"[red]Error during context analysis: {e}[/red]", state="warning")
         else:
-            logger.info("No context analyzer or codebase context available. Skipping context analysis.")
+            self.logger.info("No context analyzer or codebase context available. Skipping context analysis.")
         return context_analysis_results
 
     def _determine_persona_sequence(self, context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
@@ -459,7 +466,7 @@ class SocraticDebate:
         )
         
         self.intermediate_steps["Persona_Sequence_Order"] = unique_sequence
-        logger.info(f"Final persona sequence determined: {unique_sequence}")
+        self.logger.info(f"Final persona sequence determined: {unique_sequence}")
         return unique_sequence
 
     def _process_context_persona_turn(self, persona_sequence: List[str], context_analysis_results: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -488,7 +495,7 @@ class SocraticDebate:
                         context_prompt_for_persona += f"```\n{self.codebase_context[file_path][:500]}...\n```\n"
             
             try:
-                logger.info(f"Performing context processing with persona: {context_processing_persona_name}")
+                self.logger.info(f"Performing context processing with persona: {context_processing_persona_name}")
                 if self.status_callback:
                     self.status_callback(
                         message=f"Running [bold]{context_processing_persona_name}[/bold] for context processing...",
@@ -513,16 +520,16 @@ class SocraticDebate:
                 return turn_results
                 
             except TokenBudgetExceededError as e:
-                logger.error(f"Token budget exceeded during context processing: {e}")
+                self.logger.error(f"Token budget exceeded during context processing: {e}")
                 raise e
             except Exception as e:
-                logger.error(f"Error during context processing generation for {context_processing_persona_name}: {e}")
+                self.logger.error(f"Error during context processing generation for {context_processing_persona_name}: {e}")
                 self.intermediate_steps[f"{context_processing_persona_name}_Error"] = str(e)
                 error_tokens = self.llm_provider.count_tokens(f"Error processing {context_processing_persona_name}: {str(e)}") + 50
                 self.track_token_usage("context", error_tokens)
                 self.check_budget("context", 0, f"Error handling {context_processing_persona_name} context processing")
         else:
-            logger.info("No dedicated context processing persona found or no context available. Skipping dedicated context processing phase.")
+            self.logger.info("No dedicated context processing persona found or no context available. Skipping dedicated context processing phase.")
         return None
 
     def _execute_debate_persona_turns(self, persona_sequence: List[str], context_persona_turn_results: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -551,7 +558,7 @@ class SocraticDebate:
 
         for i, persona_name in enumerate(debate_personas_to_run):
             if persona_name not in self.all_personas:
-                logger.warning(f"Persona '{persona_name}' not found in loaded personas. Skipping.")
+                self.logger.warning(f"Persona '{persona_name}' not found in loaded personas. Skipping.")
                 if self.status_callback:
                     self.status_callback(
                         message=f"[yellow]Skipping persona '{persona_name}' (not found).[/yellow]",
@@ -575,7 +582,7 @@ class SocraticDebate:
 
             # --- Execute LLM Turn ---
             try:
-                logger.info(f"Executing debate turn with persona: {persona_name}")
+                self.logger.info(f"Executing debate turn with persona: {persona_name}")
                 if self.status_callback:
                     self.status_callback(
                         message=f"Running persona: [bold]{persona_name}[/bold]...",
@@ -599,10 +606,10 @@ class SocraticDebate:
                         )
                     all_debate_turns.append(turn_results)
             except TokenBudgetExceededError as e:
-                logger.error(f"Token budget exceeded during debate turn for persona {persona_name}: {e}")
+                self.logger.error(f"Token budget exceeded during debate turn for persona {persona_name}: {e}")
                 raise e
             except Exception as e:
-                logger.error(f"An unexpected error occurred during debate turn for persona {persona_name}: {e}")
+                self.logger.error(f"An unexpected error occurred during debate turn for persona {persona_name}: {e}")
                 self.intermediate_steps[f"{persona_name}_Error"] = str(e)
                 error_tokens = self.llm_provider.count_tokens(f"Error processing {persona_name}: {str(e)}") + 50
                 self.track_token_usage("debate", error_tokens)
@@ -702,12 +709,12 @@ class SocraticDebate:
                                 failure_reason = "Output dictionary is missing required keys (COMMIT_MESSAGE, RATIONALE)."
 
                         if not is_failure:
-                            logger.info(f"Synthesis output validated successfully on attempt {attempt + 1}.")
+                            self.logger.info(f"Synthesis output validated successfully on attempt {attempt + 1}.")
                             return current_synthesis_output # Success! Return the validated LLMOutput dict
                         else:
                             # Output is a failure, proceed to retry if possible
                             if attempt < max_retries:
-                                logger.warning(f"Synthesis output validation failed on attempt {attempt + 1} ({failure_reason}). Retrying...")
+                                self.logger.warning(f"Synthesis output validation failed on attempt {attempt + 1} ({failure_reason}). Retrying...")
                                 # Generate a correction prompt based on the failure
                                 correction_prompt_content = f"Previous output was invalid. Please re-generate the JSON output adhering strictly to the schema. The failure reason was: {failure_reason}. The previous output was:\n\n{json.dumps(current_synthesis_output, indent=2)}"
                                 
@@ -729,12 +736,12 @@ class SocraticDebate:
                                 self.intermediate_steps[f"{synthesis_persona_name}_Output_Attempt_{attempt+1}"] = current_synthesis_output
                                 continue # Proceed to the next attempt
                             else:
-                                logger.error(f"Synthesis output validation failed after {max_retries} retries.")
+                                self.logger.error(f"Synthesis output validation failed after {max_retries} retries.")
                                 # If all retries fail, return the last recorded result
                                 return current_synthesis_output # Return the last result, which will contain error information
 
                     else: # No JSON validation required (e.g., General_Synthesizer)
-                        logger.info(f"Synthesis output for {synthesis_persona_name} does not require strict JSON validation. Returning raw output.")
+                        self.logger.info(f"Synthesis output for {synthesis_persona_name} does not require strict JSON validation. Returning raw output.")
                         # current_synthesis_output is the raw text from LLM, or an error dict from LLMOutputParser
                         # if it tried to parse JSON and failed (even though it wasn't asked to).
                         
@@ -767,9 +774,9 @@ class SocraticDebate:
                             current_total_tokens=self.get_total_used_tokens(),
                             current_total_cost=self.get_total_estimated_cost()
                         )
-                    logger.error(f"Error during synthesis turn execution: {e}")
+                    self.logger.error(f"Error during synthesis turn execution: {e}")
                     if attempt == max_retries:
-                        logger.error(f"Final synthesis attempt failed due to execution error: {e}")
+                        self.logger.error(f"Final synthesis attempt failed due to execution error: {e}")
                         # If it's the last attempt and execution fails, return a specific error
                         return {
                             "COMMIT_MESSAGE": "Synthesis Execution Error",
@@ -778,7 +785,7 @@ class SocraticDebate:
                             "malformed_blocks": [{"type": "SYNTHESIS_EXECUTION_ERROR", "message": str(e)}]
                         }
                     else:
-                        logger.warning(f"Execution error on synthesis attempt {attempt + 1}, retrying...")
+                        self.logger.warning(f"Execution error on synthesis attempt {attempt + 1}, retrying...")
                         # Store the error for intermediate steps, but don't return it as final answer yet
                         self.intermediate_steps[f"{synthesis_persona_name}_Error_Attempt_{attempt+1}"] = str(e)
                         continue # Retry if not the last attempt
@@ -793,7 +800,7 @@ class SocraticDebate:
             }
 
         else:
-            logger.warning("No synthesis persona found or sequence is empty. Final answer may be incomplete.")
+            self.logger.warning("No synthesis persona found or sequence is empty. Final answer may be incomplete.")
             # Return a default error if no synthesis persona was identified
             return {
                 "COMMIT_MESSAGE": "Synthesis Skipped",
@@ -843,10 +850,10 @@ class SocraticDebate:
                     state="running", current_total_tokens=self.get_total_used_tokens(), current_total_cost=self.get_total_estimated_cost(),
                     estimated_next_step_tokens=0, estimated_next_step_cost=0.0) # Reset next step estimate
         except TokenBudgetExceededError as e:
-            logger.error(f"Token budget exceeded during LLM generation for {persona_name}: {e}")
+            self.logger.error(f"Token budget exceeded during LLM generation for {persona_name}: {e}")
             raise e # Re-raise to be caught by the main run_debate handler
         except Exception as e:
-            logger.error(f"Error during LLM generation for {persona_name}: {e}")
+            self.logger.error(f"Error during LLM generation for {persona_name}: {e}")
             self.intermediate_steps[f"{persona_name}_Error"] = str(e)
             error_tokens = self.llm_provider.count_tokens(f"Error processing {persona_name}: {str(e)}") + 50
             self.track_token_usage(phase, error_tokens)
@@ -873,7 +880,7 @@ class SocraticDebate:
                 parsed_output_data = LLMOutputParser().parse_and_validate(response_text, expected_schema)
             except Exception as e:
                 # This catch might be redundant if parse_and_validate always returns a dict with error info
-                logger.error(f"Failed to parse/validate output for {persona_name} against {expected_schema.__name__} schema: {e}")
+                self.logger.error(f"Failed to parse/validate output for {persona_name} against {expected_schema.__name__} schema: {e}")
                 malformed_blocks_for_fallback = [{"type": "PARSING_OR_VALIDATION_ERROR", "message": str(e), "raw_output": response_text[:500]}]
                 
                 parsed_output_data = {
@@ -886,7 +893,7 @@ class SocraticDebate:
         else: # If expected_schema is None (e.g., General_Synthesizer)
             # For personas that produce free-form text/markdown, store raw text
             parsed_output_data = response_text
-            logger.debug(f"Persona {persona_name} does not have a specific JSON schema. Storing raw text output.")
+            self.logger.debug(f"Persona {persona_name} does not have a specific JSON schema. Storing raw text output.")
         
         turn_results = {
             "persona": persona_name,
@@ -942,7 +949,7 @@ class SocraticDebate:
                 "CODE_CHANGES": [],
                 "malformed_blocks": [{"type": "NO_DEBATE_TURNS", "message": "No debate turns were executed."}]
             }
-            logger.error("Socratic debate process completed without executing any turns.")
+            self.logger.error("Socratic debate process completed without executing any turns.")
 
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):

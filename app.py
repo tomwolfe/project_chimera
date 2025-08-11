@@ -174,7 +174,9 @@ def get_context_analyzer():
         return analyzer
     else:
         # Fallback if persona_manager or its router is not available
-        logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
+        # Use the logger from app.py if available, otherwise a generic one
+        app_logger = logging.getLogger(__name__) if __name__ in logging.Logger.manager.loggerDict else logging.getLogger("app")
+        app_logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
         return ContextRelevanceAnalyzer()
 
 # Get the persona manager instance (also cached)
@@ -588,11 +590,16 @@ if run_button_clicked:
             st.divider() # Visual separator
             
             # Helper function to update status elements consistently
-            def update_status(stage, progress_pct, tokens, cost):
-                st.caption(f"Stage: {stage}")
-                progress.progress(progress_pct)
-                token_display.metric("Tokens Used", f"{tokens:,}")
-                cost_display.metric("Cost (USD)", f"${cost:.4f}")
+            # MODIFIED: Changed parameter names to match core.py's keyword arguments
+            # MODIFIED: Removed progress_pct as it's not provided by core.py
+            def update_status(message, state, current_total_tokens, current_total_cost, estimated_next_step_tokens=0, estimated_next_step_cost=0.0):
+                st.caption(f"Stage: {message}") # Use 'message' for the caption
+                # REMOVED: progress.progress(progress_pct) as progress_pct is not passed
+                token_display.metric("Tokens Used", f"{current_total_tokens:,}")
+                cost_display.metric("Cost (USD)", f"${current_total_cost:.4f}")
+                # Optionally display estimated next step tokens/cost if provided
+                if estimated_next_step_tokens > 0:
+                    st.caption(f"Estimated next step: {estimated_next_step_tokens:,} tokens / ${estimated_next_step_cost:.4f}")
         # --- END MODIFICATION ---
 
             debate_instance = None
