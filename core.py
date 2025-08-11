@@ -44,6 +44,19 @@ from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Import for self-analy
 logger = logging.getLogger(__name__)
 
 class SocraticDebate:
+    # --- FIX START ---
+    # Define the mapping of persona names to their expected Pydantic output schemas
+    # This attribute was missing, causing the AttributeError.
+    PERSONA_OUTPUT_SCHEMAS = {
+        "Impartial_Arbitrator": LLMOutput,
+        "Context_Aware_Assistant": ContextAnalysisOutput,
+        "Constructive_Critic": CritiqueOutput, # Added based on system prompt and model definition
+        # Add other personas here if they are expected to produce structured output
+        # e.g., "Code_Architect": LLMOutput, "Security_Auditor": LLMOutput, etc.
+        # For now, only explicitly known structured output personas are mapped.
+    }
+    # --- FIX END ---
+
     def __init__(self, initial_prompt: str, api_key: str,
                  codebase_context: Optional[Dict[str, str]] = None,
                  settings: Optional[ChimeraSettings] = None,
@@ -612,8 +625,15 @@ class SocraticDebate:
         synthesis_persona_name = None
         synthesis_persona_config = None
         
-        if synthesis_persona_name and synthesis_persona_name in self.all_personas:
-            synthesis_persona_config = self.all_personas[synthesis_persona_name]
+        # Find the synthesis persona, typically the last one if it's a designated synthesizer
+        if persona_sequence:
+            potential_synthesis_persona = persona_sequence[-1]
+            if potential_synthesis_persona in ["Impartial_Arbitrator", "General_Synthesizer"]:
+                synthesis_persona_name = potential_synthesis_persona
+                if synthesis_persona_name in self.all_personas:
+                    synthesis_persona_config = self.all_personas[synthesis_persona_name]
+        
+        if synthesis_persona_name and synthesis_persona_config:
             
             if self.status_callback:
                 self.status_callback(
@@ -844,6 +864,7 @@ class SocraticDebate:
 
         # Parse and Validate Output
         parsed_output_data = {}
+        # Use the PERSONA_OUTPUT_SCHEMAS attribute defined at the class level
         expected_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name)
 
         if expected_schema: # If a schema is defined (e.g., LLMOutput, CritiqueOutput)
@@ -970,12 +991,4 @@ class SocraticDebate:
             self.intermediate_steps["malformed_blocks"] = []
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):
-            self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}"}]}
-
-        for key, value in list(self.intermediate_steps.items()): # Iterate over a copy
-            if isinstance(value, dict) and "Error" in key:
-                pass # Already added as a dict
-            elif isinstance(value, str) and "Error" in key:
-                pass # Already added as a string
-            elif "Error" in key: # Catch other types of errors logged as keys
-                self.intermediate_steps[key] = {"error": str(value)}
+            self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__
