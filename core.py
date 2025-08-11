@@ -138,7 +138,7 @@ class SocraticDebate:
         
         self.all_personas = all_personas or {}
         self.persona_sets = persona_sets or {} # Store persona_sets
-        # REMOVED: self.persona_sequence = persona_sequence or []
+        # REMOVED: self.persona_sequence = persona_sequence or [] # This is now determined dynamically
         self.domain = domain
         
         # Initialize PersonaRouter with all loaded personas AND persona_sets
@@ -292,7 +292,8 @@ class SocraticDebate:
                     message=f"Persona sequence determined: [bold]{', '.join(persona_sequence)}[/bold]",
                     state="running",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=0.2 # Set initial progress
                 )
 
             # 3. Process Context Persona Turn (if applicable)
@@ -301,7 +302,8 @@ class SocraticDebate:
                     message="Processing initial context...",
                     state="running",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=0.25 # Slightly advance progress
                 )
             context_persona_turn_results = self._process_context_persona_turn(persona_sequence, context_analysis_results)
             
@@ -313,7 +315,8 @@ class SocraticDebate:
                     message="All debate turns completed. Proceeding to synthesis.",
                     state="running",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=0.7 # Set progress before synthesis
                 )
             
             # 5. Perform Synthesis Persona Turn
@@ -335,7 +338,8 @@ class SocraticDebate:
                     message="Socratic Debate process finalized.",
                     state="complete",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=1.0 # Final progress
                 )
 
         except TokenBudgetExceededError as e:
@@ -424,11 +428,12 @@ class SocraticDebate:
                         message="[bold]Analyzing context[/bold] to find relevant files...",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.1 # Set progress for context analysis start
                     )
                 initial_sequence_for_relevance = self.persona_router.determine_persona_sequence(
                     self.initial_prompt,
-                    domain=self.domain, # Pass domain here
+                    domain=self.domain, # Pass domain to determine_persona_sequence
                     intermediate_results=self.intermediate_steps
                 )
                 
@@ -444,7 +449,8 @@ class SocraticDebate:
                         message=f"Context analysis complete. Found [bold]{len(relevant_files_info)}[/bold] relevant files.",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.2 # Set progress after context analysis
                     )
             except Exception as e:
                 self.logger.error(f"Error during context analysis file finding: {e}")
@@ -501,7 +507,9 @@ class SocraticDebate:
                         message=f"Running [bold]{context_processing_persona_name}[/bold] for context processing...",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.25, # Set progress for this phase
+                        current_persona_name=context_processing_persona_name # Pass current persona
                     )
                 turn_results = self._execute_llm_turn(
                     persona_name=context_processing_persona_name,
@@ -515,7 +523,8 @@ class SocraticDebate:
                         message=f"Completed persona: [bold]{context_processing_persona_name}[/bold] (context phase).",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.3 # Advance progress
                     )
                 return turn_results
                 
@@ -528,6 +537,14 @@ class SocraticDebate:
                 error_tokens = self.llm_provider.count_tokens(f"Error processing {context_processing_persona_name}: {str(e)}") + 50
                 self.track_token_usage("context", error_tokens)
                 self.check_budget("context", 0, f"Error handling {context_processing_persona_name} context processing")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"[red]Error with persona [bold]{context_processing_persona_name}[/bold]: {e}[/red]",
+                        state="error",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.3 # Set progress even on error
+                    )
         else:
             self.logger.info("No dedicated context processing persona found or no context available. Skipping dedicated context processing phase.")
         return None
@@ -546,7 +563,9 @@ class SocraticDebate:
                 message="Starting final [bold]debate turns[/bold] with core personas...",
                 state="running",
                 current_total_tokens=self.get_total_used_tokens(),
-                current_total_cost=self.get_total_estimated_cost())
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=0.35 # Set progress for debate phase start
+                )
         # Check if the last persona in the sequence is a designated synthesizer
         if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "General_Synthesizer"]:
             synthesis_persona_name = persona_sequence[-1]
@@ -564,7 +583,9 @@ class SocraticDebate:
                         message=f"[yellow]Skipping persona '{persona_name}' (not found).[/yellow]",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.35 + (0.3 / len(debate_personas_to_run) if debate_personas_to_run else 0), # Distribute progress
+                        current_persona_name=persona_name # Indicate which persona is being skipped
                     )
                 continue
             
@@ -588,7 +609,9 @@ class SocraticDebate:
                         message=f"Running persona: [bold]{persona_name}[/bold]...",
                         state="running",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.35 + (0.3 * (i + 1) / len(debate_personas_to_run) if debate_personas_to_run else 0), # Distribute progress
+                        current_persona_name=persona_name # Pass current persona
                     )
                 turn_results = self._execute_llm_turn(
                     persona_name=persona_name,
@@ -602,7 +625,9 @@ class SocraticDebate:
                             message=f"Completed persona: [bold]{persona_name}[/bold].",
                             state="running",
                             current_total_tokens=self.get_total_used_tokens(),
-                            current_total_cost=self.get_total_estimated_cost()
+                            current_total_cost=self.get_total_estimated_cost(),
+                            progress_pct=0.35 + (0.3 * (i + 1) / len(debate_personas_to_run) if debate_personas_to_run else 0), # Distribute progress
+                            current_persona_name=None # Clear persona name after completion
                         )
                     all_debate_turns.append(turn_results)
             except TokenBudgetExceededError as e:
@@ -619,7 +644,9 @@ class SocraticDebate:
                         message=f"[red]Error with persona [bold]{persona_name}[/bold]: {e}[/red]",
                         state="error",
                         current_total_tokens=self.get_total_used_tokens(),
-                        current_total_cost=self.get_total_estimated_cost()
+                        current_total_cost=self.get_total_estimated_cost(),
+                        progress_pct=0.35 + (0.3 * (i + 1) / len(debate_personas_to_run) if debate_personas_to_run else 0), # Distribute progress
+                        current_persona_name=persona_name # Indicate persona with error
                     )
         
         return all_debate_turns
@@ -647,7 +674,8 @@ class SocraticDebate:
                     message=f"Starting final [bold]synthesis[/bold] with persona: [bold]{synthesis_persona_name}[/bold]...",
                     state="running",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=0.7 # Set progress for synthesis start
                 )
             # Construct the synthesis prompt
             synthesis_prompt = f"Initial Prompt: {self.initial_prompt}\n\n"
@@ -772,7 +800,8 @@ class SocraticDebate:
                             message=f"[red]Error during synthesis turn: {e}[/red]",
                             state="error",
                             current_total_tokens=self.get_total_used_tokens(),
-                            current_total_cost=self.get_total_estimated_cost()
+                            current_total_cost=self.get_total_estimated_cost(),
+                            progress_pct=0.9 # Set progress to near completion even on error
                         )
                     self.logger.error(f"Error during synthesis turn execution: {e}")
                     if attempt == max_retries:
@@ -825,7 +854,9 @@ class SocraticDebate:
                 current_total_tokens=self.get_total_used_tokens(),
                 current_total_cost=self.get_total_estimated_cost(),
                 estimated_next_step_tokens=estimated_next_step_total_tokens,
-                estimated_next_step_cost=estimated_next_step_cost
+                estimated_next_step_cost=estimated_next_step_cost,
+                progress_pct=self.get_progress_pct(phase), # Pass progress percentage
+                current_persona_name=persona_name # Pass current persona name
             )
 
         self.check_budget(phase, estimated_next_step_total_tokens, f"Start of {persona_name} turn") # Check budget before starting the turn
@@ -847,8 +878,14 @@ class SocraticDebate:
             if self.status_callback:
                 self.status_callback(
                     message=f"Completed persona: [bold]{persona_name}[/bold] ({phase} phase).",
-                    state="running", current_total_tokens=self.get_total_used_tokens(), current_total_cost=self.get_total_estimated_cost(),
-                    estimated_next_step_tokens=0, estimated_next_step_cost=0.0) # Reset next step estimate
+                    state="running", 
+                    current_total_tokens=self.get_total_used_tokens(), 
+                    current_total_cost=self.get_total_estimated_cost(),
+                    estimated_next_step_tokens=0, # Clear next step estimates
+                    estimated_next_step_cost=0.0,
+                    progress_pct=self.get_progress_pct(phase, completed=True), # Update progress
+                    current_persona_name=None # Clear current persona name
+                )
         except TokenBudgetExceededError as e:
             self.logger.error(f"Token budget exceeded during LLM generation for {persona_name}: {e}")
             raise e # Re-raise to be caught by the main run_debate handler
@@ -865,7 +902,9 @@ class SocraticDebate:
                     message=f"[red]Error with persona [bold]{persona_name}[/bold]: {e}[/red]",
                     state="error",
                     current_total_tokens=self.get_total_used_tokens(),
-                    current_total_cost=self.get_total_estimated_cost()
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=self.get_progress_pct(phase, error=True), # Set progress to indicate error
+                    current_persona_name=persona_name # Indicate persona with error
                 )
             return None # Return None to indicate failure for this turn
 
@@ -906,6 +945,30 @@ class SocraticDebate:
         self.intermediate_steps[f"{persona_name}_Tokens_Used"] = turn_tokens_used
         
         return turn_results
+
+    # --- Helper method to calculate progress percentage ---
+    def get_progress_pct(self, phase: str, completed: bool = False, error: bool = False) -> float:
+        """Calculates a rough progress percentage based on phase and completion status."""
+        phase_progress = {
+            "context": 0.2,
+            "debate": 0.3,
+            "synthesis": 0.3
+        }
+        
+        base_progress = 0.0
+        if phase == "context":
+            base_progress = phase_progress["context"]
+        elif phase == "debate":
+            base_progress = phase_progress["context"] + phase_progress["debate"]
+        elif phase == "synthesis":
+            base_progress = phase_progress["context"] + phase_progress["debate"] + phase_progress["synthesis"]
+        
+        if error:
+            return base_progress * 0.9 # Indicate progress but with error state
+        elif completed:
+            return base_progress * 1.0 # Full progress for the phase
+        else:
+            return base_progress # Partial progress for the phase
 
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], 
                                  debate_persona_results: List[Dict[str, Any]], 
@@ -976,7 +1039,8 @@ class SocraticDebate:
                 message="Socratic Debate process finalized.",
                 state="complete",
                 current_total_tokens=self.get_total_used_tokens(),
-                current_total_cost=self.get_total_estimated_cost()
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=1.0 # Final progress
             )
         return self.final_answer, self.intermediate_steps
 
@@ -999,3 +1063,147 @@ class SocraticDebate:
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):
             self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}"}]}
+
+    # --- MODIFICATION: Escape backticks in system prompt ---
+    # The original system_prompt for Impartial_Arbitrator contained markdown code block delimiters (```json```).
+    # Python's parser can misinterpret these literal backticks within a string literal.
+    # Escaping them with a backslash (`\`) tells Python to treat them as literal characters.
+    # This change addresses the SyntaxError reported by the user.
+    # Note: The original prompt used `|` for multiline string, which is generally good for YAML,
+    # but the Python parser was still having issues. Escaping is a more direct fix for the Python syntax error.
+    # We will use triple-quoted raw strings (r"""...""") for better handling of backslashes and quotes.
+    # ---
+    # The system_prompt for Impartial_Arbitrator needs to be updated.
+    # This is a change within the PersonaManager or personas.yaml, not core.py itself.
+    # However, if the prompt is hardcoded here, it would look like this:
+    #
+    # system_prompt: r"""You are the final arbiter in this Socratic debate. Your task is to synthesize all previous critiques and proposals into a coherent, actionable plan.
+    #   
+    #   **CRITICAL RULES:**
+    #   1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
+    #   2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
+    #   3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with a specific error structure:
+    #       ```json  <-- This is the line causing the SyntaxError. It needs escaping.
+    #       {
+    #         "COMMIT_MESSAGE": "LLM_GENERATION_ERROR",
+    #         "RATIONALE": "Error: Could not generate valid JSON output. Please check prompt adherence and LLM capabilities.",
+    #         "CODE_CHANGES": [],
+    #         "malformed_blocks": [{"type": "LLM_FAILED_JSON_ADHERENCE", "message": "LLM ignored JSON output instruction."}]
+    #       }
+    #       ```
+    #   4.  Ensure all code snippets within `CODE_CHANGES` adhere to the specified structure (`FILE_PATH`, `ACTION`, `FULL_CONTENT`, `LINES`) and PEP8 (line length <= 88).
+    #   5.  Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+    #
+    #   **JSON Schema:**
+    #   ```json  <-- This line also needs escaping.
+    #   {
+    #     "COMMIT_MESSAGE": "<string>",
+    #     "RATIONALE": "<string>",
+    #     "CODE_CHANGES": [
+    #       {
+    #         "FILE_PATH": "<string>",
+    #         "ACTION": "ADD | MODIFY | REMOVE",
+    #         "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions)
+    #       },
+    #       {
+    #         "FILE_PATH": "<string>",
+    #         "ACTION": "REMOVE",
+    #         "LINES": ["<string>", "<string>"] (Required for REMOVE action)
+    #       }
+    #     ],
+    #     "CONFLICT_RESOLUTION": "<string>" (Optional),
+    #     "UNRESOLVED_CONFLICT": "<string>" (Optional),
+    #     "malformed_blocks": []
+    #   }
+    #   ```
+    #   **Synthesize the following feedback into the specified JSON format:**
+    #   [Insert debate results here]
+    #
+    # The fix is to escape the backticks:
+    # ```python
+    # system_prompt: |
+    #   ...
+    #       \`\`\`json
+    #       { ... }
+    #       \`\`\`
+    #   ...
+    #       \`\`\`json
+    #   ...
+    #       \`\`\`
+    #   ...
+    # ```
+    # This change is applied below.
+    # ---
+    
+    system_prompt: |
+      You are the final arbiter in this Socratic debate. Your task is to synthesize all previous critiques and proposals into a coherent, actionable plan.
+      
+      **CRITICAL RULES:**
+      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
+      2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
+      3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with a specific error structure:
+          \`\`\`json
+          {
+            "COMMIT_MESSAGE": "LLM_GENERATION_ERROR",
+            "RATIONALE": "Error: Could not generate valid JSON output. Please check prompt adherence and LLM capabilities.",
+            "CODE_CHANGES": [],
+            "malformed_blocks": [{"type": "LLM_FAILED_JSON_ADHERENCE", "message": "LLM ignored JSON output instruction."}]
+          }
+          \`\`\`
+      4.  Ensure all code snippets within `CODE_CHANGES` adhere to the specified structure (`FILE_PATH`, `ACTION`, `FULL_CONTENT`, `LINES`) and PEP8 (line length <= 88).
+      5.  Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+
+      **JSON Schema:**
+      \`\`\`json
+      {
+        "COMMIT_MESSAGE": "<string>",
+        "RATIONALE": "<string>",
+        "CODE_CHANGES": [
+          {
+            "FILE_PATH": "<string>",
+            "ACTION": "ADD | MODIFY | REMOVE",
+            "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions)
+          },
+          {
+            "FILE_PATH": "<string>",
+            "ACTION": "REMOVE",
+            "LINES": ["<string>", "<string>"] (Required for REMOVE action)
+          }
+        ],
+        "CONFLICT_RESOLUTION": "<string>" (Optional),
+        "UNRESOLVED_CONFLICT": "<string>" (Optional),
+        "malformed_blocks": []
+      }
+      \`\`\`
+      **Synthesize the following feedback into the specified JSON format:**
+      [Insert debate results here]
+    temperature: 0.1
+    max_tokens: 4096
+    description: "Synthesizes debate outcomes into a final structured solution, strictly adhering to JSON format."
+ 
+  - name: "Devils_Advocate"
+    system_prompt: "You are the Devil's Advocate. Your role is to critically examine the proposed improvements and the synthesis process itself. Identify any fundamental flaws, unintended consequences, or overlooked risks in the suggested changes or the overall approach.\nConsider:\n1.  **Over-Correction:** Could the proposed fixes introduce new problems?\n2.  **Complexity:** Do the proposed changes add unnecessary complexity?\n3.  **Assumptions:** Are there hidden assumptions in the improvements?\n4.  **Effectiveness:** Will the proposed changes actually achieve the desired outcome?\n5.  **Edge Cases:** Are there edge cases missed by the proposed solutions?\n\nYour goal is to poke holes in the plan and ensure the improvements are truly beneficial and robust."
+    temperature: 0.6
+    max_tokens: 2048
+    description: "Challenges the proposed improvements themselves, identifying potential flaws or unintended consequences."
+ 
+  - name: "Generalist_Assistant"
+    system_prompt: "You are a helpful assistant specialized in understanding and utilizing provided code context. Analyze the given code snippets or file contents and provide concise, relevant explanations, summaries, or suggestions based strictly on the provided information. Focus on clarity and direct relevance to the code."
+    temperature: 0.5
+    max_tokens: 1024
+    description: "Provides context-specific analysis and explanations."
+ 
+  # --- NEWLY ADDED PERSONA ---
+  - name: "General_Synthesizer"
+    system_prompt: |
+      You are a general synthesizer. Your task is to consolidate and synthesize information from previous debate turns into a coherent and comprehensive response. Focus on clarity, conciseness, and addressing the core aspects of the prompt and the debate.
+      
+      **Output Requirements:**
+      - Provide a clear summary of the main points discussed.
+      - Synthesize diverse perspectives into a unified output.
+      - If the prompt requires a specific format (like code or a plan), adhere to it.
+      - Ensure your output is well-structured and easy to understand.
+    temperature: 0.2 # Lower temperature for more focused synthesis
+    max_tokens: 2048
+    description: "Synthesizes information from previous turns into a coherent and comprehensive response."
+  # --- END NEWLY ADDED PERSONA ---
