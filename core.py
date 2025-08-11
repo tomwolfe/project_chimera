@@ -242,44 +242,83 @@ class SocraticDebate:
                 context_persona_turn_results, debate_persona_results, synthesis_persona_results
             )
             
+            # --- ENHANCEMENT: Ensure final_answer is processed by the parser and is a valid dict ---
+            # The _perform_synthesis_persona_turn method should have already used the parser.
+            # We just need to ensure the final_answer is a dictionary and includes malformed_blocks.
+            
+            if not isinstance(final_answer, dict):
+                self.logger.error(f"Synthesis result was not a dictionary: {type(final_answer).__name__}. Creating fallback error.")
+                final_answer = {
+                    "COMMIT_MESSAGE": "Synthesis Failed",
+                    "RATIONALE": f"The synthesis step failed to produce a valid output structure. Received type: {type(final_answer).__name__}.",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{
+                        "type": "SYNTHESIS_OUTPUT_ERROR",
+                        "message": "Synthesis result was not a dictionary.",
+                        "details": {"received_type": str(type(final_answer))}
+                    }]
+                }
+            # Ensure malformed_blocks is always present, even if empty
+            if "malformed_blocks" not in final_answer:
+                final_answer["malformed_blocks"] = []
+            # --- END ENHANCEMENT ---
+
             return final_answer, intermediate_steps
 
         except TokenBudgetExceededError as e:
-            logger.error(f"Socratic Debate failed: Token budget exceeded. {e}")
+            self.logger.error(f"Socratic Debate failed: Token budget exceeded. {e}")
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: Token Budget Exceeded[/red]", state="error")
-            final_answer = {
-                "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
-                "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
-            }
+            
+            # Ensure final_answer is a dict with malformed_blocks
+            if not isinstance(final_answer, dict):
+                final_answer = {
+                    "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
+                    "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
+                }
+            elif "malformed_blocks" not in final_answer:
+                final_answer["malformed_blocks"] = [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
+            
             self._update_intermediate_steps_with_totals()
             return final_answer, self.intermediate_steps
         
         except ChimeraError as e:
-            logger.error(f"Socratic Debate failed due to ChimeraError: {e}")
+            self.logger.error(f"Socratic Debate failed due to ChimeraError: {e}")
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: {e}[/red]", state="error")
-            final_answer = {
-                "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
-                "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(e), "details": e.details}]
-            }
+            
+            # Ensure final_answer is a dict with malformed_blocks
+            if not isinstance(final_answer, dict):
+                final_answer = {
+                    "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
+                    "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(e), "details": e.details}]
+                }
+            elif "malformed_blocks" not in final_answer:
+                final_answer["malformed_blocks"] = [{"type": "CHIMERA_ERROR", "message": str(e), "details": e.details}]
+            
             self._update_intermediate_steps_with_totals()
             return final_answer, self.intermediate_steps
 
         except Exception as e:
-            logger.error(f"Socratic Debate failed due to an unexpected error: {e}", exc_info=True)
+            self.logger.error(f"Socratic Debate failed due to an unexpected error: {e}", exc_info=True)
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: Unexpected Error[/red]", state="error")
-            final_answer = {
-                "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
-                "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
-            }
+            
+            # Ensure final_answer is a dict with malformed_blocks
+            if not isinstance(final_answer, dict):
+                final_answer = {
+                    "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
+                    "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
+                }
+            elif "malformed_blocks" not in final_answer:
+                final_answer["malformed_blocks"] = [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
+            
             self._update_intermediate_steps_with_totals()
             return final_answer, self.intermediate_steps
 
@@ -678,13 +717,13 @@ class SocraticDebate:
 
         if expected_schema:
             try:
+                # Use the parser's validate method, which handles extraction and schema validation
                 parsed_output_data = LLMOutputParser().parse_and_validate(response_text, expected_schema)
             except Exception as e:
+                # This catch might be redundant if parse_and_validate always returns a dict with error info
                 logger.error(f"Failed to parse/validate output for {persona_name} against {expected_schema.__name__} schema: {e}")
-                # Generic fallback for structured output failure
                 malformed_blocks_for_fallback = [{"type": "PARSING_OR_VALIDATION_ERROR", "message": str(e), "raw_output": response_text[:500]}]
                 
-                # Attempt to create a basic dictionary representation of the error
                 parsed_output_data = {
                     "error_type": "Parsing/Validation Error",
                     "error_message": f"Failed to parse/validate output for {persona_name}. Error: {str(e)}",
@@ -733,6 +772,7 @@ class SocraticDebate:
 
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):
+            self.logger.error(f"Final answer was not a dictionary: {type(self.final_answer).__name__}. Creating fallback error.")
             self.final_answer = {
                 "COMMIT_MESSAGE": "Debate Failed - Final Answer Malformed",
                 "RATIONALE": f"The final answer was not a valid dictionary. Type received: {type(self.final_answer).__name__}",
@@ -741,6 +781,10 @@ class SocraticDebate:
             }
             logger.error(f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}")
 
+        # Ensure malformed_blocks is always present, even if empty
+        if "malformed_blocks" not in self.final_answer:
+            self.final_answer["malformed_blocks"] = []
+        
         # Update intermediate steps with totals
         self._update_intermediate_steps_with_totals()
         

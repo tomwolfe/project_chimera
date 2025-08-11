@@ -44,8 +44,6 @@ class LLMOutputParser:
         json_content_raw = text[start_match.end() : start_match.end() + end_match.start()].strip()
         
         # Attempt to find the actual JSON object/array within the raw content
-        # This handles cases where the LLM might put some whitespace or minor text
-        # between the marker and the actual JSON.
         json_match_within_markers = re.search(r'(\{.*\}|\[.*\])', json_content_raw, re.DOTALL)
         if json_match_within_markers:
             json_str = json_match_within_markers.group(0).strip()
@@ -189,6 +187,7 @@ class LLMOutputParser:
         Parse and validate the raw LLM output against a given Pydantic schema.
         Handles JSON extraction, parsing, and schema validation.
         Ensures the returned structure is a dictionary, even if LLM output is a JSON array.
+        Populates 'malformed_blocks' field on failure.
         """
         self.logger.debug(f"Attempting to parse raw output: {raw_output[:500]}...")
 
@@ -197,12 +196,12 @@ class LLMOutputParser:
         parsed_data = None
         data_to_validate = None
 
-        # 1. Extract JSON string
-        extracted_json_str = self._extract_json_with_markers(raw_output) # Try with markers first
+        # 1. Extract JSON string using a layered approach
+        extracted_json_str = self._extract_json_with_markers(raw_output) # Try with specific markers first
         if not extracted_json_str:
-            extracted_json_str = self._extract_json_from_markdown(raw_output)
+            extracted_json_str = self._extract_json_from_markdown(raw_output) # Then try markdown blocks
         if not extracted_json_str:
-            extracted_json_str = self._extract_and_sanitize_json_string(raw_output)
+            extracted_json_str = self._extract_and_sanitize_json_string(raw_output) # Finally, use the robust general extractor
         
         if not extracted_json_str:
             self.logger.error("Failed to extract any JSON structure from the output.")
@@ -211,6 +210,7 @@ class LLMOutputParser:
                 "message": "Could not find or extract a valid JSON structure from the output.",
                 "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "")
             })
+            # Return a default error structure that conforms to LLMOutput schema
             return {
                 "COMMIT_MESSAGE": "Parsing error",
                 "RATIONALE": f"Failed to parse LLM output as JSON. Error: Could not extract valid JSON structure.\nAttempted raw output: {raw_output[:500]}...",
@@ -312,8 +312,8 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
+            # Attempt to salvage parts of the LLM's output if it was partially valid
             if schema_model == LLMOutput and isinstance(data_to_validate, dict):
-                # Specific salvage logic for LLMOutput
                 fallback_output["COMMIT_MESSAGE"] = data_to_validate.get("COMMIT_MESSAGE", "Schema validation failed")
                 fallback_output["RATIONALE"] = data_to_validate.get("RATIONALE", f"Original output: {extracted_json_str[:500]}...\nValidation Error: {str(validation_e)}")
                 
@@ -323,10 +323,11 @@ class LLMOutputParser:
                     for index, item in enumerate(original_code_changes):
                         if isinstance(item, dict):
                             try:
+                                # Attempt to validate each code change item individually
                                 valid_item = CodeChange(**item)
                                 processed_code_changes.append(valid_item.model_dump(by_alias=True))
                             except ValidationError as inner_val_e:
-                                self.logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
+                                logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
                                 malformed_blocks_list.append({
                                     "type": "MALFORMED_CODE_CHANGE_ITEM", "index": index, "message": str(inner_val_e), "raw_item": str(item)
                                 })
@@ -336,7 +337,7 @@ class LLMOutputParser:
                                     "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", "LINES": []
                                 })
                         else:
-                            self.logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
+                            logger.logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
                             malformed_blocks_list.append({
                                 "type": "NON_DICT_CODE_CHANGE_ITEM", "index": index, "message": "Item is not a dictionary.", "raw_item": str(item)
                             })
@@ -346,11 +347,12 @@ class LLMOutputParser:
                             })
                     fallback_output["CODE_CHANGES"] = processed_code_changes
                 else:
-                    self.logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing.")
+                    logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing.")
                     malformed_blocks_list.append({
                         "type": "MALFORMED_CODE_CHANGES_FIELD", "message": "CODE_CHANGES field was not a list or was missing.", "raw_value": str(original_code_changes)
                     })
                     fallback_output["CODE_CHANGES"] = []
+            # Add salvage logic for other schema types if needed
             elif schema_model == CritiqueOutput and isinstance(data_to_validate, dict):
                 fallback_output["CRITIQUE_SUMMARY"] = data_to_validate.get("CRITIQUE_SUMMARY", "Schema validation failed for critique.")
                 fallback_output["CRITIQUE_POINTS"] = data_to_validate.get("CRITIQUE_POINTS", [])
@@ -360,6 +362,10 @@ class LLMOutputParser:
                 fallback_output["security_concerns"] = data_to_validate.get("security_concerns", [])
                 fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", [])
                 fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", [])
+
+            # Ensure malformed_blocks is always present in the final fallback output
+            if "malformed_blocks" not in fallback_output:
+                fallback_output["malformed_blocks"] = malformed_blocks_list
 
             return fallback_output
         except Exception as general_e:
