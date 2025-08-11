@@ -7,10 +7,9 @@ import re
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from pydantic import ValidationError
-import streamlit as st # For st.cache_resource, st.toast, st.error
+import streamlit as st
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig
-# Import the updated SELF_ANALYSIS_PERSONA_SEQUENCE from constants
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 
 logger = logging.getLogger(__name__)
@@ -23,21 +22,18 @@ class PersonaManager:
     def __init__(self):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
-        self.persona_sequence: List[str] = [] # Default sequence if no domain/self-analysis is detected
+        self.persona_sequence: List[str] = []
         self.available_domains: List[str] = []
         self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
+        self._original_personas: Dict[str, PersonaConfig] = {}
         self._load_initial_data()
         self._load_custom_frameworks_on_init()
-        # Store original persona configs for reset functionality
-        self._original_personas: Dict[str, PersonaConfig] = {}
         self._load_original_personas()
 
     def _load_original_personas(self):
         """Loads the initial, default persona configurations for reset purposes."""
-        # This method should be called after _load_initial_data to capture the defaults.
         if self.all_personas:
-            # Use model_copy() to create deep copies of Pydantic models
             self._original_personas = {name: p.model_copy() for name, p in self.all_personas.items()}
             logger.info(f"Captured {len(self._original_personas)} original persona configurations for reset.")
 
@@ -63,13 +59,11 @@ class PersonaManager:
             all_personas_list = [PersonaConfig(**p_data) for p_data in data.get('personas', [])]
             self.all_personas = {p.name: p for p in all_personas_list}
             self.persona_sets = data.get('persona_sets', {"General": []})
-            # Load the default sequence from the file
             self.persona_sequence = data.get('persona_sequence', [
                 "Visionary_Generator", "Skeptical_Generator", "Constructive_Critic",
                 "Impartial_Arbitrator", "Devils_Advocate"
             ])
             
-            # Validate loaded data
             for set_name, persona_names_in_set in self.persona_sets.items():
                 if not isinstance(persona_names_in_set, list):
                     raise ValueError(f"Persona set '{set_name}' must be a list of persona names.")
@@ -86,7 +80,6 @@ class PersonaManager:
         except (FileNotFoundError, ValidationError, yaml.YAMLError, ValueError) as e:
             logger.error(f"Error loading initial personas from {file_path}: {e}")
             st.error(f"Failed to load default personas from {file_path}: {e}")
-            # Provide a minimal fallback to allow the app to run
             self.all_personas = {
                 "Visionary_Generator": PersonaConfig(name="Visionary_Generator", system_prompt="You are a visionary.", temperature=0.7, max_tokens=1024),
                 "Skeptical_Generator": PersonaConfig(name="Skeptical_Generator", system_prompt="You are a skeptic.", temperature=0.3, max_tokens=1024),
@@ -97,7 +90,6 @@ class PersonaManager:
             self.default_persona_set_name = "General"
             self.available_domains = ["General"]
             logger.warning("Loaded minimal fallback personas due to initial loading error.")
-
 
     def _load_custom_frameworks_on_init(self):
         self._ensure_custom_frameworks_dir()
@@ -111,7 +103,7 @@ class PersonaManager:
                         self.available_domains.append(name)
             except Exception as e:
                 st.error(f"Failed to load custom framework '{name}': {e}")
-        self.available_domains = sorted(list(set(self.available_domains))) # Ensure unique and sorted
+        self.available_domains = sorted(list(set(self.available_domains)))
 
     def _get_saved_custom_framework_names(self) -> List[str]:
         self._ensure_custom_frameworks_dir()
@@ -159,7 +151,6 @@ class PersonaManager:
             version = self.all_custom_frameworks_data[framework_name_sanitized].get('version', 0) + 1
 
         try:
-            # Validate the data structure before saving
             temp_config_validation = ReasoningFrameworkConfig(
                 framework_name=name,
                 personas={p_name: PersonaConfig(**p_data) for p_name, p_data in current_personas_dict.items()},
@@ -181,7 +172,7 @@ class PersonaManager:
             self.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
             if framework_name_sanitized not in self.available_domains:
                  self.available_domains.append(framework_name_sanitized)
-            self.available_domains = sorted(list(set(self.available_domains))) # Re-sort after adding
+            self.available_domains = sorted(list(set(self.available_domains)))
             return True
         except OSError as e:
             st.error(f"Error saving framework '{name}' to '{filepath}': {e}")
@@ -194,20 +185,17 @@ class PersonaManager:
         if framework_name in self.all_custom_frameworks_data:
             loaded_config_data = self.all_custom_frameworks_data[framework_name]
             
-            # Update internal all_personas with custom framework's personas
             for name, data in loaded_config_data.get('personas', {}).items():
                 self.all_personas[name] = PersonaConfig(**data)
             
-            # Update internal persona_sets with custom framework's persona_sets
             self.persona_sets.update(loaded_config_data.get('persona_sets', {}))
             
-            # Return the specific personas and sets for the selected framework
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
             
             st.success(f"Loaded custom framework: '{framework_name}'")
             return personas_for_session, {framework_name: current_domain_persona_names}, framework_name
-        elif framework_name in self.persona_sets: # It's a default framework
+        elif framework_name in self.persona_sets:
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
             st.success(f"Loaded default framework: '{framework_name}'")
@@ -216,7 +204,6 @@ class PersonaManager:
             st.error(f"Framework '{framework_name}' not found.")
             return {}, {}, ""
 
-    # --- MODIFIED METHOD ---
     def get_persona_sequence_for_framework(self, framework_name: str) -> List[str]:
         """
         Retrieves the persona sequence for a given framework name.
@@ -225,17 +212,14 @@ class PersonaManager:
         if framework_name in self.persona_sets:
             return self.persona_sets[framework_name]
         elif framework_name in self.all_custom_frameworks_data:
-            # Custom frameworks might define their own persona sets
             custom_sets = self.all_custom_frameworks_data[framework_name].get('persona_sets', {})
             if framework_name in custom_sets:
                 return custom_sets[framework_name]
         
-        # Fallback to the default sequence if framework or its sequence is not found
         logger.warning(f"Persona sequence not found for framework '{framework_name}'. Falling back to default sequence.")
         return self.persona_sequence
-    # --- END MODIFIED METHOD ---
 
-    # --- NEW METHODS FOR PERSONA EDITING ---
+    # --- NEW METHODS FOR PERSONA EDITING (Improvement 4.1) ---
     def update_persona_config(self, persona_name: str, parameter: str, new_value: Any):
         """Updates a specific parameter of a persona."""
         if persona_name not in self.all_personas:
@@ -249,12 +233,10 @@ class PersonaManager:
         old_value = getattr(self.all_personas[persona_name], parameter)
         
         try:
-            # Attempt to set the new value. Pydantic validation will occur if the model is re-instantiated or validated.
-            # For direct attribute update, ensure the type is compatible.
             setattr(self.all_personas[persona_name], parameter, new_value)
             logger.info(f"Updated persona '{persona_name}' parameter '{parameter}' from '{old_value}' to '{new_value}'.")
             # In a real app, you might also log this change for an audit trail.
-            # e.g., self.log_persona_change(persona_name, parameter, old_value, new_value)
+            # self.log_persona_change(persona_name, parameter, old_value, new_value) # Assuming this method exists
             return True
         except Exception as e:
             logger.error(f"Failed to update persona '{persona_name}' parameter '{parameter}' with value '{new_value}': {e}")
@@ -273,11 +255,9 @@ class PersonaManager:
         original_config = self._original_personas[persona_name]
         current_persona = self.all_personas[persona_name]
         
-        # Update all relevant attributes from the original config
         current_persona.system_prompt = original_config.system_prompt
         current_persona.temperature = original_config.temperature
         current_persona.max_tokens = original_config.max_tokens
-        # Add other attributes as needed if PersonaConfig grows
         
         logger.info(f"Persona '{persona_name}' reset to default configuration.")
         return True

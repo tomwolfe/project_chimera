@@ -9,8 +9,10 @@ from typing import Dict, Any, List, Optional, Type
 from pathlib import Path
 from pydantic import BaseModel, Field, validator, model_validator, ValidationError
 
+# --- MODIFICATION FOR IMPROVEMENT 4.3 ---
 # Import models from src.models
 from src.models import CodeChange, LLMOutput, ContextAnalysisOutput
+# --- END MODIFICATION ---
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +31,17 @@ class LLMOutputParser:
         """
         self.logger.debug("Attempting to extract JSON from markdown code blocks...")
 
-        # Patterns to match JSON within markdown code blocks.
         patterns = [
-            r'```json\s*({.*?})\s*```',  # Standard ```json block
-            r'```\s*({.*?})\s*```',      # Standard ``` block
-            r'```json\s*(\[.*?\])\s*```', # Standard ```json array block
-            r'```\s*(\[.*?\])\s*```',      # Standard ``` array block
-            r'```json\s*({.*?})',         # ```json block without closing fence
-            r'```\s*({.*?})',             # ``` block without closing fence
-            r'({.*?})\s*```',             # Block ending with ```
-            r'```json\s*(\[.*?\])',       # ```json array block without closing fence
-            r'```\s*(\[.*?\])',           # ``` array block without closing fence
-            r'(\[.*?\])\s*```'            # Array block ending with ```
+            r'```json\s*({.*?})\s*```',
+            r'```\s*({.*?})\s*```',
+            r'```json\s*(\[.*?\])\s*```',
+            r'```\s*(\[.*?\])\s*```',
+            r'```json\s*({.*?})',
+            r'```\s*({.*?})',
+            r'({.*?})\s*```',
+            r'```json\s*(\[.*?\])',
+            r'```\s*(\[.*?\])',
+            r'(\[.*?\])\s*```'
         ]
         
         for pattern in patterns:
@@ -49,7 +50,6 @@ class LLMOutputParser:
                 json_str = match.group(1).strip()
                 self.logger.debug(f"Extracted potential JSON string: {json_str[:100]}...")
                 
-                # Basic sanitization: remove trailing commas before closing braces/brackets
                 json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
                 
                 try:
@@ -71,11 +71,9 @@ class LLMOutputParser:
         """
         self.logger.debug("Attempting robust JSON extraction and sanitization...")
 
-        # 1. Remove markdown code block fences if present
         text_cleaned = re.sub(r'```(?:json)?\s*', '', text, flags=re.MULTILINE)
         text_cleaned = re.sub(r'\s*```', '', text_cleaned, flags=re.MULTILINE)
         
-        # Find potential start indices of JSON objects or arrays
         potential_starts = []
         for i, char in enumerate(text_cleaned):
             if char == '{' or char == '[':
@@ -85,7 +83,6 @@ class LLMOutputParser:
             self.logger.debug("No JSON start delimiters found.")
             return None
 
-        # Iterate through potential start points to find a valid JSON block
         for start_index in potential_starts:
             balance = 0
             expected_closers_stack = [] 
@@ -114,14 +111,14 @@ class LLMOutputParser:
                     if expected_closers_stack and expected_closers_stack[-1] == '}':
                         expected_closers_stack.pop()
                     else:
-                        balance = -999 # Mismatched closer
+                        balance = -999
                         break
                 elif char == ']':
                     balance -= 1
                     if expected_closers_stack and expected_closers_stack[-1] == ']':
                         expected_closers_stack.pop()
                     else:
-                        balance = -999 # Mismatched closer
+                        balance = -999
                         break
                 
                 if balance == 0 and not expected_closers_stack:
@@ -131,7 +128,6 @@ class LLMOutputParser:
                         json.loads(potential_json_str)
                         self.logger.debug(f"Successfully extracted valid JSON block: {potential_json_str[:100]}...")
                         
-                        # Apply basic sanitization: remove trailing commas before closing braces/brackets
                         potential_json_str = re.sub(r',\s*([\}\]])', r'\1', potential_json_str)
                         return potential_json_str.strip()
                     except json.JSONDecodeError:
@@ -151,10 +147,8 @@ class LLMOutputParser:
 
         malformed_blocks_list = []
 
-        # First, try extracting JSON from markdown code blocks using the new helper
         extracted_json_str = self._extract_json_from_markdown(raw_output)
         
-        # If not found in markdown, try the more general extraction
         if not extracted_json_str:
             extracted_json_str = self._extract_and_sanitize_json_string(raw_output)
         
@@ -189,12 +183,11 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
-        # Validate against the provided schema_model
         try:
             validated_output = schema_model(**parsed_data)
             self.logger.info(f"LLM output successfully validated against {schema_model.__name__} schema.")
             result_dict = validated_output.model_dump(by_alias=True)
-            result_dict["malformed_blocks"] = malformed_blocks_list # Include any extraction errors
+            result_dict["malformed_blocks"] = malformed_blocks_list
             return result_dict
         except ValidationError as validation_e:
             self.logger.error(f"Schema validation failed for {schema_model.__name__}: {validation_e}")
@@ -204,8 +197,6 @@ class LLMOutputParser:
                 "raw_string_snippet": raw_output
             })
             
-            # --- ENHANCED FALLBACK LOGIC ---
-            # Attempt to salvage partial data for LLMOutput if it was the target schema
             fallback_output = {
                 "COMMIT_MESSAGE": "Schema validation failed",
                 "RATIONALE": f"Original output: {raw_output[:500]}...\nValidation Error: {str(validation_e)}",
@@ -231,7 +222,6 @@ class LLMOutputParser:
                                 malformed_blocks_list.append({
                                     "type": "MALFORMED_CODE_CHANGE_ITEM", "index": index, "message": str(inner_val_e), "raw_item": str(item)
                                 })
-                                # Add a placeholder for the malformed item
                                 processed_code_changes.append({
                                     "FILE_PATH": f"malformed_entry_{index}", "ACTION": "ADD", 
                                     "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", "LINES": []
@@ -241,7 +231,6 @@ class LLMOutputParser:
                             malformed_blocks_list.append({
                                 "type": "NON_DICT_CODE_CHANGE_ITEM", "index": index, "message": "Item is not a dictionary.", "raw_item": str(item)
                             })
-                            # Add a placeholder for the malformed item
                             processed_code_changes.append({
                                 "FILE_PATH": f"malformed_entry_{index}", "ACTION": "ADD", 
                                 "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}", "LINES": []

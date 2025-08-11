@@ -1,6 +1,10 @@
 # src/constants.py
 
-from functools import lru_cache # Import lru_cache for caching
+from functools import lru_cache
+import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Centralized keywords with weights for self-analysis prompt detection.
 # Higher weights indicate stronger indicators.
@@ -13,89 +17,62 @@ SELF_ANALYSIS_KEYWORDS = {
     "evaluate my own code": 0.82,
     "identify code improvements": 0.78,
     "suggest code enhancements": 0.73,
-    "analyze my own implementation": 0.80, # Added more specific phrase
+    "analyze my own implementation": 0.80,
     "critique my code": 0.77
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
-# Patterns are tuples: (regex_pattern, penalty_multiplier)
 NEGATION_PATTERNS = [
-    # Patterns and their penalty multipliers (lower multiplier = stronger negation)
     (r'\b(not|don\'t|do not|avoid|without|never|no)\b', 0.7),
     (r'\b(please do not|kindly avoid|do not intend to)\b', 0.9)
 ]
 
-# Threshold for determining if a prompt is considered self-analysis.
 THRESHOLD = 0.75
 
-# Cache for the is_self_analysis_prompt function to improve performance
-# when the same prompts are evaluated multiple times.
-@lru_cache(maxsize=256) # Cache up to 256 unique prompts
+@lru_cache(maxsize=256)
 def is_self_analysis_prompt(
     prompt: str,
     threshold: float = THRESHOLD,
-    negation_proximity: int = 100 # Increased proximity for better context
+    negation_proximity: int = 100
 ) -> bool:
     """
     Checks if weighted keyword score meets threshold for self-analysis,
     incorporating negation handling and context-aware weighting.
-    
-    Args:
-        prompt: The user's input prompt string.
-        threshold: The minimum score required to classify as self-analysis.
-        negation_proximity: The character distance within which negation affects keyword weight.
-        
-    Returns:
-        True if the prompt is classified as self-analysis, False otherwise.
     """
     prompt_lower = prompt.lower()
     score = 0.0
     
-    # Calculate base score from keywords
     for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
         keyword_pos = prompt_lower.find(keyword)
         if keyword_pos != -1:
             negated_weight_multiplier = 1.0
             
-            # Check for negation patterns appearing BEFORE the keyword
             for pattern, penalty in NEGATION_PATTERNS:
-                # Iterate through all matches of the pattern in the prompt up to the keyword's position
                 for neg_match in re.finditer(pattern, prompt_lower[:keyword_pos + len(keyword)]):
-                    # Ensure the negation match ends before or at the start of the keyword
                     if neg_match.end() <= keyword_pos:
                         distance = keyword_pos - neg_match.end()
                         if distance < negation_proximity:
                             negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            # Apply the strongest penalty found before the keyword and break
                             break 
             
-            # Check for negation patterns appearing AFTER the keyword (less common, but possible)
             for pattern, penalty in NEGATION_PATTERNS:
-                # Iterate through all matches of the pattern starting from the keyword's position
                 for neg_match in re.finditer(pattern, prompt_lower[keyword_pos:]):
-                    # Calculate the actual start position of the negation in the original string
                     actual_neg_pos = keyword_pos + neg_match.start()
-                    # Ensure the negation starts after the keyword ends
                     if actual_neg_pos >= keyword_pos + len(keyword):
                         distance = actual_neg_pos - (keyword_pos + len(keyword))
                         if distance < negation_proximity:
                             negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            # Apply the strongest penalty found after the keyword and break
                             break
             
             score += weight * negated_weight_multiplier
     
-    # --- NEW: Apply bonuses for keyword combinations ---
-    # Bonus for prompts that combine analysis/improvement with code context
     if ("code" in prompt_lower or "program" in prompt_lower or "script" in prompt_lower) and \
        ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower or "evaluate" in prompt_lower):
         score += 0.15
     
-    # Bonus for explicit mentions of the project name in a self-analysis context
     if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
         score += 0.10
     
-    # Explicit phrases that should strongly indicate self-analysis
     explicit_phrases = [
         "analyze the entire Project Chimera codebase",
         "critically analyze the Project Chimera codebase",
@@ -103,16 +80,19 @@ def is_self_analysis_prompt(
         "evaluate my own implementation"
     ]
     if any(phrase in prompt_lower for phrase in explicit_phrases):
-        score = max(score, 0.92) # Ensure these phrases always trigger if score is below
+        score = max(score, 0.92)
     
     return score >= threshold
 
 # Optimized persona sequence for self-analysis prompts
+# --- MODIFICATION FOR IMPROVEMENT 1.1 ---
 SELF_ANALYSIS_PERSONA_SEQUENCE = [
     "Code_Architect",
     "Security_Auditor",
     "Test_Engineer",
-    "Constructive_Critic",
     "DevOps_Engineer",
-    "Impartial_Arbitrator"
+    "Constructive_Critic",
+    "Impartial_Arbitrator",
+    "Devils_Advocate"
 ]
+# --- END MODIFICATION ---
