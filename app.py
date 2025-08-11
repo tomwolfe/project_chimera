@@ -700,7 +700,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
         for p_name in st.session_state.personas.keys(): # Iterate over currently loaded personas for the framework
             persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name)
             # Get the original persona configuration from the manager's cache
-            original_persona_config = st.session_state.persona_manager._get_original_persona_config(p_name)
+            original_persona_config = st.session_state.persona_manager._original_personas.get(p_name)
             
             if persona and original_persona_config:
                 if persona.system_prompt != original_persona_config.system_prompt or \
@@ -810,18 +810,6 @@ if run_button_clicked:
             # Use a progress bar for overall progress
             overall_progress_bar = st.progress(0)
             
-            # --- MODIFICATION: Make metrics expander collapsible by default ---
-            with st.expander("📊 View Advanced Metrics", expanded=False):
-            # --- END MODIFICATION ---
-                token_metric_col, cost_metric_col = st.columns(2)
-                token_display = token_metric_col.empty()
-                cost_display = cost_metric_col.empty()
-                # Initialize with zero values
-                token_display.metric("Tokens Used", "0")
-                cost_display.metric("Cost (USD)", "$0.00")
-            
-            st.divider() # Visual separator
-            
             # --- MODIFICATION: Add placeholder for active persona ---
             active_persona_placeholder = st.empty()
             # --- END MODIFICATION ---
@@ -848,19 +836,9 @@ if run_button_clicked:
                     overall_progress_bar.progress(min(current_progress_value, 99))
                 
                 # Update the metrics inside the expander
-                token_display.metric("Tokens Used", f"{current_total_tokens:,}")
-                cost_display.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
-                
-                # Optionally display estimated next step tokens/cost if provided
-                if estimated_next_step_tokens > 0:
-                    # These captions will appear below the metrics within the expander
-                    token_metric_col.caption(f"Est. next: {estimated_next_step_tokens:,} tokens")
-                    cost_metric_col.caption(f"Est. next: ${estimated_next_step_cost:.4f}")
-                else:
-                    # Clear previous estimates if none are provided
-                    token_metric_col.empty() 
-                    cost_metric_col.empty()
-        # --- END MODIFICATION ---
+                # token_display.metric("Tokens Used", f"{current_total_tokens:,}")
+                # cost_display.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
+            # --- END MODIFICATION ---
 
             debate_instance = None
             final_total_tokens = 0
@@ -1001,11 +979,11 @@ if run_button_clicked:
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
             # Update metrics placeholders with final values
-            token_display.metric("Total Tokens Used", f"{final_total_tokens:,}")
-            cost_display.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
+            # token_display.metric("Total Tokens Used", f"{final_total_tokens:,}")
+            # cost_display.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
             # Clear any potential next step warnings after completion or failure
-            if 'next_step_warning_placeholder' in locals(): # Check if placeholder was created
-                next_step_warning_placeholder.empty()
+            # if 'next_step_warning_placeholder' in locals(): # Check if placeholder was created
+            #     next_step_warning_placeholder.empty()
 
 
 if st.session_state.debate_ran:
