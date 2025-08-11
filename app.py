@@ -148,15 +148,43 @@ st.set_page_config(layout="wide", page_title="Project Chimera Web App")
 st.title("Project Chimera: Socratic Self-Debate")
 st.markdown("An advanced reasoning engine for complex problem-solving and code generation. This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project_chimera).")
 
+# --- MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
+# Grouping prompts by category for better UI organization
 EXAMPLE_PROMPTS = {
-    "Design a Mars City": "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
-    "Ethical AI Framework": "Develop an ethical framework for an AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
-    "Implement Python API Endpoint": "Implement a new FastAPI endpoint `/items/{item_id}` that retrieves an item from a dictionary. Include basic error handling for non-existent items and add a corresponding unit test.",
-    "Refactor a Python Function": "Refactor the given Python function to improve its readability and performance. It currently uses a nested loop; see if you can optimize it.",
-    "Fix a Bug in a Script": "The provided Python script is supposed to calculate the average of a list of numbers but fails with a `TypeError` if the list contains non-numeric strings. Fix the bug by safely ignoring non-numeric values.",
-    "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.": "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.",
-    "Climate Change Solution": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
+    "Coding & Implementation": {
+        "Implement Python API Endpoint": {
+            "prompt": "Implement a new FastAPI endpoint `/items/{item_id}` that retrieves an item from a dictionary. Include basic error handling for non-existent items and add a corresponding unit test.",
+            "description": "Generate a complete API endpoint with proper error handling, validation, and documentation."
+        },
+        "Refactor a Python Function": {
+            "prompt": "Refactor the given Python function to improve its readability and performance. It currently uses a nested loop; see if you can optimize it.",
+            "description": "Improve structure and readability of existing code while maintaining functionality."
+        },
+        "Fix a Bug in a Script": {
+            "prompt": "The provided Python script is supposed to calculate the average of a list of numbers but fails with a `TypeError` if the list contains non-numeric strings. Fix the bug by safely ignoring non-numeric values.",
+            "description": "Identify and correct issues in problematic code with explanations."
+        },
+    },
+    "Analysis & Problem Solving": {
+        "Design a Mars City": {
+            "prompt": "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
+            "description": "Explore complex design challenges with multi-faceted considerations."
+        },
+        "Ethical AI Framework": {
+            "prompt": "Develop an ethical framework for an AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
+            "description": "Formulate ethical guidelines for sensitive AI applications."
+        },
+        "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.": {
+            "prompt": "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.",
+            "description": "Perform a deep self-analysis of the Project Chimera codebase for improvements."
+        },
+        "Climate Change Solution": {
+            "prompt": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
+            "description": "Brainstorm and propose solutions for global challenges."
+        },
+    }
 }
+# --- END MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
 
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
@@ -193,13 +221,15 @@ st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
 def _initialize_session_state(pm: PersonaManager):
     """Initializes or resets all session state variables to their default values."""
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[list(EXAMPLE_PROMPTS.keys())[0]]
+    # Set default to the first example prompt from the first category
+    st.session_state.user_prompt_input = list(EXAMPLE_PROMPTS.values())[0][list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]]["prompt"]
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
     # --- END MODIFICATION ---
-    st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
+    # Set default example name to the first one in the first category
+    st.session_state.selected_example_name = list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]
     
     st.session_state.persona_manager = pm # Store the cached instance
     st.session_state.all_personas = pm.all_personas
@@ -224,6 +254,7 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.save_framework_input = ""
     st.session_state.framework_description = ""
     st.session_state.load_framework_select = ""
+    st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area
 
 if "api_key_input" not in st.session_state:
     _initialize_session_state(persona_manager_instance)
@@ -276,68 +307,102 @@ if not st.session_state.api_key_input.strip():
     api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to enable the 'Run' button.")
 
 CUSTOM_PROMPT_KEY = "Custom Prompt"
-SELECTBOX_PROMPT_OPTIONS = [CUSTOM_PROMPT_KEY] + list(EXAMPLE_PROMPTS.keys())
-current_example_index = 0
-if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(CUSTOM_PROMPT_KEY)
-elif st.session_state.selected_example_name in EXAMPLE_PROMPTS:
-    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
-else:
-    st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
-    current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
+# --- MODIFIED PROMPT SELECTION UI ---
+st.subheader("What would you like to do?")
 
-# --- MODIFICATION FOR IMPROVEMENT 1.1 ---
-# From knowledge base: "Choose an example prompt:" pattern
-st.markdown("**Select prompt template:**")
-prompt_options = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
-# Use the current session state value to determine the initial index
-selected_idx = prompt_options.index(st.session_state.selected_example_name)
+# Create organized tabs for different prompt categories
+tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
+tabs = st.tabs(tab_names)
 
-# Using radio buttons for immediate visual feedback and clear grouping
-# Bind the radio button's value directly to session state using the 'key' argument.
-# This simplifies state management and removes the need for manual checks and reruns.
-selected = st.radio("Choose a prompt template:", # Added descriptive label
-    options=prompt_options,
-    index=selected_idx,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="selected_example_name" # Directly bind to session state
-)
-# --- END MODIFICATION ---
+# Initialize selected_prompt_key to ensure it's always set
+# This will be updated within the tab logic
+selected_prompt_key = "" 
 
-# The following block now correctly reacts to changes in st.session_state.selected_example_name
-# because the 'key' argument handles the state update and triggers a rerun automatically.
-if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-    st.session_state.user_prompt_input = ""
-    st.session_state.codebase_context = {}
-    st.session_state.uploaded_files = []
-    if st.session_state.selected_persona_set == "Software Engineering":
-        st.session_state.selected_persona_set = "General"
-else:
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[st.session_state.selected_example_name]
-    if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script", "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."]:
-        st.session_state.codebase_context = load_demo_codebase_context()
-        st.session_state.uploaded_files = [
-            type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-            for k, v in st.session_state.codebase_context.items()
-        ]
-        st.session_state.selected_persona_set = "Software Engineering"
-    else:
-        st.session_state.codebase_context = {}
-        st.session_state.uploaded_files = []
-        if st.session_state.selected_persona_set == "Software Engineering":
-            st.session_state.selected_persona_set = "General"
+for i, tab_name in enumerate(tab_names):
+    with tabs[i]:
+        if tab_name == CUSTOM_PROMPT_KEY:
+            st.markdown("Create your own specialized prompt for unique requirements.")
+            # Use the specific key for the custom prompt text area
+            user_prompt_text_area = st.text_area("Enter your custom prompt here:", 
+                                      value=st.session_state.get('custom_user_prompt_input', ''),
+                                      height=150,
+                                      key="custom_user_prompt_input") # Use a unique key for custom prompt input
+            
+            with st.expander("💡 Prompt Engineering Tips"):
+                st.markdown("""
+                - **Be Specific:** Clearly define your goal and desired output.
+                - **Provide Context:** Include relevant background information or code snippets.
+                - **Define Constraints:** Specify any limitations (e.g., language, length, format).
+                - **Example Output:** If possible, provide an example of the desired output format.
+                """)
+            
+            # Update session state for custom prompt
+            st.session_state.user_prompt_input = user_prompt_text_area
+            st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
+            st.session_state.codebase_context = {} # Clear context for custom prompts
+            st.session_state.uploaded_files = []
+            if st.session_state.selected_persona_set == "Software Engineering":
+                st.session_state.selected_persona_set = "General" # Default to General for custom
+            
+        else:
+            st.markdown(f"Explore example prompts for **{tab_name}**:")
+            
+            # Get options for the current category
+            category_options = EXAMPLE_PROMPTS[tab_name]
+            
+            # Create a list of (key, description) for format_func
+            radio_options_with_desc = [
+                (key, details["description"]) for key, details in category_options.items()
+            ]
+            
+            # Find the index of the currently selected prompt within this category
+            current_selected_prompt_in_category_idx = -1
+            if st.session_state.selected_example_name in category_options:
+                current_selected_prompt_in_category_idx = list(category_options.keys()).index(st.session_state.selected_example_name)
+            
+            # Use a unique key for each radio button group to avoid conflicts
+            selected_radio_key = st.radio(
+                f"Choose a {tab_name.lower()} task:",
+                options=[item[0] for item in radio_options_with_desc],
+                index=current_selected_prompt_in_category_idx if current_selected_prompt_in_category_idx != -1 else 0,
+                format_func=lambda x: f"**{x}**\n{category_options[x]['description']}",
+                label_visibility="collapsed",
+                key=f"radio_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}" # Unique key for each tab's radio
+            )
+            
+            # Update session state based on the selected radio button
+            if selected_radio_key:
+                st.session_state.selected_example_name = selected_radio_key
+                st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
+                
+                # Logic for codebase context and persona set based on selected prompt
+                # Check if the selected prompt is a coding task or the self-analysis prompt
+                is_coding_or_self_analysis = (
+                    selected_radio_key in EXAMPLE_PROMPTS["Coding & Implementation"] or
+                    "Critically analyze the entire Project Chimera codebase" in selected_radio_key
+                )
 
-# Removed the problematic rerun condition:
-# if st.session_state.selected_example_name != st.session_state.example_selector_widget: # Check if the selection actually changed
-#     st.rerun()
+                if is_coding_or_self_analysis:
+                    st.session_state.codebase_context = load_demo_codebase_context()
+                    st.session_state.uploaded_files = [
+                        type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
+                        for k, v in st.session_state.codebase_context.items()
+                    ]
+                    st.session_state.selected_persona_set = "Software Engineering"
+                else:
+                    st.session_state.codebase_context = {}
+                    st.session_state.uploaded_files = []
+                    if st.session_state.selected_persona_set == "Software Engineering":
+                        st.session_state.selected_persona_set = "General"
+# --- END MODIFIED PROMPT SELECTION UI ---
 
-# The rerun will happen automatically when st.session_state.selected_example_name changes due to the 'key' argument.
-# The side-effect logic above correctly reacts to the updated session state on the subsequent rerun.
+# The main user_prompt text_area is now managed within the tabs, so remove the global one.
+# user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input") # REMOVE THIS LINE
 
-user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input")
+# Use the user_prompt_input from session state for the actual prompt value
+user_prompt = st.session_state.user_prompt_input
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns(2, gap="medium") # ADDED: gap="medium" for better spacing and mobile responsiveness
 with col1:
     st.subheader("Reasoning Framework")
     def recommend_domain_from_keywords(prompt: str) -> Optional[str]:
@@ -582,24 +647,51 @@ if run_button_clicked:
         # --- MODIFICATION FOR IMPROVEMENT 2.1 ---
         # Enhancing status feedback for multi-stage processes
         with st.status("Socratic Debate in Progress", expanded=True) as status:
-            st.caption("Stage: Initialization") # Clear stage indicator
-            progress = st.progress(0) # Visual progress bar
-            token_metric, cost_metric = st.columns(2) # Stable location for metrics
-            token_display = token_metric.empty()
-            cost_display = cost_metric.empty()
+            # Use a single placeholder for the main progress message
+            main_progress_message = st.empty()
+            main_progress_message.markdown("### Initializing debate...")
+            
+            # Use a progress bar for overall progress
+            overall_progress_bar = st.progress(0)
+            
+            # Technical details hidden behind an expander
+            with st.expander("📊 View Advanced Metrics"):
+                token_metric_col, cost_metric_col = st.columns(2)
+                token_display = token_metric_col.empty()
+                cost_display = cost_metric_col.empty()
+                # Initialize with zero values
+                token_display.metric("Tokens Used", "0")
+                cost_display.metric("Cost (USD)", "$0.00")
+            
             st.divider() # Visual separator
             
             # Helper function to update status elements consistently
-            # MODIFIED: Changed parameter names to match core.py's keyword arguments
-            # MODIFIED: Removed progress_pct as it's not provided by core.py
+            # NOTE: Signature must match core.py's SocraticDebate.status_callback
             def update_status(message, state, current_total_tokens, current_total_cost, estimated_next_step_tokens=0, estimated_next_step_cost=0.0):
-                st.caption(f"Stage: {message}") # Use 'message' for the caption
-                # REMOVED: progress.progress(progress_pct) as progress_pct is not passed
+                # Update the main progress message with user-friendly text
+                main_progress_message.markdown(f"### {message}")
+                
+                # Update the progress bar (simple increment for now, could be more sophisticated)
+                # For simplicity, we'll just advance it slightly with each call.
+                # A more precise implementation would require `core.py` to pass a `progress_pct`.
+                # Accessing _value is internal, but common for progress bar updates in Streamlit examples.
+                # A more robust solution would involve passing progress_pct from core.py.
+                current_progress_value = (overall_progress_bar._value * 100 + 10) if hasattr(overall_progress_bar, '_value') else 10
+                overall_progress_bar.progress(min(current_progress_value, 99))
+                
+                # Update the metrics inside the expander
                 token_display.metric("Tokens Used", f"{current_total_tokens:,}")
                 cost_display.metric("Cost (USD)", f"${current_total_cost:.4f}")
+                
                 # Optionally display estimated next step tokens/cost if provided
                 if estimated_next_step_tokens > 0:
-                    st.caption(f"Estimated next step: {estimated_next_step_tokens:,} tokens / ${estimated_next_step_cost:.4f}")
+                    # These captions will appear below the metrics within the expander
+                    token_metric_col.caption(f"Est. next: {estimated_next_step_tokens:,} tokens")
+                    cost_metric_col.caption(f"Est. next: ${estimated_next_step_cost:.4f}")
+                else:
+                    # Clear previous estimates if none are provided
+                    token_metric_col.empty() 
+                    cost_metric_col.empty()
         # --- END MODIFICATION ---
 
             debate_instance = None
@@ -845,7 +937,7 @@ if st.session_state.debate_ran:
             all_malformed_blocks.extend(validation_results_by_file['malformed_blocks'])
 
         st.subheader("Structured Summary")
-        summary_col1, summary_col2 = st.columns(2)
+        summary_col1, summary_col2 = st.columns(2, gap="medium") # ADDED: gap="medium"
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
             st.code(parsed_llm_output.commit_message, language='text')
