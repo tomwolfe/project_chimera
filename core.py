@@ -89,11 +89,29 @@ class SocraticDebate:
 
         # Initialize the LLM provider. This might raise LLMProviderError if API key is invalid.
         try:
-            self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
+            # Pass rich_console to GeminiProvider for its internal logging
+            self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name, rich_console=self.rich_console)
         except LLMProviderError as e:
-            logger.error(f"Failed to initialize LLM provider: {e}")
+            # Log the error using the console if available, or logger
+            if self.rich_console:
+                self.rich_console.print(f"[red]Failed to initialize LLM provider: {e}[/red]")
+            else:
+                logger.error(f"Failed to initialize LLM provider: {e}")
             # Re-raise as ChimeraError for consistent error handling in the app
             raise ChimeraError(f"LLM provider initialization failed: {e}") from e
+        except Exception as e: # Catch any other unexpected errors during initialization
+            if self.rich_console:
+                self.rich_console.print(f"[red]An unexpected error occurred during LLM provider initialization: {e}[/red]")
+            else:
+                logger.error(f"An unexpected error occurred during LLM provider initialization: {e}")
+            raise ChimeraError(f"LLM provider initialization failed unexpectedly: {e}") from e
+
+        # Ensure tokenizer is initialized only if client is successful
+        try:
+            self.tokenizer = self.llm_provider.tokenizer # Use the tokenizer from the provider
+        except AttributeError:
+            # This should ideally not happen if LLMProvider init is successful
+            raise ChimeraError("LLM provider tokenizer is not available.")
 
         # Calculate token budgets for different phases
         self._calculate_token_budgets()
@@ -226,21 +244,59 @@ class SocraticDebate:
             "CODE_CHANGES": [],
             "malformed_blocks": [{"type": "UNHANDLED_ERROR_INIT", "message": "Debate failed during initialization or early phase."}]
         }
+        # Initialize intermediate_steps here to ensure it's always available for error reporting
+        self.intermediate_steps = {
+            "Total_Tokens_Used": 0,
+            "Total_Estimated_Cost_USD": 0.0,
+            "CODE_CHANGES": [],
+            "malformed_blocks": [{"type": "UNHANDLED_ERROR_INIT", "message": "Debate failed during initialization or early phase."}]
+        }
         
         try:
             # 1. Initialize state variables
             self._initialize_debate_state()
+            
+            if self.status_callback:
+                self.status_callback(
+                    message="Starting Socratic Debate...",
+                    state="running",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
 
             # 2. Perform Context Analysis and Determine Persona Sequence
             context_analysis_results = self._perform_context_analysis()
-            # Pass domain to determine_persona_sequence
+            # Pass domain to determine_persona_sequence for context analysis
             persona_sequence = self._determine_persona_sequence(context_analysis_results)
+            if self.status_callback:
+                # Update status after sequence is determined
+                self.status_callback(
+                    message=f"Persona sequence determined: [bold]{', '.join(persona_sequence)}[/bold]",
+                    state="running",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
 
             # 3. Process Context Persona Turn (if applicable)
+            if self.status_callback:
+                self.status_callback(
+                    message="Processing initial context...",
+                    state="running",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
             context_persona_turn_results = self._process_context_persona_turn(persona_sequence, context_analysis_results)
             
             # 4. Execute Debate Persona Turns
             debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results)
+            if self.status_callback:
+                # Update status after all debate turns are done, before synthesis
+                self.status_callback(
+                    message="All debate turns completed. Proceeding to synthesis.",
+                    state="running",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
             
             # 5. Perform Synthesis Persona Turn
             # This method now returns the final answer structure directly
@@ -255,14 +311,21 @@ class SocraticDebate:
             if "malformed_blocks" not in final_answer:
                 final_answer["malformed_blocks"] = []
 
-            return final_answer, intermediate_steps
+            # Final status update upon successful completion
+            if self.status_callback:
+                self.status_callback(
+                    message="Socratic Debate process finalized.",
+                    state="complete",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
 
         except TokenBudgetExceededError as e:
             self.logger.error(f"Socratic Debate failed: Token budget exceeded. {e}")
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: Token Budget Exceeded[/red]", state="error")
             
-            # Ensure final_answer is a dict with malformed_blocks
+            # Ensure final_answer is a dict with malformed_blocks for consistent UI display
             if not isinstance(final_answer, dict):
                 final_answer = {
                     "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
@@ -281,7 +344,7 @@ class SocraticDebate:
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: {e}[/red]", state="error")
             
-            # Ensure final_answer is a dict with malformed_blocks
+            # Ensure final_answer is a dict with malformed_blocks for consistent UI display
             if not isinstance(final_answer, dict):
                 final_answer = {
                     "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
@@ -300,7 +363,7 @@ class SocraticDebate:
             if self.status_callback:
                 self.status_callback(message=f"[red]Socratic Debate Failed: Unexpected Error[/red]", state="error")
             
-            # Ensure final_answer is a dict with malformed_blocks
+            # Ensure final_answer is a dict with malformed_blocks for consistent UI display
             if not isinstance(final_answer, dict):
                 final_answer = {
                     "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
@@ -321,6 +384,13 @@ class SocraticDebate:
         self.tokens_used_per_phase = {"context": 0, "debate": 0, "synthesis": 0}
         self.tokens_used = self.initial_input_tokens # Start with initial input tokens
         logger.debug("Debate state initialized.")
+        
+        # Ensure intermediate_steps is always a dictionary
+        if not isinstance(self.intermediate_steps, dict):
+            self.intermediate_steps = {}
+        self.intermediate_steps.update({
+            "Total_Tokens_Used": self.tokens_used, "Total_Estimated_Cost_USD": self.get_total_estimated_cost()
+        })
 
     def _perform_context_analysis(self) -> Optional[Dict[str, Any]]:
         """Performs context analysis (finding relevant files) if context is available."""
@@ -329,6 +399,13 @@ class SocraticDebate:
             try:
                 # Determine initial persona sequence for relevance scoring
                 # Pass domain to determine_persona_sequence for context analysis
+                if self.status_callback:
+                    self.status_callback(
+                        message="[bold]Analyzing context[/bold] to find relevant files...",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
                 initial_sequence_for_relevance = self.persona_router.determine_persona_sequence(
                     self.initial_prompt,
                     domain=self.domain, # Pass domain here
@@ -342,6 +419,13 @@ class SocraticDebate:
                 context_analysis_results = {"relevant_files": relevant_files_info}
                 self.intermediate_steps["Relevant_Files_Context"] = {"relevant_files": relevant_files_info}
                 logger.info(f"Context analysis completed. Found {len(relevant_files_info)} relevant files.")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"Context analysis complete. Found [bold]{len(relevant_files_info)}[/bold] relevant files.",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
             except Exception as e:
                 logger.error(f"Error during context analysis file finding: {e}")
                 self.intermediate_steps["Context_Analysis_Error"] = {"error": str(e)}
@@ -392,12 +476,27 @@ class SocraticDebate:
             
             try:
                 logger.info(f"Performing context processing with persona: {context_processing_persona_name}")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"Running [bold]{context_processing_persona_name}[/bold] for context processing...",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
                 turn_results = self._execute_llm_turn(
                     persona_name=context_processing_persona_name,
                     persona_config=context_processing_persona_config,
-                    prompt=context_prompt_for_persona,
+                    # Ensure prompt is a string, handle potential None from context_analysis_results
+                    prompt=context_prompt_for_persona if context_prompt_for_persona is not None else self.initial_prompt,
                     phase="context"
                 )
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"Completed persona: [bold]{context_processing_persona_name}[/bold] (context phase).",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
                 return turn_results
                 
             except TokenBudgetExceededError as e:
@@ -421,6 +520,13 @@ class SocraticDebate:
 
         # Determine the synthesis persona name
         synthesis_persona_name = None
+        
+        if self.status_callback:
+            self.status_callback(
+                message="Starting final [bold]debate turns[/bold] with core personas...",
+                state="running",
+                current_total_tokens=self.get_total_used_tokens(),
+                current_total_cost=self.get_total_estimated_cost())
         # Check if the last persona in the sequence is a designated synthesizer
         if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "General_Synthesizer"]:
             synthesis_persona_name = persona_sequence[-1]
@@ -433,6 +539,13 @@ class SocraticDebate:
         for i, persona_name in enumerate(debate_personas_to_run):
             if persona_name not in self.all_personas:
                 logger.warning(f"Persona '{persona_name}' not found in loaded personas. Skipping.")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"[yellow]Skipping persona '{persona_name}' (not found).[/yellow]",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
                 continue
             
             persona_config = self.all_personas[persona_name]
@@ -450,6 +563,13 @@ class SocraticDebate:
             # --- Execute LLM Turn ---
             try:
                 logger.info(f"Executing debate turn with persona: {persona_name}")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"Running persona: [bold]{persona_name}[/bold]...",
+                        state="running",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
                 turn_results = self._execute_llm_turn(
                     persona_name=persona_name,
                     persona_config=persona_config,
@@ -457,6 +577,13 @@ class SocraticDebate:
                     phase="debate"
                 )
                 if turn_results:
+                    if self.status_callback:
+                        self.status_callback(
+                            message=f"Completed persona: [bold]{persona_name}[/bold].",
+                            state="running",
+                            current_total_tokens=self.get_total_used_tokens(),
+                            current_total_cost=self.get_total_estimated_cost()
+                        )
                     all_debate_turns.append(turn_results)
             except TokenBudgetExceededError as e:
                 logger.error(f"Token budget exceeded during debate turn for persona {persona_name}: {e}")
@@ -467,22 +594,15 @@ class SocraticDebate:
                 error_tokens = self.llm_provider.count_tokens(f"Error processing {persona_name}: {str(e)}") + 50
                 self.track_token_usage("debate", error_tokens)
                 self.check_budget("debate", 0, f"Error handling {persona_name} debate turn")
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"[red]Error with persona [bold]{persona_name}[/bold]: {e}[/red]",
+                        state="error",
+                        current_total_tokens=self.get_total_used_tokens(),
+                        current_total_cost=self.get_total_estimated_cost()
+                    )
         
         return all_debate_turns
-
-    # --- Persona to Schema Mapping ---
-    PERSONA_OUTPUT_SCHEMAS = {
-        "Impartial_Arbitrator": LLMOutput,
-        "Context_Aware_Assistant": ContextAnalysisOutput,
-        "Code_Architect": CritiqueOutput,
-        "Security_Auditor": CritiqueOutput,
-        "DevOps_Engineer": CritiqueOutput,
-        "Test_Engineer": CritiqueOutput,
-        "Devils_Advocate": CritiqueOutput,
-        # NEW: General_Synthesizer will not have a strict JSON schema here.
-        # Setting to None tells _execute_llm_turn not to use the parser for strict validation.
-        "General_Synthesizer": None,
-    }
 
     def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
@@ -492,16 +612,16 @@ class SocraticDebate:
         synthesis_persona_name = None
         synthesis_persona_config = None
         
-        # Determine the synthesis persona based on the end of the sequence
-        if persona_sequence:
-            last_persona_in_sequence = persona_sequence[-1]
-            # Check if the last persona is one of our designated synthesizers
-            if last_persona_in_sequence in ["Impartial_Arbitrator", "General_Synthesizer"]:
-                synthesis_persona_name = last_persona_in_sequence
-        
         if synthesis_persona_name and synthesis_persona_name in self.all_personas:
             synthesis_persona_config = self.all_personas[synthesis_persona_name]
             
+            if self.status_callback:
+                self.status_callback(
+                    message=f"Starting final [bold]synthesis[/bold] with persona: [bold]{synthesis_persona_name}[/bold]...",
+                    state="running",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
             # Construct the synthesis prompt
             synthesis_prompt = f"Initial Prompt: {self.initial_prompt}\n\n"
             synthesis_prompt += "Debate Turns:\n"
@@ -620,6 +740,13 @@ class SocraticDebate:
                             }
 
                 except Exception as e: # Catch errors from _execute_llm_turn itself (e.g., API errors)
+                    if self.status_callback:
+                        self.status_callback(
+                            message=f"[red]Error during synthesis turn: {e}[/red]",
+                            state="error",
+                            current_total_tokens=self.get_total_used_tokens(),
+                            current_total_cost=self.get_total_estimated_cost()
+                        )
                     logger.error(f"Error during synthesis turn execution: {e}")
                     if attempt == max_retries:
                         logger.error(f"Final synthesis attempt failed due to execution error: {e}")
@@ -658,19 +785,43 @@ class SocraticDebate:
     def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Optional[Dict[str, Any]]:
         """Executes a single LLM turn for a given persona, handling generation, token tracking, and parsing."""
         
-        self.check_budget(phase, 0, f"Start of {persona_name} turn") # Check budget before starting the turn
+        # Estimate tokens for the *next* step (input + max_output for this persona)
+        estimated_next_step_input_tokens = self.llm_provider.count_tokens(prompt=prompt, system_prompt=persona_config.system_prompt)
+        estimated_next_step_output_tokens = persona_config.max_tokens
+        estimated_next_step_total_tokens = estimated_next_step_input_tokens + estimated_next_step_output_tokens
+        estimated_next_step_cost = self.llm_provider.calculate_usd_cost(estimated_next_step_input_tokens, estimated_next_step_output_tokens)
 
+        if self.status_callback:
+            self.status_callback(
+                message=f"Running persona: [bold]{persona_name}[/bold] ({phase} phase)...",
+                state="running",
+                current_total_tokens=self.get_total_used_tokens(),
+                current_total_cost=self.get_total_estimated_cost(),
+                estimated_next_step_tokens=estimated_next_step_total_tokens,
+                estimated_next_step_cost=estimated_next_step_cost
+            )
+
+        self.check_budget(phase, estimated_next_step_total_tokens, f"Start of {persona_name} turn") # Check budget before starting the turn
+        
         try:
             response_text, input_tokens, output_tokens = self.llm_provider.generate(
                 prompt=prompt,
                 system_prompt=persona_config.system_prompt,
                 temperature=persona_config.temperature,
                 max_tokens=persona_config.max_tokens,
-                _status_callback=self.status_callback,
                 requested_model_name=self.model_name,
                 persona_config=persona_config,
                 intermediate_results=self.intermediate_steps
             )
+            
+            turn_tokens_used = input_tokens + output_tokens
+            self.track_token_usage(phase, turn_tokens_used)
+            self.check_budget(phase, 0, f"End of {persona_name} turn") # Check budget after the turn
+            if self.status_callback:
+                self.status_callback(
+                    message=f"Completed persona: [bold]{persona_name}[/bold] ({phase} phase).",
+                    state="running", current_total_tokens=self.get_total_used_tokens(), current_total_cost=self.get_total_estimated_cost(),
+                    estimated_next_step_tokens=0, estimated_next_step_cost=0.0) # Reset next step estimate
         except TokenBudgetExceededError as e:
             logger.error(f"Token budget exceeded during LLM generation for {persona_name}: {e}")
             raise e # Re-raise to be caught by the main run_debate handler
@@ -680,11 +831,16 @@ class SocraticDebate:
             error_tokens = self.llm_provider.count_tokens(f"Error processing {persona_name}: {str(e)}") + 50
             self.track_token_usage(phase, error_tokens)
             self.check_budget(phase, 0, f"Error handling {persona_name} generation")
+            
+            # Update UI status to error
+            if self.status_callback:
+                self.status_callback(
+                    message=f"[red]Error with persona [bold]{persona_name}[/bold]: {e}[/red]",
+                    state="error",
+                    current_total_tokens=self.get_total_used_tokens(),
+                    current_total_cost=self.get_total_estimated_cost()
+                )
             return None # Return None to indicate failure for this turn
-
-        turn_tokens_used = input_tokens + output_tokens
-        self.track_token_usage(phase, turn_tokens_used)
-        self.check_budget(phase, 0, f"End of {persona_name} turn") # Check budget after the turn
 
         # Parse and Validate Output
         parsed_output_data = {}
@@ -726,7 +882,6 @@ class SocraticDebate:
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], 
                                  debate_persona_results: List[Dict[str, Any]], 
                                  synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
-        """Aggregates results from all phases and finalizes the output."""
         
         # Determine the final answer
         # synthesis_persona_results now directly contains the final structured output
@@ -770,8 +925,7 @@ class SocraticDebate:
 
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):
-            logger.error(f"Final answer was not a dictionary: {type(self.final_answer).__name__}. Creating fallback error.")
-            # This means a non-synthesis persona's output was used as fallback, and it was not a dict.
+            self.logger.error(f"Final answer was not a dictionary: {type(self.final_answer).__name__}. Creating fallback error.")
             # Convert it to a general output dict.
             self.final_answer = {
                 "COMMIT_MESSAGE": "Debate Failed - Final Answer Malformed",
@@ -780,7 +934,7 @@ class SocraticDebate:
                 "general_output": str(self.final_answer), # Store the raw string here
                 "malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Expected dict, got {type(self.final_answer).__name__}", "raw_output": str(self.final_answer)[:500]}]
             }
-            logger.error(f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}")
+            self.logger.error(f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}")
 
         # Ensure malformed_blocks is always present, even if empty
         if "malformed_blocks" not in self.final_answer:
@@ -789,6 +943,13 @@ class SocraticDebate:
         # Update intermediate steps with totals
         self._update_intermediate_steps_with_totals()
         
+        if self.status_callback:
+            self.status_callback(
+                message="Socratic Debate process finalized.",
+                state="complete",
+                current_total_tokens=self.get_total_used_tokens(),
+                current_total_cost=self.get_total_estimated_cost()
+            )
         return self.final_answer, self.intermediate_steps
 
     def _update_intermediate_steps_with_totals(self):
@@ -804,6 +965,13 @@ class SocraticDebate:
         self.intermediate_steps["Synthesis_Phase_Tokens"] = self.tokens_used_per_phase.get("synthesis", 0)
 
         # Add any explicit errors logged during the process to intermediate steps
+        # Ensure malformed_blocks is always present, even if empty
+        if "malformed_blocks" not in self.intermediate_steps:
+            self.intermediate_steps["malformed_blocks"] = []
+        # Ensure final_answer is a dictionary, especially if it was None or malformed
+        if not isinstance(self.final_answer, dict):
+            self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}"}]}
+
         for key, value in list(self.intermediate_steps.items()): # Iterate over a copy
             if isinstance(value, dict) and "Error" in key:
                 pass # Already added as a dict

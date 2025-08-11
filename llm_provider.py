@@ -13,6 +13,7 @@ from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 import logging
 from pathlib import Path
 import random # Needed for backoff jitter
+from rich.console import Console # Import Console for rich logging
 
 # --- Tokenizer Interface and Implementation ---
 from src.tokenizers.base import Tokenizer
@@ -72,24 +73,27 @@ class GeminiProvider:
     # Define retryable error codes and HTTP status codes at class level
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504} # For API errors that are retryable
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504} # For HTTP errors that are retryable
-
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None):
+    
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None, rich_console: Optional[Console] = None):
         self._api_key = api_key
         self.model_name = model_name
+        self.rich_console = rich_console or Console(stderr=True) # Use provided console or default to stderr
         
         # --- FIX START ---
+        # Removed @st.cache_resource decorator as genai.Client is not serializable/cacheable
         try:
             # Attempt to initialize the genai client. This is where API key validation might fail.
             self.client = genai.Client(api_key=self._api_key)
         except Exception as e: # Catching a broad exception here to handle various potential init failures
-            logger.error(f"Failed to initialize genai.Client: {e}")
+            error_msg = str(e)
+            logger.error(f"Failed to initialize genai.Client: {error_msg}")
             # Raise a specific LLMProviderError indicating the issue.
             # Check if the error message suggests an invalid API key.
-            error_msg_lower = str(e).lower()
+            error_msg_lower = error_msg.lower()
             if "api key not valid" in error_msg_lower or "invalid_argument" in error_msg_lower or "invalid_api_key" in error_msg_lower:
                 raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY") from e
             else:
-                raise LLMProviderError(f"Failed to initialize Gemini client: {e}") from e
+                raise LLMProviderError(f"Failed to initialize Gemini client: {error_msg}") from e
         
         # Ensure tokenizer is initialized only if client is successful
         try:
@@ -129,7 +133,7 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, _status_callback=None, persona_config: PersonaConfig = None, intermediate_results: Dict[str, Any] = None, requested_model_name: str = None) -> tuple[str, int, int]:
+    def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, persona_config: PersonaConfig = None, intermediate_results: Dict[str, Any] = None, requested_model_name: str = None) -> tuple[str, int, int]:
         """
         Generate content using the specified model, with retry logic and token tracking.
         Prioritizes requested_model_name, falling back to provider's default if needed.
@@ -158,9 +162,9 @@ class GeminiProvider:
             max_output_tokens=max_tokens
         )
         
-        return self._generate_with_retry(prompt, system_prompt, config, _status_callback, current_model_name)
+        return self._generate_with_retry(prompt, system_prompt, config, current_model_name)
 
-    def _generate_with_retry(self, prompt: str, system_prompt: str, config: types.GenerateContentConfig, _status_callback=None, model_name_to_use: str = None) -> tuple[str, int, int]:
+    def _generate_with_retry(self, prompt: str, system_prompt: str, config: types.GenerateContentConfig, model_name_to_use: str = None) -> tuple[str, int, int]:
         """Handles content generation with retry logic, using the specified model."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -205,9 +209,9 @@ class GeminiProvider:
                     jitter = random.uniform(0, 0.5 * min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** attempt), self.MAX_BACKOFF_SECONDS))
                     sleep_time = backoff_time + jitter
                     
-                    log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
-                    if _status_callback:
-                        _status_callback(message=log_message, state="running")
+                    log_message = f"[yellow]Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})[/yellow]"
+                    if self.rich_console:
+                        self.rich_console.print(log_message)
                     else:
                         logger.warning(log_message)
                     time.sleep(sleep_time)
@@ -219,24 +223,27 @@ class GeminiProvider:
             
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    def count_tokens(self, prompt: str, system_prompt: str = "", _status_callback=None) -> int:
+    def count_tokens(self, prompt: str, system_prompt: str = "") -> int:
         """Counts tokens consistently and robustly using the tokenizer."""
         prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         
         try:
+            # Ensure text is properly encoded for the API call
             try:
                 text_encoded = prompt_with_system.encode('utf-8')
                 text_for_tokenizer = text_encoded.decode('utf-8', errors='replace') 
             except UnicodeEncodeError:
+                # Fallback if encoding fails, replace problematic characters
                 text_for_tokenizer = prompt_with_system.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
                 logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
             
             return self.tokenizer.count_tokens(text_for_tokenizer)
         except Exception as e:
-            error_msg = f"Error using tokenizer to count tokens: {str(e)}"
-            logger.error(error_msg)
-            if _status_callback:
-                _status_callback(message=f"[red]{error_msg}[/red]", state="error")
+            error_msg = f"[red]Error using tokenizer to count tokens: {str(e)}[/red]"
+            if self.rich_console:
+                self.rich_console.print(error_msg)
+            else:
+                logger.error(error_msg)
             raise LLMProviderError(error_msg) from e
 
     def _calculate_prompt_complexity(self, prompt: str) -> float:
