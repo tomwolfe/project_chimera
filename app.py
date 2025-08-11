@@ -174,7 +174,6 @@ def get_context_analyzer():
         return analyzer
     else:
         # Fallback if persona_manager or its router is not available
-        # This might lead to reduced context relevance if persona context is important
         logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
         return ContextRelevanceAnalyzer()
 
@@ -187,8 +186,6 @@ persona_manager_instance = get_persona_manager()
 # --- END MODIFICATION ---
 
 # --- Session State Initialization ---
-st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
-
 def _initialize_session_state(pm: PersonaManager):
     """Initializes or resets all session state variables to their default values."""
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
@@ -555,182 +552,209 @@ if run_button_clicked:
     api_key_feedback_placeholder.empty()
     if not st.session_state.api_key_input.strip():
         st.error("Please enter your Gemini API Key in the sidebar to proceed.")
+        st.session_state.debate_ran = False # Ensure flag is false if no API key
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
+        st.session_state.debate_ran = False # Ensure flag is false if no prompt
     else:
+        # --- FIX: Uncomment this line to reset the flag for a new run ---
         st.session_state.debate_ran = False
-        with st.status("Initializing Socratic Debate...", expanded=True) as status:
-            st.markdown("---")
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            total_tokens_placeholder = metric_col1.empty()
-            total_cost_placeholder = metric_col2.empty()
-            next_step_warning_placeholder = metric_col3.empty()
-            st.markdown("---")
+        
+        # --- FIX: Add explicit API key check before instantiation ---
+        # Although SocraticDebate.__init__ handles invalid keys,
+        # this provides a clearer UI message and prevents the try block from starting
+        # if the key is clearly invalid.
+        api_key_valid = False
+        try:
+            # Attempt a basic validation of the API key by configuring genai
+            # This is a lightweight check to see if the key is syntactically okay
+            # and if the model can be accessed.
+            genai.configure(api_key=st.session_state.api_key_input)
+            # Try to get a model to ensure the key is functional for API calls
+            # This might still fail if the key is valid but has no quota or is revoked.
+            # A more thorough check would involve a dummy API call, but this is a good start.
+            genai.get_model("gemini-2.5-flash-lite") 
+            api_key_valid = True
+        except Exception as e:
+            st.error(f"API Key validation failed: {e}. Please check your Gemini API Key in the sidebar.")
+            api_key_valid = False
+            st.session_state.debate_ran = False # Ensure flag is false if API key is invalid
 
-            def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
-                                          current_total_tokens: int = 0, current_total_cost: float = 0.0,
-                                          estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
-                status.update(label=message, state=state, expanded=expanded)
-                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
-                total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
-                if estimated_next_step_tokens > 0:
-                    budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
-                    if estimated_next_step_tokens > budget_remaining:
-                        next_step_warning_placeholder.warning(
-                            f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
-                            f"will exceed budget ({budget_remaining:,} remaining). "
-                            f"Estimated cost: ${estimated_next_step_cost:.4f}"
-                        )
+        if api_key_valid: # Only proceed if API key validation passed
+            with st.status("Initializing Socratic Debate...", expanded=True) as status:
+                # --- Status bar setup ---
+                metric_col1, metric_col2, metric_col3 = st.columns(3)
+                total_tokens_placeholder = metric_col1.empty()
+                total_cost_placeholder = metric_col2.empty()
+                next_step_warning_placeholder = metric_col3.empty()
+                st.markdown("---")
+                # --- End Status bar setup ---
+
+                def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
+                                              current_total_tokens: int = 0, current_total_cost: float = 0.0,
+                                              estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
+                    status.update(label=message, state=state, expanded=expanded)
+                    total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
+                    total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
+                    if estimated_next_step_tokens > 0:
+                        budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
+                        if estimated_next_step_tokens > budget_remaining:
+                            next_step_warning_placeholder.warning(
+                                f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
+                                f"will exceed budget ({budget_remaining:,} remaining). "
+                                f"Estimated cost: ${estimated_next_step_cost:.4f}"
+                            )
+                        else:
+                            next_step_warning_placeholder.info(
+                                f"Next step estimated: {estimated_next_step_tokens:,} tokens "
+                                f"(${(estimated_next_step_cost):.4f}). "
+                                f"Budget remaining: {budget_remaining:,} tokens."
+                            )
                     else:
-                        next_step_warning_placeholder.info(
-                            f"Next step estimated: {estimated_next_step_tokens:,} tokens "
-                            f"(${(estimated_next_step_cost):.4f}). "
-                            f"Budget remaining: {budget_remaining:,} tokens."
+                        next_step_warning_placeholder.empty()
+
+                debate_instance = None
+                final_total_tokens = 0
+                final_total_cost = 0.0
+                try:
+                    domain_for_run = st.session_state.selected_persona_set
+                    current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
+                    personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
+
+                    if not personas_for_run:
+                        raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
+                    
+                    # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
+                    # Use the cached context analyzer instance
+                    context_analyzer_instance = get_context_analyzer()
+                    # --- END MODIFICATION ---
+
+                    with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
+                        # Pass the context_analyzer_instance to SocraticDebate
+                        # --- FIX START ---
+                        # Changed 'core.SocraticDebate' to 'SocraticDebate' after importing it directly
+                        debate_instance = SocraticDebate(
+                        # --- FIX END ---
+                            initial_prompt=user_prompt,
+                            api_key=st.session_state.api_key_input,
+                            max_total_tokens_budget=st.session_state.max_tokens_budget_input,
+                            model_name=st.session_state.selected_model_selectbox,
+                            all_personas=st.session_state.all_personas,
+                            persona_sets=st.session_state.persona_sets,
+                            persona_sequence=st.session_state.persona_sequence,
+                            domain=domain_for_run,
+                            status_callback=streamlit_status_callback,
+                            rich_console=rich_console_instance,
+                            codebase_context=st.session_state.get('codebase_context', {}),
+                            context_token_budget_ratio=st.session_state.context_token_budget_ratio,
+                            context_analyzer=context_analyzer_instance # Pass the cached analyzer
                         )
-                else:
-                    next_step_warning_placeholder.empty()
-
-            debate_instance = None
-            final_total_tokens = 0
-            final_total_cost = 0.0
-            try:
-                domain_for_run = st.session_state.selected_persona_set
-                current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
-                personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
-
-                if not personas_for_run:
-                    raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
+                        
+                        # --- THIS IS THE CRITICAL CALL TO THE FUNCTIONAL DEBATE LOGIC ---
+                        final_answer, intermediate_steps = debate_instance.run_debate()
+                        
+                        # Store results
+                        st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                        st.session_state.final_answer_output = final_answer
+                        st.session_state.intermediate_steps_output = intermediate_steps
+                        st.session_state.last_config_params = {
+                            "max_tokens_budget": st.session_state.max_tokens_budget_input,
+                            "model_name": st.session_state.selected_model_selectbox,
+                            "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox,
+                            "domain": domain_for_run
+                        }
+                        st.session_state.debate_ran = True # Set flag to True on success
+                        status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
+                        final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
+                        final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
                 
-                # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
-                # Use the cached context analyzer instance
-                context_analyzer_instance = get_context_analyzer()
-                # --- END MODIFICATION ---
+                except TokenBudgetExceededError as e:
+                    if 'rich_output_buffer' in locals():
+                        st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                    else:
+                        st.session_state.process_log_output_text = ""
 
-                with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
-                    # Pass the context_analyzer_instance to SocraticDebate
-                    # --- FIX START ---
-                    # Changed 'core.SocraticDebate' to 'SocraticDebate' after importing it directly
-                    debate_instance = SocraticDebate(
-                    # --- FIX END ---
-                        initial_prompt=user_prompt,
-                        api_key=st.session_state.api_key_input,
-                        max_total_tokens_budget=st.session_state.max_tokens_budget_input,
-                        model_name=st.session_state.selected_model_selectbox,
-                        all_personas=st.session_state.all_personas,
-                        persona_sets=st.session_state.persona_sets,
-                        persona_sequence=st.session_state.persona_sequence,
-                        domain=domain_for_run,
-                        status_callback=streamlit_status_callback,
-                        rich_console=rich_console_instance,
-                        codebase_context=st.session_state.get('codebase_context', {}),
-                        context_token_budget_ratio=st.session_state.context_token_budget_ratio,
-                        context_analyzer=context_analyzer_instance # Pass the cached analyzer
-                    )
+                    status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
+                    st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
+                             f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
+                             f"Details: {str(e)}")
+                    st.session_state.debate_ran = True # Set flag to True even on error for results display
+                    if debate_instance:
+                        st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
                     
-                    final_answer, intermediate_steps = debate_instance.run_debate()
-                    
-                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                    st.session_state.final_answer_output = final_answer
-                    st.session_state.intermediate_steps_output = intermediate_steps
-                    st.session_state.last_config_params = {
-                        "max_tokens_budget": st.session_state.max_tokens_budget_input,
-                        "model_name": st.session_state.selected_model_selectbox,
-                        "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox,
-                        "domain": domain_for_run
+                    st.session_state.final_answer_output = {
+                        "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
+                        "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please adjust budget or prompt complexity. Error: {str(e)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
                     }
-                    st.session_state.debate_ran = True
-                    status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
-                    final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
-                    final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
-            
-            except TokenBudgetExceededError as e:
-                # Provide user-friendly feedback for token budget issues
-                if 'rich_output_buffer' in locals():
-                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                else:
-                    st.session_state.process_log_output_text = ""
-
-                status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
-                st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
-                         f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
-                         f"Details: {str(e)}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                    final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
                 
-                st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
-                    "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please adjust budget or prompt complexity. Error: {str(e)}",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
-                }
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            
-            except (LLMResponseValidationError, SchemaValidationError) as e:
-                if 'rich_output_buffer' in locals():
-                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                else:
-                    st.session_state.process_log_output_text = ""
+                except (LLMResponseValidationError, SchemaValidationError) as e:
+                    if 'rich_output_buffer' in locals():
+                        st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                    else:
+                        st.session_state.process_log_output_text = ""
 
-                status.update(label=f"Socratic Debate Failed: Validation Error", state="error", expanded=True)
-                st.error(f"**Schema Validation Error:** {e}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
-                st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
-                    "RATIONALE": f"A schema validation error occurred: {str(e)}",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR", "message": str(e), "details": e.details}]
-                }
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            except ChimeraError as ce:
-                if 'rich_output_buffer' in locals():
-                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                else:
-                    st.session_state.process_log_output_text = ""
+                    status.update(label=f"Socratic Debate Failed: Validation Error", state="error", expanded=True)
+                    st.error(f"**Schema Validation Error:** {e}")
+                    st.session_state.debate_ran = True # Set flag to True even on error for results display
+                    if debate_instance:
+                        st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    
+                    st.session_state.final_answer_output = {
+                        "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
+                        "RATIONALE": f"A schema validation error occurred: {str(e)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR", "message": str(e), "details": e.details}]
+                    }
+                    final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                    final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+                except ChimeraError as ce:
+                    if 'rich_output_buffer' in locals():
+                        st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                    else:
+                        st.session_state.process_log_output_text = ""
 
-                status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
-                st.error(f"**Chimera Error:** {ce}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
-                st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
-                    "RATIONALE": f"A Chimera-specific error occurred: {str(ce)}",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
-                }
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            except Exception as e:
-                if 'rich_output_buffer' in locals():
-                    st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-                else:
-                    st.session_state.process_log_output_text = ""
+                    status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
+                    st.error(f"**Chimera Error:** {ce}")
+                    st.session_state.debate_ran = True # Set flag to True even on error for results display
+                    if debate_instance:
+                        st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    
+                    st.session_state.final_answer_output = {
+                        "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
+                        "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(ce)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
+                    }
+                    final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                    final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+                except Exception as e:
+                    if 'rich_output_buffer' in locals():
+                        st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                    else:
+                        st.session_state.process_log_output_text = ""
 
-                status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
-                st.error(f"**Unexpected Error:** {e}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
+                    st.error(f"**Unexpected Error:** {e}")
+                    st.session_state.debate_ran = True # Set flag to True even on error for results display
+                    if debate_instance:
+                        st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                    
+                    st.session_state.final_answer_output = {
+                        "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
+                        "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
+                    }
+                    final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                    final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
                 
-                st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
-                    "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
-                }
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            
-            total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
-            total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
-            next_step_warning_placeholder.empty()
+                total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
+                total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
+                next_step_warning_placeholder.empty()
 
 if st.session_state.debate_ran:
     st.markdown("---")
