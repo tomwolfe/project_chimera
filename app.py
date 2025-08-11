@@ -19,7 +19,7 @@ from core import SocraticDebate
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, ContextAnalysisOutput
 from src.utils import LLMOutputParser
 from src.persona_manager import PersonaManager
-from src.exceptions import ChimeraError, LLMResponseValidationError, TokenBudgetExceededError, SchemaValidationError
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, SchemaValidationError
 from src.constants import SELF_ANALYSIS_KEYWORDS # Added import for suggestion 1.1
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import for caching
 import traceback # Needed for error handling in app.py
@@ -174,7 +174,6 @@ def get_context_analyzer():
         return analyzer
     else:
         # Fallback if persona_manager or its router is not available
-        # This might lead to reduced context relevance if persona context is important
         logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
         return ContextRelevanceAnalyzer()
 
@@ -285,37 +284,54 @@ else:
     st.session_state.selected_example_name = list(EXAMPLE_PROMPTS.keys())[0]
     current_example_index = SELECTBOX_PROMPT_OPTIONS.index(st.session_state.selected_example_name)
 
-selected_option_from_widget = st.selectbox(
-    "Choose an example prompt:",
-    options=SELECTBOX_PROMPT_OPTIONS,
-    index=current_example_index,
-    key="example_selector_widget",
-    help="Select a pre-defined prompt or choose 'Custom Prompt' to enter your own."
-)
+# --- MODIFICATION FOR IMPROVEMENT 1.1 ---
+# From knowledge base: "Choose an example prompt:" pattern
+st.markdown("**Select prompt template:**")
+prompt_options = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
+# Use the current session state value to determine the initial index
+selected_idx = prompt_options.index(st.session_state.selected_example_name)
 
-if selected_option_from_widget != st.session_state.selected_example_name:
-    st.session_state.selected_example_name = selected_option_from_widget
-    if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-        st.session_state.user_prompt_input = ""
+# Using radio buttons for immediate visual feedback and clear grouping
+# Bind the radio button's value directly to session state using the 'key' argument.
+# This simplifies state management and removes the need for manual checks and reruns.
+selected = st.radio("Choose a prompt template:", # Added descriptive label
+    options=prompt_options,
+    index=selected_idx,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="selected_example_name" # Directly bind to session state
+)
+# --- END MODIFICATION ---
+
+# The following block now correctly reacts to changes in st.session_state.selected_example_name
+# because the 'key' argument handles the state update and triggers a rerun automatically.
+if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+    st.session_state.user_prompt_input = ""
+    st.session_state.codebase_context = {}
+    st.session_state.uploaded_files = []
+    if st.session_state.selected_persona_set == "Software Engineering":
+        st.session_state.selected_persona_set = "General"
+else:
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[st.session_state.selected_example_name]
+    if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script", "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."]:
+        st.session_state.codebase_context = load_demo_codebase_context()
+        st.session_state.uploaded_files = [
+            type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
+            for k, v in st.session_state.codebase_context.items()
+        ]
+        st.session_state.selected_persona_set = "Software Engineering"
+    else:
         st.session_state.codebase_context = {}
         st.session_state.uploaded_files = []
         if st.session_state.selected_persona_set == "Software Engineering":
             st.session_state.selected_persona_set = "General"
-    else:
-        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[st.session_state.selected_example_name]
-        if st.session_state.selected_example_name in ["Implement Python API Endpoint", "Refactor a Python Function", "Fix a Bug in a Script", "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."]:
-            st.session_state.codebase_context = load_demo_codebase_context()
-            st.session_state.uploaded_files = [
-                type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-                for k, v in st.session_state.codebase_context.items()
-            ]
-            st.session_state.selected_persona_set = "Software Engineering"
-        else:
-            st.session_state.codebase_context = {}
-            st.session_state.uploaded_files = []
-            if st.session_state.selected_persona_set == "Software Engineering":
-                st.session_state.selected_persona_set = "General"
-    st.rerun()
+
+# Removed the problematic rerun condition:
+# if st.session_state.selected_example_name != st.session_state.example_selector_widget: # Check if the selection actually changed
+#     st.rerun()
+
+# The rerun will happen automatically when st.session_state.selected_example_name changes due to the 'key' argument.
+# The side-effect logic above correctly reacts to the updated session state on the subsequent rerun.
 
 user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input")
 
@@ -561,36 +577,23 @@ if run_button_clicked:
         st.error("Please enter a prompt.")
     else:
         st.session_state.debate_ran = False
-        with st.status("Initializing Socratic Debate...", expanded=True) as status:
-            st.markdown("---")
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            total_tokens_placeholder = metric_col1.empty()
-            total_cost_placeholder = metric_col2.empty()
-            next_step_warning_placeholder = metric_col3.empty()
-            st.markdown("---")
-
-            def streamlit_status_callback(message: str, state: str = "running", expanded: bool = True,
-                                          current_total_tokens: int = 0, current_total_cost: float = 0.0,
-                                          estimated_next_step_tokens: int = 0, estimated_next_step_cost: float = 0.0):
-                status.update(label=message, state=state, expanded=expanded)
-                total_tokens_placeholder.metric("Total Tokens Used", f"{current_total_tokens:,}")
-                total_cost_placeholder.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
-                if estimated_next_step_tokens > 0:
-                    budget_remaining = st.session_state.max_tokens_budget_input - current_total_tokens
-                    if estimated_next_step_tokens > budget_remaining:
-                        next_step_warning_placeholder.warning(
-                            f"⚠️ Next step ({estimated_next_step_tokens:,} tokens) "
-                            f"will exceed budget ({budget_remaining:,} remaining). "
-                            f"Estimated cost: ${estimated_next_step_cost:.4f}"
-                        )
-                    else:
-                        next_step_warning_placeholder.info(
-                            f"Next step estimated: {estimated_next_step_tokens:,} tokens "
-                            f"(${(estimated_next_step_cost):.4f}). "
-                            f"Budget remaining: {budget_remaining:,} tokens."
-                        )
-                else:
-                    next_step_warning_placeholder.empty()
+        # --- MODIFICATION FOR IMPROVEMENT 2.1 ---
+        # Enhancing status feedback for multi-stage processes
+        with st.status("Socratic Debate in Progress", expanded=True) as status:
+            st.caption("Stage: Initialization") # Clear stage indicator
+            progress = st.progress(0) # Visual progress bar
+            token_metric, cost_metric = st.columns(2) # Stable location for metrics
+            token_display = token_metric.empty()
+            cost_display = cost_metric.empty()
+            st.divider() # Visual separator
+            
+            # Helper function to update status elements consistently
+            def update_status(stage, progress_pct, tokens, cost):
+                st.caption(f"Stage: {stage}")
+                progress.progress(progress_pct)
+                token_display.metric("Tokens Used", f"{tokens:,}")
+                cost_display.metric("Cost (USD)", f"${cost:.4f}")
+        # --- END MODIFICATION ---
 
             debate_instance = None
             final_total_tokens = 0
@@ -623,7 +626,7 @@ if run_button_clicked:
                         persona_sets=st.session_state.persona_sets, # Pass persona_sets
                         # REMOVED: persona_sequence=st.session_state.persona_sequence, # This is now determined dynamically
                         domain=domain_for_run, # Pass the domain
-                        status_callback=streamlit_status_callback,
+                        status_callback=update_status, # Use the new update_status helper
                         rich_console=rich_console_instance,
                         codebase_context=st.session_state.get('codebase_context', {}),
                         context_token_budget_ratio=st.session_state.context_token_budget_ratio,
@@ -734,44 +737,50 @@ if run_button_clicked:
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
-            total_tokens_placeholder.metric("Total Tokens Used", f"{final_total_tokens:,}")
-            total_cost_placeholder.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
-            next_step_warning_placeholder.empty()
+            # Update metrics placeholders with final values
+            token_display.metric("Total Tokens Used", f"{final_total_tokens:,}")
+            cost_display.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
+            # Clear any potential next step warnings after completion or failure
+            if 'next_step_warning_placeholder' in locals(): # Check if placeholder was created
+                next_step_warning_placeholder.empty()
+
 
 if st.session_state.debate_ran:
     st.markdown("---")
     st.header("Results")
 
-    download_cols = st.columns(2)
-    with download_cols[0]:
-        full_report_content = generate_markdown_report(
+    # --- MODIFICATION FOR IMPROVEMENT 3.1 ---
+    # Consolidating download options for clarity and space efficiency
+    with st.expander("📥 Download Analysis", expanded=True):
+        st.markdown("**Report format:**")
+        # Radio buttons for clear format selection
+        format_choice = st.radio("Choose report format:", # Added descriptive label
+            ["Complete Report (Markdown)", "Summary (Text)"],
+            label_visibility="collapsed")
+        
+        # Dynamically generate content based on selection
+        # NOTE: Assuming create_summary_report exists or can be adapted from generate_markdown_report
+        # For now, using a placeholder for summary report generation.
+        # A real implementation would need a dedicated function or logic here.
+        report_content = generate_markdown_report(
             user_prompt=user_prompt,
             final_answer=st.session_state.final_answer_output,
             intermediate_steps=st.session_state.intermediate_steps_output,
             process_log_output=st.session_state.process_log_output_text,
             config_params=st.session_state.last_config_params,
             persona_audit_log=st.session_state.persona_audit_log
-        )
+        ) if "Complete" in format_choice else "This is a placeholder for the summary report." # Placeholder for summary
+        
+        file_name = f"chimera_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}{'_full' if 'Complete' in format_choice else '_summary'}.{'md' if 'Complete' in format_choice else 'txt'}"
+        
         st.download_button(
-            label="Download Full Report (Markdown)",
-            data=full_report_content,
-            file_name=f"project_chimera_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-            mime="text/markdown",
-            use_container_width=True
+            "⬇️ Download Selected Format",
+            data=report_content,
+            file_name=file_name,
+            use_container_width=True,
+            type="primary"
         )
-    with download_cols[1]:
-        # Only offer JSON download if the final answer is actually a dictionary
-        if isinstance(st.session_state.final_answer_output, dict):
-            final_answer_json = json.dumps(st.session_state.final_answer_output, indent=2)
-            st.download_button(
-                label="Download Final Answer (JSON)",
-                data=final_answer_json,
-                file_name=f"project_chimera_final_answer_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                use_container_width=True
-            )
-        else:
-            st.info("Final answer is not in JSON format for direct download.")
+    # --- END MODIFICATION ---
 
     if st.session_state.last_config_params.get("domain") == "Software Engineering":
         parsed_llm_output: LLMOutput

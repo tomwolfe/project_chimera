@@ -950,10 +950,10 @@ class SocraticDebate:
             # Convert it to a general output dict.
             self.final_answer = {
                 "COMMIT_MESSAGE": "Debate Failed - Final Answer Malformed",
-                "RATIONALE": f"The final answer was not a valid dictionary. Type received: {type(self.final_answer).__name__}",
+                "RATIONALE": f"The final answer was not a dictionary. Type: {type(self.final_answer).__name__}", # CORRECTED LINE
                 "CODE_CHANGES": [], # Empty list for non-code output
                 "general_output": str(self.final_answer), # Store the raw string here
-                "malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Expected dict, got {type(self.final_answer).__name__}", "raw_output": str(self.final_answer)[:500]}]
+                "malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}", "raw_output": str(self.final_answer)[:500]}]
             }
             self.logger.error(f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}")
 
@@ -991,4 +991,4 @@ class SocraticDebate:
             self.intermediate_steps["malformed_blocks"] = []
         # Ensure final_answer is a dictionary, especially if it was None or malformed
         if not isinstance(self.final_answer, dict):
-            self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__
+            self.final_answer = {"malformed_blocks": [{"type": "FINAL_ANSWER_MALFORMED", "message": f"Final answer was not a dictionary. Type: {type(self.final_answer).__name__}"}]}
