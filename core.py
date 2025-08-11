@@ -83,65 +83,28 @@ class SocraticDebate:
         self.tokens_used = 0
         self.model_name = model_name
         
-        # --- FIX START: Assign initial_prompt before it's used in token budget calculation ---
-        # The original code called _calculate_token_budgets() before assigning self.initial_prompt,
-        # leading to an AttributeError. This line is moved up to resolve that.
+        # Assign initial_prompt and other necessary attributes BEFORE they are used.
         self.initial_prompt = initial_prompt
-        # --- FIX END ---
-        
-        # --- FIX START ---
-        # Initialize _prev_context_ratio BEFORE calling _calculate_token_budgets
-        # This prevents an AttributeError in _calculate_token_budgets when it checks `if self._prev_context_ratio is not None:`
         self._prev_context_ratio = None
+        self.codebase_context = codebase_context
+
+        # --- FIX START ---
+        # Initialize the LLM provider *before* calling methods that depend on it.
+        # The original code called _calculate_token_budgets() before initializing self.llm_provider,
+        # leading to an AttributeError when count_tokens() was accessed.
+        self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
         # --- FIX END ---
 
-        # --- NEW FIX START ---
-        # Assign codebase_context to self.codebase_context *before* calling _calculate_token_budgets
-        # This ensures self.codebase_context is available when _calculate_token_budgets needs it.
-        self.codebase_context = codebase_context
-        # --- NEW FIX END ---
-
-        # Call the method that was causing the AttributeError.
+        # Now that llm_provider is initialized, we can safely calculate token budgets.
         self._calculate_token_budgets()
 
         self.context_analyzer = context_analyzer # Use the provided analyzer instance
-        # The original lines below are now redundant because self.codebase_context is already set correctly.
-        # self.codebase_context = None
-        # if codebase_context and self.context_analyzer:
-        #     self.codebase_context = codebase_context
-        # The logic for processing codebase_context and computing embeddings is now handled within _calculate_token_budgets
-        # or when the context_analyzer is used later.
         
         self.all_personas = all_personas or {}
         self.persona_sets = persona_sets or {}
         self.persona_sequence = persona_sequence or []
         self.domain = domain
         self.persona_router = PersonaRouter(self.all_personas)
-        
-        self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name)
-        
-        # The following line was moved up to be before _calculate_token_budgets
-        # self.initial_prompt = initial_prompt
-        
-        try:
-            # Count tokens for the initial prompt. This is separate from phase budget calculation.
-            # The _calculate_token_budgets method already estimates initial input tokens.
-            # We can rely on that for the total initial input.
-            # self.initial_input_tokens = self.llm_provider.count_tokens(self.initial_prompt, system_prompt=None)
-            pass # Rely on _calculate_token_budgets for initial_input_tokens
-        except Exception as e:
-            logger.error(f"Failed to count tokens for initial prompt: {e}. Setting initial_input_tokens to 0.")
-            self.initial_input_tokens = 0
-        
-        self.tokens_used_per_phase = {"context": 0, "debate": 0, "synthesis": 0}
-        self.tokens_used_per_step = {}
-
-        self.intermediate_steps = {}
-        self.final_answer = None
-        self.process_log = []
-        
-        self.status_callback = status_callback
-        self.rich_console = rich_console or Console()
         
         # Initialize phase_budgets dictionary if it doesn't exist
         if not hasattr(self, 'phase_budgets'):
@@ -164,8 +127,6 @@ class SocraticDebate:
         """
         Calculates token budgets for different phases of the debate using
         max_total_tokens_budget and context_token_budget_ratio.
-        This method was missing the assignment of self.codebase_context before its call,
-        leading to the AttributeError.
         """
         # Ensure context_token_budget_ratio is within reasonable bounds
         context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio)) # Clamp between 5% and 50%
@@ -178,18 +139,15 @@ class SocraticDebate:
         
         # Estimate tokens for initial input (context + prompt)
         context_str = ""
-        # --- IMPORTANT: self.codebase_context is now guaranteed to be set here ---
         if self.codebase_context:
             # Simple concatenation of all context files for estimation.
             # A more sophisticated approach might involve summarizing or embedding.
             context_str = "\n".join(f"{fname}:\n{content}" for fname, content in self.codebase_context.items())
         
-        # --- IMPORTANT: self.initial_prompt is now guaranteed to be set here ---
         prompt_for_estimation = self.initial_prompt if self.initial_prompt else ""
 
         try:
             # Use the LLM provider's count_tokens method to estimate tokens for the combined input.
-            # This assumes llm_provider.count_tokens can handle combined context and prompt.
             combined_input_text = f"{context_str}\n\n{prompt_for_estimation}" if context_str else prompt_for_estimation
             self.initial_input_tokens = self.llm_provider.count_tokens(combined_input_text)
 
@@ -202,7 +160,6 @@ class SocraticDebate:
             self.phase_budgets["synthesis"] = max(400, int(available_tokens_for_phases * synthesis_ratio))
 
             # Sanity check: Ensure phase budgets don't exceed total available tokens
-            # This can happen if minimums are too high or ratios are miscalculated.
             total_phase_budget = sum(self.phase_budgets.values())
             if total_phase_budget > available_tokens_for_phases:
                 # Simple scaling to fit within available tokens if necessary
