@@ -203,7 +203,7 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.persona_manager = pm # Store the cached instance
     st.session_state.all_personas = pm.all_personas
     st.session_state.persona_sets = pm.persona_sets
-    st.session_state.persona_sequence = pm.persona_sequence
+    # REMOVED: st.session_state.persona_sequence = pm.persona_sequence # This is now determined dynamically
     st.session_state.available_domains = pm.available_domains
     st.session_state.selected_persona_set = pm.default_persona_set_name
 
@@ -358,6 +358,7 @@ with col1:
     if st.session_state.selected_persona_set:
         current_domain_personas = st.session_state.persona_manager.all_personas.get(st.session_state.selected_persona_set, {})
         if not current_domain_personas:
+            # Use the persona manager to get the sequence for the selected framework
             current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
             current_domain_personas = {name: st.session_state.persona_manager.all_personas[name] for name in current_domain_persona_names if name in st.session_state.persona_manager.all_personas}
         
@@ -370,6 +371,7 @@ with col1:
     # --- MODIFICATION FOR IMPROVEMENT 4.1 ---
     if st.button("Save Current Framework") and new_framework_name_input:
         current_framework_name = st.session_state.selected_persona_set
+        # Get the currently active personas for the selected framework
         current_active_personas_data = {
             p_name: st.session_state.persona_manager.all_personas[p_name]
             for p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
@@ -381,7 +383,7 @@ with col1:
     # --- END MODIFICATION ---
     
     st.subheader("Load Framework")
-    all_available_frameworks_for_load = [""] + st.session_state.persona_manager.available_domains
+    all_available_frameworks_for_load = [""] + st.session_state.available_domains
     unique_framework_options_for_load = sorted(list(set(all_available_frameworks_for_load)))
     
     current_selection_for_load = ""
@@ -595,6 +597,7 @@ if run_button_clicked:
             final_total_cost = 0.0
             try:
                 domain_for_run = st.session_state.selected_persona_set
+                # Get persona sequence using the persona manager, which now uses persona_sets
                 current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
                 personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
 
@@ -617,9 +620,9 @@ if run_button_clicked:
                         max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                         model_name=st.session_state.selected_model_selectbox,
                         all_personas=st.session_state.all_personas,
-                        persona_sets=st.session_state.persona_sets,
-                        persona_sequence=st.session_state.persona_sequence,
-                        domain=domain_for_run,
+                        persona_sets=st.session_state.persona_sets, # Pass persona_sets
+                        # REMOVED: persona_sequence=st.session_state.persona_sequence, # This is now determined dynamically
+                        domain=domain_for_run, # Pass the domain
                         status_callback=streamlit_status_callback,
                         rich_console=rich_console_instance,
                         codebase_context=st.session_state.get('codebase_context', {}),
@@ -644,7 +647,7 @@ if run_button_clicked:
                     final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             
             except TokenBudgetExceededError as e:
-                # Provide user-friendly feedback for token budget issues
+                # ... (existing error handling for TokenBudgetExceededError)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -668,6 +671,7 @@ if run_button_clicked:
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
             except (LLMResponseValidationError, SchemaValidationError) as e:
+                # ... (existing error handling for validation errors)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -688,6 +692,7 @@ if run_button_clicked:
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             except ChimeraError as ce:
+                # ... (existing error handling for ChimeraError)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:
@@ -701,13 +706,14 @@ if run_button_clicked:
                 
                 st.session_state.final_answer_output = {
                     "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
-                    "RATIONALE": f"A Chimera-specific error occurred: {str(ce)}",
+                    "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(ce)}",
                     "CODE_CHANGES": [],
                     "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
                 }
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             except Exception as e:
+                # ... (existing error handling for generic Exception)
                 if 'rich_output_buffer' in locals():
                     st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 else:

@@ -20,6 +20,7 @@ from typing import List, Dict, Tuple, Any, Callable, Optional, Type
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError # Import APIError
+import traceback # Needed for error handling in core.py
 from rich.console import Console
 from pydantic import ValidationError
 from functools import lru_cache # Import lru_cache for caching
@@ -38,7 +39,6 @@ from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeC
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Import for self-analysis persona sequence
-import traceback # Needed for error handling in core.py
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class SocraticDebate:
                  settings: Optional[ChimeraSettings] = None,
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
                  persona_sets: Optional[Dict[str, List[str]]] = None,
-                 persona_sequence: Optional[List[str]] = None,
+                 # REMOVED persona_sequence from arguments
                  domain: Optional[str] = None,
                  max_total_tokens_budget: int = 10000,
                  model_name: str = "gemini-2.5-flash-lite",
@@ -68,7 +68,6 @@ class SocraticDebate:
             settings: Optional custom settings; uses defaults if not provided
             all_personas: Optional custom personas; uses defaults if not provided
             persona_sets: Optional custom persona groupings; uses defaults if not provided
-            persona_sequence: Optional default persona execution order; uses defaults if not provided
             domain: The selected reasoning domain/framework.
             max_total_tokens_budget: Maximum token budget for the entire debate process
             model_name: Name of the LLM model to use (user's explicit choice)
@@ -102,12 +101,12 @@ class SocraticDebate:
         self.context_analyzer = context_analyzer # Use the provided analyzer instance
         
         self.all_personas = all_personas or {}
-        self.persona_sets = persona_sets or {}
-        self.persona_sequence = persona_sequence or []
+        self.persona_sets = persona_sets or {} # Store persona_sets
+        # REMOVED: self.persona_sequence = persona_sequence or []
         self.domain = domain
         
-        # Initialize PersonaRouter with all loaded personas
-        self.persona_router = PersonaRouter(self.all_personas)
+        # Initialize PersonaRouter with all loaded personas AND persona_sets
+        self.persona_router = PersonaRouter(self.all_personas, self.persona_sets) # Pass persona_sets here
         
         # If codebase_context was provided, compute embeddings now if context_analyzer is available.
         if self.codebase_context and self.context_analyzer:
@@ -226,6 +225,7 @@ class SocraticDebate:
 
             # 2. Perform Context Analysis and Determine Persona Sequence
             context_analysis_results = self._perform_context_analysis()
+            # Pass domain to determine_persona_sequence
             persona_sequence = self._determine_persona_sequence(context_analysis_results)
 
             # 3. Process Context Persona Turn (if applicable)
@@ -252,11 +252,7 @@ class SocraticDebate:
                     "COMMIT_MESSAGE": "Synthesis Failed",
                     "RATIONALE": f"The synthesis step failed to produce a valid output structure. Received type: {type(final_answer).__name__}.",
                     "CODE_CHANGES": [],
-                    "malformed_blocks": [{
-                        "type": "SYNTHESIS_OUTPUT_ERROR",
-                        "message": "Synthesis result was not a dictionary.",
-                        "details": {"received_type": str(type(final_answer))}
-                    }]
+                    "malformed_blocks": [{"type": "SYNTHESIS_OUTPUT_ERROR", "message": "Synthesis result was not a dictionary.", "details": {"received_type": str(type(final_answer))}}]
                 }
             # Ensure malformed_blocks is always present, even if empty
             if "malformed_blocks" not in final_answer:
@@ -336,7 +332,12 @@ class SocraticDebate:
         if self.context_analyzer and self.codebase_context:
             try:
                 # Determine initial persona sequence for relevance scoring
-                initial_sequence_for_relevance = self.persona_router.determine_persona_sequence(self.initial_prompt)
+                # Pass domain to determine_persona_sequence for context analysis
+                initial_sequence_for_relevance = self.persona_router.determine_persona_sequence(
+                    self.initial_prompt,
+                    domain=self.domain, # Pass domain here
+                    intermediate_results=self.intermediate_steps
+                )
                 
                 relevant_files_info = self.context_analyzer.find_relevant_files(
                     self.initial_prompt,
@@ -356,51 +357,13 @@ class SocraticDebate:
 
     def _determine_persona_sequence(self, context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
         """Determines the persona sequence based on prompt, context, and self-analysis detection."""
-        if self.persona_router.is_self_analysis_prompt(self.initial_prompt):
-            logger.info("Detected self-analysis prompt. Using standardized specialized persona sequence.")
-            base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE
-        else:
-            # Accessing protected methods for domain analysis and persona selection
-            domains = self.persona_router._analyze_prompt_domain(self.initial_prompt)
-            base_sequence = self.persona_router._get_domain_specific_personas(domains)
-            
-            # Reorder core personas and domain experts
-            core_order = ["Visionary_Generator", "Skeptical_Generator"]
-            domain_experts = [p for p in base_sequence if p not in core_order and p != "Impartial_Arbitrator"]
-            
-            base_sequence = core_order + domain_experts
-            if "Impartial_Arbitrator" in base_sequence:
-                base_sequence.append("Impartial_Arbitrator")
-        
-        # Apply dynamic adjustments based on context analysis and intermediate results
-        adjusted_sequence = self.persona_router._apply_dynamic_adjustment(
-            base_sequence,
-            self.intermediate_steps,
-            self.initial_prompt.lower()
+        # Call the PersonaRouter's method, passing the domain
+        unique_sequence = self.persona_router.determine_persona_sequence(
+            prompt=self.initial_prompt,
+            domain=self.domain, # Pass the domain here
+            intermediate_results=self.intermediate_steps,
+            context_analysis_results=context_analysis_results
         )
-        
-        # Further adjustments based on context analysis results (e.g., presence of test files)
-        if context_analysis_results and context_analysis_results.get("relevant_files"):
-            relevant_files = context_analysis_results["relevant_files"]
-            test_file_count = sum(1 for file_path, _ in relevant_files if file_path.startswith('tests/'))
-            code_file_count = sum(1 for file_path, _ in relevant_files if file_path.endswith(('.py', '.js', '.ts', '.java', '.go')))
-            
-            if test_file_count > 3 and "Test_Engineer" not in adjusted_sequence:
-                self.persona_router._insert_persona_before_arbitrator(adjusted_sequence, "Test_Engineer")
-            
-            if code_file_count > 5:
-                if "Code_Architect" not in adjusted_sequence:
-                    self.persona_router._insert_persona_before_arbitrator(adjusted_sequence, "Code_Architect")
-                if "Security_Auditor" not in adjusted_sequence:
-                    self.persona_router._insert_persona_before_arbitrator(adjusted_sequence, "Security_Auditor")
-
-        # Ensure uniqueness and order
-        seen = set()
-        unique_sequence = []
-        for persona in adjusted_sequence:
-            if persona not in seen:
-                unique_sequence.append(persona)
-                seen.add(persona)
         
         self.intermediate_steps["Persona_Sequence_Order"] = unique_sequence
         logger.info(f"Final persona sequence determined: {unique_sequence}")
@@ -412,6 +375,7 @@ class SocraticDebate:
         context_processing_persona_config = None
         
         # Find a persona suitable for initial context processing
+        # This logic might need adjustment if persona names change or are more dynamic
         for p_name in persona_sequence:
             if "Generalist_Assistant" in p_name or "Context_Aware_Assistant" in p_name:
                 context_processing_persona_name = p_name
