@@ -38,6 +38,7 @@ from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeC
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Import for self-analysis persona sequence
+import traceback # Needed for error handling in core.py
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -470,18 +471,19 @@ class SocraticDebate:
         return all_debate_turns
 
     def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Performs the synthesis turn using the designated synthesis persona."""
+        """Performs the synthesis turn with retry logic for JSON validation."""
         synthesis_persona_name = None
         synthesis_persona_config = None
         
-        # Determine the synthesis persona (usually the last one in sequence if designated)
-        if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "Constructive_Critic"]: # Add other synthesis personas if needed
+        # Determine the synthesis persona
+        # Check if the last persona in the sequence is a designated synthesizer
+        if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "Constructive_Critic"]:
             synthesis_persona_name = persona_sequence[-1]
         
         if synthesis_persona_name and synthesis_persona_name in self.all_personas:
             synthesis_persona_config = self.all_personas[synthesis_persona_name]
             
-            # Construct the synthesis prompt: combine initial prompt and all debate turns
+            # Construct the synthesis prompt
             synthesis_prompt = f"Initial Prompt: {self.initial_prompt}\n\n"
             synthesis_prompt += "Debate Turns:\n"
             for turn in debate_persona_results:
@@ -493,27 +495,138 @@ class SocraticDebate:
                     output_str = str(output_str)
                 synthesis_prompt += f"{output_str}\n\n"
             
-            try:
-                logger.info(f"Performing final synthesis with persona: {synthesis_persona_name}")
-                turn_results = self._execute_llm_turn(
-                    persona_name=synthesis_persona_name,
-                    persona_config=synthesis_persona_config,
-                    prompt=synthesis_prompt,
-                    phase="synthesis"
-                )
-                return turn_results
-            except TokenBudgetExceededError as e:
-                logger.error(f"Token budget exceeded during final synthesis: {e}")
-                raise e
-            except Exception as e:
-                logger.error(f"Error during final synthesis for {synthesis_persona_name}: {e}")
-                self.intermediate_steps[f"{synthesis_persona_name}_Error"] = str(e)
-                error_tokens = self.llm_provider.count_tokens(f"Error processing {synthesis_persona_name}: {str(e)}") + 50
-                self.track_token_usage("synthesis", error_tokens)
-                self.check_budget("synthesis", 0, f"Error handling {synthesis_persona_name} synthesis")
+            max_retries = 2  # Number of retries for synthesis output validation
+            last_turn_results = None # Store the result of the last attempt
+
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Performing final synthesis with persona: {synthesis_persona_name} (Attempt {attempt + 1}/{max_retries + 1})")
+                    current_turn_results = self._execute_llm_turn(
+                        persona_name=synthesis_persona_name,
+                        persona_config=synthesis_persona_config,
+                        prompt=synthesis_prompt,
+                        phase="synthesis"
+                    )
+                    last_turn_results = current_turn_results # Store result for potential fallback
+
+                    # --- Enhanced Validation Logic ---
+                    is_failure = False
+                    failure_reason = ""
+
+                    if not isinstance(current_turn_results, dict):
+                        is_failure = True
+                        failure_reason = "Output is not a dictionary."
+                    else:
+                        # Check for malformed_blocks indicating JSON adherence issues
+                        malformed_blocks = current_turn_results.get("malformed_blocks", [])
+                        if malformed_blocks:
+                            # Check if any malformed block indicates a JSON adherence problem
+                            if any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE", "LLM_FAILED_JSON_ADHERENCE", "SYNTHESIS_EXECUTION_ERROR"] for block in malformed_blocks):
+                                is_failure = True
+                                failure_reason = "Output contains malformed blocks indicating JSON adherence failure."
+                        # Also check for the specific fallback error JSON structure
+                        elif current_turn_results.get("COMMIT_MESSAGE") == "LLM_GENERATION_ERROR" and \
+                             any(block.get("type") == "LLM_FAILED_JSON_ADHERENCE" for block in malformed_blocks):
+                            is_failure = True
+                            failure_reason = "LLM produced the fallback error JSON for JSON adherence."
+                        # If it's a valid structure but missing key fields (e.g., COMMIT_MESSAGE), it's also a failure
+                        elif not ("COMMIT_MESSAGE" in current_turn_results and "RATIONALE" in current_turn_results):
+                            is_failure = True
+                            failure_reason = "Output dictionary is missing required keys (COMMIT_MESSAGE, RATIONALE)."
+
+                    if not is_failure:
+                        logger.info(f"Synthesis output validated successfully on attempt {attempt + 1}.")
+                        return current_turn_results # Success!
+                    else:
+                        # Output is a failure, proceed to retry if possible
+                        if attempt < max_retries:
+                            logger.warning(f"Synthesis output validation failed on attempt {attempt + 1} ({failure_reason}). Retrying...")
+                            # Generate a correction prompt based on the failure
+                            correction_prompt_content = f"Previous output was invalid. Please re-generate the JSON output adhering strictly to the schema. The failure reason was: {failure_reason}. The previous output was:\n\n{json.dumps(current_turn_results, indent=2)}"
+                            
+                            # Re-construct the synthesis prompt to include the correction instruction
+                            synthesis_prompt = f"Initial Prompt: {self.initial_prompt}\n\n"
+                            synthesis_prompt += "Debate Turns:\n"
+                            for turn_data in debate_persona_results:
+                                synthesis_prompt += f"--- Persona: {turn_data['persona']} ---\n"
+                                output_str = turn_data['output']
+                                if isinstance(output_str, dict):
+                                    output_str = json.dumps(output_str, indent=2)
+                                elif not isinstance(output_str, str):
+                                    output_str = str(output_str)
+                                synthesis_prompt += f"{output_str}\n\n"
+                            synthesis_prompt += f"\n\n{correction_prompt_content}" # Append correction instruction
+                            
+                            # Update the last_turn_results to reflect the error for this attempt, so it can be logged/displayed if needed
+                            if isinstance(current_turn_results, dict):
+                                current_turn_results["RATIONALE"] = f"Synthesis output invalid on attempt {attempt + 1}. Retrying..."
+                                # Ensure malformed_blocks is a list and add retry info
+                                if "malformed_blocks" not in current_turn_results or not isinstance(current_turn_results["malformed_blocks"], list):
+                                    current_turn_results["malformed_blocks"] = []
+                                current_turn_results["malformed_blocks"].append({"type": "RETRYING_SYNTHESIS", "message": f"Output validation failed: {failure_reason}. Retrying..."})
+                            else: # Handle cases where _execute_llm_turn might return non-dict on error
+                                current_turn_results = {
+                                    "COMMIT_MESSAGE": "Synthesis Error",
+                                    "RATIONALE": f"Synthesis output invalid on attempt {attempt + 1}. Retrying...",
+                                    "CODE_CHANGES": [],
+                                    "malformed_blocks": [{"type": "RETRYING_SYNTHESIS", "message": f"Output validation failed: {failure_reason}. Retrying..."}]
+                                }
+                            continue # Proceed to the next attempt
+                        else:
+                            logger.error(f"Synthesis output validation failed after {max_retries} retries.")
+                            # If all retries fail, return the last recorded result
+                            if not last_turn_results: # If _execute_llm_turn itself failed on the last attempt
+                                last_turn_results = {
+                                    "COMMIT_MESSAGE": "Synthesis Failed",
+                                    "RATIONALE": f"Failed to generate valid synthesis output after multiple attempts.",
+                                    "CODE_CHANGES": [],
+                                    "malformed_blocks": [{"type": "SYNTHESIS_RETRY_FAILURE", "message": "All synthesis attempts failed validation."}]
+                                }
+                            return last_turn_results # Return the last result, which will contain error information
+
+                except Exception as e: # Catch errors from _execute_llm_turn itself (e.g., API errors)
+                    logger.error(f"Error during synthesis turn execution: {e}")
+                    if attempt == max_retries:
+                        logger.error(f"Final synthesis attempt failed due to execution error: {e}")
+                        # If it's the last attempt and execution fails, return a specific error
+                        last_turn_results = {
+                            "COMMIT_MESSAGE": "Synthesis Execution Error",
+                            "RATIONALE": f"An error occurred during the final synthesis turn: {str(e)}",
+                            "CODE_CHANGES": [],
+                            "malformed_blocks": [{"type": "SYNTHESIS_EXECUTION_ERROR", "message": str(e)}]
+                        }
+                        return last_turn_results
+                    else:
+                        logger.warning(f"Execution error on synthesis attempt {attempt + 1}, retrying...")
+                        # Update last_turn_results to reflect the execution error for this attempt
+                        last_turn_results = {
+                            "COMMIT_MESSAGE": "Synthesis Execution Error",
+                            "RATIONALE": f"An error occurred during synthesis turn attempt {attempt + 1}: {str(e)}. Retrying...",
+                            "CODE_CHANGES": [],
+                            "malformed_blocks": [{"type": "SYNTHESIS_EXECUTION_ERROR", "message": str(e)}]
+                        }
+                        continue # Retry if not the last attempt
+            
+            # If the loop finishes without returning, it means all retries failed or an error occurred.
+            # Return the last recorded result, which should contain error information.
+            if last_turn_results is None: # Fallback if _execute_llm_turn never ran or failed before storing result
+                 last_turn_results = {
+                    "COMMIT_MESSAGE": "Synthesis Failed",
+                    "RATIONALE": f"Failed to generate valid synthesis output after multiple attempts.",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "SYNTHESIS_FINAL_FAILURE", "message": "An unhandled failure occurred during synthesis."}]
+                }
+            return last_turn_results
+
         else:
             logger.warning("No synthesis persona found or sequence is empty. Final answer may be incomplete.")
-        return None # Return None if no explicit synthesis persona was found or executed.
+            # Return a default error if no synthesis persona was identified
+            return {
+                "COMMIT_MESSAGE": "Synthesis Skipped",
+                "RATIONALE": "No synthesis persona was identified in the sequence.",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "NO_SYNTHESIS_PERSONA", "message": "Synthesis persona not found in sequence."}]
+            }
 
     # --- Persona to Schema Mapping ---
     PERSONA_OUTPUT_SCHEMAS = {
