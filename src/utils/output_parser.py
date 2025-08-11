@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, validator, model_validator, ValidationErr
 
 # --- MODIFICATION FOR IMPROVEMENT 4.3 ---
 # Import models from src.models
-from src.models import CodeChange, LLMOutput, ContextAnalysisOutput
+from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput # Ensure CritiqueOutput is imported
 # --- END MODIFICATION ---
 
 logger = logging.getLogger(__name__)
@@ -262,19 +262,18 @@ class LLMOutputParser:
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "") # Use extracted JSON for context
             })
             
-            # Construct a fallback output dictionary
-            fallback_output = {
-                "COMMIT_MESSAGE": "Schema validation failed",
-                "RATIONALE": f"Original output: {extracted_json_str[:500]}...\nValidation Error: {str(validation_e)}",
-                "CODE_CHANGES": [],
+            # Construct a fallback output dictionary based on the expected schema type
+            fallback_output: Dict[str, Any] = {
+                "error_type": "SCHEMA_VALIDATION_FAILED",
+                "error_message": f"Schema validation failed for {schema_model.__name__}: {str(validation_e)}",
+                "raw_llm_output_snippet": extracted_json_str[:500],
                 "malformed_blocks": malformed_blocks_list
             }
-            
-            # If the schema is LLMOutput, try to salvage parts of the response
+
             if schema_model == LLMOutput and isinstance(data_to_validate, dict):
-                fallback_output["COMMIT_MESSAGE"] = data_to_validate.get("COMMIT_MESSAGE", fallback_output["COMMIT_MESSAGE"])
-                if "RATIONALE" in data_to_validate:
-                    fallback_output["RATIONALE"] = data_to_validate["RATIONALE"]
+                # Specific salvage logic for LLMOutput
+                fallback_output["COMMIT_MESSAGE"] = data_to_validate.get("COMMIT_MESSAGE", "Schema validation failed")
+                fallback_output["RATIONALE"] = data_to_validate.get("RATIONALE", f"Original output: {extracted_json_str[:500]}...\nValidation Error: {str(validation_e)}")
                 
                 original_code_changes = data_to_validate.get("CODE_CHANGES")
                 processed_code_changes = []
@@ -310,8 +309,30 @@ class LLMOutputParser:
                         "type": "MALFORMED_CODE_CHANGES_FIELD", "message": "CODE_CHANGES field was not a list or was missing.", "raw_value": str(original_code_changes)
                     })
                     fallback_output["CODE_CHANGES"] = []
-            
+            elif schema_model == CritiqueOutput and isinstance(data_to_validate, dict):
+                fallback_output["CRITIQUE_SUMMARY"] = data_to_validate.get("CRITIQUE_SUMMARY", "Schema validation failed for critique.")
+                fallback_output["CRITIQUE_POINTS"] = data_to_validate.get("CRITIQUE_POINTS", [])
+                fallback_output["SUGGESTIONS"] = data_to_validate.get("SUGGESTIONS", [])
+            elif schema_model == ContextAnalysisOutput and isinstance(data_to_validate, dict):
+                fallback_output["key_modules"] = data_to_validate.get("key_modules", [])
+                fallback_output["security_concerns"] = data_to_validate.get("security_concerns", [])
+                fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", [])
+                fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", [])
+
             return fallback_output
+        except Exception as general_e:
+            self.logger.error(f"An unexpected error occurred during schema validation: {general_e}")
+            malformed_blocks_list.append({
+                "type": "UNEXPECTED_VALIDATION_ERROR",
+                "message": str(general_e),
+                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+            })
+            return {
+                "COMMIT_MESSAGE": "Unexpected validation error",
+                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {extracted_json_str[:500]}...",
+                "CODE_CHANGES": [],
+                "malformed_blocks": malformed_blocks_list
+            }
         except Exception as general_e:
             self.logger.error(f"An unexpected error occurred during schema validation: {general_e}")
             malformed_blocks_list.append({

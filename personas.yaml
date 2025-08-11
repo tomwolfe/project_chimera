@@ -217,5 +217,5 @@ persona_sets:
     - DevOps_Engineer
     - Test_Engineer
     - Constructive_Critic
-    - Impartial_Arbitrator
-    - Devils_Advocate
+    - Devils_Advocate # Moved up
+    - Impartial_Arbitrator # Moved to the last position

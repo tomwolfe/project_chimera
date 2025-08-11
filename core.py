@@ -34,7 +34,7 @@ from src.persona.routing import PersonaRouter
 # Import LLMOutputParser for parsing LLM responses
 from src.utils.output_parser import LLMOutputParser
 # Import models and exceptions
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Import for self-analysis persona sequence
@@ -421,6 +421,7 @@ class SocraticDebate:
 
         # Determine the personas to run in the debate loop (exclude synthesis persona if it's the last one)
         synthesis_persona_name = None
+        # Check if the last persona in the sequence is a designated synthesizer
         if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "Constructive_Critic"]: # Add other synthesis personas if needed
             synthesis_persona_name = persona_sequence[-1]
         
@@ -476,8 +477,7 @@ class SocraticDebate:
         # Determine the synthesis persona (usually the last one in sequence if designated)
         if persona_sequence and persona_sequence[-1] in ["Impartial_Arbitrator", "Constructive_Critic"]: # Add other synthesis personas if needed
             synthesis_persona_name = persona_sequence[-1]
-        # Removed the problematic elif block that incorrectly assigned the last persona as synthesizer.
-
+        
         if synthesis_persona_name and synthesis_persona_name in self.all_personas:
             synthesis_persona_config = self.all_personas[synthesis_persona_name]
             
@@ -515,6 +515,19 @@ class SocraticDebate:
             logger.warning("No synthesis persona found or sequence is empty. Final answer may be incomplete.")
         return None # Return None if no explicit synthesis persona was found or executed.
 
+    # --- Persona to Schema Mapping ---
+    PERSONA_OUTPUT_SCHEMAS = {
+        "Impartial_Arbitrator": LLMOutput,
+        "Context_Aware_Assistant": ContextAnalysisOutput,
+        "Code_Architect": CritiqueOutput,
+        "Security_Auditor": CritiqueOutput,
+        "DevOps_Engineer": CritiqueOutput,
+        "Test_Engineer": CritiqueOutput,
+        "Devils_Advocate": CritiqueOutput,
+        # Personas not listed here will have their raw text output stored directly.
+        # This includes Visionary_Generator, Skeptical_Generator, Constructive_Critic, Generalist_Assistant
+    }
+
     def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Optional[Dict[str, Any]]:
         """Executes a single LLM turn for a given persona, handling generation, token tracking, and parsing."""
         
@@ -548,17 +561,28 @@ class SocraticDebate:
 
         # Parse and Validate Output
         parsed_output_data = {}
-        try:
-            parsed_output_data = LLMOutputParser().parse_and_validate(response_text, LLMOutput)
-        except Exception as e:
-            logger.error(f"Failed to parse/validate output for {persona_name} against LLMOutput schema: {e}")
-            parsed_output_data = {
-                "COMMIT_MESSAGE": f"Parsing/Validation Error for {persona_name}",
-                "RATIONALE": f"Error processing output from {persona_name}: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "PARSING_OR_VALIDATION_ERROR", "message": str(e), "raw_output": response_text[:500]}]
-            }
-            self.intermediate_steps[f"{persona_name}_Error"] = str(e)
+        expected_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name)
+
+        if expected_schema:
+            try:
+                parsed_output_data = LLMOutputParser().parse_and_validate(response_text, expected_schema)
+            except Exception as e:
+                logger.error(f"Failed to parse/validate output for {persona_name} against {expected_schema.__name__} schema: {e}")
+                # Generic fallback for structured output failure
+                malformed_blocks_for_fallback = [{"type": "PARSING_OR_VALIDATION_ERROR", "message": str(e), "raw_output": response_text[:500]}]
+                
+                # Attempt to create a basic dictionary representation of the error
+                parsed_output_data = {
+                    "error_type": "Parsing/Validation Error",
+                    "error_message": f"Failed to parse/validate output for {persona_name}. Error: {str(e)}",
+                    "raw_llm_output_snippet": response_text[:500],
+                    "malformed_blocks": malformed_blocks_for_fallback
+                }
+                self.intermediate_steps[f"{persona_name}_Error"] = str(e)
+        else:
+            # For personas that produce free-form text/markdown, store raw text
+            parsed_output_data = response_text
+            logger.debug(f"Persona {persona_name} does not have a specific JSON schema. Storing raw text output.")
         
         turn_results = {
             "persona": persona_name,
