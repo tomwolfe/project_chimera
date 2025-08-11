@@ -3,11 +3,28 @@
 import logging
 from typing import Optional, Dict, Any
 from .base import Tokenizer
+import hashlib
+import re
 
 logger = logging.getLogger(__name__)
 
 class GeminiTokenizer(Tokenizer):
     """Gemini-specific tokenizer that uses the google-genai library to count tokens."""
+    
+    # Map model names to their max output tokens.
+    # Values are based on common Gemini model specifications and the provided code's usage.
+    # Note: Official Gemini API docs might not always list exact max output tokens for every variant.
+    # These are generally accepted values.
+    MODEL_MAX_OUTPUT_TOKENS = {
+
+        # Gemini 2.5 models (explicitly listed as per app's selectbox)
+        "gemini-2.5-flash-lite": 8192,
+        "gemini-2.5-flash": 8192,
+        "gemini-2.5-pro": 32768,
+        
+        # Default fallback for any other models or versions
+        "default": 8192
+    }
     
     def __init__(self, model_name: str = "gemini-2.5-flash-lite", genai_client: Any = None):
         """Initializes the GeminiTokenizer.
@@ -18,16 +35,36 @@ class GeminiTokenizer(Tokenizer):
         """
         if genai_client is None:
             raise ValueError("genai_client must be provided to GeminiTokenizer for token counting.")
+        
         self.genai_client = genai_client
         self.model_name = model_name
-        self._cache = {} # Initialize cache for token counts
+        self._cache = {}  # Initialize cache for token counts
 
+    @property
+    def max_output_tokens(self) -> int:
+        """Returns the maximum number of output tokens for the model."""
+        # Try to find the exact model name in the map
+        if self.model_name in self.MODEL_MAX_OUTPUT_TOKENS:
+            return self.MODEL_MAX_OUTPUT_TOKENS[self.model_name]
+        
+        # Attempt to match with common patterns if exact name not found
+        # This is a heuristic and might need adjustment if model naming conventions change.
+        for model_pattern, token_limit in self.MODEL_MAX_OUTPUT_TOKENS.items():
+            # Simple check for common prefixes or substrings
+            if model_pattern in self.model_name:
+                logger.debug(f"Matched model '{self.model_name}' with pattern '{model_pattern}', using limit {token_limit}")
+                return token_limit
+        
+        # Return default value if no match found
+        logger.warning(f"Unknown model '{self.model_name}', using default max output tokens (8192)")
+        return self.MODEL_MAX_OUTPUT_TOKENS["default"]
+    
     def count_tokens(self, text: str) -> int:
-        """Counts tokens in the given text using the Gemini API, with caching.
-        """
+        """Counts tokens in the given text using the Gemini API, with caching."""
         if not text:
             return 0
-        
+            
+        # Use a hash of the text for cache key
         text_hash = hash(text)
         
         if text_hash in self._cache:
@@ -35,30 +72,33 @@ class GeminiTokenizer(Tokenizer):
             return self._cache[text_hash]
         
         try:
+            # Ensure text is properly encoded for the API call
             try:
                 text_encoded = text.encode('utf-8')
-                text_for_api = text_encoded.decode('utf-8', errors='replace') 
+                text_for_api = text_encoded.decode('utf-8', errors='replace')
             except UnicodeEncodeError:
+                # Fallback if encoding fails, replace problematic characters
                 text_for_api = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
                 logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
             
-            response = self.genai_client.models.count_tokens(model=self.model_name, contents=text_for_api)
+            # Use the count_tokens API to get token count
+            response = self.genai_client.models.count_tokens(
+                model=self.model_name,
+                contents=text_for_api
+            )
             tokens = response.total_tokens
             
-            # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
-            # Store in cache and implement bounded cache (LRU-like)
+            # Cache the result
             self._cache[text_hash] = tokens
-            if len(self._cache) > 1000: # Limit cache size
-                # Keep the most recent 500 entries
-                self._cache = dict(list(self._cache.items())[-500:])
-            # --- END MODIFICATION ---
-            
             logger.debug(f"Token count for text (hash: {text_hash}) is {tokens}. Stored in cache.")
             return tokens
             
         except Exception as e:
-            logger.error(f"Gemini token counting failed for model '{self.model_name}': {e}")
-            raise
+            logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
+            # Fallback to approximate count if API fails, to prevent crashing the budget calculation
+            approx_tokens = len(text.split()) # Simple word count as fallback
+            logger.warning(f"Falling back to approximate token count ({approx_tokens}) due to error.")
+            return approx_tokens
 
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
         """Estimates tokens for a context and prompt combination."""
