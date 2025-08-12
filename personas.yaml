@@ -206,20 +206,20 @@ persona_sets:
     - Visionary_Generator
     - Skeptical_Generator
     - Constructive_Critic
-    - General_Synthesizer # Corrected reference
-    - Devils_Advocate
+    - Devils_Advocate # Moved Devils_Advocate before General_Synthesizer
+    - General_Synthesizer # Corrected reference, now last
   Science:
     - Scientific_Visionary
     - Scientific_Analyst
     - Constructive_Critic
-    - General_Synthesizer # Corrected reference
-    - Devils_Advocate
+    - Devils_Advocate # Moved Devils_Advocate before General_Synthesizer
+    - General_Synthesizer # Corrected reference, now last
   Business:
     - Business_Innovator
     - Business_Strategist
     - Constructive_Critic
-    - General_Synthesizer # Corrected reference
-    - Devils_Advocate
+    - Devils_Advocate # Moved Devils_Advocate before General_Synthesizer
+    - General_Synthesizer # Corrected reference, now last
   Creative:
     - Creative_Visionary
     - Creative_Thinker
