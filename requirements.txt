@@ -4,7 +4,9 @@ google-genai
 typer[all]  # Includes Rich for better CLI output
 pyyaml
 pydantic>=2.0  # Ensure Pydantic v2 for model_validator and other features
-rich<14  # Pin to version compatible with flask-limiter
+rich<14 # Pin to version compatible with flask-limiter
+pycodestyle # Added for code validation
+bandit # Added for security analysis in code_validator.py
  
 # Add linters and formatters for development/pre-commit
 black
