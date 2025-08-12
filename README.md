@@ -1,136 +1,237 @@
-# Project Chimera
+# Project Chimera: Socratic Self-Debate Engine
 
 [![GitHub](https://img.shields.io/badge/GitHub-Project_Chimera-000?style=flat-square&logo=github)](https://github.com/tomwolfe/project_chimera)
 [![X (Twitter)](https://img.shields.io/badge/X-Proj_Chimera-1DA1F2?style=flat-square&logo=x)](https://x.com/Proj_Chimera)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Project%20Chimera-green?style=flat-square&logo=streamlit)](https://project-chimera-406972693661.us-central1.run.app)
 
-Project Chimera is an advanced AI reasoning engine designed for complex problem-solving, code generation, and critical self-analysis. It employs a sophisticated **Socratic debate methodology**, where multiple specialized AI personas collaborate to refine solutions, identify potential flaws, and generate high-quality, robust code. Each persona contributes a unique viewpoint to iteratively improve a solution or piece of code, facilitating comprehensive analysis, risk assessment, and optimization.
+## Overview
 
-Powered by Google's Gemini API, Chimera offers a unique approach to AI-assisted development and critical thinking.
+Project Chimera is an advanced reasoning engine that employs a Socratic debate methodology to solve complex problems through collaborative multi-agent discussions. By simulating a panel of specialized AI personas that debate and refine solutions through multiple critique cycles, Chimera achieves higher quality outputs than traditional single-model approaches.
 
-## 🚀 Key Features
+Unlike conventional AI systems, Chimera implements a structured debate process where specialized personas sequentially analyze, critique, and refine solutions according to their domain expertise. The system culminates in a JSON-structured final output validated against strict schemas to ensure reliability.
 
-*   **Socratic Debate Engine:**
-    *   Simulates a collaborative discussion among diverse AI personas (e.g., Visionary, Skeptic, Architect, Security Auditor, Test Engineer).
-    *   Each persona contributes a unique viewpoint to iteratively refine solutions, identify potential flaws, and generate high-quality, robust code.
-    *   Facilitates comprehensive analysis, risk assessment, and optimization.
+## Key Features
 
-*   **Domain-Specific Reasoning Frameworks:**
-    *   Supports specialized reasoning tailored for **Science**, **Business**, **Creative** endeavors, and **Software Engineering**.
-    *   Users can select a framework to guide the AI's persona selection and approach.
+- **Specialized Persona System**: 8+ dedicated personas with domain-specific expertise:
+  - *Visionary_Generator*: Creates initial proposals with creativity
+  - *DevOps_Specialist*: Focuses on CI/CD, infrastructure, and operational efficiency
+  - *Security_Auditor*: Identifies vulnerabilities and enforces security best practices
+  - *Test_Engineer*: Ensures test coverage and quality assurance
+  - *Code_Refactorer*: Optimizes code structure and readability
+  - *Devils_Advocate*: Challenges assumptions and identifies potential flaws
+  - *Impartial_Arbitrator*: Synthesizes final JSON output (critical for system reliability)
+  
+- **Strict Output Validation**: 
+  - Final outputs must adhere to precise JSON schemas
+  - Code outputs validated against PEP8 (88 char line limits), Bandit security scans, and AST analysis
+  - Automatic error recovery with fallback mechanisms when validation fails
 
-*   **Codebase Context Analysis:**
-    *   For Software Engineering tasks, users can upload code files to provide rich context.
-    *   Enables the AI to understand project structure, dependencies, and coding standards, leading to more relevant and consistent code generation and analysis.
+- **Context-Aware Analysis**:
+  - Semantic embedding-based context relevance scoring (using SentenceTransformer)
+  - Dynamic codebase context weighting based on keyword analysis
+  - Negation-aware proximity scoring for more accurate context selection
 
-*   **Self-Analysis & Improvement:**
-    *   Chimera can critically analyze its own codebase.
-    *   Identifies areas for enhancement in reasoning quality, robustness, efficiency, and developer maintainability, providing actionable code modification suggestions.
+- **Robust Production Architecture**:
+  - Circuit breakers for API reliability (configurable failure thresholds)
+  - Rate limiting to prevent quota exhaustion
+  - Token budget management with configurable context allocation ratios
+  - Comprehensive error handling with detailed logging
 
-*   **Persona & Framework Management:**
-    *   Load default personas and frameworks or create and save custom ones directly from the UI.
-    *   Allows for highly tailored AI workflows by defining custom persona sets and reasoning strategies.
+- **Self-Improvement Capability**:
+  - Can analyze its own codebase to identify improvements
+  - Generates specific code modification suggestions with context-aware diffs
+  - Produces actionable technical debt reports
 
-*   **Robustness & Quality Assurance:**
-    *   Features dynamic token budget management and adaptive phase allocation.
-    *   Includes built-in retry mechanisms for LLM calls and integrated code quality/security checks (PEP8, Bandit, AST-based security patterns).
+- **Comprehensive Reporting**:
+  - Detailed markdown reports with complete reasoning history
+  - Token usage tracking by persona and phase
+  - Persona configuration audit trails
+  - Malformed block identification for troubleshooting
 
-*   **Actionable & Validated Output:**
-    *   Generates structured outputs including commit messages, rationales, and specific code changes.
-    *   Outputs are validated against predefined schemas (like `LLMOutput`) to ensure correctness and usability.
+## Architecture
 
-## 💡 Technology Stack
+Project Chimera employs a sophisticated multi-agent architecture with strict process control:
 
-*   **AI Model:** Google Gemini API
-*   **Web Framework:** Streamlit
-*   **Core Libraries:** `google-genai`, `pydantic`, `sentence-transformers`, `rich`, `pyyaml`
-*   **Code Analysis Tools:** `pycodestyle`, `bandit`, `ast` (for static analysis)
+1. **Persona Router**: Selects appropriate personas based on problem domain and prompt analysis
+   - Uses keyword matching with negation awareness
+   - Supports domain-specific persona sets (Software Engineering, Strategic Analysis, Creative)
+   - Dynamic persona sequencing based on debate progress
 
-## 🌐 Live Demo
+2. **Debate Orchestrator**: Manages the complete Socratic debate process
+   - Enforces strict phase sequencing (proposal → critique → synthesis)
+   - Tracks intermediate reasoning steps with token accounting
+   - Implements circuit breakers for each persona generation phase
 
-Experience Project Chimera in action:
-[**Project Chimera Live Demo**](https://project-chimera-406972693661.run.app)
+3. **Context Relevance Analyzer**: 
+   - Computes semantic embeddings for code context files
+   - Applies keyword-based boosting with negation handling
+   - Returns context-weighted file relevance scores for optimal context selection
 
-## 🚀 Getting Started (5 Minutes)
+4. **Validation Pipeline**:
+   - Schema validation using Pydantic models
+   - Code-specific validation (PEP8, security, syntax)
+   - Automatic recovery from malformed outputs
+   - Malformed block identification and reporting
 
-### 1. Prerequisites
-*   **Python:** Version 3.9 or higher.
-*   **Gemini API Key:** Obtain from [Google AI Studio](https://aistudio.google.com/apikey).
+5. **Resilience Layer**:
+   - Rate limiting with configurable thresholds
+   - Circuit breakers with configurable failure thresholds and recovery timeouts
+   - Token budget enforcement with configurable context allocation ratios
+   - Comprehensive error logging with structured context
 
-### 2. Setup & Installation
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10+
+- Google API key for Gemini access (with `gemini-2.5-pro` or `gemini-2.5-flash` permissions)
+- Git
+
+### Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/tomwolfe/project_chimera.git
 cd project_chimera
 
-# Create a virtual environment (recommended)
+# Create and activate virtual environment
 python -m venv venv
-# Activate it:
-# On Windows: venv\Scripts\activate
-# On macOS/Linux: source venv/bin/activate
+source venv/bin/activate  # Linux/MacOS
+# venv\Scripts\activate   # Windows
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Configure API Key (Choose ONE method)
-# Method A: Set environment variable (recommended for security)
-export GEMINI_API_KEY='your_actual_gemini_api_key'
-# Method B: Create a .env file in the project root
-# echo "GEMINI_API_KEY=your_actual_gemini_api_key" > .env
 ```
 
-### 3. Running the Application
+### Configuration
+
+1. Create a `.env` file in the project root:
+   ```
+   GEMINI_API_KEY=your_google_api_key_here
+   ```
+
+2. For development, create a `secrets.toml` file in the `.streamlit` directory:
+   ```toml
+   [server]
+   enableCORS = false
+   enableXsrfProtection = true
+   
+   [gemini]
+   api_key = "your_google_api_key_here"
+   ```
+
+### Running the Application
+
 ```bash
 streamlit run app.py
 ```
 
-### 4. Using the Self-Analysis Feature
-For Project Chimera's self-analysis capability:
-1.  Select the **"Software Engineering"** framework in the UI.
-2.  Use a prompt like: "Critically analyze the entire Project Chimera codebase..."
+The application will launch in your default web browser. For production deployments, see the Docker section below.
 
-## 📝 Usage
+## Usage
 
-1.  **Enter API Key:** Provide your Gemini API key in the sidebar.
-2.  **Select Prompt:** Choose an example prompt or enter your own custom prompt in the main area.
-3.  **Select Framework:** Choose a reasoning framework (e.g., "General", "Software Engineering") from the dropdown to guide the AI's persona selection.
-4.  **Provide Codebase Context (Optional):** If using the "Software Engineering" framework, upload relevant code files. This context helps the AI understand your project for more accurate analysis and code generation.
-5.  **Edit Personas (Optional):** Access the "⚙️ View and Edit Personas" expander to customize persona behavior by adjusting their system prompts and parameters.
-6.  **Run Debate:** Click the "🚀 Run Socratic Debate" button to start the AI's reasoning process.
-7.  **View Results:** Examine the final synthesized answer, intermediate reasoning steps, process logs, and download comprehensive reports.
+### Web Interface Features
 
-## 🗄️ Configuration
+The Streamlit interface provides:
 
-*   **`config.yaml`**: Defines domain keywords used for suggesting appropriate reasoning frameworks based on your prompt.
-*   **`personas.yaml`**: Contains the default personas, their configurations, and predefined persona sets for different domains.
-*   **`custom_frameworks/`**: This directory is automatically created to store any custom frameworks you save directly from the application.
+- **Prompt Templates**: Pre-configured prompts organized by category (Software Engineering, Strategic Analysis, Creative)
+- **Framework Selection**: Choose between specialized reasoning frameworks
+- **Context Management**: Upload codebases for context-aware analysis
+- **Resource Controls**: Configure token budgets and context allocation ratios
+- **Detailed Process Logging**: Real-time visibility into the debate process
+- **Exportable Reports**: Download comprehensive markdown reports with complete reasoning history
 
-## 🧠 Self-Analysis Feature
+### Self-Analysis Capability
 
-Project Chimera can analyze its own codebase to identify areas for improvement. To trigger this:
+Use the "Critically analyze the entire Project Chimera codebase" prompt to generate actionable improvement suggestions with specific code modifications. The system will:
+1. Analyze the codebase structure
+2. Identify security concerns and maintainability issues
+3. Generate specific code change proposals with context
+4. Provide a detailed technical debt assessment
 
-1.  Select the **"Software Engineering"** framework.
-2.  Use a prompt that explicitly requests self-analysis, such as:
-    *"Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."*
+### Output Format Requirements
 
-## 🐳 Docker
+The Impartial_Arbitrator persona enforces strict JSON output format:
+```json
+{
+  "COMMIT_MESSAGE": "Clear summary of changes",
+  "RATIONALE": "Detailed justification for changes",
+  "CODE_CHANGES": [
+    {
+      "FILE_PATH": "path/to/file.py",
+      "ACTION": "ADD|MODIFY|REMOVE",
+      "FULL_CONTENT": "Complete file content (for ADD/MODIFY)",
+      "LINES": ["Specific lines to remove (for REMOVE)"]
+    }
+  ],
+  "CONFLICT_RESOLUTION": "How conflicts were resolved",
+  "UNRESOLVED_CONFLICT": "Any remaining conflicts",
+  "malformed_blocks": []
+}
+```
 
-The project includes a `Dockerfile` for containerized deployment.
+## Docker Deployment
 
-1.  **Build the Docker image:**
-    ```bash
-    docker build -t project-chimera .
-    ```
-2.  **Run the Docker container:**
-    ```bash
-    docker run -p 8080:8080 -e GEMINI_API_KEY=$GEMINI_API_KEY project-chimera
-    ```
-    Access the application at `http://localhost:8080`.
+For production deployment:
 
-## 📜 License
+```bash
+# Build the Docker image
+docker build -t project-chimera .
+
+# Run the container
+docker run -p 8080:8080 -e GEMINI_API_KEY=your_api_key_here project-chimera
+```
+
+The application will be available at `http://localhost:8080`.
+
+## Project Structure
+
+```
+project_chimera/
+├── src/
+│   ├── config/             # Configuration management
+│   ├── context/            # Context analysis and relevance scoring
+│   ├── exceptions/         # Custom exception hierarchy
+│   ├── middleware/         # Rate limiting and request processing
+│   ├── models/             # Pydantic validation schemas
+│   ├── persona/            # Persona management and routing
+│   ├── resilience/         # Circuit breakers and error handling
+│   ├── tokenizers/         # Token counting implementations
+│   ├── utils/              # Utility functions and helpers
+│   └── core.py             # SocraticDebate engine implementation
+├── app.py                  # Streamlit web interface
+├── personas.yaml           # Persona configurations and system prompts
+├── requirements.txt        # Python dependencies
+├── .dockerignore
+├── .gitignore
+├── .pre-commit-config.yaml # Pre-commit hooks configuration
+└── Dockerfile
+```
+
+## Contributing
+
+We welcome contributions! Please follow these steps:
+
+1. Fork the repository
+2. Create a new feature branch (`git checkout -b feature/YourFeature`)
+3. Commit your changes (`git commit -am 'Add some feature'`)
+4. Push to the branch (`git push origin feature/YourFeature`)
+5. Create a new Pull Request
+
+Please ensure your code follows the project's pre-commit hooks (configured in `.pre-commit-config.yaml`), which include:
+- Black code formatting
+- Ruff linting and fixing
+- AST syntax checking
+- YAML validation
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🤝 Contributing
+## Support
 
-Contributions are welcome! Please refer to the [CONTRIBUTING.md](CONTRIBUTING.md) file (if available) for details on how to contribute, report issues, or suggest features.
+For questions or issues, please [open an issue](https://github.com/tomwolfe/project_chimera/issues) on GitHub.
+
+---
+
+*Project Chimera: Where AI debates itself to find better answers.*
