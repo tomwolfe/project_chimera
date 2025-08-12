@@ -5,7 +5,8 @@ FROM python:3.11-slim AS model_downloader
 WORKDIR /tmp
 # Install sentence-transformers here, separately from app dependencies
 RUN pip install --no-cache-dir sentence-transformers
-# Download the model. It will be cached in /root/.cache/huggingface/transformers
+# Download the model. It will be cached in /root/.cache/torch/sentence_transformers/all-MiniLM-L6-v2
+# The command itself doesn't output much, but it creates the directory.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Stage 2: Build application dependencies and copy the cached model
@@ -19,11 +20,11 @@ WORKDIR /app
 COPY requirements-prod.txt .
 RUN pip install --no-cache-dir -r requirements-prod.txt
 
-# Copy the cached model from the model_downloader stage.
-# The model is typically cached in /root/.cache/huggingface/transformers for the root user.
-# We copy it to /home/appuser/.cache/huggingface/transformers, which is where the 'appuser'
-# (created later) will expect it to be.
-COPY --from=model_downloader /root/.cache/huggingface/transformers /home/appuser/.cache/huggingface/transformers
+# Corrected COPY path for the SentenceTransformer model.
+# The model 'all-MiniLM-L6-v2' is downloaded into a specific subdirectory within ~/.cache/torch/sentence_transformers.
+# We need to copy that specific model directory.
+# The destination path should match where the 'appuser' will expect it.
+COPY --from=model_downloader /root/.cache/torch/sentence_transformers/all-MiniLM-L6-v2 /home/appuser/.cache/torch/sentence_transformers/all-MiniLM-L6-v2
 
 # Stage 3: Final image with non-root user and application code
 # This is your final production image.
@@ -38,15 +39,19 @@ USER appuser
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
 # Copy the pre-downloaded model cache to the appuser's home directory.
-# This ensures the appuser can access the model without re-downloading.
-COPY --from=builder /home/appuser/.cache/huggingface/transformers /home/appuser/.cache/huggingface/transformers
+# Ensure the destination path matches where sentence-transformers will look for it.
+# It will look in ~/.cache/torch/sentence_transformers/all-MiniLM-L6-v2
+COPY --from=builder /home/appuser/.cache/torch/sentence_transformers/all-MiniLM-L6-v2 /home/appuser/.cache/torch/sentence_transformers/all-MiniLM-L6-v2
 
 # Copy application code. This should be the LAST step that copies source code,
 # as it's the most frequently changing part, minimizing cache invalidation.
 COPY . .
 
-# Ensure the appuser owns the cached model directory
-RUN chown -R appuser:appuser /home/appuser/.cache/huggingface/transformers
+# Ensure the appuser owns the cached model directory.
+# The parent directory of the model cache needs to be owned by appuser for read/write access.
+# The `mkdir -p` ensures the parent directories exist before `chown` if they weren't created by COPY.
+RUN mkdir -p /home/appuser/.cache/torch/sentence_transformers && \
+    chown -R appuser:appuser /home/appuser/.cache/torch
 
 # Expose the port Streamlit will run on (Cloud Run default is 8080)
 EXPOSE 8080
