@@ -225,8 +225,14 @@ setup_structured_logging(log_level=logging.INFO)
 logger = logging.getLogger(__name__) # Logger for app.py
 # --- END LOGGING SETUP ---
 
-# Define the explicit cache directory as per your Dockerfile
-SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
+# Define the cache directory dynamically based on the environment
+# Check if the current user's home directory is '/home/appuser'
+# This is a strong indicator that we are likely in a Docker container setup.
+if os.path.expanduser("~") == "/home/appuser":
+    SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
+else:
+    # Otherwise, assume we are running locally and use the standard user cache directory
+    SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/transformers")
 
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
