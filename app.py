@@ -403,7 +403,6 @@ session_rate_limiter = RateLimiter(calls=10, period=60.0)
 # This function is defined in src/constants.py, but for clarity and
 # to ensure it's available if core.py is modified to use it directly,
 # we can keep a reference or ensure it's imported correctly.
-# The core.py already imports it, so this is mainly for app.py's direct use.
 # The is_self_analysis_prompt function is already imported from src.constants.
 # --- END HELPER FUNCTION ---
 
@@ -552,6 +551,20 @@ for i, tab_name in enumerate(tab_names):
                 st.session_state.selected_example_name = selected_radio_key
                 st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
                 
+                # ADDED START: Framework suggestion logic for example prompts
+                example_prompt = category_options[selected_radio_key]["prompt"]
+                suggested_domain_for_example = recommend_domain_from_keywords(example_prompt, DOMAIN_KEYWORDS)
+                
+                if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
+                    st.info(f"💡 Based on your example prompt, the **'{suggested_domain_for_example}'** framework might be appropriate.")
+                    if st.button(f"Apply '{suggested_domain_for_example}' Framework", 
+                                type="primary", 
+                                use_container_width=True, 
+                                key=f"apply_suggested_framework_example_{selected_radio_key}"):
+                        st.session_state.selected_persona_set = suggested_domain_for_example
+                        st.rerun()
+                # ADDED END: Framework suggestion logic for example prompts
+
                 # --- REMOVED: Automatic framework change and context loading from here ---
                 # This logic is now handled in the main framework selection and context loading blocks
                 # to give the user control over the framework.
@@ -575,7 +588,6 @@ for i, tab_name in enumerate(tab_names):
                         key=f"copy_prompt_{selected_radio_key}")
                     # COMMENT: Reverts to a button that instructs manual copy if clipboard functionality is unavailable.
                     # --- END FALLBACK ---
-            # --- END MODIFICATION ---
 
 # The main user_prompt text_area is now managed within the tabs, so remove the global one.
 # user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input") # REMOVE THIS LINE
@@ -597,7 +609,12 @@ with col1:
         # --- FIX: Update the primary session state variable directly ---
         if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
             st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
-            if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True, key="apply_suggested_framework"):
+            # MODIFIED START: Use dynamic key to prevent widget ID conflicts
+            if st.button(f"Apply '{suggested_domain}' Framework", 
+                        type="primary", 
+                        use_container_width=True, 
+                        key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
+            # MODIFIED END
                 st.session_state.selected_persona_set = suggested_domain
                 st.rerun() # Re-added to ensure UI updates
     
@@ -1255,7 +1272,7 @@ if st.session_state.debate_ran:
                         
                         for issue_type, type_issues in issues_by_type.items():
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
-                                for issue in type_issues:
+                                for issue in type_types:
                                     # Use markdown for better formatting of issue details
                                     line_info = f" (Line: {issue.get('line_number', 'N/A')}, Col: {issue.get('column_number', 'N/A')})" if issue.get('line_number') else ""
                                     st.markdown(f"- **{issue.get('code', '')}**: {issue['message']}{line_info}")
