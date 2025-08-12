@@ -297,7 +297,7 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # This line now works
     st.session_state.persona_audit_log = []
     st.session_state.persona_edit_mode = False
-    st.session_state.persona_changes_detected = False # For Improvement 4.1
+    st.session_state.persona_changes_detected = False
     
     # --- FIX: Ensure context_token_budget_ratio is initialized before use ---
     # The value parameter should correctly reference the session state variable
@@ -502,17 +502,20 @@ for i, tab_name in enumerate(tab_names):
             # Update session state for custom prompt
             st.session_state.user_prompt_input = user_prompt_text_area
             st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
-            st.session_state.codebase_context = {} # Clear context for custom prompts
+            # Clear codebase context when switching to custom prompt, user will upload or it'll be empty
+            st.session_state.codebase_context = {} 
             st.session_state.uploaded_files = []
             
-            # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING ---
+            # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING (Now a suggestion button) ---
             # Analyze the custom prompt to determine the appropriate framework
             suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area, DOMAIN_KEYWORDS)
             
-            # Only change if a suggestion is made and it's different from the current selection
+            # Only display suggestion if different from current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
-                st.session_state.selected_persona_set = suggested_domain_for_custom
-                st.rerun() # Re-added to ensure UI updates
+                st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
+                if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key="apply_suggested_framework_custom_prompt"):
+                    st.session_state.selected_persona_set = suggested_domain_for_custom
+                    st.rerun() # Re-added to ensure UI updates
             # --- END FIX ---
             
         else:
@@ -549,34 +552,12 @@ for i, tab_name in enumerate(tab_names):
                 st.session_state.selected_example_name = selected_radio_key
                 st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
                 
-                # --- START OF LLM'S PROPOSED FIX (with re-added st.rerun) ---
-                framework_changed = False
-                prompt_text = category_options[selected_radio_key]["prompt"]
-
-                # Use domain recommendation for ALL prompts
-                suggested_domain = recommend_domain_from_keywords(prompt_text, DOMAIN_KEYWORDS)
-
-                # Update framework if recommendation differs from current selection
-                if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
-                    st.session_state.selected_persona_set = suggested_domain
-                    framework_changed = True
-
-                # Handle codebase context appropriately based on the selected framework
-                if st.session_state.selected_persona_set == "Software Engineering":
-                    st.session_state.codebase_context = load_demo_codebase_context()
-                    st.session_state.uploaded_files = [
-                        type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-                        for k, v in st.session_state.codebase_context.items()
-                    ]
-                else:
-                    # Clear codebase context for non-Software Engineering frameworks
-                    st.session_state.codebase_context = {}
-                    st.session_state.uploaded_files = []
-
-                # Trigger rerun if framework changed to update the selectbox
-                if framework_changed:
-                    st.rerun()
-                # --- END OF LLM'S PROPOSED FIX ---
+                # --- REMOVED: Automatic framework change and context loading from here ---
+                # This logic is now handled in the main framework selection and context loading blocks
+                # to give the user control over the framework.
+                st.session_state.codebase_context = {}
+                st.session_state.uploaded_files = []
+                # --- END REMOVAL ---
             
             # --- MODIFICATION FOR SUGGESTION 3.1: Display details and add Copy button ---
             if selected_radio_key:
@@ -616,7 +597,7 @@ with col1:
         # --- FIX: Update the primary session state variable directly ---
         if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
             st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
-            if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
+            if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True, key="apply_suggested_framework"):
                 st.session_state.selected_persona_set = suggested_domain
                 st.rerun() # Removed to prevent potential loops
     
@@ -736,13 +717,20 @@ with col2:
             help="Provide files for context. The AI will analyze them to generate consistent code.",
             key="code_context_uploader"
         )
+        
+        # If new files are uploaded, process them. This takes precedence over demo context.
         if uploaded_files:
-            current_uploaded_file_info = [(f.name, f.size) for f in uploaded_files]
-            previous_uploaded_file_info = [(f.name, f.size) for f in st.session_state.uploaded_files]
-            if current_uploaded_file_info != previous_uploaded_file_info:
+            current_uploaded_file_names = {f.name for f in uploaded_files}
+            previous_uploaded_file_names = {f.name for f in st.session_state.uploaded_files}
+
+            # Only re-process if files have changed or if context is empty despite files being present
+            if current_uploaded_file_names != previous_uploaded_file_names or \
+               (current_uploaded_file_names and not st.session_state.codebase_context):
+                
                 if len(uploaded_files) > 100:
                     st.warning("Please upload a maximum of 100 files. Truncating to the first 100.")
                     uploaded_files = uploaded_files[:100]
+                
                 temp_context = {}
                 for file in uploaded_files:
                     try:
@@ -750,18 +738,36 @@ with col2:
                         temp_context[file.name] = content
                     except Exception as e:
                         st.error(f"Error reading {file.name}: {e}")
+                
                 st.session_state.codebase_context = temp_context
                 st.session_state.uploaded_files = uploaded_files
-                st.toast(f"{len(st.session_state.codebase_context)} file(s) loaded for context.")
-        elif st.session_state.codebase_context and not uploaded_files:
-            st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
-        else:
+                st.toast(f"{len(st.session_state.codebase_context)} file(s) loaded for context from upload.")
+        
+        # If no files are uploaded, but SE is selected and it's an example prompt, load demo context
+        elif not st.session_state.uploaded_files and st.session_state.selected_example_name != "Custom Prompt":
+            if not st.session_state.codebase_context: # Only load if not already loaded
+                st.session_state.codebase_context = load_demo_codebase_context()
+                st.session_state.uploaded_files = [
+                    type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
+                    for k, v in st.session_state.codebase_context.items()
+                ]
+                st.success(f"{len(st.session_state.codebase_context)} demo file(s) loaded for context.")
+            else:
+                st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
+        
+        # If no files uploaded and it's a custom prompt, ensure context is empty
+        elif not st.session_state.uploaded_files and st.session_state.selected_example_name == "Custom Prompt":
+            if st.session_state.codebase_context: # Only clear if something is actually loaded
+                st.session_state.codebase_context = {}
+                st.session_state.uploaded_files = []
+                st.info("Codebase context cleared for custom prompt.")
+
+    else: # Not Software Engineering domain
+        st.info("Select the 'Software Engineering' framework to provide codebase context.")
+        # Always clear context if SE is not selected and context is present
+        if st.session_state.codebase_context:
             st.session_state.codebase_context = {}
             st.session_state.uploaded_files = []
-    else:
-        st.info("Select the 'Software Engineering' framework to provide codebase context.")
-        st.session_state.codebase_context = {}
-        st.session_state.uploaded_files = []
 
 # --- NEW: Persona Editing UI (Improvement 1.2 & 4.1) ---
 st.markdown("---")
