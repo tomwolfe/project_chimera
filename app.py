@@ -599,7 +599,7 @@ with col1:
             st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True, key="apply_suggested_framework"):
                 st.session_state.selected_persona_set = suggested_domain
-                st.rerun() # Removed to prevent potential loops
+                st.rerun() # Re-added to ensure UI updates
     
     # --- MODIFICATION FOR IMPROVEMENT 1.2: Centralize Persona/Framework Data Access ---
     # Use the PersonaManager instance to get available domains for the selectbox
