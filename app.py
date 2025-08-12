@@ -519,7 +519,7 @@ for i, tab_name in enumerate(tab_names):
             # Only change if a suggestion is made and it's different from the current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.session_state.selected_persona_set = suggested_domain_for_custom
-                # REMOVED: st.rerun() # Removed to prevent potential loops
+                st.rerun() # Removed to prevent potential loops
             # --- END FIX ---
             
         else:
@@ -591,8 +591,7 @@ for i, tab_name in enumerate(tab_names):
                 
                 # --- FIX: Uncomment and use the framework_changed flag to trigger UI update ---
                 if framework_changed:
-                    # REMOVED: st.rerun() # Removed to prevent potential loops
-                    pass # Let Streamlit handle the re-render due to session state change
+                    st.rerun() # Removed to prevent potential loops
                 # --- END FIX ---
             
             # --- MODIFICATION FOR SUGGESTION 3.1: Display details and add Copy button ---
@@ -641,7 +640,7 @@ with col1:
             st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
             if st.button(f"Apply '{suggested_domain}' Framework", type="primary", use_container_width=True):
                 st.session_state.selected_persona_set = suggested_domain
-                # REMOVED: st.rerun() # Removed to prevent potential loops
+                st.rerun() # Removed to prevent potential loops
     
     # --- MODIFICATION FOR IMPROVEMENT 1.2: Centralize Persona/Framework Data Access ---
     # Use the PersonaManager instance to get available domains for the selectbox
@@ -698,9 +697,9 @@ with col1:
                 current_framework_name = st.session_state.selected_persona_set
                 # Get the currently active personas for the selected framework
                 current_active_personas_data = {
-                    p_name: st.session_state.persona_manager.all_personas[p_name]
-                    for p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
-                    if p_name in st.session_state.persona_manager.all_personas
+                    p_name: p_data.model_copy() # Use model_copy to ensure we're getting a snapshot
+                    for p_name, p_data in st.session_state.persona_manager.all_personas.items()
+                    if p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
                 }
                 
                 if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
