@@ -507,19 +507,12 @@ for i, tab_name in enumerate(tab_names):
             
             # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING ---
             # Analyze the custom prompt to determine the appropriate framework
-            # This call is now valid because recommend_domain_from_keywords is defined earlier.
-            # NOTE: `recommend_domain_from_keywords` is not defined in this file,
-            # it's assumed to be imported or defined elsewhere in the project.
-            # For this fix, I'll assume it's available.
-            # --- REMOVED INLINE IMPORT ---
-            # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
-            # --- END REMOVED INLINE IMPORT ---
             suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area, DOMAIN_KEYWORDS)
             
             # Only change if a suggestion is made and it's different from the current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.session_state.selected_persona_set = suggested_domain_for_custom
-                st.rerun() # Removed to prevent potential loops
+                st.rerun() # Re-added to ensure UI updates
             # --- END FIX ---
             
         else:
@@ -556,43 +549,34 @@ for i, tab_name in enumerate(tab_names):
                 st.session_state.selected_example_name = selected_radio_key
                 st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
                 
-                # Logic for codebase context and persona set based on selected prompt
-                is_coding_or_self_analysis = (
-                    selected_radio_key in EXAMPLE_PROMPTS["Coding & Implementation"] or
-                    "Critically analyze the entire Project Chimera codebase" in selected_radio_key
-                )
+                # --- START OF LLM'S PROPOSED FIX (with re-added st.rerun) ---
+                framework_changed = False
+                prompt_text = category_options[selected_radio_key]["prompt"]
 
-                framework_changed = False # Flag to track if framework state was modified
-                if is_coding_or_self_analysis:
+                # Use domain recommendation for ALL prompts
+                suggested_domain = recommend_domain_from_keywords(prompt_text, DOMAIN_KEYWORDS)
+
+                # Update framework if recommendation differs from current selection
+                if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
+                    st.session_state.selected_persona_set = suggested_domain
+                    framework_changed = True
+
+                # Handle codebase context appropriately based on the selected framework
+                if st.session_state.selected_persona_set == "Software Engineering":
                     st.session_state.codebase_context = load_demo_codebase_context()
                     st.session_state.uploaded_files = [
                         type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
                         for k, v in st.session_state.codebase_context.items()
                     ]
-                    # Only update if the framework is actually changing
-                    if st.session_state.selected_persona_set != "Software Engineering":
-                        st.session_state.selected_persona_set = "Software Engineering"
-                        framework_changed = True
                 else:
+                    # Clear codebase context for non-Software Engineering frameworks
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
-                    # --- FIX: Apply recommendation for non-coding example prompts ---
-                    # NOTE: `recommend_domain_from_keywords` is not defined in this file,
-                    # it's assumed to be imported or defined elsewhere in the project.
-                    # For this fix, I'll assume it's available.
-                    # --- REMOVED INLINE IMPORT ---
-                    # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
-                    # --- END REMOVED INLINE IMPORT ---
-                    suggested_domain_for_example = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
-                    if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
-                        st.session_state.selected_persona_set = suggested_domain_for_example
-                        framework_changed = True
-                    # --- END FIX ---
-                
-                # --- FIX: Uncomment and use the framework_changed flag to trigger UI update ---
+
+                # Trigger rerun if framework changed to update the selectbox
                 if framework_changed:
-                    st.rerun() # Removed to prevent potential loops
-                # --- END FIX ---
+                    st.rerun()
+                # --- END OF LLM'S PROPOSED FIX ---
             
             # --- MODIFICATION FOR SUGGESTION 3.1: Display details and add Copy button ---
             if selected_radio_key:
@@ -627,12 +611,6 @@ with col1:
     
     if user_prompt.strip():
         # --- FIX: Pass DOMAIN_KEYWORDS to the recommendation function ---
-        # NOTE: `recommend_domain_from_keywords` is not defined in this file,
-        # it's assumed to be imported or defined elsewhere in the project.
-        # For this fix, I'll assume it's available.
-        # --- REMOVED INLINE IMPORT ---
-        # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
-        # --- END REMOVED INLINE IMPORT ---
         suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
         # --- END FIX ---
         # --- FIX: Update the primary session state variable directly ---
