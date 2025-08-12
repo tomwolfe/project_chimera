@@ -67,7 +67,7 @@ class SocraticDebate:
                  status_callback: Optional[Callable] = None,
                  rich_console: Optional[Console] = None,
                  context_token_budget_ratio: float = 0.25,
-                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
+                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None, # ADDED THIS PARAMETER
                  is_self_analysis: bool = False
                  ):
         """
@@ -119,11 +119,12 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
+        # Store the context analyzer instance
+        self.context_analyzer = context_analyzer # ADDED THIS LINE
+
         # Calculate token budgets for different phases
         self._calculate_token_budgets()
 
-        self.context_analyzer = context_analyzer # Use the provided analyzer instance
-        
         self.all_personas = all_personas or {}
         self.persona_sets = persona_sets or {} # Store persona_sets
         self.domain = domain
@@ -212,7 +213,7 @@ class SocraticDebate:
                 total_needed = 200  # Minimum for debate + synthesis
                 if self.max_total_tokens_budget >= total_needed:
                     self.phase_budgets = {
-                        "context": max(0, self.max_total_tokens_budget - total_needed),
+                        "context": 0,
                         "debate": 100,
                         "synthesis": 100
                     }
