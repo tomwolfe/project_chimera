@@ -904,7 +904,9 @@ class SocraticDebate:
         """Executes a single LLM turn for a given persona, handling generation, token tracking, and parsing."""
         
         # Estimate tokens needed for this turn (input + max output)
-        estimated_next_step_input_tokens = self.tokenizer.count_tokens(prompt=prompt, system_prompt=persona_config.system_prompt)
+        # FIX: Combine system_prompt and prompt into a single string for token counting
+        text_for_token_count = f"{persona_config.system_prompt}\n\n{prompt}" if persona_config.system_prompt else prompt
+        estimated_next_step_input_tokens = self.tokenizer.count_tokens(text=text_for_token_count)
         estimated_next_step_output_tokens = persona_config.max_tokens
         estimated_next_step_total_tokens = estimated_next_step_input_tokens + estimated_next_step_output_tokens
         # Estimate cost for this turn
