@@ -233,7 +233,8 @@ logger = logging.getLogger(__name__) # Logger for app.py
 def get_context_analyzer():
     """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
     # Access the persona manager instance from session state
-    pm = st.session_state.persona_manager
+    # This line will now work because persona_manager is initialized in _initialize_session_state
+    pm = st.session_state.persona_manager 
     if pm and pm.persona_router:
         # Instantiate ContextRelevanceAnalyzer and inject the persona router
         analyzer = ContextRelevanceAnalyzer()
@@ -262,6 +263,13 @@ def _initialize_session_state(pm: PersonaManager):
     # --- END FIX ---
 
     st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
+    # --- START FIX (from LLM's suggestion 1) ---
+    # Initialize persona manager in session state
+    st.session_state.persona_manager = pm
+    st.session_state.all_personas = pm.all_personas
+    st.session_state.persona_sets = pm.persona_sets
+    # --- END FIX ---
+    
     # Set default to the first example prompt from the first category
     st.session_state.user_prompt_input = list(EXAMPLE_PROMPTS.values())[0][list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]]["prompt"]
     st.session_state.max_tokens_budget_input = 1000000
@@ -272,6 +280,12 @@ def _initialize_session_state(pm: PersonaManager):
     # Set default example name to the first one in the first category
     st.session_state.selected_example_name = list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]
     
+    # FIX START: Initialize selected_persona_set BEFORE using it
+    # Get default framework from PersonaManager
+    default_framework = pm.available_domains[0] if pm.available_domains else "General"
+    st.session_state.selected_persona_set = default_framework
+    # FIX END
+
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
     st.session_state.intermediate_steps_output = {}
@@ -280,7 +294,7 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
     st.session_state.example_selector_widget = st.session_state.selected_example_name
-    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
+    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # This line now works
     st.session_state.persona_audit_log = []
     st.session_state.persona_edit_mode = False
     st.session_state.persona_changes_detected = False # For Improvement 4.1
@@ -691,8 +705,11 @@ with col1:
                 
                 if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
                     st.toast(f"Framework '{new_framework_name_input}' saved successfully!")
-                    # Update available_domains to include the new framework
-                    st.session_state.available_domains = list(st.session_state.persona_manager.persona_sets.keys())
+                    # --- FIX START ---
+                    # Removed the problematic line:
+                    # st.session_state.available_domains = list(st.session_state.persona_manager.persona_sets.keys())
+                    # The persona_manager.available_domains is the source of truth.
+                    # --- FIX END ---
                     st.rerun()
                 else:
                     st.error(f"Failed to save framework '{new_framework_name_input}'. It might already exist or there was an internal error.")
@@ -700,7 +717,10 @@ with col1:
         # --- FIX START ---
         with tabs[1]: # Corresponds to "Load/Manage Frameworks"
         # --- FIX END ---
-            all_available_frameworks_for_load = [""] + st.session_state.available_domains
+            # --- FIX START ---
+            # Changed to use persona_manager.available_domains directly
+            all_available_frameworks_for_load = [""] + st.session_state.persona_manager.available_domains
+            # --- FIX END ---
             unique_framework_options_for_load = sorted(list(set(all_available_frameworks_for_load)))
             
             current_selection_for_load = ""
