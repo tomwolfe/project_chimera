@@ -22,6 +22,9 @@ class ContextRelevanceAnalyzer:
         self.model = SentenceTransformer(model_name, cache_folder=cache_dir)
         self.file_embeddings = {}
         self.persona_router: Optional[PersonaRouter] = None 
+        # --- FIX START ---
+        self.last_relevant_files: List[Tuple[str, float]] = [] # Store the last computed relevant files
+        # --- FIX END ---
 
     def set_persona_router(self, router: PersonaRouter):
         """Sets the PersonaRouter instance for this analyzer."""
@@ -89,6 +92,9 @@ class ContextRelevanceAnalyzer:
         Incorporates prompt keyword analysis to boost similarity scores.
         """
         if not self.file_embeddings:
+            # --- FIX START ---
+            self.last_relevant_files = [] # Ensure it's cleared if no embeddings
+            # --- FIX END ---
             return []
 
         prompt_embedding = self.model.encode([prompt], convert_to_numpy=True)[0]
@@ -105,7 +111,11 @@ class ContextRelevanceAnalyzer:
             
             similarities.append((file_path, float(weighted_similarity)))
         
-        return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_k]
+        # --- FIX START ---
+        # Store the results in the instance attribute
+        self.last_relevant_files = sorted(similarities, key=lambda x: x[1], reverse=True)[:top_k]
+        return self.last_relevant_files
+        # --- FIX END ---
 
     def _extract_prompt_keywords(self, prompt: str) -> List[str]:
         """Extracts significant keywords from the prompt, excluding common stop words."""
@@ -155,3 +165,18 @@ class ContextRelevanceAnalyzer:
         
         return weighted_similarity
     # --- END MODIFICATION ---
+
+    # --- FIX START ---
+    def get_context_summary(self) -> str:
+        """Return a string summary of the last computed relevant files for token estimation."""
+        if not self.last_relevant_files:
+            return ""
+        
+        # Create a concise summary of the most relevant files
+        summary = "Relevant context files:\n"
+        # self.last_relevant_files is already sorted and contains top_k files
+        for file_path, relevance_score in self.last_relevant_files:
+            summary += f"- {file_path} (relevance: {relevance_score:.2f})\n"
+        
+        return summary
+    # --- FIX END ---
