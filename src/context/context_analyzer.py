@@ -18,8 +18,16 @@ class ContextRelevanceAnalyzer:
     """Analyzes code context relevance using semantic embeddings."""
     
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_dir: str = None):
-        """Initialize the analyzer with a sentence transformer model."""
-        self.model = SentenceTransformer(model_name, cache_folder=cache_dir)
+        """Initialize the analyzer with a sentence transformer model.
+        
+        Args:
+            model_name: The name of the SentenceTransformer model to use.
+            cache_dir: Optional. The directory where the model should be loaded from or cached to.
+                       If None, SentenceTransformer uses its default caching mechanism.
+        """
+        self.cache_dir = cache_dir # Store the cache_dir
+        # Pass cache_folder directly to SentenceTransformer
+        self.model = SentenceTransformer(model_name, cache_folder=self.cache_dir) 
         self.file_embeddings = {}
         self.persona_router: Optional[PersonaRouter] = None 
         # --- FIX START ---

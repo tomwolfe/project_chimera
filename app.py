@@ -225,6 +225,9 @@ setup_structured_logging(log_level=logging.INFO)
 logger = logging.getLogger(__name__) # Logger for app.py
 # --- END LOGGING SETUP ---
 
+# Define the explicit cache directory as per your Dockerfile
+SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
+
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
 # Define the function to get a cached instance of ContextRelevanceAnalyzer
@@ -240,7 +243,7 @@ def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manag
     # FIX START: Use _pm_instance inside the function
     if _pm_instance and _pm_instance.persona_router:
         # Instantiate ContextRelevanceAnalyzer and inject the persona router
-        analyzer = ContextRelevanceAnalyzer()
+        analyzer = ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR) # Pass the explicit cache_dir
         analyzer.set_persona_router(_pm_instance.persona_router)
     # FIX END
         return analyzer
@@ -249,7 +252,7 @@ def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manag
         # Use the logger from app.py if available, otherwise a generic one
         app_logger = logging.getLogger(__name__) if __name__ in logging.Logger.manager.loggerDict else logging.getLogger("app")
         app_logger.warning("PersonaManager or its router not found in session state. Context relevance scoring might be suboptimal.")
-        return ContextRelevanceAnalyzer()
+        return ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR) # Also pass cache_dir to fallback
 
 # Get the persona manager instance (also cached)
 # --- FIX START: REMOVE @st.cache_resource from get_persona_manager() ---
