@@ -621,6 +621,9 @@ class SocraticDebate:
                         current_total_cost=self.get_total_estimated_cost(),
                         progress_pct=0.3
                     )
+                # FIX: Instead of returning None, re-raise the exception to be handled by the main run_debate loop
+                raise ChimeraError(f"Context processing failed for {context_processing_persona_name}: {e}") from e
+
         else:
             # Log if no context processing persona was found or needed
             self._log_with_context("info", "No dedicated context processing persona found or no context available. Skipping dedicated context processing phase.")
@@ -731,6 +734,8 @@ class SocraticDebate:
                         progress_pct=0.35 + (0.3 * (i + 1) / len(debate_personas_to_run) if debate_personas_to_run else 0),
                         current_persona_name=persona_name
                     )
+                # Do NOT append turn_results here, as it would be None or an error state.
+                # The loop will continue to the next persona.
         
         return all_debate_turns
 
@@ -944,7 +949,7 @@ class SocraticDebate:
                 max_tokens=persona_config.max_tokens,
                 requested_model_name=self.model_name,
                 persona_config=persona_config,
-                intermediate_results=self.intermediate_results
+                intermediate_results=self.intermediate_steps # FIX: Changed from self.intermediate_results
             )
             
             # Calculate total tokens used in this turn
@@ -989,7 +994,8 @@ class SocraticDebate:
                     progress_pct=self.get_progress_pct(phase, error=True),
                     current_persona_name=persona_name
                 )
-            return None # Return None if an error occurred and was handled
+            # FIX: Instead of returning None, re-raise the exception to prevent None from being appended
+            raise ChimeraError(f"LLM generation failed for {persona_name}: {e}") from e
 
         # Parse and validate the LLM's output
         parsed_output_data = {}
