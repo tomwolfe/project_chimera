@@ -32,6 +32,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # --server.enableXsrfProtection=true: Enables Cross-Site Request Forgery protection.
 # --server.runOnSave=false: Prevents Streamlit from automatically reloading on file changes in production.
 # --server.fileWatcherType=none: Disables file watching entirely in production for performance.
-CMD ["streamlit", "run", "app.py", "--server.port", "8080", "--server.headless", "true",
-     "--server.enableCORS", "false", "--server.enableXsrfProtection", "true",
-     "--server.runOnSave", "false", "--server.fileWatcherType", "none"]
+CMD ["streamlit", "run", "app.py", "--server.port", "8080", "--server.headless", "true", "--server.enableCORS", "false", "--server.enableXsrfProtection", "true", "--server.runOnSave", "false", "--server.fileWatcherType", "none"]
