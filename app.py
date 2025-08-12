@@ -252,9 +252,12 @@ def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manag
         return ContextRelevanceAnalyzer()
 
 # Get the persona manager instance (also cached)
-@st.cache_resource
+# --- FIX START: REMOVE @st.cache_resource from get_persona_manager() ---
+# This is the core fix for the CacheReplayClosureError.
+# @st.cache_resource # <--- REMOVED THIS LINE
 def get_persona_manager():
     return PersonaManager()
+# --- FIX END ---
 
 persona_manager_instance = get_persona_manager()
 
@@ -1022,6 +1025,8 @@ def _run_socratic_debate_process():
                 # --- END MODIFICATION ---
 
                 # Pass the request_id to the SocraticDebate instance for logging
+                logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance)})
+                
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate, # Use the potentially sanitized prompt
                     api_key=st.session_state.api_key_input,
