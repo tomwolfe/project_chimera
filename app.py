@@ -317,6 +317,10 @@ def _initialize_session_state(pm: PersonaManager):
         st.session_state._session_id = str(uuid.uuid4())
     # --- END ADDED ---
 
+    # --- FIX START: Initialize debate_progress for the progress bar ---
+    st.session_state.debate_progress = 0.0
+    # --- FIX END ---
+
 # --- Session State Initialization Call ---
 # Ensure session state is initialized on first run
 if "initialized" not in st.session_state:
@@ -949,19 +953,25 @@ def _run_socratic_debate_process():
     # --- END SANITIZATION ---
 
     st.session_state.debate_ran = False
-    # --- MODIFICATION FOR IMPROVEMENT 2.1 ---
-    # Enhancing status feedback for multi-stage processes
+    # --- FIX START ---
+    # Initialize final_answer and intermediate_steps before the try block
+    final_answer = None
+    intermediate_steps = {}
+    # --- FIX END ---
+    final_total_tokens = 0
+    final_total_cost = 0.0
+    
+    # --- FIX START: Initialize progress bar and related elements correctly ---
     with st.status("Socratic Debate in Progress", expanded=True) as status:
         # Use a single placeholder for the main progress message
         main_progress_message = st.empty()
         main_progress_message.markdown("### Initializing debate...")
         
-        # Use a progress bar for overall progress
+        # Create a progress bar for overall progress
         overall_progress_bar = st.progress(0)
         
-        # --- MODIFICATION: Add placeholder for active persona ---
+        # Add placeholder for active persona
         active_persona_placeholder = st.empty()
-        # --- END MODIFICATION ---
 
         # Helper function to update status elements consistently
         # NOTE: Signature must match core.py's SocraticDebate.status_callback
@@ -975,25 +985,19 @@ def _run_socratic_debate_process():
             else:
                 active_persona_placeholder.empty() # Clear if no persona name is provided
 
-            # Update the progress bar (simple increment for now, could be more sophisticated)
+            # Update the progress bar
             if progress_pct is not None:
-                overall_progress_bar.progress(progress_pct)
+                # Ensure progress_pct is between 0.0 and 1.0 for st.progress
+                st.session_state.debate_progress = max(0.0, min(1.0, progress_pct))
+                overall_progress_bar.progress(st.session_state.debate_progress)
             else:
-                # Fallback to a simple increment if progress_pct is not provided
-                current_progress_value = (overall_progress_bar._value * 100 + 10) if hasattr(overall_progress_bar, '_value') else 10
-                overall_progress_bar.progress(min(current_progress_value, 99))
-            
-        # --- END MODIFICATION ---
+                # Fallback: if progress_pct is None, increment based on last known progress
+                # This ensures the progress bar still moves and avoids the TypeError.
+                # Increment by a small, fixed amount to show activity.
+                st.session_state.debate_progress = min(st.session_state.debate_progress + 0.01, 0.99)
+                overall_progress_bar.progress(st.session_state.debate_progress)
+    # --- FIX END ---
 
-        debate_instance = None
-        # --- FIX START ---
-        # Initialize final_answer and intermediate_steps before the try block
-        final_answer = None
-        intermediate_steps = {}
-        # --- FIX END ---
-        final_total_tokens = 0
-        final_total_cost = 0.0
-        
         # Capture rich output and console instance for process log
         with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
             try:

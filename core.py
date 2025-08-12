@@ -147,6 +147,10 @@ class SocraticDebate:
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs using the class-specific logger."""
+        # --- FIX START: Extract exc_info from kwargs before passing to extra ---
+        exc_info = kwargs.pop('exc_info', None)
+        # --- FIX END ---
+
         log_data = {**self._log_extra, **kwargs}
         # Convert non-serializable objects to strings for logging to prevent errors
         for k, v in log_data.items():
@@ -158,16 +162,13 @@ class SocraticDebate:
                 log_data[k] = str(v) 
         
         # Use the class-specific logger instance
-        if level == "debug":
-            self.logger.debug(message, extra=log_data)
-        elif level == "info":
-            self.logger.info(message, extra=log_data)
-        elif level == "warning":
-            self.logger.warning(message, extra=log_data)
-        elif level == "error":
-            self.logger.error(message, extra=log_data)
-        else: # Default to error if an unknown level is provided
-            self.logger.error(f"Unknown log level '{level}': {message}", extra=log_data)
+        logger_method = getattr(self.logger, level)
+        # --- FIX START: Pass exc_info as a separate parameter ---
+        if exc_info is not None:
+            logger_method(message, exc_info=exc_info, extra=log_data)
+        else:
+            logger_method(message, extra=log_data)
+        # --- FIX END ---
 
     def _calculate_token_budgets(self):
         """Calculates token budgets for different phases based on context and model limits."""
@@ -321,6 +322,7 @@ class SocraticDebate:
                 output_tokens=max(0, self.tokens_used - self.initial_input_tokens) 
             )
             return cost
+
         except Exception as e:
             # Log any errors during cost calculation
             self._log_with_context("error", "Could not estimate total cost", error=str(e), method="get_total_estimated_cost")
