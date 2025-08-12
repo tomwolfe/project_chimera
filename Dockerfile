@@ -4,10 +4,10 @@
 FROM python:3.10-slim AS builder
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
+# Install production dependencies
+COPY requirements-prod.txt .
 # Ensure all necessary packages, including streamlit, google-genai, etc., are installed.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-prod.txt
 
 # Pre-download sentence-transformers model to avoid runtime download issues
 # This ensures the model is available at runtime and avoids network issues or delays

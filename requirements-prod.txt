@@ -1,0 +1,10 @@
+# requirements-prod.txt
+streamlit
+google-genai
+pyyaml
+pydantic>=2.0
+rich<14
+pycodestyle
+bandit
+sentence-transformers
+python-json-logger

@@ -32,6 +32,9 @@ README.md
 .env
 secrets.toml # If you were using Streamlit secrets locally
 
+# Ignore development-specific requirements file
+requirements.txt # ADD THIS LINE
+
 # Ignore any other local development files or directories you don't want in the image
 # e.g., data directories, logs, temporary files
 # data/

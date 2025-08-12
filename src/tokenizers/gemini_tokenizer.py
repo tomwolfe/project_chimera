@@ -6,6 +6,7 @@ from .base import Tokenizer
 import hashlib
 import re
 import sys # Import sys for sys.stderr
+from functools import lru_cache # ADD THIS IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class GeminiTokenizer(Tokenizer):
         
         self.genai_client = genai_client
         self.model_name = model_name
-        self._cache = {}  # Initialize cache for token counts
+        # self._cache = {}  # REMOVE THIS LINE - cache is now handled by lru_cache
 
     @property
     def max_output_tokens(self) -> int:
@@ -60,17 +61,18 @@ class GeminiTokenizer(Tokenizer):
         logger.warning(f"Unknown model '{self.model_name}', using default max output tokens (8192)")
         return self.MODEL_MAX_OUTPUT_TOKENS["default"]
     
+    @lru_cache(maxsize=512) # ADD THIS DECORATOR
     def count_tokens(self, text: str) -> int:
         """Counts tokens in the given text using the Gemini API, with caching."""
         if not text:
             return 0
             
         # Use a hash of the text for cache key
-        text_hash = hash(text)
+        # text_hash = hash(text) # REMOVE THIS LINE - lru_cache handles hashing
         
-        if text_hash in self._cache:
-            logger.debug(f"Cache hit for token count (hash: {text_hash}).")
-            return self._cache[text_hash]
+        # if text_hash in self._cache: # REMOVE THIS BLOCK - lru_cache handles caching
+        #     logger.debug(f"Cache hit for token count (hash: {text_hash}).")
+        #     return self._cache[text_hash]
         
         try:
             # Ensure text is properly encoded for the API call
@@ -89,9 +91,9 @@ class GeminiTokenizer(Tokenizer):
             )
             tokens = response.total_tokens
             
-            # Cache the result
-            self._cache[text_hash] = tokens
-            logger.debug(f"Token count for text (hash: {text_hash}) is {tokens}. Stored in cache.")
+            # Cache the result # REMOVE THIS LINE - lru_cache handles caching
+            # self._cache[text_hash] = tokens # REMOVE THIS LINE
+            logger.debug(f"Token count for text is {tokens}. Stored in cache.") # Modified log message
             return tokens
             
         except Exception as e:
