@@ -19,30 +19,23 @@ RUN pip install --no-cache-dir sentence-transformers
 RUN python -c "from sentence_transformers import SentenceTransformer; import os; os.makedirs('/tmp/hf_cache/transformers/sentence-transformers_all-MiniLM-L6-v2', exist_ok=True); model = SentenceTransformer('all-MiniLM-L6-v2'); model.save('/tmp/hf_cache/transformers/sentence-transformers_all-MiniLM-L6-v2')"
 
 
-# Stage 2: Build application dependencies
-FROM python:3.11-slim AS builder
-WORKDIR /app
-
-# Install production dependencies
-COPY requirements-prod.txt .
-RUN pip install --no-cache-dir -r requirements-prod.txt
-
-# Copy the cached model from the model_downloader stage
-COPY --from=model_downloader /tmp/hf_cache/transformers /home/appuser/.cache/huggingface/transformers
-
-
-# Stage 3: Final image
+# Stage 2: Final image
 FROM python:3.11-slim AS final
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser
 WORKDIR /home/appuser
 
-# Copy installed packages and model cache
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /home/appuser/.cache /home/appuser/.cache
+# Copy production requirements and install them as root first.
+# This ensures executables like 'streamlit' are placed in /usr/local/bin,
+# which is typically in the PATH for all users.
+COPY requirements-prod.txt .
+RUN pip install --no-cache-dir -r requirements-prod.txt
 
-# Ensure proper ownership
+# Copy the cached model from the model_downloader stage
+COPY --from=model_downloader /tmp/hf_cache/transformers /home/appuser/.cache/huggingface/transformers
+
+# Ensure proper ownership of the cache directory for the non-root user
 RUN chown -R appuser:appuser /home/appuser/.cache
 
 # Copy application code
