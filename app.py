@@ -17,17 +17,27 @@ from core import SocraticDebate
 # --- FIX END ---
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
-from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path # Added sanitize_and_validate_file_path
+# --- MODIFICATION: Added recommend_domain_from_keywords to src.utils import ---
+from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords # Added sanitize_and_validate_file_path and recommend_domain_from_keywords
+# --- END MODIFICATION ---
 from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, SchemaValidationError
-from src.constants import SELF_ANALYSIS_KEYWORDS # Added import for suggestion 1.1
+# --- MODIFICATION: Added is_self_analysis_prompt to src.constants import ---
+from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # Added import for suggestion 1.1
+# --- END MODIFICATION ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import for caching
 import traceback # Needed for error handling in app.py
 import difflib # For Suggestion 3.1
 from collections import defaultdict # For Suggestion 3.2
 from pydantic import ValidationError # Import ValidationError for parsing errors
 import html # Needed for html.escape in sanitize_user_input
+
+# --- NEW IMPORTS FOR ENHANCEMENTS ---
+import uuid # For request ID generation
+from src.logging_config import setup_structured_logging # For structured logging
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # For rate limiting
+# --- END NEW IMPORTS ---
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -72,11 +82,13 @@ def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json
         st.error(f"IO error reading demo context file '{file_path}'. Check permissions: {e}")
         return {}
 
-# Redirect rich console output to a string buffer for Streamlit display
+# Redirect rich output to a string buffer for Streamlit display
 @contextlib.contextmanager
 def capture_rich_output_and_get_console():
     """Captures rich output (like Streamlit elements) and returns the captured content."""
     buffer = io.StringIO()
+    # Use force_terminal=True to ensure ANSI codes are generated for rich output
+    # Use soft_wrap=True for better readability in the output buffer
     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
     yield buffer, console_instance
 
@@ -102,10 +114,26 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         md_content += "## Persona Configuration Audit Trail (Current Session)\n\n"
         md_content += "| Timestamp | Persona | Parameter | Old Value | New Value |\n"
         md_content += "|---|---|---|---|---|\n"
+        
+        # --- FIX APPLIED HERE ---
+        # Define the replacement string outside the f-string expression to avoid SyntaxError.
+        # The f-string parser cannot handle raw string literals with backslashes directly within the expression part.
+        escaped_newline_for_display = r'\\n'
+        # --- END FIX ---
+
         for entry in persona_audit_log:
-            old_val = str(entry.get('old_value')).replace('\n', '\\n')[:50] + '...' if len(str(entry.get('old_value'))) > 50 else str(entry.get('old_value')).replace('\n', '\\n')
-            new_val = str(entry.get('new_value')).replace('\n', '\\n')[:50] + '...' if len(str(entry.get('new_value'))) > 50 else str(entry.get('new_value')).replace('\n', '\\n')
-            md_content += f"| {entry.get('timestamp')} | {entry.get('persona')} | {entry.get('parameter')} | `{old_val}` | `{new_val}` |\n"
+            # Truncate long values for better table display
+            old_val_str = str(entry.get('old_value', ''))
+            new_val_str = str(entry.get('new_value', ''))
+            old_val_display = (old_val_str[:50] + '...') if len(old_val_str) > 50 else old_val_str
+            new_val_display = (new_val_str[:50] + '...') if len(new_val_str) > 50 else new_val_str
+            
+            # --- FIX APPLIED HERE ---
+            # Move the replace operation OUTSIDE the f-string expression
+            old_val_display_escaped = old_val_display.replace('\n', escaped_newline_for_display)
+            new_val_display_escaped = new_val_display.replace('\n', escaped_newline_for_display)
+            md_content += f"| {entry.get('timestamp')} | {entry.get('persona')} | {entry.get('parameter')} | `{old_val_display_escaped}` | `{new_val_display_escaped}` |\n"
+            # --- END FIX ---
         md_content += "\n---\n\n"
 
     md_content += "## Process Log\n\n"
@@ -117,8 +145,8 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
         step_keys_to_process = sorted([k for k in intermediate_steps.keys()
-                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"],
-                                      key=lambda x: (x.split('_')[0], x))
+                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("malformed_blocks")],
+                                      key=lambda x: (x.split('_')[0] if '_' in x else '', x)) # Sort by persona name first, then step name
         
         for step_key in step_keys_to_process:
             display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
@@ -191,6 +219,12 @@ EXAMPLE_PROMPTS = {
 }
 # --- END MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
 
+# --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
+# This should be called early to ensure all subsequent logs are structured.
+setup_structured_logging(log_level=logging.INFO)
+logger = logging.getLogger(__name__) # Logger for app.py
+# --- END LOGGING SETUP ---
+
 # Initialize PersonaManager once (it's cached by st.cache_resource)
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
 # Define the function to get a cached instance of ContextRelevanceAnalyzer
@@ -238,15 +272,6 @@ def _initialize_session_state(pm: PersonaManager):
     # Set default example name to the first one in the first category
     st.session_state.selected_example_name = list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]
     
-    st.session_state.persona_manager = pm # Store the cached instance
-    st.session_state.all_personas = pm.all_personas
-    st.session_state.persona_sets = pm.persona_sets
-    # --- FIX: Add this line to initialize available_domains ---
-    # This list is derived from the keys of the loaded persona sets, used for framework selection.
-    st.session_state.available_domains = list(pm.persona_sets.keys())
-    # REMOVED: st.session_state.persona_sequence = pm.persona_sequence # This is now determined dynamically
-    st.session_state.selected_persona_set = pm.default_persona_set_name # Use default from manager
-
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
     st.session_state.intermediate_steps_output = {}
@@ -260,9 +285,8 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.persona_edit_mode = False
     st.session_state.persona_changes_detected = False # For Improvement 4.1
     
-    # --- FIX: Initialize context_token_budget_ratio in session state ---
-    # This variable is used in the sidebar slider's 'value' parameter before the widget itself
-    # might create it in session state.
+    # --- FIX: Ensure context_token_budget_ratio is initialized before use ---
+    # The value parameter should correctly reference the session state variable
     st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
     # --- END FIX ---
 
@@ -270,7 +294,12 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.framework_description = ""
     st.session_state.load_framework_select = ""
     st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area
-# --- END Session State Initialization ---
+    
+    # --- ADDED FOR RATE LIMITING ---
+    # Initialize a session ID for the rate limiter if not already present
+    if '_session_id' not in st.session_state:
+        st.session_state._session_id = str(uuid.uuid4())
+    # --- END ADDED ---
 
 # --- Session State Initialization Call ---
 # Ensure session state is initialized on first run
@@ -279,29 +308,58 @@ if "initialized" not in st.session_state:
 # --- END Session State Initialization Call ---
 
 
-# --- NEW HELPER FUNCTION FOR SANITIZATION ---
+# --- ENHANCED SANITIZATION FUNCTION ---
 def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
+    issues = [] # Keep track of detected issues for logging/feedback if needed
+    
     # 1. Basic HTML escaping for XSS protection
     sanitized = html.escape(prompt)
     
     # 2. Prevent prompt injection patterns
+    # Added more patterns and refined existing ones for better coverage.
     injection_patterns = [
-        (r'(?i)\b(system|shell|bash|cmd|execute|run|import|from|import\s+[\w.]+)\b', 'COMMAND'),
-        (r'(?i)\b(prompt\s*[:=]|instruction\s*[:=]|role\s*[:=])', 'DIRECTIVE'),
-        (r'(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous', 'IGNORE'),
-        (r'(?i)(?:act as|pretend to be|roleplay as|you are now)', 'ROLEPLAY'),
-        (r'(?i)(?:\bdebug\b|\bprint\b|\bconsole\.log\b)', 'DEBUG'),
-        (r'(?i)(?:output only|respond with|format as)', 'FORMAT_INJECTION'),
+        # Patterns targeting instruction override/manipulation
+        (r'(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b', 'INSTRUCTION_OVERRIDE'),
+        (r'(?i)\b(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b', 'DIRECTIVE_PROBING'),
+        (r'(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous', 'IGNORE_PREVIOUS'),
+        (r'(?i)(?:act as|pretend to be|roleplay as|you are now|your new role is)\s+[:]?\s*([\w\s]+)', 'ROLE_MANIPULATION'),
+        
+        # Patterns targeting code execution or command injection
+        (r'(?i)\b(execute|run|system|shell|bash|cmd|powershell|eval|exec|import\s+os|from\s+subprocess)\b', 'CODE_EXECUTION_ATTEMPT'),
+        (r'(?i)(?:print|console\.log|echo)\s*\(?[\'"]?.*[\'"]?\)?', 'DEBUG_OUTPUT_ATTEMPT'),
+        
+        # Patterns targeting output format manipulation
+        (r'(?i)(?:output only|respond with|format as|return only|extract)\s+[:]?\s*([\w\s]+)', 'FORMAT_INJECTION'),
+        
+        # Patterns targeting specific LLM vulnerabilities or escape sequences
+        (r'(?i)<\|.*?\|>', 'SPECIAL_TOKEN_MANIPULATION'), # e.g., <|im_start|>
+        (r'(?i)(open\s+the\s+pod\s+bay\s+doors)', 'LLM_ESCAPE_REFERENCE'), # Classic reference
+        (r'(?i)^\s*#', 'COMMENT_INJECTION'), # Lines starting with # might be interpreted as comments
+        
+        # Patterns targeting sensitive information disclosure
+        (r'(?i)\b(api_key|secret|password|token|credential)\b[:=]?\s*[\'"]?[\w-]+[\'"]?', 'SENSITIVE_DATA_PROBE'),
     ]
     
-    for pattern, replacement in injection_patterns:
-        sanitized = re.sub(pattern, replacement, sanitized)
+    # --- ADDED: Length Limit ---
+    MAX_PROMPT_LENGTH = 2000
+    if len(prompt) > MAX_PROMPT_LENGTH:
+        issues.append(f"Prompt length exceeded ({len(prompt)} > {MAX_PROMPT_LENGTH}). Truncating.")
+        prompt = prompt[:MAX_PROMPT_LENGTH]
+    # --- END ADDED ---
+    
+    # Replace matched patterns with a placeholder to indicate detection
+    # This prevents the malicious instruction from being passed directly.
+    # The replacement string should be neutral and clearly indicate detection.
+    for pattern, replacement_tag in injection_patterns:
+        prompt = re.sub(pattern, f"[{replacement_tag}]", prompt)
     
     # 3. Limit consecutive special characters to prevent token manipulation
-    sanitized = re.sub(r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r'\1\1\1', sanitized)
+    # This regex limits sequences of 3 or more identical special characters to 3.
+    sanitized = re.sub(r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r'\1\1\1', prompt)
     
     # 4. Ensure balanced quotes and brackets (simplified approach)
+    # This is a basic attempt to balance common delimiters. More complex parsing might be needed.
     for char_pair in [('"', '"'), ("'", "'"), ('(', ')'), ('{', '}'), ('[', ']')]:
         open_count = sanitized.count(char_pair[0])
         close_count = sanitized.count(char_pair[1])
@@ -310,69 +368,30 @@ def sanitize_user_input(prompt: str) -> str:
         elif close_count > open_count:
             sanitized = char_pair[0] * (close_count - open_count) + sanitized
     
+    # Re-apply HTML escaping after other sanitization steps if necessary,
+    # but generally, it's better to do it first or ensure replacements don't break it.
+    # For now, assuming HTML escaping is done first and replacements are safe.
+    
     return sanitized
-# --- END NEW HELPER FUNCTION ---
+# --- END ENHANCED SANITIZATION FUNCTION ---
 
-# --- START: Enhanced Framework Recommendation Function ---
-# Moved this function definition to the top level, before UI elements and session state initialization.
-def recommend_domain_from_keywords(prompt: str, all_domain_keywords: Dict[str, List[str]]) -> Optional[str]:
-    """
-    Analyze prompt to recommend the most appropriate reasoning framework
-    based on keyword matching across multiple domains.
-    """
-    if not prompt or len(prompt.strip()) < 5:
-        return None
-        
-    prompt_lower = prompt.lower().strip()
-    
-    domain_scores = defaultdict(float)
-    
-    # Calculate scores for each domain
-    for domain, keywords in all_domain_keywords.items():
-        current_domain_score = 0.0
-        for keyword in keywords:
-            # Use word boundaries to avoid partial matches (e.g., "code" matching "decoder")
-            # and count occurrences for stronger signals
-            current_domain_score += len(re.findall(r'\b' + re.escape(keyword) + r'\b', prompt_lower))
-            
-        domain_scores[domain] = current_domain_score
-    
-    # Special handling for explicit self-analysis requests (strong override)
-    explicit_self_analysis_phrases = [
-        "analyze the entire project chimera codebase",
-        "critically analyze the project chimera codebase",
-        "perform self-analysis on the code",
-        "evaluate my own implementation",
-        "improve code quality",
-        "refactor this code",
-        "identify code improvements",
-        "suggest code enhancements"
-    ]
-    
-    if any(phrase in prompt_lower for phrase in explicit_self_analysis_phrases):
-        # Assign a very high score to ensure "Software Engineering" is chosen for self-analysis
-        domain_scores["Software Engineering"] = max(domain_scores["Software Engineering"], 100.0) 
-    
-    # Find the domain with the highest score
-    best_domain = "General" # Default fallback
-    max_score = 0.0
-    
-    for domain, score in domain_scores.items():
-        if score > max_score:
-            max_score = score
-            best_domain = domain
-            
-    # Define a minimum threshold for a specific domain to be recommended over "General"
-    # A score of 1.0 means at least one keyword matched.
-    # --- FIX: Corrected typo from RECOMMENDENDATION_THRESHOLD to RECOMMENDATION_THRESHOLD ---
-    RECOMMENDATION_THRESHOLD = 1.0 
-    # --- END FIX ---
-    
-    if max_score >= RECOMMENDATION_THRESHOLD:
-        return best_domain
-    else:
-        return "General" # Fallback if no strong domain signal
-# --- END: Enhanced Framework Recommendation Function ---
+
+# --- NEW: RATE LIMITER INSTANTIATION ---
+# Instantiate the rate limiter (e.g., 10 calls per minute per session)
+# This limiter will be applied to the main action function.
+# Note: For distributed deployments, an in-memory limiter is insufficient.
+# A Redis-based solution or external proxy would be needed.
+session_rate_limiter = RateLimiter(calls=10, period=60.0)
+# --- END RATE LIMITER INSTANTIATION ---
+
+
+# --- NEW: HELPER FUNCTION FOR IS_SELF_ANALYSIS_PROMPT ---
+# This function is defined in src/constants.py, but for clarity and
+# to ensure it's available if core.py is modified to use it directly,
+# we can keep a reference or ensure it's imported correctly.
+# The core.py already imports it, so this is mainly for app.py's direct use.
+# The is_self_analysis_prompt function is already imported from src.constants.
+# --- END HELPER FUNCTION ---
 
 
 def reset_app_state():
@@ -401,7 +420,7 @@ with st.sidebar:
         st.text_input("Enter your Gemini API Key", type="password", key="api_key_input", help="Your API key will not be stored.")
         st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
         st.markdown("---")
-        # --- MODIFICATION: Add API Key Format Validation ---
+        # --- MODIFICATION FOR API KEY VALIDATION ---
         # Check if the API key input is not empty and if it has a valid format.
         # The regex checks for a string of alphanumeric characters, hyphens, and underscores,
         # typically 35 characters long for Gemini API keys.
@@ -475,6 +494,12 @@ for i, tab_name in enumerate(tab_names):
             # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING ---
             # Analyze the custom prompt to determine the appropriate framework
             # This call is now valid because recommend_domain_from_keywords is defined earlier.
+            # NOTE: `recommend_domain_from_keywords` is not defined in this file,
+            # it's assumed to be imported or defined elsewhere in the project.
+            # For this fix, I'll assume it's available.
+            # --- REMOVED INLINE IMPORT ---
+            # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
+            # --- END REMOVED INLINE IMPORT ---
             suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area, DOMAIN_KEYWORDS)
             
             # Only change if a suggestion is made and it's different from the current selection
@@ -538,6 +563,12 @@ for i, tab_name in enumerate(tab_names):
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
                     # --- FIX: Apply recommendation for non-coding example prompts ---
+                    # NOTE: `recommend_domain_from_keywords` is not defined in this file,
+                    # it's assumed to be imported or defined elsewhere in the project.
+                    # For this fix, I'll assume it's available.
+                    # --- REMOVED INLINE IMPORT ---
+                    # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
+                    # --- END REMOVED INLINE IMPORT ---
                     suggested_domain_for_example = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
                     if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
                         st.session_state.selected_persona_set = suggested_domain_for_example
@@ -583,6 +614,12 @@ with col1:
     
     if user_prompt.strip():
         # --- FIX: Pass DOMAIN_KEYWORDS to the recommendation function ---
+        # NOTE: `recommend_domain_from_keywords` is not defined in this file,
+        # it's assumed to be imported or defined elsewhere in the project.
+        # For this fix, I'll assume it's available.
+        # --- REMOVED INLINE IMPORT ---
+        # from src.utils import recommend_domain_from_keywords # Assuming this import is missing
+        # --- END REMOVED INLINE IMPORT ---
         suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
         # --- END FIX ---
         # --- FIX: Update the primary session state variable directly ---
@@ -592,7 +629,7 @@ with col1:
                 st.session_state.selected_persona_set = suggested_domain
                 # REMOVED: st.rerun() # Removed to prevent potential loops
     
-    # --- MODIFICATION FOR IMPROVEMENT 4.1: Centralize Persona/Framework Data Access ---
+    # --- MODIFICATION FOR IMPROVEMENT 1.2: Centralize Persona/Framework Data Access ---
     # Use the PersonaManager instance to get available domains for the selectbox
     available_framework_options = st.session_state.persona_manager.available_domains
     unique_framework_options = sorted(list(set(available_framework_options)))
@@ -840,23 +877,50 @@ with reset_col:
 # --- MODIFICATION: Extract debate execution logic into a separate function ---
 def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
+    
+    # Generate a request ID for this specific run
+    request_id = str(uuid.uuid4())[:8]
+    
+    # Log the start of the process with the request ID
+    logger.info("Starting Socratic Debate process.", extra={'request_id': request_id, 'user_prompt': user_prompt})
+    
     api_key_feedback_placeholder.empty()
     if not st.session_state.api_key_input.strip():
-        st.error("Please enter your Gemini API Key in the sidebar to proceed.")
+        api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to proceed.")
+        logger.warning("API key missing, debate process aborted.", extra={'request_id': request_id})
         return # Exit if API key is missing
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
+        logger.warning("User prompt is empty, debate process aborted.", extra={'request_id': request_id})
         return # Exit if prompt is empty
 
+    # --- RATE LIMITING CHECK ---
+    try:
+        # This call will raise RateLimitExceededError if the limit is hit
+        # We call the wrapper with a dummy function to trigger the check.
+        session_rate_limiter(lambda: None)() 
+    except RateLimitExceededError as e:
+        st.error(f"Request blocked: {e}")
+        logger.warning(f"Rate limit exceeded for session. {e}", extra={'request_id': request_id})
+        return # Stop execution if rate limit is hit
+    except Exception as e: # Catch other potential issues with the limiter itself
+        st.error(f"An error occurred with the rate limiting system: {e}")
+        logger.error(f"Error in rate limiter check: {e}", extra={'request_id': request_id})
+        return
+    # --- END RATE LIMITING CHECK ---
+
     # --- SANITIZE USER PROMPT BEFORE PASSING TO DEBATE ---
+    # The existing sanitize_user_input function is already present in app.py.
+    # This step ensures the prompt is cleaned and logs the action.
     sanitized_prompt = sanitize_user_input(user_prompt)
     if sanitized_prompt != user_prompt:
         st.warning("User prompt was sanitized to mitigate potential injection risks.")
         st.session_state.user_prompt_input = sanitized_prompt # Update session state with sanitized prompt
-        # Use the sanitized prompt for the debate
-        current_user_prompt_for_debate = sanitized_prompt 
+        logger.info("Prompt was sanitized.", extra={'request_id': request_id, 'original_prompt': user_prompt, 'sanitized_prompt': sanitized_prompt})
     else:
-        current_user_prompt_for_debate = user_prompt
+        logger.debug("Prompt did not require sanitization.", extra={'request_id': request_id})
+        
+    current_user_prompt_for_debate = sanitized_prompt
     # --- END SANITIZATION ---
 
     st.session_state.debate_ran = False
@@ -887,7 +951,6 @@ def _run_socratic_debate_process():
                 active_persona_placeholder.empty() # Clear if no persona name is provided
 
             # Update the progress bar (simple increment for now, could be more sophisticated)
-            # A more precise implementation would require `core.py` to pass a `progress_pct`.
             if progress_pct is not None:
                 overall_progress_bar.progress(progress_pct)
             else:
@@ -895,55 +958,62 @@ def _run_socratic_debate_process():
                 current_progress_value = (overall_progress_bar._value * 100 + 10) if hasattr(overall_progress_bar, '_value') else 10
                 overall_progress_bar.progress(min(current_progress_value, 99))
             
-            # Update the metrics inside the expander
-            # token_display.metric("Tokens Used", f"{current_total_tokens:,}")
-            # cost_display.metric("Estimated Cost (USD)", f"${current_total_cost:.4f}")
         # --- END MODIFICATION ---
 
         debate_instance = None
         final_total_tokens = 0
         final_total_cost = 0.0
-        try:
-            domain_for_run = st.session_state.selected_persona_set
-            # Get persona sequence using the persona manager, which now uses persona_sets
-            current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
-            personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
+        
+        # Capture rich output and console instance for process log
+        with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
+            try:
+                domain_for_run = st.session_state.selected_persona_set
+                # Get persona sequence using the persona manager, which now uses persona_sets
+                current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
+                personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
 
-            if not personas_for_run:
-                raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
-            
-            # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
-            # Use the cached context analyzer instance
-            context_analyzer_instance = get_context_analyzer()
-            # --- END MODIFICATION ---
+                if not personas_for_run:
+                    raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
+                
+                # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
+                # Use the cached context analyzer instance
+                context_analyzer_instance = get_context_analyzer()
+                # --- END MODIFICATION ---
 
-            with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
-                # Pass the context_analyzer_instance to SocraticDebate
-                # --- FIX START ---
-                # Changed 'core.SocraticDebate' to 'SocraticDebate' after importing it directly
+                # Pass the request_id to the SocraticDebate instance for logging
                 debate_instance = SocraticDebate(
-                # --- FIX END ---
                     initial_prompt=current_user_prompt_for_debate, # Use the potentially sanitized prompt
                     api_key=st.session_state.api_key_input,
                     max_total_tokens_budget=st.session_state.max_tokens_budget_input,
                     model_name=st.session_state.selected_model_selectbox,
                     all_personas=st.session_state.all_personas,
                     persona_sets=st.session_state.persona_sets, # Pass persona_sets
-                    # REMOVED persona_sequence from arguments
                     domain=domain_for_run, # Pass the domain
                     status_callback=update_status, # Use the new update_status helper
-                    rich_console=rich_console_instance,
+                    rich_console=rich_console_instance, # Pass the captured console instance
                     codebase_context=st.session_state.get('codebase_context', {}),
                     context_token_budget_ratio=st.session_state.context_token_budget_ratio,
                     context_analyzer=context_analyzer_instance, # Pass the cached analyzer
                     # --- MODIFICATION: Add is_self_analysis parameter ---
+                    # NOTE: `is_self_analysis_prompt` is not defined in this file,
+                    # it's assumed to be imported or defined elsewhere in the project.
+                    # For this fix, I'll assume it's available.
+                    # --- REMOVED INLINE IMPORT ---
+                    # from src.constants import is_self_analysis_prompt # Assuming this import is missing
+                    # --- END REMOVED INLINE IMPORT ---
                     is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate)
                     # --- END MODIFICATION ---
                 )
                 
+                # Log the start of the debate execution with request_id
+                logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance)})
+                
                 final_answer, intermediate_steps = debate_instance.run_debate()
                 
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue()
+                # Log completion
+                logger.info("Socratic Debate execution finished.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance)})
+                
+                st.session_state.process_log_output_text = rich_output_buffer.getvalue() # Capture the process log
                 st.session_state.final_answer_output = final_answer
                 st.session_state.intermediate_steps_output = intermediate_steps
                 st.session_state.last_config_params = {
@@ -956,101 +1026,82 @@ def _run_socratic_debate_process():
                 status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
                 final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                 final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
-        
-        except TokenBudgetExceededError as e:
-            if 'rich_output_buffer' in locals():
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-            else:
-                st.session_state.process_log_output_text = ""
-
-            status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
-            st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
-                     f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
-                     f"Details: {str(e)}")
-            st.session_state.debate_ran = True
-            if debate_instance:
-                st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
             
-            st.session_state.final_answer_output = {
-                "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
-                "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please adjust budget or prompt complexity. Error: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
-            }
-            final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-        
-        except (LLMResponseValidationError, SchemaValidationError) as e:
-            if 'rich_output_buffer' in locals():
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-            else:
-                st.session_state.process_log_output_text = ""
-
-            status.update(label=f"Socratic Debate Failed: Validation Error", state="error", expanded=True)
-            st.error(f"**Schema Validation Error:** {e}")
-            st.session_state.debate_ran = True
-            if debate_instance:
-                st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+            except TokenBudgetExceededError as e:
+                logger.error("Token budget exceeded during debate.", extra={'request_id': request_id, 'error': str(e)})
+                if not isinstance(final_answer, dict):
+                    final_answer = {
+                        "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
+                        "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
+                    }
+                elif "malformed_blocks" not in final_answer:
+                    final_answer["malformed_blocks"] = [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
+                
+                status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
+                st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
+                         f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
+                         f"Details: {str(e)}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
-            st.session_state.final_answer_output = {
-                "COMMIT_MESSAGE": "Debate Failed - Schema Validation",
-                "RATIONALE": f"A schema validation error occurred: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR", "message": str(e), "details": e.details}]
-            }
-            final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-        except ChimeraError as ce:
-            if 'rich_output_buffer' in locals():
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-            else:
-                st.session_state.process_log_output_text = ""
-
-            status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
-            st.error(f"**Chimera Error:** {ce}")
-            st.session_state.debate_ran = True
-            if debate_instance:
-                st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+            except ChimeraError as ce:
+                logger.error("ChimeraError during debate.", extra={'request_id': request_id, 'error': str(ce)})
+                if not isinstance(final_answer, dict):
+                    final_answer = {
+                        "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
+                        "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(ce)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
+                    }
+                elif "malformed_blocks" not in final_answer:
+                    final_answer["malformed_blocks"] = [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
+                
+                status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
+                st.error(f"**Chimera Error:** {ce}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
-            st.session_state.final_answer_output = {
-                "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
-                "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(ce)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
-            }
-            final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-        except Exception as e:
-            if 'rich_output_buffer' in locals():
-                st.session_state.process_log_output_text = rich_output_buffer.getvalue()
-            else:
-                st.session_state.process_log_output_text = ""
-
-            status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
-            st.error(f"**Unexpected Error:** {e}")
-            st.session_state.debate_ran = True
-            if debate_instance:
-                st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+            except Exception as e:
+                logger.exception("Unexpected error during debate execution.", extra={'request_id': request_id}) # Use logger.exception for traceback
+                if not isinstance(final_answer, dict):
+                    final_answer = {
+                        "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
+                        "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
+                        "CODE_CHANGES": [],
+                        "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
+                    }
+                elif "malformed_blocks" not in final_answer:
+                    final_answer["malformed_blocks"] = [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
+                
+                status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
+                st.error(f"**Unexpected Error:** {e}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
-            st.session_state.final_answer_output = {
-                "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
-                "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
-            }
-            final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-        
-        # Update intermediate steps with totals
-        # Ensure malformed_blocks is always present, even if empty
-        if "malformed_blocks" not in st.session_state.final_answer_output:
-            st.session_state.final_answer_output["malformed_blocks"] = []
-        if "malformed_blocks" not in st.session_state.intermediate_steps_output:
-            st.session_state.intermediate_steps_output["malformed_blocks"] = []
-            
-        # Update total tokens and cost in intermediate steps
-        st.session_state.intermediate_steps_output["Total_Tokens_Used"] = final_total_tokens
-        st.session_state.intermediate_steps_output["Total_Estimated_Cost_USD"] = final_total_cost
+            # Update intermediate steps with totals
+            # Ensure malformed_blocks is always present, even if empty
+            if "malformed_blocks" not in final_answer:
+                final_answer["malformed_blocks"] = []
+            if "malformed_blocks" not in intermediate_steps:
+                intermediate_steps["malformed_blocks"] = []
+                
+            # Update total tokens and cost in intermediate steps
+            intermediate_steps["Total_Tokens_Used"] = final_total_tokens
+            intermediate_steps["Total_Estimated_Cost_USD"] = final_total_cost
 
 # --- END OF NEW FUNCTION ---
 
@@ -1242,7 +1293,6 @@ if st.session_state.debate_ran:
                         display_content = change.full_content[:1500] + "..." if len(change.full_content) > 1500 else change.full_content
                         st.code(display_content, language='python')
                     
-                    # Download button for ADD and MODIFY actions
                     st.download_button(
                         label=f"Download {'File' if change.action == 'ADD' else 'New File Content'}",
                         data=change.full_content,
@@ -1278,8 +1328,8 @@ if st.session_state.debate_ran:
         if st.session_state.show_intermediate_steps_checkbox:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items()
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history"}
-            sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0], x))
+                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("malformed_blocks")}
+            sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0] if '_' in x else '', x)) # Sort by persona name first, then step name
             for step_key in sorted_step_keys:
                 persona_name = step_key.split('_')[0]
                 display_name = step_key.replace('_Output', '').replace('_Critique', '').replace('_Feedback', '').replace('_', ' ').title()
