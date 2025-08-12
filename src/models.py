@@ -94,3 +94,17 @@ class CritiqueOutput(BaseModel):
     suggestions: List[str] = Field(default_factory=list, alias="SUGGESTIONS", description="Actionable suggestions for improvement.")
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
 # --- END MODIFICATION ---
+
+# --- ADDED DEFINITION FOR CHIMERASETTINGS ---
+class ChimeraSettings(BaseModel):
+    """
+    Default configuration settings for the Chimera application.
+    These can be overridden by explicit arguments or configuration files.
+    """
+    # These fields are based on common parameters used in core.py and app.py
+    # and are assumed to be part of default settings if not provided otherwise.
+    default_model_name: str = "gemini-2.5-flash-lite"
+    default_max_tokens_budget: int = 10000
+    default_context_token_budget_ratio: float = 0.25
+    # Add any other default settings that ChimeraSettings is intended to manage.
+# --- END ADDED DEFINITION ---

@@ -34,7 +34,7 @@ THRESHOLD = 0.75
 def is_self_analysis_prompt(
     prompt: str,
     threshold: float = THRESHOLD,
-    negation_proximity: int = 100
+    negation_proximity: int = 100 # Default proximity for negation check
 ) -> bool:
     """
     Checks if weighted keyword score meets threshold for self-analysis,
@@ -48,17 +48,20 @@ def is_self_analysis_prompt(
         if keyword_pos != -1:
             negated_weight_multiplier = 1.0
             
-            # Check for negations *before* the keyword
-            for pattern, penalty in NEGATION_PATTERNS:
-                for neg_match in re.finditer(pattern, prompt_lower[:keyword_pos]): # Search only before the keyword
-                    if neg_match.end() <= keyword_pos: # Ensure negation is fully before the keyword
-                        distance = keyword_pos - neg_match.end()
-                        if distance < negation_proximity:
-                            negated_weight_multiplier = min(negated_weight_multiplier, penalty)
-                            break # Apply the strongest penalty found before the keyword
+            # Check for negations *before* the keyword within the specified proximity
+            search_window_end = keyword_pos
+            search_window = prompt_lower[:search_window_end]
             
-            # The original code had a duplicate loop here that applied the penalty twice.
-            # This single loop correctly handles negation detection.
+            # Find the closest negation pattern before the keyword
+            closest_negation_end = -1
+            for pattern, penalty in NEGATION_PATTERNS:
+                for neg_match in re.finditer(pattern, search_window):
+                    # Ensure the negation is within the proximity window
+                    distance = keyword_pos - neg_match.end()
+                    if distance >= 0 and distance <= negation_proximity:
+                        if neg_match.end() > closest_negation_end: # Take the closest negation
+                            closest_negation_end = neg_match.end()
+                            negated_weight_multiplier = penalty # Apply the penalty
             
             score += weight * negated_weight_multiplier
     

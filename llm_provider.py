@@ -20,29 +20,11 @@ from src.tokenizers.base import Tokenizer
 from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 
 # --- MODIFICATION: Import PersonaConfig from src.models ---
-# This import was missing, causing the NameError in the GeminiProvider class definition.
 from src.models import PersonaConfig
 # --- END MODIFICATION ---
 
 # --- Custom Exceptions ---
-# Correcting the inheritance for LLMProviderError
-from src.exceptions import ChimeraError # Import ChimeraError
-
-class LLMProviderError(ChimeraError): # Inherit from ChimeraError
-    """Base exception for LLM provider errors."""
-    def __init__(self, message: str, provider_error_code: Any = None, details: Optional[dict] = None):
-        full_details = (details or {}).copy()
-        full_details["provider_error_code"] = provider_error_code
-        super().__init__(message, details=full_details)
-
-class GeminiAPIError(LLMProviderError):
-    """Specific exception for Gemini API errors."""
-    def __init__(self, message: str, code: int = None, response_details: Any = None):
-        super().__init__(message, provider_error_code=code, details={"response_details": response_details})
-
-class LLMUnexpectedError(LLMProviderError):
-    """Specific exception for unexpected LLM errors."""
-    pass
+from src.exceptions import ChimeraError, LLMProviderError, GeminiAPIError, LLMUnexpectedError, TokenBudgetExceededError # Corrected import, added LLMProviderError
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
@@ -58,51 +40,36 @@ TOKEN_COSTS_PER_1K_TOKENS = {
 
 logger = logging.getLogger(__name__)
 
-# Apply st.cache_resource to the class itself
-# --- FIX START ---
-# Removed @st.cache_resource decorator as genai.Client is not serializable/cacheable
-# @st.cache_resource
 class GeminiProvider:
-# --- FIX END ---
-    # Retry parameters
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
     MAX_BACKOFF_SECONDS = 60 # Maximum backoff time in seconds
     
-    # Define retryable error codes and HTTP status codes at class level
-    RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504} # For API errors that are retryable
-    RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504} # For HTTP errors that are retryable
+    RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
+    RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
     
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None, rich_console: Optional[Console] = None):
         self._api_key = api_key
         self.model_name = model_name
-        self.rich_console = rich_console or Console(stderr=True) # Use provided console or default to stderr
+        self.rich_console = rich_console or Console(stderr=True)
         
-        # --- FIX START ---
-        # Removed @st.cache_resource decorator as genai.Client is not serializable/cacheable
         try:
-            # Attempt to initialize the genai client. This is where API key validation might fail.
             self.client = genai.Client(api_key=self._api_key)
-        except Exception as e: # Catching a broad exception here to handle various potential init failures
+        except Exception as e:
             error_msg = str(e)
             logger.error(f"Failed to initialize genai.Client: {error_msg}")
-            # Raise a specific LLMProviderError indicating the issue.
-            # Check if the error message suggests an invalid API key.
             error_msg_lower = error_msg.lower()
             if "api key not valid" in error_msg_lower or "invalid_argument" in error_msg_lower or "invalid_api_key" in error_msg_lower:
                 raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY") from e
             else:
                 raise LLMProviderError(f"Failed to initialize Gemini client: {error_msg}") from e
         
-        # Ensure tokenizer is initialized only if client is successful
         try:
             self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
         except Exception as e:
             logger.error(f"Failed to initialize GeminiTokenizer: {e}")
-            # Raise an error if tokenizer initialization fails
             raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}") from e
-        # --- FIX END ---
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -134,10 +101,6 @@ class GeminiProvider:
         return input_cost + output_cost
 
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, persona_config: PersonaConfig = None, intermediate_results: Dict[str, Any] = None, requested_model_name: str = None) -> tuple[str, int, int]:
-        """
-        Generate content using the specified model, with retry logic and token tracking.
-        Prioritizes requested_model_name, falling back to provider's default if needed.
-        """
         
         final_model_to_use = requested_model_name
         
@@ -165,7 +128,6 @@ class GeminiProvider:
         return self._generate_with_retry(prompt, system_prompt, config, current_model_name)
 
     def _generate_with_retry(self, prompt: str, system_prompt: str, config: types.GenerateContentConfig, model_name_to_use: str = None) -> tuple[str, int, int]:
-        """Handles content generation with retry logic, using the specified model."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
@@ -223,58 +185,48 @@ class GeminiProvider:
             
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    def count_tokens(self, prompt: str, system_prompt: str = "") -> int:
-        """Counts tokens consistently and robustly using the tokenizer."""
-        prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+    def count_tokens(self, text: str) -> int:
+        """Counts tokens in the given text using the Gemini API, with caching."""
+        if not text:
+            return 0
+            
+        # Use a hash of the text for cache key
+        text_hash = hash(text)
+        
+        if text_hash in self._cache:
+            logger.debug(f"Cache hit for token count (hash: {text_hash}).")
+            return self._cache[text_hash]
         
         try:
             # Ensure text is properly encoded for the API call
             try:
-                text_encoded = prompt_with_system.encode('utf-8')
-                text_for_tokenizer = text_encoded.decode('utf-8', errors='replace') 
+                text_encoded = text.encode('utf-8')
+                text_for_api = text_encoded.decode('utf-8', errors='replace')
             except UnicodeEncodeError:
                 # Fallback if encoding fails, replace problematic characters
-                text_for_tokenizer = prompt_with_system.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+                text_for_api = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
                 logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
             
-            return self.tokenizer.count_tokens(text_for_tokenizer)
+            # Use the count_tokens API to get token count
+            response = self.genai_client.models.count_tokens(
+                model=self.model_name,
+                contents=text_for_api
+            )
+            tokens = response.total_tokens
+            
+            # Cache the result
+            self._cache[text_hash] = tokens
+            logger.debug(f"Token count for text (hash: {text_hash}) is {tokens}. Stored in cache.")
+            return tokens
+            
         except Exception as e:
-            error_msg = f"[red]Error using tokenizer to count tokens: {str(e)}[/red]"
-            if self.rich_console:
-                self.rich_console.print(error_msg)
-            else:
-                logger.error(error_msg)
-            raise LLMProviderError(error_msg) from e
+            logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
+            # Fallback to approximate count if API fails, to prevent crashing the budget calculation
+            approx_tokens = max(1, int(len(text) / 4))  # More accurate fallback
+            logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}")
+            return approx_tokens
 
-    def _calculate_prompt_complexity(self, prompt: str) -> float:
-        """Placeholder for calculating prompt complexity score (0.0 to 1.0)."""
-        prompt_lower = prompt.lower()
-        complexity = 0.0
-        length_factor = min(1.0, len(prompt) / 2000.0)
-        complexity += length_factor * 0.5
-        technical_keywords = [
-            "code", "analyze", "refactor", "algorithm", "architecture", "system",
-            "science", "research", "business", "market", "creative", "art",
-            "security", "test", "deploy", "optimize", "debug"
-        ]
-        keyword_count = sum(1 for kw in technical_keywords if kw in prompt_lower)
-        complexity += (keyword_count / len(technical_keywords) if technical_keywords else 0) * 0.5
-        return max(0.0, min(1.0, complexity))
-
-    def _extract_quality_metrics_from_results(self, intermediate_results: Dict[str, Any]) -> Dict[str, float]:
-        """Placeholder for extracting quality metrics from intermediate results."""
-        metrics = {
-            "code_quality": 0.5, "security_risk_score": 0.5, "maintainability_index": 0.5,
-            "test_coverage_estimate": 0.5, "reasoning_depth": 0.5, "architectural_coherence": 0.5
-        }
-        if "Context_Aware_Assistant_Output" in intermediate_results:
-            caa_output = intermediate_results["Context_Aware_Assistant_Output"]
-            if isinstance(caa_output, dict) and "quality_metrics" in caa_output and isinstance(caa_output["quality_metrics"], dict):
-                quality_metrics_from_caa = caa_output["quality_metrics"]
-                for metric_name, value in quality_metrics_from_caa.items():
-                    if metric_name in metrics:
-                        metrics[metric_name] = max(metrics[metric_name], value)
-        for key in metrics:
-            metrics[key] = max(0.0, min(1.0, metrics[key]))
-        logger.debug(f"Extracted quality metrics (placeholder): {metrics}")
-        return metrics
+    def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
+        """Estimates tokens for a context and prompt combination."""
+        combined_text = f"{context_str}\n\n{prompt}"
+        return self.count_tokens(combined_text)

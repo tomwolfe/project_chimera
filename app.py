@@ -11,6 +11,8 @@ from typing import Dict, Any, List, Optional
 import yaml
 import logging
 from rich.console import Console
+import html # Ensure html is imported for XSS protection
+
 # --- FIX START ---
 # Import SocraticDebate directly from the core module
 from core import SocraticDebate
@@ -20,13 +22,14 @@ from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeC
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path # Added sanitize_and_validate_file_path
 from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
 from src.persona_manager import PersonaManager
-from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, SchemaValidationError
-from src.constants import SELF_ANALYSIS_KEYWORDS # Added import for suggestion 1.1
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
+from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # Added import for suggestion 1.1
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import for caching
 import traceback # Needed for error handling in app.py
 import difflib # For Suggestion 3.1
 from collections import defaultdict # For Suggestion 3.2
 from pydantic import ValidationError # Import ValidationError for parsing errors
+import time # Needed for session_token_usage
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -222,7 +225,14 @@ persona_manager_instance = get_persona_manager()
 # Moved this function definition BEFORE its first call.
 def _initialize_session_state(pm: PersonaManager):
     """Initializes or resets all session state variables to their default values."""
-    # --- FIX: Ensure initialization flag is set first ---
+    
+    # --- FIX: Store persona_manager_instance in session state ---
+    # This makes it accessible to other cached functions like get_context_analyzer
+    st.session_state.persona_manager = pm
+    # --- END FIX ---
+
+    # --- FIX START ---
+    # Ensure initialization flag is set first
     st.session_state.initialized = True
     # --- END FIX ---
 
@@ -237,15 +247,6 @@ def _initialize_session_state(pm: PersonaManager):
     # Set default example name to the first one in the first category
     st.session_state.selected_example_name = list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]
     
-    st.session_state.persona_manager = pm # Store the cached instance
-    st.session_state.all_personas = pm.all_personas
-    st.session_state.persona_sets = pm.persona_sets
-    # --- FIX: Add this line to initialize available_domains ---
-    # This list is derived from the keys of the loaded persona sets, used for framework selection.
-    st.session_state.available_domains = list(pm.persona_sets.keys())
-    # REMOVED: st.session_state.persona_sequence = pm.persona_sequence # This is now determined dynamically
-    st.session_state.selected_persona_set = pm.default_persona_set_name # Use default from manager
-
     st.session_state.debate_ran = False
     st.session_state.final_answer_output = ""
     st.session_state.intermediate_steps_output = {}
@@ -254,7 +255,26 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
     st.session_state.example_selector_widget = st.session_state.selected_example_name
-    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set
+    
+    # --- FIX: Initialize selected_persona_set and available_domains ---
+    # Get available domains from the persona manager instance stored in session state
+    available_domains = []
+    if "persona_manager" in st.session_state and st.session_state.persona_manager:
+        available_domains = st.session_state.persona_manager.available_domains
+    # Store available domains in session state (critical fix)
+    st.session_state.available_domains = available_domains if available_domains else ["General"]
+    default_framework = "General" # Fallback
+    if available_domains:
+        default_framework = available_domains[0] # Use the first available domain as default
+    st.session_state.selected_persona_set = default_framework
+    # --- END FIX ---
+
+    # --- FIX: Remove redundant assignment ---
+    # This line caused the AttributeError because selected_persona_set was not yet initialized.
+    # It also seems redundant as 'selected_persona_set' is used as the key for the actual widget.
+    # st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # REMOVE THIS LINE
+    # --- END FIX ---
+    
     st.session_state.persona_audit_log = []
     st.session_state.persona_edit_mode = False
     st.session_state.persona_changes_detected = False # For Improvement 4.1
@@ -269,7 +289,11 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.framework_description = ""
     st.session_state.load_framework_select = ""
     st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area
-# --- END Session State Initialization ---
+
+    # --- NEW: Initialize session state for token tracking and rate limiting ---
+    st.session_state.session_token_usage = {'tokens': 0, 'last_reset': time.time()}
+    st.session_state.session_request_count = {'count': 0, 'last_reset': time.time()}
+    # --- END NEW ---
 
 # --- Session State Initialization Call ---
 # Ensure session state is initialized on first run
@@ -280,17 +304,20 @@ if "initialized" not in st.session_state:
 
 # --- NEW HELPER FUNCTION FOR SANITIZATION ---
 def sanitize_user_input(prompt: str) -> str:
-    """Basic sanitization to mitigate prompt injection risks."""
-    # Remove common injection keywords and sequences
-    # This is a basic sanitization. For robust security, more advanced techniques might be needed.
-    # Added more patterns for better protection.
-    sanitized = re.sub(
-        r'(?i)\b(system|shell|exec|import|script|eval|os\.system|__import__|cat /etc/passwd|wget|curl|nc|powershell|bash|python -c|javascript:alert|javascript:eval)\b', 
-        '', 
-        prompt
-    )
-    # Limit length to prevent excessive input
-    return sanitized[:4000].strip() if sanitized else ""
+    """Enhanced sanitization against advanced LLM injection and encoding attacks."""
+    sanitized = prompt
+    # Block role prompting and instruction overriding (production failure #2)
+    sanitized = re.sub(r'(?i)(system|assistant|user|role)\s*:', '', sanitized)
+    sanitized = re.sub(r'(?i)(ignore\s+previous|disregard\s+instructions)', '', sanitized)
+    
+    # Harden against encoding attacks (e.g., UTF-7, URL encoding abuse)
+    # This is a basic defense; robust encoding attack prevention is complex.
+    # Example: Replace potentially malicious sequences or normalize encoding.
+    sanitized = re.sub(r'%[0-7][0-9a-f]', '', sanitized) # Basic URL encoding sanitization
+    sanitized = re.sub(r'[\u0000-\x1f\x7f-\x9f]', '', sanitized) # Remove control characters
+
+    # Preserve 4000-character limit (builds on existing limit)
+    return sanitized[:4000]
 # --- END NEW HELPER FUNCTION ---
 
 # --- START: Enhanced Framework Recommendation Function ---
@@ -345,6 +372,8 @@ def recommend_domain_from_keywords(prompt: str, all_domain_keywords: Dict[str, L
     # Define a minimum threshold for a specific domain to be recommended over "General"
     # A score of 1.0 means at least one keyword matched.
     # --- FIX: Corrected typo from RECOMMENDENDATION_THRESHOLD to RECOMMENDATION_THRESHOLD ---
+    # The variable name was corrected from 'RECOMMENDENDATION_THRESHOLD' (with an extra 'N')
+    # to 'RECOMMENDATION_THRESHOLD' to resolve the NameError.
     RECOMMENDATION_THRESHOLD = 1.0 
     # --- END FIX ---
     
@@ -409,12 +438,26 @@ with st.sidebar:
             step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis."
         )
         # --- END FIX ---
+        # --- NEW: Display Session Token Usage ---
+        # Builds on the session_token_usage initialized in _initialize_session_state
+        if 'session_token_usage' in st.session_state and 'max_tokens_budget_input' in st.session_state:
+            total_tokens_used = st.session_state.session_token_usage.get('tokens', 0)
+            max_budget = st.session_state.max_tokens_budget_input
+            if max_budget > 0:
+                budget_used_pct = (total_tokens_used / max_budget) * 100
+                st.caption(f"Session Tokens Used: {total_tokens_used:,} / {max_budget:,} ({budget_used_pct:.1f}%)")
+            else:
+                st.caption(f"Session Tokens Used: {total_tokens_used:,}")
+        # --- END NEW ---
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 
 st.header("Project Setup & Input")
 api_key_feedback_placeholder = st.empty()
 if not st.session_state.api_key_input.strip():
-    api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to enable the 'Run' button.")
+    # --- MODIFICATION: Enhanced API Key Feedback ---
+    api_key_feedback_placeholder.error("🔐 **API Key Required**\n\nPlease enter your Gemini API Key in the sidebar. "
+                                       "Keys can be obtained from [Google AI Studio](https://aistudio.google.com/apikey).")
+    # --- END MODIFICATION ---
 
 CUSTOM_PROMPT_KEY = "Custom Prompt"
 # --- MODIFIED PROMPT SELECTION UI ---
@@ -480,8 +523,7 @@ for i, tab_name in enumerate(tab_names):
                 current_selected_prompt_in_category_idx = list(category_options.keys()).index(st.session_state.selected_example_name)
             
             # Use a unique key for each radio button group to avoid conflicts
-            # --- MODIFICATION FOR IMPROVEMENT 2.2: Replace st.radio with st.selectbox ---
-            # --- MODIFICATION FOR IMPROVEMENT 2.1: Update format_func and key ---
+            # --- MODIFICATION FOR SUGGESTION 3.1: Display details and add Copy button ---
             options_with_desc = [(key, details["description"]) for key, details in category_options.items()]
 
             selected_radio_key = st.selectbox("Select task:",
@@ -822,7 +864,10 @@ def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
     api_key_feedback_placeholder.empty()
     if not st.session_state.api_key_input.strip():
-        st.error("Please enter your Gemini API Key in the sidebar to proceed.")
+        # --- MODIFICATION: Enhanced API Key Feedback ---
+        api_key_feedback_placeholder.error("🔐 **API Key Required**\n\nPlease enter your Gemini API Key in the sidebar. "
+                                           "Keys can be obtained from [Google AI Studio](https://aistudio.google.com/apikey).")
+        # --- END MODIFICATION ---
         return # Exit if API key is missing
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
@@ -944,16 +989,24 @@ def _run_socratic_debate_process():
                 st.session_state.process_log_output_text = ""
 
             status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
-            st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
-                     f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
-                     f"Details: {str(e)}")
+            # --- MODIFICATION: Enhanced error message for TokenBudgetExceededError ---
+            current_tokens = e.details.get('current_tokens', 0)
+            budget = e.details.get('budget', 0)
+            error_type = e.details.get('type', 'UNKNOWN')
+            
+            if error_type == "rate_limit":
+                st.error(f"**Error:** Session request limit exceeded ({current_tokens} requests in the last minute, limit is {budget}). Please wait a moment before retrying or reduce prompt complexity.")
+            else: # General token budget exceeded
+                st.error(f"**Error:** The process exceeded the token budget. Please consider increasing the 'Max Total Tokens Budget' in the sidebar or simplifying the prompt. Details: {str(e)}")
+            # --- END MODIFICATION ---
+            
             st.session_state.debate_ran = True
             if debate_instance:
                 st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
             
             st.session_state.final_answer_output = {
                 "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
-                "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please adjust budget or prompt complexity. Error: {str(e)}",
+                "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
                 "CODE_CHANGES": [],
                 "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
             }
@@ -1019,7 +1072,7 @@ def _run_socratic_debate_process():
                 "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
             }
             final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-            final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+            final_total_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
         
         # Update intermediate steps with totals
         # Ensure malformed_blocks is always present, even if empty
