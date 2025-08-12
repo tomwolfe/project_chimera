@@ -283,7 +283,12 @@ def sanitize_user_input(prompt: str) -> str:
     """Basic sanitization to mitigate prompt injection risks."""
     # Remove common injection keywords and sequences
     # This is a basic sanitization. For robust security, more advanced techniques might be needed.
-    sanitized = re.sub(r'(?i)\b(system|shell|exec|import|script|eval|os\.system|__import__)\b', '', prompt)
+    # Added more patterns for better protection.
+    sanitized = re.sub(
+        r'(?i)\b(system|shell|exec|import|script|eval|os\.system|__import__|cat /etc/passwd|wget|curl|nc|powershell|bash|python -c|javascript:alert|javascript:eval)\b', 
+        '', 
+        prompt
+    )
     # Limit length to prevent excessive input
     return sanitized[:4000].strip() if sanitized else ""
 # --- END NEW HELPER FUNCTION ---
@@ -376,6 +381,15 @@ with st.sidebar:
         st.text_input("Enter your Gemini API Key", type="password", key="api_key_input", help="Your API key will not be stored.")
         st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
         st.markdown("---")
+        # --- MODIFICATION: Add API Key Format Validation ---
+        # Check if the API key input is not empty and if it has a valid format.
+        # The regex checks for a string of alphanumeric characters, hyphens, and underscores,
+        # typically 35 characters long for Gemini API keys.
+        if st.session_state.api_key_input and not re.match(r'^[A-Za-z0-9_-]{35,}$', st.session_state.api_key_input):
+            st.error("Invalid API key format. Please check your Gemini API Key.")
+            # Optionally, disable the run button or show a more prominent warning.
+            # For now, just displaying the error.
+        # --- END MODIFICATION ---
         st.markdown("Security Note: Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
         st.markdown("---")
         # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
@@ -901,7 +915,10 @@ def _run_socratic_debate_process():
                     rich_console=rich_console_instance,
                     codebase_context=st.session_state.get('codebase_context', {}),
                     context_token_budget_ratio=st.session_state.context_token_budget_ratio,
-                    context_analyzer=context_analyzer_instance # Pass the cached analyzer
+                    context_analyzer=context_analyzer_instance, # Pass the cached analyzer
+                    # --- MODIFICATION: Add is_self_analysis parameter ---
+                    is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate)
+                    # --- END MODIFICATION ---
                 )
                 
                 final_answer, intermediate_steps = debate_instance.run_debate()
@@ -1004,12 +1021,16 @@ def _run_socratic_debate_process():
             final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
             final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
         
-        # Update metrics placeholders with final values
-        # token_display.metric("Total Tokens Used", f"{final_total_tokens:,}")
-        # cost_display.metric("Estimated Cost (USD)", f"${final_total_cost:.4f}")
-        # Clear any potential next step warnings after completion or failure
-        # if 'next_step_warning_placeholder' in locals(): # Check if placeholder was created
-        #     next_step_warning_placeholder.empty()
+        # Update intermediate steps with totals
+        # Ensure malformed_blocks is always present, even if empty
+        if "malformed_blocks" not in st.session_state.final_answer_output:
+            st.session_state.final_answer_output["malformed_blocks"] = []
+        if "malformed_blocks" not in st.session_state.intermediate_steps_output:
+            st.session_state.intermediate_steps_output["malformed_blocks"] = []
+            
+        # Update total tokens and cost in intermediate steps
+        st.session_state.intermediate_steps_output["Total_Tokens_Used"] = final_total_tokens
+        st.session_state.intermediate_steps_output["Total_Estimated_Cost_USD"] = final_total_cost
 
 # --- END OF NEW FUNCTION ---
 

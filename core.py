@@ -38,7 +38,7 @@ from src.utils.output_parser import LLMOutputParser
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Import for self-analysis persona sequence
+from src.constants import SELF_ANALYSIS_KEYWORDS # Import for self-analysis persona sequence
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -69,7 +69,10 @@ class SocraticDebate:
                  status_callback: Optional[Callable] = None,
                  rich_console: Optional[Console] = None,
                  context_token_budget_ratio: float = 0.25,
-                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None
+                 context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
+                 # --- MODIFICATION: Add is_self_analysis parameter ---
+                 is_self_analysis: bool = False
+                 # --- END MODIFICATION ---
                  ):
         """
         Initialize a Socratic debate session.
@@ -88,6 +91,7 @@ class SocraticDebate:
             rich_console: Rich Console instance for logging.
             context_token_budget_ratio: Ratio of total budget allocated to context analysis.
             context_analyzer: An optional pre-initialized and cached ContextRelevanceAnalyzer instance.
+            is_self_analysis: Flag indicating if the current prompt is for self-analysis.
         """
         self.settings = settings or ChimeraSettings()
         self.context_token_budget_ratio = context_token_budget_ratio
@@ -96,6 +100,7 @@ class SocraticDebate:
         self.model_name = model_name
         self.status_callback = status_callback
         self.rich_console = rich_console
+        self.is_self_analysis = is_self_analysis # Store the flag
         
         # --- FIX START ---
         # Initialize logger for the class
@@ -163,16 +168,27 @@ class SocraticDebate:
         Calculates token budgets for different phases of the debate using
         max_total_tokens_budget and context_token_budget_ratio.
         Handles potential errors during LLM provider interactions.
+        Dynamically adjusts ratios for self-analysis tasks.
         """
-        # Ensure context_token_budget_ratio is within reasonable bounds
-        context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio)) # Clamp between 5% and 50%
-        
-        # Calculate remaining ratio for debate and synthesis
-        remaining_ratio = 1.0 - context_ratio
-        # Split remaining ratio for debate and synthesis (e.g., 50/50)
-        debate_ratio = remaining_ratio / 2.0
-        synthesis_ratio = remaining_ratio / 2.0
-        
+        # Determine which ratios to use based on the is_self_analysis flag
+        if self.is_self_analysis:
+            context_ratio = max(0.05, min(0.5, self.settings.self_analysis_context_ratio))
+            debate_ratio = max(0.4, min(0.9, self.settings.self_analysis_debate_ratio))
+            # Synthesis ratio is implicitly handled by the remaining budget, or can be fixed.
+            # For simplicity, let's assume synthesis gets a fixed portion or the remainder.
+            # Let's allocate a fixed portion for synthesis, and debate gets the rest of the non-context budget.
+            synthesis_ratio = 0.2 # Fixed portion for synthesis
+            debate_ratio = max(0.1, 1.0 - context_ratio - synthesis_ratio) # Debate gets remaining budget
+            self.logger.info(f"Self-analysis mode detected. Using context ratio: {context_ratio:.2f}, debate ratio: {debate_ratio:.2f}, synthesis ratio: {synthesis_ratio:.2f}")
+        else:
+            # Use standard ratios for non-self-analysis tasks
+            context_ratio = max(0.05, min(0.5, self.context_token_budget_ratio))
+            # Calculate remaining ratio for debate and synthesis (e.g., 50/50)
+            remaining_ratio = 1.0 - context_ratio
+            debate_ratio = remaining_ratio / 2.0
+            synthesis_ratio = remaining_ratio / 2.0
+            self.logger.info(f"Standard mode. Using context ratio: {context_ratio:.2f}, debate ratio: {debate_ratio:.2f}, synthesis ratio: {synthesis_ratio:.2f}")
+
         # Estimate tokens for initial input (context + prompt)
         context_str = ""
         if self.codebase_context:
@@ -201,11 +217,13 @@ class SocraticDebate:
 
         except LLMProviderError as e:
             self.logger.error(f"LLM Provider Error during token calculation: {e}")
+            # Provide fallback budgets if token calculation fails
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError(f"LLM provider error: {e}") from e
         except Exception as e:
             self.logger.error(f"An unexpected error occurred calculating token budgets: {e}")
+            # Provide fallback budgets if token calculation fails
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.") from e
@@ -295,11 +313,11 @@ class SocraticDebate:
                     current_total_cost=self.get_total_estimated_cost(),
                     progress_pct=0.2 # Set initial progress
                 )
-
+            
             # 3. Process Context Persona Turn (if applicable)
             if self.status_callback:
                 self.status_callback(
-                    message="Processing initial context...",
+                    message="Analyzing context...",
                     state="running",
                     current_total_tokens=self.get_total_used_tokens(),
                     current_total_cost=self.get_total_estimated_cost(),
