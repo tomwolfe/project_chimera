@@ -279,3 +279,20 @@ class PersonaManager:
         logger.info(f"Persona '{persona_name}' reset to default configuration.")
         return True
     # --- END NEW METHODS ---
+
+    def reset_all_personas_for_current_framework(self, framework_name: str) -> bool:
+        """
+        Resets all personas belonging to the specified framework to their original default configurations.
+        """
+        if framework_name not in self.persona_sets:
+            logger.warning(f"Framework '{framework_name}' not found in persona sets. Cannot reset its personas.")
+            return False
+
+        persona_names_in_framework = self.persona_sets[framework_name]
+        success = True
+        for p_name in persona_names_in_framework:
+            if not self.reset_persona_to_default(p_name):
+                logger.error(f"Failed to reset persona '{p_name}' during bulk reset for framework '{framework_name}'.")
+                success = False
+        logger.info(f"Attempted to reset all personas for framework '{framework_name}'. Overall success: {success}")
+        return success
