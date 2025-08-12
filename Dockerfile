@@ -9,6 +9,11 @@ COPY requirements.txt .
 # Ensure all necessary packages, including streamlit, google-genai, etc., are installed.
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download sentence-transformers model to avoid runtime download issues
+# This ensures the model is available at runtime and avoids network issues or delays
+# The model 'all-MiniLM-L6-v2' is used in src/context/context_analyzer.py
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 # Use a non-root user for security
 RUN useradd -m -u 1000 appuser
 USER appuser

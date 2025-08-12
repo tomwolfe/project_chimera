@@ -230,15 +230,19 @@ logger = logging.getLogger(__name__) # Logger for app.py
 # Define the function to get a cached instance of ContextRelevanceAnalyzer
 # and inject the persona_router from the PersonaManager.
 @st.cache_resource
-def get_context_analyzer():
+# FIX START: Add underscore to pm_instance to tell Streamlit not to hash it
+def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manager_instance
+# FIX END
     """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
     # Access the persona manager instance from session state
     # This line will now work because persona_manager is initialized in _initialize_session_state
-    pm = st.session_state.persona_manager 
-    if pm and pm.persona_router:
+    # pm = st.session_state.persona_manager # REMOVED: No longer needed from session state
+    # FIX START: Use _pm_instance inside the function
+    if _pm_instance and _pm_instance.persona_router:
         # Instantiate ContextRelevanceAnalyzer and inject the persona router
         analyzer = ContextRelevanceAnalyzer()
-        analyzer.set_persona_router(pm.persona_router)
+        analyzer.set_persona_router(_pm_instance.persona_router)
+    # FIX END
         return analyzer
     else:
         # Fallback if persona_manager or its router is not available
@@ -253,6 +257,9 @@ def get_persona_manager():
     return PersonaManager()
 
 persona_manager_instance = get_persona_manager()
+
+# Get the context analyzer instance (also cached)
+context_analyzer_instance = get_context_analyzer(persona_manager_instance)
 
 # --- Session State Initialization ---
 # Moved this function definition BEFORE its first call.
@@ -1011,7 +1018,7 @@ def _run_socratic_debate_process():
                 
                 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
                 # Use the cached context analyzer instance
-                context_analyzer_instance = get_context_analyzer()
+                # context_analyzer_instance = get_context_analyzer() # REMOVED: Now passed directly
                 # --- END MODIFICATION ---
 
                 # Pass the request_id to the SocraticDebate instance for logging
