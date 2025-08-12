@@ -307,7 +307,9 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.save_framework_input = ""
     st.session_state.framework_description = ""
     st.session_state.load_framework_select = ""
-    st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area
+    # --- FIX START: Remove custom_user_prompt_input as a separate state variable ---
+    # st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area - REMOVED
+    # --- FIX END ---
     
     # --- ADDED FOR RATE LIMITING ---
     # Initialize a session ID for the rate limiter if not already present
@@ -484,11 +486,13 @@ for i, tab_name in enumerate(tab_names):
     with tabs[i]:
         if tab_name == CUSTOM_PROMPT_KEY:
             st.markdown("Create your own specialized prompt for unique requirements.")
-            # Use the specific key for the custom prompt text area
-            user_prompt_text_area = st.text_area("Enter your custom prompt here:", 
-                                      value=st.session_state.get('custom_user_prompt_input', ''),
+            # --- FIX START: Modify custom prompt text area to directly bind to user_prompt_input ---
+            st.text_area("Enter your custom prompt here:", 
+                                      value=st.session_state.user_prompt_input, # Reads from the main prompt state
                                       height=150,
-                                      key="custom_user_prompt_input") # Use a unique key for custom prompt input
+                                      key="user_prompt_input", # This key binds directly to st.session_state.user_prompt_input
+                                      on_change=lambda: st.session_state.update(selected_example_name=CUSTOM_PROMPT_KEY))
+            # --- FIX END ---
             
             with st.expander("💡 Prompt Engineering Tips"):
                 st.markdown("""
@@ -498,16 +502,17 @@ for i, tab_name in enumerate(tab_names):
                 - **Example Output:** If possible, provide an example of the desired output format.
                 """)
             
-            # Update session state for custom prompt
-            st.session_state.user_prompt_input = user_prompt_text_area
-            st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
+            # --- FIX START: Remove problematic explicit assignments ---
+            # st.session_state.user_prompt_input = user_prompt_text_area # REMOVED: Handled by key="user_prompt_input"
+            # st.session_state.selected_example_name = CUSTOM_PROMPT_KEY # REMOVED: Handled by on_change
+            # --- FIX END ---
             # Clear codebase context when switching to custom prompt, user will upload or it'll be empty
             st.session_state.codebase_context = {} 
             st.session_state.uploaded_files = []
             
             # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING (Now a suggestion button) ---
             # Analyze the custom prompt to determine the appropriate framework
-            suggested_domain_for_custom = recommend_domain_from_keywords(user_prompt_text_area, DOMAIN_KEYWORDS)
+            suggested_domain_for_custom = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS) # Use the main prompt state
             
             # Only display suggestion if different from current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
@@ -981,6 +986,11 @@ def _run_socratic_debate_process():
         # --- END MODIFICATION ---
 
         debate_instance = None
+        # --- FIX START ---
+        # Initialize final_answer and intermediate_steps before the try block
+        final_answer = None
+        intermediate_steps = {}
+        # --- FIX END ---
         final_total_tokens = 0
         final_total_cost = 0.0
         
@@ -1049,7 +1059,8 @@ def _run_socratic_debate_process():
             
             except TokenBudgetExceededError as e:
                 logger.error("Token budget exceeded during debate.", extra={'request_id': request_id, 'error': str(e)})
-                if not isinstance(final_answer, dict):
+                # Now final_answer is guaranteed to be defined (as None or a dict)
+                if not isinstance(final_answer, dict): 
                     final_answer = {
                         "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
                         "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
@@ -1072,6 +1083,7 @@ def _run_socratic_debate_process():
             
             except ChimeraError as ce:
                 logger.error("ChimeraError during debate.", extra={'request_id': request_id, 'error': str(ce)})
+                # Now final_answer is guaranteed to be defined (as None or a dict)
                 if not isinstance(final_answer, dict):
                     final_answer = {
                         "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
@@ -1093,6 +1105,7 @@ def _run_socratic_debate_process():
             
             except Exception as e:
                 logger.exception("Unexpected error during debate execution.", extra={'request_id': request_id}) # Use logger.exception for traceback
+                # Now final_answer is guaranteed to be defined (as None or a dict)
                 if not isinstance(final_answer, dict):
                     final_answer = {
                         "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
@@ -1272,7 +1285,7 @@ if st.session_state.debate_ran:
                         
                         for issue_type, type_issues in issues_by_type.items():
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
-                                for issue in type_types:
+                                for issue in type_issues: # Corrected variable name from type_types to type_issues
                                     # Use markdown for better formatting of issue details
                                     line_info = f" (Line: {issue.get('line_number', 'N/A')}, Col: {issue.get('column_number', 'N/A')})" if issue.get('line_number') else ""
                                     st.markdown(f"- **{issue.get('code', '')}**: {issue['message']}{line_info}")
