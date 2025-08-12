@@ -65,6 +65,13 @@ class TokenBudgetExceededError(ChimeraError):
         }
         super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used", details=error_details)
 
+# --- ADDED CIRCUITBREAKERERROR START ---
+class CircuitBreakerError(ChimeraError):
+    """Exception raised when the circuit breaker is open and prevents execution."""
+    def __init__(self, message: str, details: Optional[dict] = None):
+        super().__init__(message, details)
+# --- ADDED CIRCUITBREAKERERROR END ---
+
 # LLMResponseValidationError is now superseded by SchemaValidationError for schema issues,
 # but might be kept for other non-schema-related LLM errors if they arise.
 class LLMResponseValidationError(ValidationPhaseError):

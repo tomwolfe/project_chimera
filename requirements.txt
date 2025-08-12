@@ -13,3 +13,4 @@ ruff
  
 # Add testing libraries
 pytest
+python-json-logger
