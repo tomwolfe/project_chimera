@@ -7,7 +7,7 @@ import re
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
-import streamlit as st # Keep streamlit import for potential future use or if other parts of the app need it, but not for direct UI calls within cached methods.
+import streamlit as st
 
 from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
@@ -156,6 +156,25 @@ class PersonaManager:
             else: # Catch other OSError
                 logger.error(f"Error reading custom framework file '{filepath}': {e}")
             return None
+
+    def _load_original_personas(self) -> Tuple[bool, Optional[str]]:
+        """Loads the original default personas from the YAML file and stores them."""
+        try:
+            # Load base configuration (assuming personas.yaml is the source of original personas)
+            with open(DEFAULT_PERSONAS_FILE, 'r') as f:
+                data = yaml.safe_load(f)
+            
+            if not data:
+                raise ValueError("Original personas file is empty.")
+
+            original_personas_list = [PersonaConfig(**p_data) for p_data in data.get('personas', [])]
+            self._original_personas = {p.name: p for p in original_personas_list}
+            logger.info("Original personas loaded and stored.")
+            return True, None
+            
+        except (FileNotFoundError, ValidationError, yaml.YAMLError, ValueError) as e:
+            logger.error(f"Error loading original personas from {DEFAULT_PERSONAS_FILE}: {e}")
+            return False, f"Failed to load original personas: {e}"
 
     def save_framework(self, name: str, current_persona_set_name: str, current_active_personas: Dict[str, PersonaConfig]) -> Tuple[bool, str]:
         """Saves the current framework configuration (including persona edits) as a custom framework.
