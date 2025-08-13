@@ -44,24 +44,25 @@ from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # Fo
 def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
     """Load config with validation and user-friendly errors."""
     if not os.path.exists(file_path):
-        st.error(f"❌ Config file not found at '{file_path}'.")
-        st.info("Please create `config.yaml` from the `config.example.yaml` template.")
-        st.stop()
+        # Raise an exception instead of calling st.error/st.info/st.stop
+        raise FileNotFoundError(f"Config file not found at '{file_path}'. Please create `config.yaml` from the `config.example.yaml` template.")
     try:
         with open(file_path, 'r') as f:
             config = yaml.safe_load(f)
             if not isinstance(config, dict):
-                st.error(f"❌ Invalid config format in '{file_path}'. Expected a dictionary.")
-                st.stop()
+                raise ValueError(f"Invalid config format in '{file_path}'. Expected a dictionary.")
             return config
     except yaml.YAMLError as e:
-        st.error(f"❌ Error parsing config file '{file_path}'. Please check YAML syntax: {e}")
-        st.stop()
+        raise ValueError(f"Error parsing config file '{file_path}'. Please check YAML syntax: {e}") from e
     except IOError as e:
-        st.error(f"❌ IO error reading config file '{file_path}'. Check permissions: {e}")
-        st.stop()
+        raise IOError(f"IO error reading config file '{file_path}'. Check permissions: {e}") from e
 
-app_config = load_config()
+try:
+    app_config = load_config()
+except (FileNotFoundError, ValueError, IOError) as e:
+    st.error(f"❌ Application configuration error: {e}")
+    st.stop() # Stop the app if config loading fails
+
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
 CONTEXT_TOKEN_BUDGET_RATIO = app_config.get("context_token_budget_ratio", 0.25)
 
@@ -73,14 +74,12 @@ def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        st.error(f"Demo context file not found at '{file_path}'.")
-        return {}
+        # Raise an exception instead of calling st.error
+        raise FileNotFoundError(f"Demo context file not found at '{file_path}'.")
     except json.JSONDecodeError as e:
-        st.error(f"Error decoding JSON from '{file_path}'. Please check its format: {e}")
-        return {}
+        raise ValueError(f"Error decoding JSON from '{file_path}'. Please check its format: {e}") from e
     except IOError as e:
-        st.error(f"IO error reading demo context file '{file_path}'. Check permissions: {e}")
-        return {}
+        raise IOError(f"IO error reading demo context file '{file_path}'. Check permissions: {e}") from e
 
 # Redirect rich output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -706,16 +705,13 @@ with col1:
                     if p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
                 }
                 
-                if persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data):
-                    st.toast(f"Framework '{new_framework_name_input}' saved successfully!")
-                    # --- FIX START ---
-                    # Removed the problematic line:
-                    # st.session_state.available_domains = list(st.session_state.persona_manager.persona_sets.keys())
-                    # The persona_manager.available_domains is the source of truth.
-                    # --- FIX END ---
+                # MODIFIED: Handle return from save_framework
+                success, message = persona_manager_instance.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data)
+                if success:
+                    st.toast(message)
                     st.rerun()
                 else:
-                    st.error(f"Failed to save framework '{new_framework_name_input}'. It might already exist or there was an internal error.")
+                    st.error(message)
         
         # --- FIX START ---
         with tabs[1]: # Corresponds to "Load/Manage Frameworks"
@@ -739,9 +735,11 @@ with col1:
                 key='load_framework_select'
             )
             if st.button("Load Selected Framework") and selected_framework_to_load:
-                loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
+                # MODIFIED: Handle return from load_framework_into_session
+                success, message, loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = \
+                    persona_manager_instance.load_framework_into_session(selected_framework_to_load)
                 
-                if loaded_personas_dict:
+                if success:
                     st.session_state.all_personas.update(loaded_personas_dict)
                     st.session_state.persona_sets.update(loaded_persona_sets_dict)
                     st.session_state.selected_persona_set = new_selected_framework_name
@@ -749,7 +747,7 @@ with col1:
                     st.session_state.persona_changes_detected = False 
                     st.rerun()
                 else:
-                    st.error(f"Failed to load framework '{selected_framework_to_load}'. It might not exist or there was an internal error.")
+                    st.error(message)
     # --- END MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION ---
 
 with col2:
@@ -791,12 +789,17 @@ with col2:
         # If no files are uploaded, but SE is selected and it's an example prompt, load demo context
         elif not st.session_state.uploaded_files and st.session_state.selected_example_name != "Custom Prompt":
             if not st.session_state.codebase_context: # Only load if not already loaded
-                st.session_state.codebase_context = load_demo_codebase_context()
-                st.session_state.uploaded_files = [
-                    type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
-                    for k, v in st.session_state.codebase_context.items()
-                ]
-                st.success(f"{len(st.session_state.codebase_context)} demo file(s) loaded for context.")
+                try:
+                    st.session_state.codebase_context = load_demo_codebase_context()
+                    st.session_state.uploaded_files = [
+                        type('obj', (object,), {'name': k, 'size': len(v.encode('utf-8')), 'getvalue': lambda val=v: val.encode('utf-8')})()
+                        for k, v in st.session_state.codebase_context.items()
+                    ]
+                    st.success(f"{len(st.session_state.codebase_context)} demo file(s) loaded for context.")
+                except (FileNotFoundError, ValueError, IOError) as e:
+                    st.error(f"❌ Error loading demo codebase context: {e}")
+                    st.session_state.codebase_context = {} # Ensure context is empty on error
+                    st.session_state.uploaded_files = []
             else:
                 st.success(f"{len(st.session_state.codebase_context)} file(s) already loaded for context.")
         
@@ -973,9 +976,20 @@ def _run_socratic_debate_process():
 
     st.session_state.debate_ran = False
     # --- FIX START ---
-    # Initialize final_answer and intermediate_steps before the try block
-    final_answer = None
-    intermediate_steps = {}
+    # Initialize final_answer to a default error state, in case of early failure
+    final_answer = {
+        "COMMIT_MESSAGE": "Debate Failed - Unhandled Error",
+        "RATIONALE": "An unexpected error occurred before a final answer could be synthesized.",
+        "CODE_CHANGES": [],
+        "malformed_blocks": [{"type": "UNHANDLED_ERROR_INIT", "message": "Debate failed during initialization or early phase."}]
+    }
+    # Initialize intermediate_steps here to ensure it's always available for error reporting
+    intermediate_steps = {
+        "Total_Tokens_Used": 0,
+        "Total_Estimated_Cost_USD": 0.0,
+        "CODE_CHANGES": [],
+        "malformed_blocks": [{"type": "UNHANDLED_ERROR_INIT", "message": "Debate failed during initialization or early phase."}]
+    }
     # --- FIX END ---
     final_total_tokens = 0
     final_total_cost = 0.0
@@ -1083,7 +1097,7 @@ def _run_socratic_debate_process():
                 final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             
             except TokenBudgetExceededError as e:
-                logger.error("Token budget exceeded during debate.", extra={'request_id': request_id, 'error': str(e)})
+                logger.error("Token budget exceeded during debate.", extra={'request_id': request_id})
                 # Now final_answer is guaranteed to be defined (as None or a dict)
                 if not isinstance(final_answer, dict): 
                     final_answer = {
@@ -1107,8 +1121,8 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
             except ChimeraError as ce:
-                logger.error("ChimeraError during debate.", extra={'request_id': request_id, 'error': str(ce)})
-                # Now final_answer is guaranteed to be defined (as None or a dict)
+                # Handle Chimera-specific errors
+                logger.error(f"Socratic Debate failed due to ChimeraError: {ce}", exc_info=True, extra={'request_id': request_id})
                 if not isinstance(final_answer, dict):
                     final_answer = {
                         "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
@@ -1129,6 +1143,7 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
             except Exception as e:
+                # Handle any other unexpected exceptions
                 logger.exception("Unexpected error during debate execution.", extra={'request_id': request_id}) # Use logger.exception for traceback
                 # Now final_answer is guaranteed to be defined (as None or a dict)
                 if not isinstance(final_answer, dict):

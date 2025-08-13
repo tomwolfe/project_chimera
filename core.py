@@ -38,7 +38,7 @@ from src.utils.output_parser import LLMOutputParser
 # Import models and exceptions
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
 from src.config.settings import ChimeraSettings
-from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError # Corrected import, added LLMProviderError
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS # Import for self-analysis persona sequence
 
 # --- NEW IMPORT FOR LOGGING CONFIG ---
@@ -74,7 +74,7 @@ class SocraticDebate:
         Initialize a Socratic debate session.
         """
         # Initialize structured logging early in the constructor
-        # This ensures all subsequent logs within this instance are structured.
+        # This ensures all subsequent logs from this instance are structured.
         setup_structured_logging(log_level=logging.INFO)
         # Get a logger specific to this class instance for better log organization.
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -758,7 +758,7 @@ class SocraticDebate:
         # Execute synthesis if a persona is found
         if synthesis_persona_name and synthesis_persona_config:
             
-            self._log_with_context("info", f"Starting final [bold]synthesis[/bold] with persona: [bold]{synthesis_persona_name}[/bold]", state="running", progress_pct=0.7)
+            self._log_with_context("info", "Starting final [bold]synthesis[/bold] with persona: [bold]{synthesis_persona_name}[/bold]", state="running", progress_pct=0.7)
             if self.status_callback:
                 self.status_callback(
                     message=f"Starting final [bold]synthesis[/bold] with persona: [bold]{synthesis_persona_name}[/bold]...",
@@ -825,12 +825,12 @@ class SocraticDebate:
 
                         if not is_failure:
                             # If validation passes, log success and return the output
-                            self._log_with_context("info", f"Synthesis output validated successfully on attempt {attempt + 1}")
+                            self._log_with_context("info", "Synthesis output validated successfully on attempt {attempt + 1}")
                             return current_synthesis_output
                         else:
                             # If validation fails and retries are available, prepare for retry
                             if attempt < max_retries:
-                                self._log_with_context("warning", f"Synthesis output validation failed on attempt {attempt + 1} ({failure_reason}). Retrying...", attempt=attempt+1)
+                                self._log_with_context("warning", "Synthesis output validation failed on attempt {attempt + 1} ({failure_reason}). Retrying...", attempt=attempt+1)
                                 # Construct a correction prompt to guide the LLM on the next attempt
                                 correction_prompt_content = f"Previous output was invalid. Please re-generate the JSON output adhering strictly to the schema. The failure reason was: {failure_reason}. The previous output was:\n\n{json.dumps(current_synthesis_output, indent=2)}"
                                 # Rebuild the synthesis prompt with the correction
@@ -850,11 +850,11 @@ class SocraticDebate:
                                 continue # Proceed to the next iteration (retry)
                             else:
                                 # If max retries reached, log the final failure
-                                self._log_with_context("error", f"Synthesis output validation failed after {max_retries} retries.")
+                                self._log_with_context("error", "Synthesis output validation failed after {max_retries} retries.")
                                 return current_synthesis_output # Return the last (failed) output
 
                     else: # If JSON validation is not required
-                        self._log_with_context("debug", f"Synthesis output for {synthesis_persona_name} does not require strict JSON validation. Returning raw output.")
+                        self._log_with_context("debug", "Synthesis output for {synthesis_persona_name} does not require strict JSON validation. Returning raw output.")
                         if isinstance(current_synthesis_output, dict):
                             # Ensure standard fields exist for non-JSON outputs
                             if "general_output" not in current_synthesis_output:
@@ -871,10 +871,10 @@ class SocraticDebate:
 
                 except Exception as e:
                     # Handle errors during LLM turn execution for synthesis
-                    self._log_with_context("error", f"Error during synthesis turn execution", error=str(e), persona_name=synthesis_persona_name)
+                    self._log_with_context("error", "Error during synthesis turn execution", error=str(e), persona_name=synthesis_persona_name)
                     if attempt == max_retries:
                         # If max retries reached and an execution error occurred, return a final error state
-                        self._log_with_context("error", f"Final synthesis attempt failed due to execution error", error=str(e))
+                        self._log_with_context("error", "Final synthesis attempt failed due to execution error", error=str(e))
                         return {
                             "COMMIT_MESSAGE": "Synthesis Execution Error",
                             "RATIONALE": f"An error occurred during the final synthesis turn: {str(e)}",
@@ -883,7 +883,7 @@ class SocraticDebate:
                         }
                     else:
                         # If retries are available, log the error and continue to the next attempt
-                        self._log_with_context("warning", f"Execution error on synthesis attempt {attempt + 1}, retrying...", attempt=attempt+1)
+                        self._log_with_context("warning", "Execution error on synthesis attempt {attempt + 1}, retrying...", attempt=attempt+1)
                         self.intermediate_steps[f"{synthesis_persona_name}_Error_Attempt_{attempt+1}"] = str(e)
                         continue # Proceed to the next iteration (retry)
             
@@ -899,7 +899,7 @@ class SocraticDebate:
             # Log and return a fallback if no synthesis persona was identified
             self._log_with_context("warning", "No synthesis persona found or sequence is empty. Final answer may be incomplete.")
             return {
-                "COMMIT_MESSAGE": "Synthesis Skipped",
+                "COMMIT_MESSAGE": "Debate Fallback - No Synthesis",
                 "RATIONALE": "No synthesis persona was identified in the sequence.",
                 "CODE_CHANGES": [],
                 "malformed_blocks": [{"type": "NO_SYNTHESIS_PERSONA", "message": "Synthesis persona not found in sequence."}]
