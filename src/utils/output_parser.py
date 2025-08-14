@@ -6,7 +6,7 @@ import re
 import sys
 import traceback
 from typing import Dict, Any, List, Optional, Type
-from pathlib import Path
+from pathlib import Path # Import Path for file_name extraction
 from pydantic import BaseModel, Field, validator, model_validator, ValidationError
 
 # --- MODIFICATION FOR IMPROVEMENT 4.3 ---
@@ -297,6 +297,26 @@ class LLMOutputParser:
                 else:
                     data_to_validate["CODE_CHANGES"] = [] # Fallback to empty list
         # --- END LLM SUGGESTION 1 ---
+
+        # --- START FIX: Handle raw CodeChange output when LLMOutput is expected ---
+        if schema_model == LLMOutput and isinstance(data_to_validate, dict):
+            # Check if it looks like a CodeChange object directly (has FILE_PATH, ACTION, and one of FULL_CONTENT/LINES)
+            is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
+                                  ("FULL_CONTENT" in data_to_validate or "LINES" in data_to_validate)
+            
+            if is_code_change_like:
+                self.logger.warning("LLM output was a raw CodeChange object, but LLMOutput schema was expected. Wrapping it.")
+                file_name = Path(data_to_validate.get("FILE_PATH", "unknown_file")).name
+                
+                # Construct the expected LLMOutput structure
+                wrapped_data = {
+                    "COMMIT_MESSAGE": f"Feat: Add/Update {file_name}",
+                    "RATIONALE": f"The LLM generated a direct code change for {file_name} as part of the solution. This was wrapped into the expected LLMOutput format.",
+                    "CODE_CHANGES": [data_to_validate], # Wrap the single CodeChange object in a list
+                    "malformed_blocks": malformed_blocks_list # Include any existing malformed blocks
+                }
+                data_to_validate = wrapped_data
+        # --- END FIX ---
 
         # 4. Validate against schema
         try:
