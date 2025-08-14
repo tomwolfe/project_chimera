@@ -929,6 +929,10 @@ with reset_col:
 def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
     
+    # FIX START: Initialize debate_instance to None to avoid UnboundLocalError
+    debate_instance = None
+    # FIX END
+    
     # Generate a request ID for this specific run
     request_id = str(uuid.uuid4())[:8]
     
@@ -1048,7 +1052,9 @@ def _run_socratic_debate_process():
                 # --- END MODIFICATION ---
 
                 # Pass the request_id to the SocraticDebate instance for logging
-                logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance)})
+                # This line was causing the UnboundLocalError if SocraticDebate() failed
+                # to initialize. Now debate_instance is initialized to None above.
+                logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance) if debate_instance else 'N/A'})
                 
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate, # Use the potentially sanitized prompt
