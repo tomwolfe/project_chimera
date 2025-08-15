@@ -386,13 +386,13 @@ class LLMOutputParser:
             # Add salvage logic for other schema types if needed
             elif schema_model == CritiqueOutput and isinstance(data_to_validate, dict):
                 fallback_output["CRITIQUE_SUMMARY"] = data_to_validate.get("CRITIQUE_SUMMARY", "Schema validation failed for critique.")
-                fallback_output["CRITIQUE_POINTS"] = data_to_validate.get("CRITIQUE_POINTS", [])
-                fallback_output["SUGGESTIONS"] = data_to_validate.get("SUGGESTIONS", [])
+                fallback_output["CRITIQUE_POINTS"] = data_to_validate.get("CRITIQUE_POINTS", []) if isinstance(data_to_validate.get("CRITIQUE_POINTS"), list) else []
+                fallback_output["SUGGESTIONS"] = data_to_validate.get("SUGGESTIONS", []) if isinstance(data_to_validate.get("SUGGESTIONS"), list) else []
             elif schema_model == ContextAnalysisOutput and isinstance(data_to_validate, dict):
-                fallback_output["key_modules"] = data_to_validate.get("key_modules", [])
-                fallback_output["security_concerns"] = data_to_validate.get("security_concerns", [])
-                fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", [])
-                fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", [])
+                fallback_output["key_modules"] = data_to_validate.get("key_modules", []) if isinstance(data_to_validate.get("key_modules"), list) else []
+                fallback_output["security_concerns"] = data_to_validate.get("security_concerns", []) if isinstance(data_to_validate.get("security_concerns"), list) else []
+                fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", []) if isinstance(data_to_validate.get("architectural_patterns"), list) else []
+                fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", []) if isinstance(data_to_validate.get("performance_bottlenecks"), list) else []
 
             # Ensure malformed_blocks is always present in the final fallback output
             if "malformed_blocks" not in fallback_output:
