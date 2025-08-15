@@ -213,50 +213,6 @@ class GeminiProvider:
             # If loop finishes without returning or raising, it means max retries were exceeded
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
-    # REMOVE THIS METHOD: It's redundant and uses a simple dict cache.
-    # The tokenizer object (self.tokenizer) should be the single source of truth for token counting.
-    # def count_tokens(self, text: str) -> int:
-    #     """Counts tokens in the given text using the Gemini API, with caching."""
-    #     if not text:
-    #         return 0
-    #         
-    #     # Use a hash of the text for cache key to avoid issues with identical content
-    #     text_hash = hash(text)
-    #     
-    #     if text_hash in self._cache:
-    #         logger.debug(f"Cache hit for token count (hash: {text_hash}).")
-    #         return self._cache[text_hash]
-    #     
-    #     try:
-    #         # Ensure text is properly encoded for the API call, replacing errors
-    #         try:
-    #             text_encoded = text.encode('utf-8')
-    #             text_for_api = text_encoded.decode('utf-8', errors='replace')
-    #         except UnicodeEncodeError:
-    #             # Fallback if encoding fails, replace problematic characters
-    #             text_for_api = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
-    #             logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
-    #         
-    #         # Use the count_tokens API to get token count
-    #         response = self.genai_client.models.count_tokens(
-    #             model=self.model_name,
-    #             contents=text_for_api
-    #         )
-    #         tokens = response.total_tokens
-    #         
-    #         # Cache the result
-    #         self._cache[text_hash] = tokens
-    #         logger.debug(f"Token count for text (hash: {text_hash}) is {tokens}. Stored in cache.")
-    #         return tokens
-    #         
-    #     except Exception as e:
-    #         logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
-    #         # Fallback to approximate count if API fails, to prevent crashing the budget calculation
-    #         # IMPROVED FALLBACK: Use a more accurate approximation (e.g., 4 chars per token)
-    #         approx_tokens = max(1, int(len(text) / 4))  # More accurate fallback
-    #         logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}")
-    #         return approx_tokens
-
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"

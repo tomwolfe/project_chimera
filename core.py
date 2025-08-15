@@ -242,44 +242,8 @@ class SocraticDebate:
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.") from e
     
-    def count_tokens(self, text: str) -> int:
-        """Counts tokens in text using the provider's tokenizer, with an enhanced fallback and caching."""
-        if not text:
-            return 0
-            
-        # Use a hash of the text for cache key to avoid recomputing for identical inputs
-        text_hash = hash(text)
-        
-        if text_hash in self._cache:
-            self.logger.debug(f"Cache hit for token count (hash: {text_hash}).")
-            return self._cache[text_hash]
-        
-        try:
-            # Ensure text is properly encoded for the API call, handling potential errors
-            try:
-                text_encoded = text.encode('utf-8')
-                text_for_api = text_encoded.decode('utf-8', errors='replace')
-            except UnicodeEncodeError:
-                # Fallback if encoding fails, replace problematic characters
-                text_for_api = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
-                self.logger.warning("Fixed encoding issues in text for token counting by replacing problematic characters.")
-            
-            # Use the LLM provider's tokenizer to count tokens
-            response = self.llm_provider.tokenizer.count_tokens(text_for_api)
-            tokens = response # Assuming count_tokens returns the integer token count directly
-            
-            # Cache the result for future use
-            self._cache[text_hash] = tokens
-            self.logger.debug(f"Token count for text (hash: {text_hash}) is {tokens}. Stored in cache.")
-            return tokens
-            
-        except Exception as e:
-            # Log the error and provide a fallback approximation if the API call fails
-            self.logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
-            # IMPROVED FALLBACK: Use a more accurate approximation (e.g., 4 chars per token)
-            approx_tokens = max(1, int(len(text) / 4))  # More accurate fallback than character count alone
-            self.logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}")
-            return approx_tokens
+    # Removed redundant count_tokens method and its cache.
+    # The GeminiProvider's tokenizer is now the single source of truth.
 
     def track_token_usage(self, phase: str, tokens: int):
         """Tracks token usage for a specific phase and updates total used tokens."""
@@ -475,6 +439,7 @@ class SocraticDebate:
         self.intermediate_steps = {} # Clear previous intermediate steps
         self.final_answer = None      # Reset final answer
         # Reset token usage per phase
+        self.tokens_used = 0 # Reset total tokens used
         self.tokens_used_per_phase = {"context": 0, "debate": 0, "synthesis": 0}
         # Start total tokens used with the initial input tokens
         self.tokens_used = self.initial_input_tokens 
@@ -958,7 +923,7 @@ class SocraticDebate:
             self.check_budget(phase, 0, f"End of {persona_name} turn") # Re-check budget after usage
             
             # Log completion of the turn
-            self._log_with_context("info", f"Completed persona: {persona_name} ({phase} phase).",
+            self._log_with_context("info", "Completed persona: {persona_name} ({phase} phase).",
                                    persona_name=persona_name, phase=phase,
                                    tokens_used=turn_tokens_used, input_tokens=input_tokens, output_tokens=output_tokens,
                                    progress_pct=self.get_progress_pct(phase, completed=True))
@@ -1021,7 +986,7 @@ class SocraticDebate:
         else:
             # If no specific schema is defined for the persona, store the raw text output
             parsed_output_data = response_text
-            self._log_with_context("debug", f"Persona {persona_name} does not have a specific JSON schema. Storing raw text output.", persona_name=persona_name)
+            self._log_with_context("debug", "Persona {persona_name} does not have a specific JSON schema. Storing raw text output.", persona_name=persona_name)
         
         # Structure the results for this turn
         turn_results = {
@@ -1169,7 +1134,7 @@ class SocraticDebate:
       "CODE_CHANGES": [
         {
           "FILE_PATH": "<string>",
-          "ACTION": "ADD | MODIFY | REMOVE",
+          "ACTION": "ADD | MODIFY",
           "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions)
         },
         {
