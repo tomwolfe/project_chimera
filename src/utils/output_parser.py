@@ -287,17 +287,6 @@ class LLMOutputParser:
                 "malformed_blocks": malformed_blocks_list
             }
 
-        # --- LLM SUGGESTION 1: Fix CODE_CHANGES type mismatch ---
-        # Ensure CODE_CHANGES is a list if it exists and is not already a list.
-        if isinstance(data_to_validate, dict) and "CODE_CHANGES" in data_to_validate:
-            if not isinstance(data_to_validate["CODE_CHANGES"], list):
-                self.logger.warning("Fixing CODE_CHANGES type mismatch: Expected list, got dictionary or other type.")
-                if isinstance(data_to_validate["CODE_CHANGES"], dict):
-                    data_to_validate["CODE_CHANGES"] = [data_to_validate["CODE_CHANGES"]]
-                else:
-                    data_to_validate["CODE_CHANGES"] = [] # Fallback to empty list
-        # --- END LLM SUGGESTION 1 ---
-
         # --- START FIX: Handle raw CodeChange output when LLMOutput is expected ---
         if schema_model == LLMOutput and isinstance(data_to_validate, dict):
             # Check if it looks like a CodeChange object directly (has FILE_PATH, ACTION, and one of FULL_CONTENT/LINES)
@@ -307,10 +296,11 @@ class LLMOutputParser:
             if is_code_change_like:
                 self.logger.warning("LLM output was a raw CodeChange object, but LLMOutput schema was expected. Wrapping it.")
                 file_name = Path(data_to_validate.get("FILE_PATH", "unknown_file")).name
+                action = data_to_validate.get("ACTION", "change").lower() # Extract action for better message
                 
                 # Construct the expected LLMOutput structure
                 wrapped_data = {
-                    "COMMIT_MESSAGE": f"Feat: Add/Update {file_name}",
+                    "COMMIT_MESSAGE": f"Feat: {action.capitalize()} {file_name}", # More specific commit message
                     "RATIONALE": f"The LLM generated a direct code change for {file_name} as part of the solution. This was wrapped into the expected LLMOutput format.",
                     "CODE_CHANGES": [data_to_validate], # Wrap the single CodeChange object in a list
                     "malformed_blocks": malformed_blocks_list # Include any existing malformed blocks
@@ -345,44 +335,23 @@ class LLMOutputParser:
 
             # Attempt to salvage parts of the LLM's output if it was partially valid
             if schema_model == LLMOutput and isinstance(data_to_validate, dict):
-                fallback_output["COMMIT_MESSAGE"] = data_to_validate.get("COMMIT_MESSAGE", "Schema validation failed")
-                fallback_output["RATIONALE"] = data_to_validate.get("RATIONALE", f"Original output: {extracted_json_str[:500]}...\nValidation Error: {str(validation_e)}")
+                # Check if it looks like a CodeChange object directly (has FILE_PATH, ACTION, and one of FULL_CONTENT/LINES)
+                is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
+                                      ("FULL_CONTENT" in data_to_validate or "LINES" in data_to_validate)
                 
-                original_code_changes = data_to_validate.get("CODE_CHANGES")
-                processed_code_changes = []
-                if isinstance(original_code_changes, list):
-                    for index, item in enumerate(original_code_changes):
-                        if isinstance(item, dict):
-                            try:
-                                # Attempt to validate each code change item individually
-                                valid_item = CodeChange(**item)
-                                processed_code_changes.append(valid_item.model_dump(by_alias=True))
-                            except ValidationError as inner_val_e:
-                                logger.warning(f"Fallback: Malformed dictionary item in CODE_CHANGES at index {index} skipped. Error: {inner_val_e}")
-                                malformed_blocks_list.append({
-                                    "type": "MALFORMED_CODE_CHANGE_ITEM", "index": index, "message": str(inner_val_e), "raw_item": str(item)
-                                })
-                                # Add a placeholder for the malformed item to indicate the issue
-                                processed_code_changes.append({
-                                    "FILE_PATH": f"malformed_entry_{index}", "ACTION": "ADD", 
-                                    "FULL_CONTENT": f"LLM provided a malformed dictionary entry in CODE_CHANGES at index {index}. Validation error: {inner_val_e}", "LINES": []
-                                })
-                        else:
-                            logger.warning(f"Fallback: Non-dictionary item in CODE_CHANGES at index {index} skipped.")
-                            malformed_blocks_list.append({
-                                "type": "NON_DICT_CODE_CHANGE_ITEM", "index": index, "message": "Item is not a dictionary.", "raw_item": str(item)
-                            })
-                            processed_code_changes.append({
-                                "FILE_PATH": f"malformed_entry_{index}", "ACTION": "ADD", 
-                                "FULL_CONTENT": f"LLM provided a non-dictionary item in CODE_CHANGES at index {index}: {item}", "LINES": []
-                            })
-                    fallback_output["CODE_CHANGES"] = processed_code_changes
-                else:
-                    logger.warning(f"Fallback: CODE_CHANGES field was not a list or was missing.")
-                    malformed_blocks_list.append({
-                        "type": "MALFORMED_CODE_CHANGES_FIELD", "message": "CODE_CHANGES field was not a list or was missing.", "raw_value": str(original_code_changes)
-                    })
-                    fallback_output["CODE_CHANGES"] = []
+                if is_code_change_like:
+                    self.logger.warning("LLM output was a raw CodeChange object, but LLMOutput schema was expected. Wrapping it.")
+                    file_name = Path(data_to_validate.get("FILE_PATH", "unknown_file")).name
+                    action = data_to_validate.get("ACTION", "change").lower() # Extract action for better message
+                    
+                    # Construct the expected LLMOutput structure
+                    wrapped_data = {
+                        "COMMIT_MESSAGE": f"Feat: {action.capitalize()} {file_name}", # More specific commit message
+                        "RATIONALE": f"The LLM generated a direct code change for {file_name} as part of the solution. This was wrapped into the expected LLMOutput format.",
+                        "CODE_CHANGES": [data_to_validate], # Wrap the single CodeChange object in a list
+                        "malformed_blocks": malformed_blocks_list # Include any existing malformed blocks
+                    }
+                    data_to_validate = wrapped_data
             # Add salvage logic for other schema types if needed
             elif schema_model == CritiqueOutput and isinstance(data_to_validate, dict):
                 fallback_output["CRITIQUE_SUMMARY"] = data_to_validate.get("CRITIQUE_SUMMARY", "Schema validation failed for critique.")
@@ -397,6 +366,9 @@ class LLMOutputParser:
             # Ensure malformed_blocks is always present in the final fallback output
             if "malformed_blocks" not in fallback_output:
                 fallback_output["malformed_blocks"] = malformed_blocks_list
+            # NEW: Ensure malformed_code_change_items is always present
+            if "malformed_code_change_items" not in fallback_output:
+                fallback_output["malformed_code_change_items"] = []
 
             return fallback_output
         except Exception as general_e:

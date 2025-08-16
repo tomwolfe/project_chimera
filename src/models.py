@@ -81,6 +81,8 @@ class LLMOutput(BaseModel):
     unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
     # Add malformed_blocks field for parser feedback (as per Improvement 2.2)
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+    # NEW: Dedicated field for malformed items within CODE_CHANGES
+    malformed_code_change_items: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_code_change_items")
 
 # NEW: Pydantic model for general critique output
 class CritiqueOutput(BaseModel):

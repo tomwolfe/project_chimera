@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
     
-    # Modified __init__ to accept persona_sets
     def __init__(self, all_personas: Dict[str, PersonaConfig], persona_sets: Dict[str, List[str]]):
         self.all_personas = all_personas
         self.persona_sets = persona_sets # Store persona sets
@@ -84,18 +83,6 @@ class PersonaRouter:
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"]
         }
     
-    # The determine_domain method is not directly used for the main sequence, but can remain.
-    # def determine_domain(self, prompt: str) -> str:
-    #     # ... (existing logic)
-
-    # The _analyze_prompt_domain method can remain if used elsewhere, but not for base sequence.
-    # def _analyze_prompt_domain(self, prompt: str) -> Set[str]:
-    #     # ... (existing logic)
-
-    # REMOVED: _get_domain_specific_personas as it's replaced by direct use of persona_sets
-    # def _get_domain_specific_personas(self, domains: Set[str]) -> List[str]:
-    #     # ... (existing logic)
-
     def is_self_analysis_prompt(self, prompt: str) -> bool:
        """Standardized method to detect self-analysis prompts using central constants"""
        return is_self_analysis_prompt(prompt)
@@ -106,11 +93,14 @@ class PersonaRouter:
             intermediate_results = {}
         
         quality_metrics = {}
+        # Extract quality metrics from intermediate results
         for step_name, result in intermediate_results.items():
             if isinstance(result, dict):
+                # Check for quality_metrics directly in the result dictionary
                 if 'quality_metrics' in result and isinstance(result['quality_metrics'], dict):
                     for metric_name, value in result['quality_metrics'].items():
                         quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
+                # Also check for quality_metrics nested within persona output structures
                 elif step_name.endswith("_Output") and isinstance(result, dict):
                     if "quality_metrics" in result and isinstance(result["quality_metrics"], dict):
                         for metric_name, value in result["quality_metrics"].items():
@@ -120,28 +110,31 @@ class PersonaRouter:
         
         # --- Dynamic Adjustments based on Quality Metrics ---
         # These are heuristics and can be tuned.
-        if quality_metrics.get('code_quality', 1.0) < 0.7:
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Code_Architect')
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor')
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer')
-        
-        if quality_metrics.get('reasoning_depth', 1.0) < 0.6:
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Devils_Advocate')
-        
-        if quality_metrics.get('test_coverage_estimate', 1.0) < 0.5:
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Test_Engineer')
-        
+        # Prioritize Security_Auditor if security risk is high
         if quality_metrics.get('security_risk_score', 0.0) > 0.7:
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'Security_Auditor')
-            self._insert_persona_before_arbitrator(adjusted_sequence, 'DevOps_Engineer')
+            self._insert_persona_before_arbitrator(adjusted_sequence, "Security_Auditor")
+            logger.info("Prioritized Security_Auditor due to high security risk score.")
+        
+        # Prioritize Test_Engineer if test coverage estimate is low
+        if quality_metrics.get('test_coverage_estimate', 1.0) < 0.5:
+            self._insert_persona_before_arbitrator(adjusted_sequence, "Test_Engineer")
+            logger.info("Prioritized Test_Engineer due to low test coverage estimate.")
+        
+        # Prioritize Code_Architect if maintainability or code quality is low
+        if quality_metrics.get('maintainability_index', 1.0) < 0.7 or quality_metrics.get('code_quality', 1.0) < 0.7:
+            self._insert_persona_before_arbitrator(adjusted_sequence, "Code_Architect")
+            logger.info("Prioritized Code_Architect due to low maintainability or code quality.")
 
         # --- Dynamic Adjustments based on Prompt Misclassification ---
+        # Check for common misclassifications and correct the sequence
         if "Code_Architect" in adjusted_sequence:
+            # If prompt mentions building architecture but not software architecture
             if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
-               ("software architect" not in prompt_lower and "software" not in prompt_lower and "code" not in prompt_lower):
+               not ("software architect" in prompt_lower or "software" in prompt_lower or "code" in prompt_lower):
                 logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
                 adjusted_sequence.remove("Code_Architect")
-                if "Generalist_Assistant" not in adjusted_sequence:
+                # If removed, ensure a general assistant is present if not already
+                if "Generalist_Assistant" not in adjusted_sequence and "Generalist_Assistant" in self.all_personas:
                     self._insert_persona_before_arbitrator(adjusted_sequence, "Generalist_Assistant")
         
         return adjusted_sequence
@@ -174,20 +167,56 @@ class PersonaRouter:
         if self.is_self_analysis_prompt(prompt):
             logger.info("Detected self-analysis prompt. Applying dynamic persona sequence.")
             
-            # Define sequences based on security keywords
-            security_keywords = ["security", "vulnerability", "exploit", "authentication", "threat", "risk", "malware", "penetration", "compliance"]
+            # Start with a core self-analysis sequence
+            base_sequence = ["Code_Architect", "Test_Engineer", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate"]
             
-            # Check if prompt contains security-related keywords
-            contains_security_keywords = any(kw in prompt_lower for kw in security_keywords)
+            # Dynamic adaptation based on specific self-analysis keywords
+            # Prioritize Security_Auditor if security keywords are present
+            if any(kw in prompt_lower for kw in ["security", "vulnerability", "exploit", "authentication", "threat", "risk"]):
+                self._insert_persona_before_arbitrator(base_sequence, "Security_Auditor")
+                logger.info("Self-analysis prompt is security-focused. Added Security_Auditor.")
             
-            if contains_security_keywords:
-                # Sequence for security-focused self-analysis
-                base_sequence = ["Code_Architect", "Security_Auditor", "Test_Engineer", "Impartial_Arbitrator"]
-                logger.info("Self-analysis prompt is security-focused. Using sequence: %s", base_sequence)
+            # Prioritize DevOps_Engineer if performance/DevOps keywords are present
+            if any(kw in prompt_lower for kw in ["performance", "efficiency", "scalability", "devops", "ci/cd", "deployment"]):
+                self._insert_persona_before_arbitrator(base_sequence, "DevOps_Engineer")
+                logger.info("Self-analysis prompt is performance/DevOps-focused. Added DevOps_Engineer.")
+
+            # Prioritize Code_Architect if maintainability/structure keywords are present
+            if any(kw in prompt_lower for kw in ["maintainability", "readability", "structure", "refactor", "clean code"]):
+                # If Code_Architect is already in the sequence, move it to the front
+                if "Code_Architect" in base_sequence:
+                    base_sequence.remove("Code_Architect")
+                    base_sequence.insert(0, "Code_Architect") # Prioritize it at the beginning
+                else:
+                    # If not present, insert it early
+                    self._insert_persona_before_arbitrator(base_sequence, "Code_Architect")
+                logger.info("Self-analysis prompt is maintainability/structure-focused. Prioritized Code_Architect.")
+
+            # Ensure Impartial_Arbitrator is always last for synthesis
+            if "Impartial_Arbitrator" in base_sequence:
+                base_sequence.remove("Impartial_Arbitrator")
+            base_sequence.append("Impartial_Arbitrator")
+
+            # Ensure Devils_Advocate is before Arbitrator but after critics
+            if "Devils_Advocate" in base_sequence:
+                base_sequence.remove("Devils_Advocate")
+            
+            # Find the index of the last critic or the Arbitrator if no critic exists
+            insert_pos_for_advocate = len(base_sequence)
+            if "Impartial_Arbitrator" in base_sequence:
+                insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
+            
+            # Try to insert after Constructive_Critic if it exists
+            if "Constructive_Critic" in base_sequence and base_sequence.index("Constructive_Critic") < insert_pos_for_advocate:
+                critic_idx = base_sequence.index("Constructive_Critic")
+                base_sequence.insert(critic_idx + 1, "Devils_Advocate")
             else:
-                # Default sequence for general self-analysis
-                base_sequence = ["Code_Architect", "Test_Engineer", "Impartial_Arbitrator"]
-                logger.info("Self-analysis prompt is general. Using sequence: %s", base_sequence)
+                # Otherwise, insert it before the Arbitrator
+                base_sequence.insert(insert_pos_for_advocate, "Devils_Advocate")
+            
+            final_sequence = base_sequence # Start with the dynamically built base sequence
+            logger.info(f"Self-analysis persona sequence: {final_sequence}")
+
         else:
         # --- END LLM SUGGESTION 2 ---
             # Use the persona_sets directly from personas.yaml as the base sequence for non-self-analysis prompts
@@ -204,11 +233,11 @@ class PersonaRouter:
                     logger.error("No valid persona sequence found for 'General' domain. Using minimal fallback.")
                     base_sequence = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
 
-        # Ensure all personas in base_sequence actually exist in all_personas
-        base_sequence = [p for p in base_sequence if p in self.all_personas]
+            final_sequence = base_sequence.copy() # Start with the domain's base sequence
 
         # Apply dynamic adjustments based on context analysis and intermediate results
-        final_sequence = self._apply_dynamic_adjustment(base_sequence, intermediate_results, prompt_lower)
+        # This will now apply to both self-analysis and general sequences
+        final_sequence = self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)
         
         # Further adjustments based on context analysis results (e.g., presence of test files)
         if context_analysis_results:
@@ -216,16 +245,18 @@ class PersonaRouter:
             test_file_count = sum(1 for file_path, _ in relevant_files if file_path.startswith('tests/'))
             code_file_count = sum(1 for file_path, _ in relevant_files if file_path.endswith(('.py', '.js', '.ts', '.java', '.go')))
             
+            # Insert Test_Engineer if many test files are relevant and it's not already in sequence
             if test_file_count > 3 and "Test_Engineer" not in final_sequence:
                 self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
             
+            # Insert Code_Architect and Security_Auditor if many code files are relevant and they are not in sequence
             if code_file_count > 5:
                 if "Code_Architect" not in final_sequence:
                     self._insert_persona_before_arbitrator(final_sequence, "Code_Architect")
                 if "Security_Auditor" not in final_sequence:
                     self._insert_persona_before_arbitrator(final_sequence, "Security_Auditor")
         
-        # Ensure uniqueness and order
+        # Ensure uniqueness and order by removing duplicates while preserving order
         seen = set()
         unique_sequence = []
         for persona in final_sequence:
