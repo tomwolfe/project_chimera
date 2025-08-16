@@ -40,7 +40,7 @@ class GeminiTokenizer(Tokenizer):
         
         self.genai_client = genai_client
         self.model_name = model_name
-        # self._cache = {}  # REMOVE THIS LINE - cache is now handled by lru_cache
+        # Removed manual cache: self._cache = {}
 
     @property
     def max_output_tokens(self) -> int:
@@ -61,19 +61,12 @@ class GeminiTokenizer(Tokenizer):
         logger.warning(f"Unknown model '{self.model_name}', using default max output tokens (8192)")
         return self.MODEL_MAX_OUTPUT_TOKENS["default"]
     
-    @lru_cache(maxsize=512) # ADD THIS DECORATOR
+    @lru_cache(maxsize=512) # ADD THIS DECORATOR for caching token counts
     def count_tokens(self, text: str) -> int:
         """Counts tokens in the given text using the Gemini API, with caching."""
         if not text:
             return 0
             
-        # Use a hash of the text for cache key
-        # text_hash = hash(text) # REMOVE THIS LINE - lru_cache handles hashing
-        
-        # if text_hash in self._cache: # REMOVE THIS BLOCK - lru_cache handles caching
-        #     logger.debug(f"Cache hit for token count (hash: {text_hash}).")
-        #     return self._cache[text_hash]
-        
         try:
             # Ensure text is properly encoded for the API call
             try:
@@ -90,17 +83,19 @@ class GeminiTokenizer(Tokenizer):
                 contents=text_for_api
             )
             tokens = response.total_tokens
-            
-            # Cache the result # REMOVE THIS LINE - lru_cache handles caching
-            # self._cache[text_hash] = tokens # REMOVE THIS LINE
-            logger.debug(f"Token count for text is {tokens}. Stored in cache.") # Modified log message
+            logger.debug(f"Token count for text is {tokens}. Stored in cache.")
             return tokens
             
         except Exception as e:
             logger.error(f"Gemini token counting failed for model '{self.model_name}': {str(e)}")
-            # Fallback to approximate count if API fails, to prevent crashing the budget calculation
-            # IMPROVED FALLBACK: Use a more accurate approximation (e.g., 4 chars per token)
-            approx_tokens = max(1, int(len(text) / 4))  # More accurate fallback
+            # Improved fallback based on content type heuristic
+            # Check for common code indicators in the first 200 characters
+            if any(indicator in text[:200] for indicator in ["def ", "class ", "import ", "{", "}", "func", "var ", "const "]):
+                # Code content is denser - use ~3.5 characters per token
+                approx_tokens = max(1, int(len(text) / 3.5))
+            else:
+                # Standard text content - use ~4 characters per token
+                approx_tokens = max(1, int(len(text) / 4))
             logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}")
             return approx_tokens
 

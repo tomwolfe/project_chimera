@@ -38,7 +38,9 @@ from src.utils.output_parser import LLMOutputParser
 # Import models and exceptions
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
 from src.config.settings import ChimeraSettings
-from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError
+# --- MODIFICATION: Ensure SchemaValidationError is imported ---
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError, SchemaValidationError
+# --- END MODIFICATION ---
 from src.constants import SELF_ANALYSIS_KEYWORDS # Import for self-analysis persona sequence
 
 # --- NEW IMPORT FOR LOGGING CONFIG ---
@@ -312,7 +314,109 @@ class SocraticDebate:
     def _process_context_persona_turn(self, persona_sequence: List[str], context_analysis_results: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]: return None
     def _execute_debate_persona_turns(self, persona_sequence: List[str], context_persona_turn_results: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]: return []
     def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]: return {}
-    def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Optional[Dict[str, Any]]: return {}
+    def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Optional[Dict[str, Any]]:
+        """
+        Executes a single LLM turn for a given persona, handling parsing and validation.
+        Includes specific error handling for SchemaValidationError to trigger circuit breaker.
+        """
+        
+        # ... (existing code for _execute_llm_turn up to the try block)
+        try:
+            # Make the LLM call
+            raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
+                prompt=prompt,
+                system_prompt=persona_config.system_prompt,
+                temperature=persona_config.temperature,
+                max_tokens=persona_config.max_tokens,
+                persona_config=persona_config,
+                intermediate_results=self.intermediate_steps,
+                requested_model_name=self.model_name # Pass the model name from SocraticDebate
+            )
+            self.track_token_usage(phase, input_tokens + output_tokens)
+            
+            # Determine the schema model based on persona name
+            schema_model = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, LLMOutput) # Default to LLMOutput
+            
+            # Parse and validate the output
+            parser = LLMOutputParser()
+            parsed_output = parser.parse_and_validate(raw_llm_output, schema_model)
+            
+            # Check if parse_and_validate indicated a critical failure (e.g., "Parsing error")
+            # This check ensures that if the parser itself failed catastrophically,
+            # we treat it as a persistent error to potentially trip the circuit breaker.
+            if parsed_output.get("malformed_blocks") and \
+               (parsed_output.get("COMMIT_MESSAGE") == "Parsing error" or \
+                parsed_output.get("CRITIQUE_SUMMARY") == "LLM_GENERATION_ERROR" or \
+                parsed_output.get("error_type") == "SCHEMA_VALIDATION_FAILED"):
+                
+                self._log_with_context("error", f"Schema validation failed for {persona_name} output (critical failure): {parsed_output.get('RATIONALE', 'Unknown parsing error')}",
+                                       persona=persona_name, exc_info=True)
+                self.status_callback(f"[red]Schema validation failed critically for {persona_name}. Circuit breaker may trip.[/red]", state="error")
+                
+                # Re-raise SchemaValidationError to be caught by the circuit breaker
+                # Pass relevant info from parsed_output to the exception
+                raise SchemaValidationError(
+                    error_type="LLM_OUTPUT_MALFORMED",
+                    field_path="root",
+                    invalid_value=raw_llm_output, # Pass raw output for context
+                    details={"malformed_blocks": parsed_output.get("malformed_blocks", []),
+                             "parser_rationale": parsed_output.get("RATIONALE", "No specific rationale provided by parser.")}
+                )
+            
+            # If output is not critically malformed, but has malformed_blocks, just log and return
+            if parsed_output.get("malformed_blocks"):
+                self._log_with_context("warning", f"LLM output for {persona_name} contained non-critical malformed blocks.",
+                                       persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
+                self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
+            
+            return parsed_output
+
+        except CircuitBreakerError as cbe:
+            self._log_with_context("error", f"Circuit breaker open for {persona_name} LLM call: {cbe}",
+                                   persona=persona_name, exc_info=True)
+            self.status_callback(f"[red]Circuit breaker open for {persona_name}. Skipping turn.[/red]", state="error")
+            # Return a structured error indicating circuit breaker tripped
+            return {
+                "COMMIT_MESSAGE": "Circuit Breaker Tripped",
+                "RATIONALE": f"LLM call for {persona_name} was blocked by circuit breaker: {cbe}",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "CIRCUIT_BREAKER_OPEN", "message": str(cbe)}]
+            }
+        except TokenBudgetExceededError as tbe:
+            self._log_with_context("error", f"Token budget exceeded for {persona_name}: {tbe}",
+                                   persona=persona_name, exc_info=True)
+            self.status_callback(f"[red]Token budget exceeded for {persona_name}. Skipping turn.[/red]", state="error")
+            raise tbe # Re-raise to be caught by the main debate loop
+        except LLMProviderError as lpe:
+            self._log_with_context("error", f"LLM Provider Error for {persona_name}: {lpe}",
+                                   persona=persona_name, exc_info=True)
+            self.status_callback(f"[red]LLM Provider Error for {persona_name}. Skipping turn.[/red]", state="error")
+            # Return a structured error indicating provider issue
+            return {
+                "COMMIT_MESSAGE": "LLM Provider Error",
+                "RATIONALE": f"An error occurred with the LLM provider for {persona_name}: {lpe}",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "LLM_PROVIDER_ERROR", "message": str(lpe)}]
+            }
+        # --- MODIFICATION: Add specific catch for SchemaValidationError ---
+        except SchemaValidationError as sve:
+            self._log_with_context("error", f"Schema validation failed for {persona_name} output: {sve}",
+                                   persona=persona_name, exc_info=True)
+            self.status_callback(f"[red]Schema validation failed for {persona_name}. Circuit breaker may trip.[/red]", state="error")
+            # Re-raise the SchemaValidationError to be caught by the circuit breaker
+            raise sve
+        # --- END MODIFICATION ---
+        except Exception as e:
+            self._log_with_context("error", f"Unexpected error during {persona_name} LLM turn: {e}",
+                                   persona=persona_name, exc_info=True)
+            self.status_callback(f"[red]Unexpected error during {persona_name} turn. Skipping.[/red]", state="error")
+            # Return a structured error for unexpected issues
+            return {
+                "COMMIT_MESSAGE": "Unexpected Error",
+                "RATIONALE": f"An unexpected error occurred during {persona_name}'s turn: {e}",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "traceback": traceback.format_exc()}]
+            }
     def get_progress_pct(self, phase: str, completed: bool = False, error: bool = False) -> float: return 0.0
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]: return {}, {}
     def _update_intermediate_steps_with_totals(self): pass

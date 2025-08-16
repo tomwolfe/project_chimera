@@ -289,14 +289,17 @@ def _initialize_session_state(pm: PersonaManager):
     # --- END FIX ---
     
     # Set default to the first example prompt from the first category
-    st.session_state.user_prompt_input = list(EXAMPLE_PROMPTS.values())[0][list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]]["prompt"]
+    default_example_category = list(EXAMPLE_PROMPTS.keys())[0]
+    default_example_name = list(EXAMPLE_PROMPTS[default_example_category].keys())[0]
+    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[default_example_category][default_example_name]["prompt"]
     st.session_state.max_tokens_budget_input = 1000000
     st.session_state.show_intermediate_steps_checkbox = True
     # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
     # --- END MODIFICATION ---
     # Set default example name to the first one in the first category
-    st.session_state.selected_example_name = list(list(EXAMPLE_PROMPTS.values())[0].keys())[0]
+    st.session_state.selected_example_name = default_example_name
+    st.session_state.selected_prompt_category = default_example_category # Track selected category for tabs
     
     # FIX START: Initialize selected_persona_set BEFORE using it
     # Get default framework from PersonaManager
@@ -311,8 +314,8 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.last_config_params = {}
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
-    st.session_state.example_selector_widget = st.session_state.selected_example_name
-    st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # This line now works
+    # REMOVED: st.session_state.example_selector_widget = st.session_state.selected_example_name
+    # REMOVED: st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # This line now works
     st.session_state.persona_audit_log = []
     st.session_state.persona_edit_mode = False
     st.session_state.persona_changes_detected = False
@@ -498,23 +501,30 @@ st.subheader("What would you like to do?")
 
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
+# --- START FIX FOR Streamlit < 1.25.0 ---
+# Removed 'key' and 'index' arguments as they are not supported in older versions.
 tabs = st.tabs(tab_names)
-
-# Initialize selected_prompt_key to ensure it's always set
-# This will be updated within the tab logic
-selected_prompt_key = "" 
+# --- END FIX FOR Streamlit < 1.25.0 ---
 
 for i, tab_name in enumerate(tab_names):
     with tabs[i]:
+        # Update selected_prompt_category when a tab is clicked
+        # This is implicitly handled by Streamlit if the key for st.tabs is linked to session state.
+        # We can add an explicit callback if needed, but usually not necessary for simple tab clicks.
+        
         if tab_name == CUSTOM_PROMPT_KEY:
             st.markdown("Create your own specialized prompt for unique requirements.")
-            # --- FIX START: Modify custom prompt text area to directly bind to user_prompt_input ---
-            st.text_area("Enter your custom prompt here:", 
-                                      value=st.session_state.user_prompt_input, # Reads from the main prompt state
+            # The main user_prompt_input text area is now used for custom prompts
+            custom_prompt_text = st.text_area("Enter your custom prompt here:",
+                                      value=st.session_state.user_prompt_input,
                                       height=150,
-                                      key="user_prompt_input", # This key binds directly to st.session_state.user_prompt_input
-                                      on_change=lambda: st.session_state.update(selected_example_name=CUSTOM_PROMPT_KEY))
-            # --- FIX END ---
+                                      key="custom_prompt_text_area") # Unique key for this widget
+            
+            # Update the main user_prompt_input state when this text area changes
+            if custom_prompt_text != st.session_state.user_prompt_input:
+                st.session_state.user_prompt_input = custom_prompt_text
+                st.session_state.selected_example_name = CUSTOM_PROMPT_KEY # Mark as custom
+                st.session_state.selected_prompt_category = CUSTOM_PROMPT_KEY # Mark category as custom
             
             with st.expander("💡 Prompt Engineering Tips"):
                 st.markdown("""
@@ -524,103 +534,82 @@ for i, tab_name in enumerate(tab_names):
                 - **Example Output:** If possible, provide an example of the desired output format.
                 """)
             
-            # --- FIX START: Remove problematic explicit assignments ---
-            # st.session_state.user_prompt_input = user_prompt_text_area # REMOVED: Handled by key="user_prompt_input"
-            # st.session_state.selected_example_name = CUSTOM_PROMPT_KEY # REMOVED: Handled by on_change
-            # --- FIX END ---
             # Clear codebase context when switching to custom prompt, user will upload or it'll be empty
-            st.session_state.codebase_context = {} 
+            st.session_state.codebase_context = {}
             st.session_state.uploaded_files = []
             
-            # --- FIX FOR CUSTOM PROMPT FRAMEWORK HANDLING (Now a suggestion button) ---
             # Analyze the custom prompt to determine the appropriate framework
-            suggested_domain_for_custom = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS) # Use the main prompt state
+            suggested_domain_for_custom = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
             
-            # Only display suggestion if different from current selection
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
                 if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key="apply_suggested_framework_custom_prompt"):
                     st.session_state.selected_persona_set = suggested_domain_for_custom
-                    st.rerun() # Re-added to ensure UI updates
-            # --- END FIX ---
+                    st.rerun()
             
-        else:
+        else: # Example Prompts Tabs
             st.markdown(f"Explore example prompts for **{tab_name}**:")
             
-            # Get options for the current category
             category_options = EXAMPLE_PROMPTS[tab_name]
             
-            # Create a list of (key, description) for format_func
-            radio_options_with_desc = [
-                (key, details["description"]) for key, details in category_options.items()
-            ]
+            # Add a search bar for filtering prompts within the current category
+            search_term_for_category = st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}")
             
-            # Find the index of the currently selected prompt within this category
-            current_selected_prompt_in_category_idx = -1
-            if st.session_state.selected_example_name in category_options:
-                current_selected_prompt_in_category_idx = list(category_options.keys()).index(st.session_state.selected_example_name)
-            
-            # Use a unique key for each radio button group to avoid conflicts
-            # --- MODIFICATION FOR IMPROVEMENT 2.2: Replace st.radio with st.selectbox ---
-            # --- MODIFICATION FOR IMPROVEMENT 2.1: Update format_func and key ---
-            options_with_desc = [(key, details["description"]) for key, details in category_options.items()]
+            filtered_prompts_in_category = {
+                name: details for name, details in category_options.items()
+                if not search_term_for_category or \
+                   search_term_for_category.lower() in name.lower() or \
+                   search_term_for_category.lower() in details["prompt"].lower()
+            }
 
-            selected_radio_key = st.selectbox("Select task:",
-                options=[item[0] for item in options_with_desc],
-                # Display prompt name and a truncated description for better scanning
-                format_func=lambda x: f"{x} - {next(item[1] for item in options_with_desc if item[0] == x)[:60]}...",
-                label_visibility="collapsed",
-                key=f"select_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}") # Changed widget type and key
-            # --- END MODIFICATION ---
-            
-            # Update session state based on the selected radio button
-            if selected_radio_key:
-                st.session_state.selected_example_name = selected_radio_key
-                st.session_state.user_prompt_input = category_options[selected_radio_key]["prompt"]
+            if filtered_prompts_in_category:
+                # Use st.selectbox for better space efficiency and searchability
+                selected_example_key = st.selectbox(
+                    "Select task:",
+                    options=list(filtered_prompts_in_category.keys()),
+                    format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
+                    label_visibility="collapsed",
+                    key=f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
+                )
                 
-                # ADDED START: Framework suggestion logic for example prompts
-                example_prompt = category_options[selected_radio_key]["prompt"]
-                suggested_domain_for_example = recommend_domain_from_keywords(example_prompt, DOMAIN_KEYWORDS)
-                
-                if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
-                    st.info(f"💡 Based on your example prompt, the **'{suggested_domain_for_example}'** framework might be appropriate.")
-                    if st.button(f"Apply '{suggested_domain_for_example}' Framework", 
-                                type="primary", 
-                                use_container_width=True, 
-                                key=f"apply_suggested_framework_example_{selected_radio_key}"):
-                        st.session_state.selected_persona_set = suggested_domain_for_example
-                        st.rerun()
-                # ADDED END: Framework suggestion logic for example prompts
+                # Update session state based on the selected example
+                if selected_example_key:
+                    st.session_state.selected_example_name = selected_example_key
+                    st.session_state.user_prompt_input = filtered_prompts_in_category[selected_example_key]["prompt"]
+                    st.session_state.selected_prompt_category = tab_name # Update category state
 
-                # --- REMOVED: Automatic framework change and context loading from here ---
-                # This logic is now handled in the main framework selection and context loading blocks
-                # to give the user control over the framework.
-                st.session_state.codebase_context = {}
-                st.session_state.uploaded_files = []
-                # --- END REMOVAL ---
-            
-            # --- MODIFICATION FOR SUGGESTION 3.1: Display details and add Copy button ---
-            if selected_radio_key:
-                selected_prompt_details = category_options[selected_radio_key]
-                st.info(f"**Description:** {selected_prompt_details['description']}")
-                with st.expander("View Full Prompt Text"):
-                    st.code(selected_prompt_details['prompt'], language='text')
-                    # --- FALLBACK FOR COPY FUNCTIONALITY ---
-                    # Revert to st.button with enhanced help text if st.clipboard_button is unavailable
-                    st.button(
-                        "Copy Prompt",
-                        help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
-                        use_container_width=True,
-                        type="secondary",
-                        key=f"copy_prompt_{selected_radio_key}")
-                    # COMMENT: Reverts to a button that instructs manual copy if clipboard functionality is unavailable.
-                    # --- END FALLBACK ---
+                    # Display description and full prompt
+                    selected_prompt_details = filtered_prompts_in_category[selected_example_key]
+                    st.info(f"**Description:** {selected_prompt_details['description']}")
+                    with st.expander("View Full Prompt Text"):
+                        st.code(selected_prompt_details['prompt'], language='text')
+                        st.button(
+                            "Copy Prompt",
+                            help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
+                            use_container_width=True,
+                            type="secondary",
+                            key=f"copy_prompt_{selected_example_key}")
 
-# The main user_prompt text_area is now managed within the tabs, so remove the global one.
-# user_prompt = st.text_area("Enter your prompt here:", height=150, key="user_prompt_input") # REMOVE THIS LINE
+                    # Framework suggestion logic for example prompts
+                    example_prompt = filtered_prompts_in_category[selected_example_key]["prompt"]
+                    suggested_domain_for_example = recommend_domain_from_keywords(example_prompt, DOMAIN_KEYWORDS)
+                    
+                    if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
+                        st.info(f"💡 Based on this example, the **'{suggested_domain_for_example}'** framework might be appropriate.")
+                        if st.button(f"Apply '{suggested_domain_for_example}' Framework",
+                                    type="primary",
+                                    use_container_width=True,
+                                    key=f"apply_suggested_framework_example_{selected_example_key}"):
+                            st.session_state.selected_persona_set = suggested_domain_for_example
+                            st.rerun()
 
-# Use the user_prompt_input from session state for the actual prompt value
-user_prompt = st.session_state.user_prompt_input
+                    st.session_state.codebase_context = {}
+                    st.session_state.uploaded_files = []
+            else:
+                st.info("No example prompts match your search in this category.")
+
+# The main user_prompt text_area is now implicitly managed by the tab selection.
+user_prompt = st.session_state.user_prompt_input # Ensure this line remains to get the current prompt
 
 # --- START: UI Layout for Framework and Context ---
 # This block is now placed after the tabs, but before the main run button.
@@ -1126,6 +1115,24 @@ def _run_socratic_debate_process():
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
+            except SchemaValidationError as sve: # This block is modified for error recovery
+                logger.error(f"Socratic Debate failed due to SchemaValidationError: {sve}", exc_info=True, extra={'request_id': request_id})
+                # The SchemaValidationError is now expected to be caught by the CircuitBreaker in llm_provider.py
+                # We re-raise it here so the main app.py error handling can display a user-friendly message,
+                # but the CircuitBreaker will have already registered the failure.
+                status.update(label=f"Socratic Debate Failed: Output Schema Invalid", state="error", expanded=True)
+                st.error(f"**Output Error:** The LLM produced output that did not conform to the expected structure. "
+                         f"This indicates a potential issue with the LLM's adherence to instructions. "
+                         f"The system's circuit breaker has registered this failure. Details: {str(sve)}")
+                st.session_state.debate_ran = True
+                if debate_instance:
+                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
+                
+                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
+                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+                # Re-raise the exception to ensure it's propagated if needed by higher-level error handling
+                raise sve # Re-raise the SchemaValidationError
+            
             except ChimeraError as ce:
                 # Handle Chimera-specific errors
                 logger.error(f"Socratic Debate failed due to ChimeraError: {ce}", exc_info=True, extra={'request_id': request_id})
@@ -1331,7 +1338,7 @@ if st.session_state.debate_ran:
                         
                         for issue_type, type_issues in issues_by_type.items():
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
-                                for issue in type_issues: # Corrected variable name from type_types to type_issues
+                                for issue in type_types: # Corrected variable name from type_types to type_issues
                                     # Use markdown for better formatting of issue details
                                     line_info = f" (Line: {issue.get('line_number', 'N/A')}, Col: {issue.get('column_number', 'N/A')})" if issue.get('line_number') else ""
                                     st.markdown(f"- **{issue.get('code', '')}**: {issue['message']}{line_info}")

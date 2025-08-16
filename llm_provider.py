@@ -1,17 +1,23 @@
 # src/llm_provider.py
+"""
+Provides an interface for interacting with the Gemini LLM API,
+including retry mechanisms, token counting, cost calculation,
+and circuit breaker protection.
+"""
+
 import time
 from collections import defaultdict
 import streamlit as st
 import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional
-import google.genai as genai # ADDED: This was missing
-from google.genai import types # ADDED: This was missing
-from google.genai.errors import APIError # ADDED: This was missing
-import hashlib # ADDED: This was missing
-import random # ADDED: This was missing
-import socket # ADDED: This was missing
-from rich.console import Console # ADDED: This was missing
+import google.genai as genai
+from google.genai import types
+from google.genai.errors import APIError
+import hashlib
+import random
+import socket
+from rich.console import Console
 
 # --- Tokenizer Interface and Implementation ---
 from src.tokenizers.base import Tokenizer
@@ -22,7 +28,7 @@ from src.models import PersonaConfig
 # --- END MODIFICATION ---
 
 # --- Custom Exceptions ---
-from src.exceptions import ChimeraError, LLMProviderError, GeminiAPIError, LLMUnexpectedError, TokenBudgetExceededError, CircuitBreakerError # Corrected import, added LLMProviderError and CircuitBreakerError
+from src.exceptions import ChimeraError, LLMProviderError, GeminiAPIError, LLMUnexpectedError, TokenBudgetExceededError, CircuitBreakerError, SchemaValidationError # Corrected import, added LLMProviderError, CircuitBreakerError, and SchemaValidationError
 
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
 from src.resilience.circuit_breaker import CircuitBreaker
@@ -80,7 +86,7 @@ class GeminiProvider:
     def __eq__(self, other):
         if not isinstance(other, GeminiProvider):
             return NotImplemented
-        return (self.model_name == other.model_name and 
+        return (self.model_name == other.model_name and
                 self._api_key == other.api_key and
                 type(self.tokenizer) == type(other.tokenizer))
 
@@ -104,10 +110,10 @@ class GeminiProvider:
 
     # --- CIRCUIT BREAKER APPLIED HERE ---
     @CircuitBreaker(
-        failure_threshold=3, 
+        failure_threshold=3,
         recovery_timeout=60, # Wait 60 seconds before trying again
-        # Count API errors and previous circuit breaker rejections as failures
-        expected_exception=(APIError, CircuitBreakerError) 
+        # Count API errors, circuit breaker rejections, and schema validation errors as failures
+        expected_exception=(APIError, CircuitBreakerError, SchemaValidationError)
     )
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, persona_config: PersonaConfig = None, intermediate_results: Dict[str, Any] = None, requested_model_name: str = None) -> tuple[str, int, int]:
         """
@@ -216,4 +222,4 @@ class GeminiProvider:
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"
-        return self.tokenizer.count_tokens(combined_text) # USE self.tokenizer.count_tokens
+        return self.count_tokens(combined_text)
