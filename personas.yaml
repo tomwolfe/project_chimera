@@ -37,7 +37,21 @@ personas:
           ```
       4.  Ensure all code snippets within `SUGGESTIONS` (if any) adhere to PEP8 (line length <= 88).
       5.  Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
- 
+
+      **JSON Schema:**
+      ```json
+      {
+        "CRITIQUE_SUMMARY": "<string>",
+        "CRITIQUE_POINTS": [
+          {
+            "point_summary": "<string>",
+            "details": "<string>"
+          }
+        ],
+        "SUGGESTIONS": ["<string>", "<string>"], # <-- FIX APPLIED HERE: Explicitly show array of strings
+        "malformed_blocks": []
+      }
+      ```
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.45
@@ -155,8 +169,7 @@ personas:
         "ANALYSIS_SUMMARY": "<string>",
         "IMPACTFUL_SUGGESTIONS": [
           {
-            "AREA": "Reasoning Quality \\| Robustness \\| Efficiency \\|
-    Maintainability",
+            "AREA": "Reasoning Quality \\| Robustness \\| Efficiency \\| Maintainability",
             "PROBLEM": "<string>",
             "PROPOSED_SOLUTION": "<string>",
             "EXPECTED_IMPACT": "<string>",

@@ -90,4 +90,9 @@ class CritiqueOutput(BaseModel):
     critique_points: List[Dict[str, Any]] = Field(..., alias="CRITIQUE_POINTS", description="Detailed points of critique.")
     suggestions: List[str] = Field(default_factory=list, alias="SUGGESTIONS", description="Actionable suggestions for improvement.")
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+
+# NEW: Pydantic model for General_Synthesizer's output
+class GeneralOutput(BaseModel):
+    general_output: str = Field(..., alias="general_output", description="The synthesized general output.")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
 # --- END MODIFICATION ---

@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field, validator, model_validator, ValidationErr
 
 # --- MODIFICATION FOR IMPROVEMENT 4.3 ---
 # Import models from src.models
-from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput # Ensure CritiqueOutput is imported
+# Ensure GeneralOutput is imported here
+from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput
 # --- END MODIFICATION ---
 
 logger = logging.getLogger(__name__)
@@ -362,6 +363,10 @@ class LLMOutputParser:
                 fallback_output["security_concerns"] = data_to_validate.get("security_concerns", []) if isinstance(data_to_validate.get("security_concerns"), list) else []
                 fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", []) if isinstance(data_to_validate.get("architectural_patterns"), list) else []
                 fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", []) if isinstance(data_to_validate.get("performance_bottlenecks"), list) else []
+            # ADD THIS NEW SALVAGE LOGIC FOR GeneralOutput
+            elif schema_model == GeneralOutput and isinstance(data_to_validate, dict):
+                fallback_output["general_output"] = data_to_validate.get("general_output", "Schema validation failed for general output.")
+            # END NEW SALVAGE LOGIC
 
             # Ensure malformed_blocks is always present in the final fallback output
             if "malformed_blocks" not in fallback_output:
