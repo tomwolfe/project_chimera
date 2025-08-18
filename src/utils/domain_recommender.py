@@ -52,9 +52,20 @@ def recommend_domain_from_keywords(user_prompt: str, domain_keywords: Dict[str, 
                 if not negated:
                     score += DEFAULT_KEYWORD_WEIGHT # Add full weight if not negated
 
+        # Additional context boost for technical terms in code contexts (from LLM's suggestion)
+        if domain == "Software Engineering":
+            if any(term in prompt_lower for term in ["implement", "endpoint", "api", "function"]):
+                if "error handling" in prompt_lower or "validation" in prompt_lower:
+                    score += 2.0  # Significant boost for complete implementation requests
+
         if score > highest_score:
             highest_score = score
             best_match = domain
+
+    # Special case: if prompt contains code block indicators but low score, boost SE (from LLM's suggestion)
+    # This acts as a strong fallback for clear coding prompts that might otherwise be misclassified.
+    if highest_score < 1.0 and ("```python" in prompt_lower or ".py" in prompt_lower or "function" in prompt_lower):
+        return "Software Engineering"
 
     # A higher threshold might be needed for more confident recommendations
     # Adjust this based on desired strictness. 1.0 means at least one non-negated keyword match.

@@ -45,7 +45,7 @@ def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
     """Load config with validation and user-friendly errors."""
     if not os.path.exists(file_path):
         # Raise an exception instead of calling st.error/st.info/st.stop
-        raise FileNotFoundError(f"Config file not found at '{file_path}'. Please create `config.yaml` from the `config.example.yaml` template.")
+        raise FileNotFoundError(f"Config file not found at '{file_path}'. Please create `config.example.yaml` from the `config.example.yaml` template.")
     try:
         with open(file_path, 'r') as f:
             config = yaml.safe_load(f)
@@ -186,33 +186,40 @@ EXAMPLE_PROMPTS = {
     "Coding & Implementation": {
         "Implement Python API Endpoint": {
             "prompt": "Implement a new FastAPI endpoint `/items/{item_id}` that retrieves an item from a dictionary. Include basic error handling for non-existent items and add a corresponding unit test.",
-            "description": "Generate a complete API endpoint with proper error handling, validation, and documentation."
+            "description": "Generate a complete API endpoint with proper error handling, validation, and documentation.",
+            "framework_hint": "Software Engineering" # ADDED: Explicit hint for this example
         },
         "Refactor a Python Function": {
             "prompt": "Refactor the given Python function to improve its readability and performance. It currently uses a nested loop; see if you can optimize it.",
-            "description": "Improve structure and readability of existing code while maintaining functionality."
+            "description": "Improve structure and readability of existing code while maintaining functionality.",
+            "framework_hint": "Software Engineering" # ADDED: Explicit hint for this example
         },
         "Fix a Bug in a Script": {
             "prompt": "The provided Python script is supposed to calculate the average of a list of numbers but fails with a `TypeError` if the list contains non-numeric strings. Fix the bug by safely ignoring non-numeric values.",
-            "description": "Identify and correct issues in problematic code with explanations."
+            "description": "Identify and correct issues in problematic code with explanations.",
+            "framework_hint": "Software Engineering" # ADDED: Explicit hint for this example
         },
     },
     "Analysis & Problem Solving": {
         "Design a Mars City": {
             "prompt": "Design a sustainable city for 1 million people on Mars, considering resource scarcity and human psychology.",
-            "description": "Explore complex design challenges with multi-faceted considerations."
+            "description": "Explore complex design challenges with multi-faceted considerations.",
+            "framework_hint": "Creative" # ADDED: Explicit hint
         },
         "Ethical AI Framework": {
             "prompt": "Develop an ethical framework for an AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
-            "description": "Formulate ethical guidelines for sensitive AI applications."
+            "description": "Formulate ethical guidelines for sensitive AI applications.",
+            "framework_hint": "Business" # ADDED: Explicit hint
         },
         "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.": {
             "prompt": "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.",
-            "description": "Perform a deep self-analysis of the Project Chimera codebase for improvements."
+            "description": "Perform a deep self-analysis of the Project Chimera codebase for improvements.",
+            "framework_hint": "Self-Improvement" # ADDED: Explicit hint
         },
         "Climate Change Solution": {
             "prompt": "Propose an innovative, scalable solution to mitigate the effects of climate change, focusing on a specific sector (e.g., energy, agriculture, transportation).",
-            "description": "Brainstorm and propose solutions for global challenges."
+            "description": "Brainstorm and propose solutions for global challenges.",
+            "framework_hint": "Science" # ADDED: Explicit hint
         },
     }
 }
@@ -364,7 +371,7 @@ def sanitize_user_input(prompt: str) -> str:
         (r'(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b', 'INSTRUCTION_OVERRIDE'),
         (r'(?i)\b(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b', 'DIRECTIVE_PROBING'),
         (r'(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous', 'IGNORE_PREVIOUS'),
-        (r'(?i)(?:act as|pretend to be|roleplay as|you are now|your new role is)\s+[:]?\s*([\w\s]+)', 'ROLE_MANIPULATION'),
+        (r'(?i)(?:act as|pretend to be|roleplay as|you are now|your new role is)\s*[:]?\s*([\w\s]+)', 'ROLE_MANIPULATION'),
         
         # Patterns targeting code execution or command injection
         (r'(?i)\b(execute|run|system|shell|bash|cmd|powershell|eval|exec|import\s+os|from\s+subprocess)\b', 'CODE_EXECUTION_ATTEMPT'),
@@ -590,17 +597,25 @@ for i, tab_name in enumerate(tab_names):
                             type="secondary",
                             key=f"copy_prompt_{selected_example_key}")
 
-                    # Framework suggestion logic for example prompts
-                    example_prompt = filtered_prompts_in_category[selected_example_key]["prompt"]
-                    suggested_domain_for_example = recommend_domain_from_keywords(example_prompt, DOMAIN_KEYWORDS)
-                    
-                    if suggested_domain_for_example and suggested_domain_for_example != st.session_state.selected_persona_set:
-                        st.info(f"💡 Based on this example, the **'{suggested_domain_for_example}'** framework might be appropriate.")
-                        if st.button(f"Apply '{suggested_domain_for_example}' Framework",
+                    # MODIFIED: Framework suggestion logic for example prompts
+                    example_prompt_text = filtered_prompts_in_category[selected_example_key]["prompt"]
+                    framework_hint = filtered_prompts_in_category[selected_example_key].get("framework_hint")
+
+                    # Determine which framework to suggest for display
+                    display_suggested_framework = None
+                    if framework_hint:
+                        display_suggested_framework = framework_hint
+                    else:
+                        # Fallback to dynamic recommendation if no hint
+                        display_suggested_framework = recommend_domain_from_keywords(example_prompt_text, DOMAIN_KEYWORDS)
+
+                    if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
+                        st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
+                        if st.button(f"Apply '{display_suggested_framework}' Framework",
                                     type="primary",
                                     use_container_width=True,
                                     key=f"apply_suggested_framework_example_{selected_example_key}"):
-                            st.session_state.selected_persona_set = suggested_domain_for_example
+                            st.session_state.selected_persona_set = display_suggested_framework
                             st.rerun()
 
                     st.session_state.codebase_context = {}
@@ -1338,7 +1353,7 @@ if st.session_state.debate_ran:
                         
                         for issue_type, type_issues in issues_by_type.items():
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
-                                for issue in type_types: # Corrected variable name from type_types to type_issues
+                                for issue in type_issues: # Corrected variable name from type_types to type_issues
                                     # Use markdown for better formatting of issue details
                                     line_info = f" (Line: {issue.get('line_number', 'N/A')}, Col: {issue.get('column_number', 'N/A')})" if issue.get('line_number') else ""
                                     st.markdown(f"- **{issue.get('code', '')}**: {issue['message']}{line_info}")
