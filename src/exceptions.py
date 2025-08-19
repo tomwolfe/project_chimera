@@ -61,9 +61,13 @@ class TokenBudgetExceededError(ChimeraError):
         error_details = {
             "current_tokens": current_tokens,
             "budget": budget,
+            "phase": details.get("phase", "N/A"), # Added phase
+            "step_name": details.get("step_name", "N/A"), # Added step_name
+            "tokens_needed": details.get("tokens_needed", "N/A"), # Added tokens_needed
             **(details or {})
         }
-        super().__init__(f"Token budget exceeded: {current_tokens}/{budget} tokens used", details=error_details)
+        message = f"Token budget exceeded: {current_tokens}/{budget} tokens used. Phase: {error_details['phase']}, Step: {error_details['step_name']}"
+        super().__init__(message, details=error_details)
 
 # --- ADDED CIRCUITBREAKERERROR START ---
 class CircuitBreakerError(ChimeraError):

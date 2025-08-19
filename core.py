@@ -111,13 +111,13 @@ class SocraticDebate:
             if self.rich_console:
                 self.rich_console.print(f"[red]Failed to initialize LLM provider: {e}[/red]")
             else:
-                self.logger.error(f"Failed to initialize LLM provider: {e}")
+                self.logger.error(f"Failed to initialize LLM provider: {e}", exc_info=True)
             raise ChimeraError(f"LLM provider initialization failed: {e}") from e
         except Exception as e: # Catch any other unexpected errors during initialization
             if self.rich_console:
                 self.rich_console.print(f"[red]An unexpected error occurred during LLM provider initialization: {e}[/red]")
             else:
-                self.logger.error(f"An unexpected error occurred during LLM provider initialization: {e}")
+                self.logger.error(f"An unexpected error occurred during LLM provider initialization: {e}", exc_info=True)
             raise ChimeraError(f"LLM provider initialization failed unexpectedly: {e}") from e
 
         # Ensure tokenizer is initialized only if client is successful
@@ -146,7 +146,7 @@ class SocraticDebate:
                     if not self.context_analyzer.file_embeddings:
                         self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 except Exception as e:
-                    self.logger.error(f"Failed to compute embeddings for codebase context: {e}")
+                    self.logger.error(f"Failed to compute embeddings for codebase context: {e}", exc_info=True)
                     if self.status_callback:
                         self.status_callback(message=f"[red]Error computing context embeddings: {e}[/red]")
             else:
@@ -175,7 +175,7 @@ class SocraticDebate:
             # Estimate tokens for context and initial input
             context_str = self.context_analyzer.get_context_summary() if self.context_analyzer else ""
             # Use initial_prompt for token estimation
-            self.initial_input_tokens = self.tokenizer.estimate_tokens_for_context(context_str, self.initial_prompt)
+            self.initial_input_tokens = self.tokenizer.count_tokens(context_str + self.initial_prompt)
             
             # Ensure remaining tokens never goes negative
             remaining_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
@@ -199,39 +199,36 @@ class SocraticDebate:
             
             # Calculate debate tokens, ensuring it meets the minimum if possible
             debate_tokens = int(remaining_tokens * debate_ratio)
-            if debate_tokens < MIN_PHASE_TOKENS and remaining_tokens > 0:
-                debate_tokens = min(remaining_tokens - MIN_PHASE_TOKENS, MIN_PHASE_TOKENS)
-                
-            # Synthesis gets whatever's left, ensuring it also meets the minimum
-            synthesis_tokens = max(MIN_PHASE_TOKENS, remaining_tokens - debate_tokens)
+            synthesis_tokens = int(remaining_tokens * synthesis_ratio)
+            
+            # Ensure minimums and adjust if total remaining is too small
+            if remaining_tokens < MIN_PHASE_TOKENS * 2: # If not enough for two minimum phases
+                if remaining_tokens >= MIN_PHASE_TOKENS:
+                    debate_tokens = remaining_tokens // 2
+                    synthesis_tokens = remaining_tokens - debate_tokens
+                else: # Extremely low budget, allocate what's left to synthesis
+                    debate_tokens = 0
+                    synthesis_tokens = remaining_tokens
+            else:
+                debate_tokens = max(MIN_PHASE_TOKENS, debate_tokens)
+                synthesis_tokens = max(MIN_PHASE_TOKENS, synthesis_tokens)
+                # Re-distribute if sum exceeds remaining_tokens due to min_phase_tokens
+                total_allocated = debate_tokens + synthesis_tokens
+                if total_allocated > remaining_tokens:
+                    diff = total_allocated - remaining_tokens
+                    if debate_tokens > synthesis_tokens:
+                        debate_tokens -= diff
+                    else:
+                        synthesis_tokens -= diff
+                    # Ensure they don't fall below minimum again
+                    debate_tokens = max(MIN_PHASE_TOKENS, debate_tokens)
+                    synthesis_tokens = max(MIN_PHASE_TOKENS, synthesis_tokens)
             
             self.phase_budgets = {
                 "context": self.initial_input_tokens, # Tokens for initial context analysis
                 "debate": debate_tokens,             # Tokens for persona debate turns
                 "synthesis": synthesis_tokens        # Tokens for final synthesis
             }
-            
-            # Additional safety check for extremely constrained scenarios where budgets might be critically low
-            if self.phase_budgets["debate"] < 100 or self.phase_budgets["synthesis"] < 100:
-                self._log_with_context("error", "Token allocation critically constrained",
-                                       phase_budgets=self.phase_budgets,
-                                       context_tokens=self.initial_input_tokens,
-                                       total_budget=self.max_total_tokens_budget)
-                # Fall back to a minimum viable allocation if budgets are too low
-                total_needed = 200  # Minimum for debate + synthesis
-                if self.max_total_tokens_budget >= total_needed:
-                    self.phase_budgets = {
-                        "context": 0,
-                        "debate": 100,
-                        "synthesis": 100
-                    }
-                else:
-                    # If total budget is less than minimum needed, allocate proportionally
-                    self.phase_budgets = {
-                        "context": 0,
-                        "debate": int(self.max_total_tokens_budget * 0.5),
-                        "synthesis": self.max_total_tokens_budget - int(self.max_total_tokens_budget * 0.5)
-                    }
             
             self._log_with_context("info", "SocraticDebate token budgets initialized",
                                    initial_input_tokens=self.initial_input_tokens,
@@ -243,7 +240,7 @@ class SocraticDebate:
         except Exception as e:
             # Log any errors during budget calculation and provide fallback budgets
             self._log_with_context("error", "Token budget calculation failed",
-                                   error=str(e), context="token_budget")
+                                   error=str(e), context="token_budget", exc_info=True)
             # Provide fallback budgets to prevent startup failure
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
@@ -484,7 +481,8 @@ class SocraticDebate:
             # Insert it before the last "critic" type persona or before the end
             insert_idx = len(personas_for_debate)
             for i, p_name in reversed(list(enumerate(personas_for_debate))):
-                if "Critic" in p_name or "Analyst" in p_name: # Heuristic for critic-like personas
+                # Heuristic for critic-like/technical personas
+                if "Critic" in p_name or "Analyst" in p_name or "Engineer" in p_name or "Architect" in p_name: 
                     insert_idx = i + 1
                     break
             personas_for_debate.insert(insert_idx, "Devils_Advocate")
@@ -497,7 +495,7 @@ class SocraticDebate:
                 "running",
                 self.tokens_used,
                 self.get_total_estimated_cost(),
-                progress_pct=self.get_progress_pct("debate"), # REMOVED current_persona_name from this call
+                progress_pct=self.get_progress_pct("debate"),
                 current_persona_name=persona_name # ADDED current_persona_name directly to status_callback
             )
 
@@ -513,7 +511,7 @@ class SocraticDebate:
             
             # Estimate tokens for this turn
             estimated_tokens = self.tokenizer.count_tokens(current_prompt) + persona_config.max_tokens
-            self.check_budget("debate", estimated_tokens, persona_name)
+            self.check_budget("debate", estimated_tokens, persona_name) # Added persona_name as step_name
 
             try:
                 output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate")
@@ -522,7 +520,6 @@ class SocraticDebate:
             except Exception as e:
                 self._log_with_context("error", f"Error during {persona_name} turn: {e}", persona=persona_name, exc_info=True)
                 self.rich_console.print(f"[red]Error during {persona_name} turn: {e}[/red]")
-                debate_history.append({"persona": persona_name, "error": str(e)})
                 # Decide whether to stop or continue. For now, we continue but log the error.
                 # If the error is critical (e.g., TokenBudgetExceeded), it will be re-raised by _execute_llm_turn.
                 # If it's a recoverable error (e.g., malformed JSON that was salvaged), output will be a dict with error info.
@@ -573,7 +570,7 @@ class SocraticDebate:
             self._log_with_context("error", f"Error during final synthesis turn by {synthesis_persona_name}: {e}", exc_info=True)
             self.rich_console.print(f"[red]Error during final synthesis turn: {e}[/red]")
             # Re-raise critical exceptions, otherwise return a structured error
-            if isinstance(e, (TokenBudgetExceededError, ChimeraError, CircuitBreakerError)):
+            if isinstance(e, (TokenBudgetExceededError, ChimeraError, CircuitBreakerError, LLMProviderError, SchemaValidationError)):
                 raise e
             return {"error": f"Synthesis turn failed: {e}", "malformed_blocks": [{"type": "SYNTHESIS_ERROR", "message": str(e)}]}
 
@@ -595,6 +592,7 @@ class SocraticDebate:
                 requested_model_name=self.model_name # Pass the model name from SocraticDebate
             )
             self.track_token_usage(phase, input_tokens + output_tokens)
+            self.check_budget(phase, input_tokens + output_tokens, persona_name) # Added persona_name as step_name
             
             # --- FIX: Conditionally apply JSON parsing and validation ---
             if persona_name in self.PERSONA_OUTPUT_SCHEMAS:
@@ -695,6 +693,9 @@ class SocraticDebate:
             final_answer["malformed_blocks"] = []
 
         self._update_intermediate_steps_with_totals()
+        # Ensure malformed_blocks is also present in intermediate_steps
+        if "malformed_blocks" not in self.intermediate_steps:
+            self.intermediate_steps["malformed_blocks"] = []
         return final_answer, self.intermediate_steps
 
     def _update_intermediate_steps_with_totals(self):

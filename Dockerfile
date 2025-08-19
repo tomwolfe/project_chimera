@@ -2,7 +2,7 @@
 FROM python:3.11-slim AS model_downloader
 WORKDIR /tmp
 
-# Set Hugging Face cache directories
+# Set Hugging Face cache directories for model download
 ENV HF_HOME=/tmp/hf_cache
 ENV TRANSFORMERS_CACHE=/tmp/hf_cache/transformers
 ENV SENTENCE_TRANSFORMERS_HOME=/tmp/hf_cache/sentence_transformers
@@ -33,6 +33,7 @@ COPY requirements-prod.txt .
 RUN pip install --no-cache-dir -r requirements-prod.txt
 
 # Copy the cached model from the model_downloader stage
+# This ensures the SentenceTransformer model is available offline within the appuser's cache
 COPY --from=model_downloader /tmp/hf_cache/transformers /home/appuser/.cache/huggingface/transformers
 
 # Ensure proper ownership of the cache directory for the non-root user

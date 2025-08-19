@@ -90,8 +90,9 @@ class CodeChange(BaseModel):
         """Ensures that full_content is provided for ADD/MODIFY and lines for REMOVE."""
         if self.action in ["ADD", "MODIFY"] and self.full_content is None:
             raise ValueError(f"full_content is required for action '{self.action}' on file '{self.file_path}'.")
-        if self.action == "REMOVE" and not isinstance(self.lines, list):
-            raise ValueError(f"lines must be a list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__}.")
+        # FIX: Ensure lines is a non-empty list for REMOVE
+        if self.action == "REMOVE" and (not isinstance(self.lines, list) or not self.lines):
+            raise ValueError(f"lines must be a non-empty list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__} or empty.")
         return self
 
 class LLMOutput(BaseModel):
@@ -110,7 +111,7 @@ class CritiqueOutput(BaseModel):
     critique_summary: str = Field(..., alias="CRITIQUE_SUMMARY", description="A concise summary of the critique.")
     critique_points: List[Dict[str, Any]] = Field(..., alias="CRITIQUE_POINTS", description="Detailed points of critique.")
     suggestions: List[str] = Field(default_factory=list, alias="SUGGESTIONS", description="Actionable suggestions for improvement.")
-    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # Ensure malformed_blocks is present
 
     @model_validator(mode='after')
     def validate_paths_in_suggestions(self) -> 'CritiqueOutput':
@@ -140,7 +141,7 @@ class CritiqueOutput(BaseModel):
 # NEW: Pydantic model for General_Synthesizer's output
 class GeneralOutput(BaseModel):
     general_output: str = Field(..., alias="general_output", description="The synthesized general output.")
-    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # Ensure malformed_blocks is present
 
     @model_validator(mode='after')
     def validate_paths_in_general_output(self) -> 'GeneralOutput':
@@ -163,4 +164,3 @@ class GeneralOutput(BaseModel):
                 sanitized_output = sanitized_output.replace(path, f"INVALID_PATH_DETECTED:{path}")
         self.general_output = sanitized_output
         return self
-# --- END MODIFICATION ---

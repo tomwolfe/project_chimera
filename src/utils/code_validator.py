@@ -47,7 +47,7 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
             })
 
     except Exception as e:
-        logger.error(f"Error running pycodestyle on {filename}: {e}")
+        logger.error(f"Error running pycodestyle on {filename}: {e}", exc_info=True)
         issues.append({
             "line_number": None,
             "column_number": None,
@@ -62,19 +62,21 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
 def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
+    tmp_file_path = None # Initialize to None
     try:
         with tempfile.NamedTemporaryFile(
-            mode='w+', suffix='.py', encoding='utf-8', delete=True
+            mode='w+', suffix='.py', encoding='utf-8', delete=False # Set delete=False for explicit cleanup
         ) as temp_file:
             temp_file.write(content)
             temp_file.flush()
+            tmp_file_path = Path(temp_file.name) # Store path for explicit unlink
             
             command = [
                 sys.executable,
                 "-m", "bandit",
                 "-q",
                 "-f", "json",
-                temp_file.name
+                str(tmp_file_path) # Use str(Path)
             ]
             
             process = subprocess.run(
@@ -95,6 +97,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                     if bandit_results:
                         data = json.loads(bandit_results)
                         for issue in data.get('results', []):
+                            # Original code's use of 'severity' and 'description' is correct for Bandit's JSON output
                             if issue['level'] != 'info':
                                 issues.append({
                                     'type': 'Bandit Security Issue',
@@ -104,10 +107,10 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                                     'message': f"[{issue.get('severity')}] {issue.get('description')}"
                                 })
                 except json.JSONDecodeError as jde:
-                    logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {process.stdout}")
+                    logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {process.stdout}", exc_info=True)
                     issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
                 except Exception as e:
-                    logger.error(f"Unexpected error processing Bandit output for {filename}: {e}")
+                    logger.error(f"Unexpected error processing Bandit output for {filename}: {e}", exc_info=True)
                     issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
 
     except FileNotFoundError:
@@ -116,9 +119,15 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     except subprocess.TimeoutExpired:
         logger.error(f"Bandit execution timed out for {filename}.")
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'})
-    except Exception as e:
-        logger.error(f"Unexpected error running Bandit on {filename}: {e}")
+    except Exception as e: # Catch any other unexpected errors during the try block
+        logger.error(f"Unexpected error running Bandit on {filename}: {e}", exc_info=True)
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})
+    finally: # Ensure cleanup of the temporary file
+        if tmp_file_path and tmp_file_path.exists():
+            try:
+                os.unlink(tmp_file_path)
+            except OSError as e:
+                logger.warning(f"Failed to delete temporary Bandit file {tmp_file_path}: {e}")
         
     return issues
 
@@ -210,7 +219,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
             'message': f"Invalid Python syntax: {se.msg}"
         })
     except Exception as e:
-        logger.error(f"Error during AST analysis for {filename}: {e}")
+        logger.error(f"Error during AST analysis for {filename}: {e}", exc_info=True)
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed during AST analysis: {e}'})
     return issues
 # --- END NEW FUNCTION ---
@@ -301,7 +310,17 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         if not isinstance(change_entry, dict):
             issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
             logger.error(issue_message)
-            all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
+            all_validation_results.setdefault('N/A', []).append({
+                'type': 'Malformed Change Entry',
+                'file': 'N/A',
+                'message': issue_message
+            })
+            # Explicitly populate malformed_code_change_items for better reporting
+            parsed_data.setdefault('malformed_code_change_items', []).append({
+                'index': i,
+                'original_value': str(change_entry)[:500],
+                'error': 'Entry must be a dictionary'
+            })
             continue
 
         file_path = change_entry.get('FILE_PATH')
@@ -313,7 +332,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
                 all_validation_results[file_path] = validation_result.get('issues', [])
                 logger.debug(f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues.")
             except Exception as e:
-                logger.error(f"Error during validation of change entry {i} for file {file_path}: {e}")
+                logger.exception(f"Error during validation of change entry {i} for file {file_path}: {e}") # Use logger.exception for full traceback
                 if file_path not in all_validation_results:
                     all_validation_results[file_path] = []
                 all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})

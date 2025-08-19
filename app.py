@@ -246,8 +246,9 @@ else:
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
 # Define the function to get a cached instance of ContextRelevanceAnalyzer
 # and inject the persona_router from the PersonaManager.
-@st.cache_resource
-# FIX START: Add underscore to pm_instance to tell Streamlit not to hash it
+# FIX START: REMOVE @st.cache_resource from get_context_analyzer()
+# This is the core fix for the CacheReplayClosureError.
+# @st.cache_resource # <--- REMOVED THIS LINE
 def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manager_instance
 # FIX END
     """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
@@ -1243,7 +1244,7 @@ def _run_socratic_debate_process():
 # --- END OF NEW FUNCTION ---
 
 if run_button_clicked:
-    _run_socratic_debate_process() # Call the extracted function
+    _run_socratic_debate_process()
 
 
 if st.session_state.debate_ran:
@@ -1374,8 +1375,16 @@ if st.session_state.debate_ran:
                     with st.expander("Malformed Output Details"):
                         for block_info in all_malformed_blocks:
                             st.error(f"**Type:** {block_info.get('type', 'Unknown')}\n**Message:** {block_info.get('message', 'N/A')}")
-                            if block_info.get('raw_string_snippet'):
-                                st.code(block_info['raw_string_snippet'][:1000] + ('...' if len(block_info['raw_string_snippet']) > 1000 else ''), language='text')
+                            # FIX START: Defensive check for raw_string_snippet
+                            raw_snippet = block_info.get('raw_string_snippet', '')
+                            if not raw_snippet:
+                                st.code("<No content available>", language='text')
+                            else:
+                                display_content = raw_snippet[:1000]
+                                if len(raw_snippet) > 1000:
+                                    display_content += '...'
+                                st.code(display_content, language='text')
+                            # FIX END
                             st.markdown("---") # Separator between blocks
 
                 # Group remaining issues by file, then by type
