@@ -14,7 +14,8 @@ import pycodestyle
 import ast
 import json # Added for Bandit output parsing
 
-from src.utils.path_utils import find_project_root, is_within_base_dir, sanitize_and_validate_file_path
+# FIX: Removed 'find_project_root' from the import as it's no longer a public function
+from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path
 
 logger = logging.getLogger(__name__)
 

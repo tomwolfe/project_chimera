@@ -2,42 +2,39 @@
 import logging
 import re
 from pathlib import Path
+from typing import Optional # Added for find_project_root signature
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT_MARKERS = ['.git', 'config.yaml', 'pyproject.toml', 'Dockerfile'] # Added Dockerfile as a marker
+PROJECT_ROOT_MARKERS = ['.git', 'config.yaml', 'pyproject.toml', 'Dockerfile']
 
-def find_project_root(start_path: Path = None) -> Path:
-    """Finds the project root directory by searching for known markers.
-    Starts from the directory of the current file and traverses upwards.
-    """
-    if start_path is None:
-        start_path = Path(__file__).resolve().parent
-
+# Renamed to avoid confusion with the module-level variable
+def _find_project_root_internal(start_path: Path) -> Optional[Path]:
+    """Internal helper to find the project root without raising an error."""
     current_dir = start_path
     # Limit search depth to prevent infinite loops in unusual file structures
-    for _ in range(15): # Increased depth slightly for robustness
+    for _ in range(15):
         if any(current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS):
-            logger.info(f"Project root identified at: {current_dir}")
             return current_dir
         
         parent_path = current_dir.parent
         if parent_path == current_dir: # Reached the filesystem root
             break
         current_dir = parent_path
-    
-    # If root is not found after extensive search, raise an error.
-    raise FileNotFoundError(f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {start_path}. Cannot determine project root.")
+    return None # Return None if not found
 
 # --- Define PROJECT_ROOT dynamically ---
 # This should be called once at module load time.
-try:
-    PROJECT_ROOT = find_project_root()
-except FileNotFoundError as e:
-    logger.error(f"Failed to find project root: {e}")
-    # Set a fallback or raise a critical error if project root is essential for startup.
-    # For this context, we'll assume it's critical and let it fail if not found.
-    raise e
+_initial_start_path = Path(__file__).resolve().parent
+_found_root = _find_project_root_internal(_initial_start_path)
+
+if _found_root:
+    PROJECT_ROOT = _found_root
+    logger.info(f"Project root identified at: {PROJECT_ROOT}")
+else:
+    # Fallback if project root markers are not found
+    PROJECT_ROOT = Path.cwd() # Fallback to current working directory
+    logger.warning(f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective.")
 
 def is_within_base_dir(file_path: Path) -> bool:
     """Checks if a file path is safely within the project base directory."""
@@ -68,9 +65,6 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
         raise ValueError("File path cannot be empty.")
 
     # Remove potentially dangerous characters and sequences
-    # This regex removes characters that are invalid in filenames on most OS,
-    # and also common traversal sequences like '..'.
-    # It also removes control characters.
     sanitized_path_str = re.sub(r'[<>:"|?*\x00-\x1f\x7f]', '', raw_path)
     # Explicitly remove '..' sequences to prevent directory traversal
     sanitized_path_str = re.sub(r'\.\./', '', sanitized_path_str)
