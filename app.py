@@ -635,7 +635,7 @@ for i, tab_name in enumerate(tab_names):
             # If they switch to this tab, and the current prompt isn't already marked custom,
             # mark it as custom.
             if custom_prompt_text != st.session_state.user_prompt_input or \
-               st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
+               st.session_state.selected_example_name == CUSTOM_PROMPT_KEY: # Check if it's already marked as custom
                 
                 st.session_state.user_prompt_input = custom_prompt_text
                 st.session_state.selected_example_name = CUSTOM_PROMPT_KEY # Mark as custom
@@ -669,7 +669,7 @@ for i, tab_name in enumerate(tab_names):
             
             category_options = EXAMPLE_PROMPTS[tab_name]
             
-            # Add a search bar for filtering prompts within the current category
+            # Create search bar for filtering prompts within the current category
             search_term_for_category = st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}")
             
             filtered_prompts_in_category = {
@@ -679,49 +679,52 @@ for i, tab_name in enumerate(tab_names):
                    search_term_for_category.lower() in details["prompt"].lower()
             }
 
-            if filtered_prompts_in_category:
+            # --- FIX START: Guard against empty filtered prompts and manage state ---
+            if not filtered_prompts_in_category:
+                # If no prompts match the search, clear the current selection and show a message.
+                # This prevents the IndexError and ensures the UI reflects no active example.
+                st.session_state.user_prompt_input = ""
+                st.session_state.selected_example_name = ""
+                st.session_state.selected_prompt_category = tab_name # Ensure category is set
+                st.info("No example prompts match your search in this category.")
+                st.session_state.codebase_context = {}
+                st.session_state.uploaded_files = []
+            else:
+                # If there are filtered prompts, proceed with rendering the selectbox and managing state.
                 options_keys = list(filtered_prompts_in_category.keys())
                 
-                # Determine the initial index for the selectbox
                 current_prompt_text_in_state = st.session_state.user_prompt_input
                 initial_selectbox_index = 0 # Default to first option if no match
                 
                 found_match_in_current_tab = False
+                # Check if the current prompt in session state matches any of the filtered prompts
                 for idx, key in enumerate(options_keys):
                     if filtered_prompts_in_category[key]["prompt"] == current_prompt_text_in_state:
                         initial_selectbox_index = idx
                         found_match_in_current_tab = True
                         break
                 
-                # --- FIX START: More robust state synchronization for example tabs ---
-                # If the current prompt in session state is NOT one of the examples in this tab,
-                # OR if the current prompt is a custom prompt (meaning it's not an example),
-                # then we should reset the session state to the first example of this tab.
-                # This ensures that when switching categories, the prompt defaults to the first of the new category.
+                # If the current prompt is not found in the filtered list, or if it's a custom prompt,
+                # reset the selection to the first available example in this tab.
+                # This logic is now safe because we know 'options_keys' is not empty.
                 if not found_match_in_current_tab or st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
                     st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
                     st.session_state.selected_example_name = options_keys[0]
-                    # st.session_state.selected_prompt_category = tab_name # Already set at the top of the tab loop
                     initial_selectbox_index = 0 # Ensure selectbox also points to the first option
-                # --- FIX END ---
-                        
-                # Use st.selectbox for better space efficiency and searchability
+                
                 selected_example_key_from_widget = st.selectbox(
                     "Select task:",
                     options=options_keys,
-                    index=initial_selectbox_index, # Set the initial index based on session state
+                    index=initial_selectbox_index,
                     format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
                     label_visibility="collapsed",
                     key=f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
                 )
                 
-                # UNCONDITIONALLY update session state to reflect the selectbox's current value.
-                # This is crucial. If the user changes the selectbox, or if it defaulted,
-                # the session state MUST reflect it.
-                if selected_example_key_from_widget: # Ensure a selection was made (not empty list)
+                # Update session state based on the selectbox's current value
+                if selected_example_key_from_widget:
                     st.session_state.selected_example_name = selected_example_key_from_widget
                     st.session_state.user_prompt_input = filtered_prompts_in_category[selected_example_key_from_widget]["prompt"]
-                    # st.session_state.selected_prompt_category = tab_name # Already set at the top of the tab loop
                 
                 # Display description and full prompt based on the *updated* session state
                 # This ensures the displayed info matches the internal state.
@@ -745,12 +748,11 @@ for i, tab_name in enumerate(tab_names):
                                 use_container_width=True,
                                 key=f"apply_suggested_framework_example_{st.session_state.selected_example_name}"):
                         st.session_state.selected_persona_set = display_suggested_framework
-                        st.rerun()
-
+                        st.rerun() # Re-added to ensure UI updates
+                
                 st.session_state.codebase_context = {}
                 st.session_state.uploaded_files = []
-            else:
-                st.info("No example prompts match your search in this category.")
+            # --- FIX END ---
 
 # The main user_prompt text_area is now implicitly managed by the tab selection.
 user_prompt = st.session_state.user_prompt_input # Ensure this line remains to get the current prompt
