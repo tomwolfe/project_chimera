@@ -39,7 +39,7 @@ from src.utils.output_parser import LLMOutputParser
 # --- MODIFICATION: Ensure GeneralOutput is imported ---
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput # Added CritiqueOutput, GeneralOutput
 # --- END MODIFICATION ---
-from src.config.settings import ChimeraSettings
+from src.config.settings import ChimeraSettings # Corrected import path
 # --- MODIFICATION: Ensure SchemaValidationError is imported ---
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError, SchemaValidationError
 # --- END MODIFICATION ---
@@ -65,7 +65,7 @@ class SocraticDebate:
 
     def __init__(self, initial_prompt: str, api_key: str,
                  codebase_context: Optional[Dict[str, str]] = None,
-                 settings: Optional[ChimeraSettings] = None,
+                 settings: Optional[ChimeraSettings] = None, # ADDED THIS PARAMETER
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
                  persona_sets: Optional[Dict[str, List[str]]] = None,
                  domain: Optional[str] = None,
@@ -73,7 +73,7 @@ class SocraticDebate:
                  model_name: str = "gemini-2.5-flash-lite",
                  status_callback: Optional[Callable] = None,
                  rich_console: Optional[Console] = None,
-                 context_token_budget_ratio: float = 0.25,
+                 # REMOVED: context_token_budget_ratio: float = 0.25, # This is now managed by ChimeraSettings
                  context_analyzer: Optional[ContextRelevanceAnalyzer] = None, # ADDED THIS PARAMETER
                  is_self_analysis: bool = False # Flag to indicate if the prompt is for self-analysis
                  ):
@@ -86,8 +86,8 @@ class SocraticDebate:
         # Get a logger specific to this class instance for better log organization.
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        self.settings = settings or ChimeraSettings()
-        self.context_token_budget_ratio = context_token_budget_ratio
+        self.settings = settings or ChimeraSettings() # Use provided settings or default
+        # REMOVED: self.context_token_budget_ratio = context_token_budget_ratio # Now managed by self.settings
         self.max_total_tokens_budget = max_total_tokens_budget
         self.tokens_used = 0 # Total tokens used across all phases
         self.model_name = model_name
@@ -180,16 +180,19 @@ class SocraticDebate:
             # Ensure remaining tokens never goes negative
             remaining_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
             
-            # --- Dynamic allocation based on self-analysis flag ---
+            # --- Dynamic allocation based on self-analysis flag and ChimeraSettings ---
             if self.is_self_analysis:
-                # For self-analysis, prioritize debate/critique over final synthesis
-                debate_ratio = 0.95  # More tokens for debate/critique
-                synthesis_ratio = 0.05 # Less for final synthesis
-                self._log_with_context("info", "Adjusting token ratios for self-analysis prompt.")
+                debate_ratio = self.settings.self_analysis_debate_ratio
+                # Synthesis ratio is derived to ensure sum is 1.0
+                synthesis_ratio = 1.0 - debate_ratio 
+                self._log_with_context("info", "Adjusting token ratios for self-analysis prompt using ChimeraSettings.",
+                                       self_analysis_debate_ratio=debate_ratio, synthesis_ratio=synthesis_ratio)
             else:
-                # Default ratios for general prompts
-                debate_ratio = 0.9  
-                synthesis_ratio = 0.1 
+                debate_ratio = self.settings.debate_token_budget_ratio
+                # Synthesis ratio is derived to ensure sum is 1.0
+                synthesis_ratio = 1.0 - debate_ratio 
+                self._log_with_context("info", "Using default token ratios from ChimeraSettings.",
+                                       debate_ratio=debate_ratio, synthesis_ratio=synthesis_ratio)
             
             # Define a minimum token allocation to ensure phases can function even with tight budgets
             MIN_PHASE_TOKENS = 250
@@ -614,6 +617,20 @@ class SocraticDebate:
                                            persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
                     self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
                 
+                # --- ADDED LOGIC TO RE-RAISE AS SchemaValidationError IF PARSER INDICATES CRITICAL FAILURE ---
+                # Check if the parser itself flagged a critical issue that should halt the debate.
+                # This happens if JSON extraction or basic structure is fundamentally broken.
+                if parsed_output.get("error_type") == "SCHEMA_VALIDATION_FAILED" or \
+                   any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE"] for block in parsed_output.get("malformed_blocks", [])):
+                    # Re-raise as SchemaValidationError for consistent handling in run_debate
+                    raise SchemaValidationError(
+                        error_type="LLM_OUTPUT_MALFORMED",
+                        field_path="N/A", # Or more specific if available from parsed_output
+                        invalid_value=raw_llm_output[:500],
+                        details={"persona": persona_name, "raw_output_snippet": raw_llm_output[:500], "malformed_blocks": parsed_output.get("malformed_blocks", [])}
+                    )
+                # --- END ADDED LOGIC ---
+                
                 return parsed_output # Always return the parsed_output, even if it contains error info
             else:
                 # Persona is not expected to produce structured JSON, return raw text
@@ -628,12 +645,7 @@ class SocraticDebate:
                                  state="error",
                                  current_total_tokens=self.tokens_used,
                                  current_total_cost=self.get_total_estimated_cost())
-            return {
-                "COMMIT_MESSAGE": "Circuit Breaker Tripped",
-                "RATIONALE": f"LLM call for {persona_name} was blocked by circuit breaker: {cbe}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "CIRCUIT_BREAKER_OPEN", "message": str(cbe)}]
-            }
+            raise cbe # Consistently re-raise
         except TokenBudgetExceededError as tbe:
             self._log_with_context("error", f"Token budget exceeded for {persona_name}: {tbe}",
                                    persona=persona_name, exc_info=True)
@@ -649,12 +661,7 @@ class SocraticDebate:
                                  state="error",
                                  current_total_tokens=self.tokens_used,
                                  current_total_cost=self.get_total_estimated_cost())
-            return {
-                "COMMIT_MESSAGE": "LLM Provider Error",
-                "RATIONALE": f"An error occurred with the LLM provider for {persona_name}: {lpe}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "LLM_PROVIDER_ERROR", "message": str(lpe)}]
-            }
+            raise lpe # Consistently re-raise
         except SchemaValidationError as sve:
             self._log_with_context("error", f"Schema validation failed for {persona_name} output: {sve}",
                                    persona=persona_name, exc_info=True)
@@ -662,7 +669,7 @@ class SocraticDebate:
                                  state="error",
                                  current_total_tokens=self.tokens_used,
                                  current_total_cost=self.get_total_estimated_cost())
-            raise sve
+            raise sve # Consistently re-raise
         except Exception as e:
             self._log_with_context("error", f"Unexpected error during {persona_name} LLM turn: {e}",
                                    persona=persona_name, exc_info=True)
@@ -670,12 +677,9 @@ class SocraticDebate:
                                  state="error",
                                  current_total_tokens=self.tokens_used,
                                  current_total_cost=self.get_total_estimated_cost())
-            return {
-                "COMMIT_MESSAGE": "Unexpected Error",
-                "RATIONALE": f"An unexpected error occurred during {persona_name}'s turn: {e}",
-                "CODE_CHANGES": [],
-                "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "traceback": traceback.format_exc()}]
-            }
+            # Wrap any other unexpected errors in a generic ChimeraError for consistent handling
+            raise ChimeraError(f"An unexpected error occurred during {persona_name}'s turn: {e}",
+                               details={"persona": persona_name, "traceback": traceback.format_exc()}) from e
 
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
         """

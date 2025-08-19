@@ -16,7 +16,7 @@ from rich.console import Console
 from core import SocraticDebate
 # --- FIX END ---
 
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput # Added CritiqueOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput # Added CritiqueOutput, GeneralOutput
 # --- MODIFICATION: Added recommend_domain_from_keywords to src.utils import ---
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords # Added sanitize_and_validate_file_path and recommend_domain_from_keywords
 # --- END MODIFICATION ---
@@ -37,7 +37,9 @@ import html # Needed for html.escape in sanitize_user_input
 import uuid # For request ID generation
 from src.logging_config import setup_structured_logging # For structured logging
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # For rate limiting
-# --- END NEW IMPORTS ---
+# --- MODIFICATION: Import ChimeraSettings for centralized token budget configuration ---
+from src.config.settings import ChimeraSettings
+# --- END MODIFICATION ---
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -64,7 +66,7 @@ except (FileNotFoundError, ValueError, IOError) as e:
     st.stop() # Stop the app if config loading fails
 
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
-CONTEXT_TOKEN_BUDGET_RATIO = app_config.get("context_token_budget_ratio", 0.25)
+CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25) # Store initial ratio from config
 
 # --- Demo Codebase Context Loading ---
 @st.cache_data
@@ -306,7 +308,7 @@ def _initialize_session_state(pm: PersonaManager):
         "persona_audit_log": [],
         "persona_edit_mode": False,
         "persona_changes_detected": False,
-        "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO,
+        "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG, # Use value from config.yaml as initial default
         "save_framework_input": "",
         "framework_description": "",
         "load_framework_select": "",
@@ -569,7 +571,7 @@ with st.sidebar:
 
         # Determine smart default based on prompt type and current default ratio
         # Only suggest a new default if the user hasn't explicitly changed it from the initial config value.
-        if user_prompt_text and current_ratio_value == CONTEXT_TOKEN_BUDGET_RATIO: # CONTEXT_TOKEN_BUDGET_RATIO is 0.25 from config.yaml
+        if user_prompt_text and current_ratio_value == CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG: # CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG is 0.25 from config.yaml
             if is_self_analysis_prompt(user_prompt_text):
                 smart_default_ratio = 0.35 # Higher for self-analysis
                 help_text_dynamic = "Self-analysis prompts often benefit from more context tokens (35%+)."
@@ -1142,10 +1144,23 @@ def _run_socratic_debate_process():
                 # to initialize. Now debate_instance is initialized to None above.
                 logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance) if debate_instance else 'N/A'})
                 
+                # --- MODIFICATION FOR SUGGESTION #3: Pass ChimeraSettings instance ---
+                # Create a ChimeraSettings instance, potentially overriding defaults with app_config values
+                # The UI slider for context_token_budget_ratio directly updates session state.
+                # max_tokens_budget_input from the UI is used for the total budget.
+                current_settings = ChimeraSettings(
+                    context_token_budget_ratio=st.session_state.context_token_budget_ratio,
+                    # Other settings like max_retries, debate_token_budget_ratio, etc.,
+                    # will use their defaults or values from config.yaml if loaded into settings.
+                    # For simplicity, we're only explicitly mapping UI-controlled values here.
+                    total_budget=st.session_state.max_tokens_budget_input # Map UI budget to total_budget
+                )
+                # --- END MODIFICATION ---
+
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate, # Use the potentially sanitized prompt
                     api_key=st.session_state.api_key_input,
-                    max_total_tokens_budget=st.session_state.max_tokens_budget_input,
+                    # max_total_tokens_budget=st.session_state.max_tokens_budget_input, # This is now handled by ChimeraSettings
                     model_name=st.session_state.selected_model_selectbox,
                     all_personas=st.session_state.all_personas,
                     persona_sets=st.session_state.persona_sets, # Pass persona_sets
@@ -1153,7 +1168,7 @@ def _run_socratic_debate_process():
                     status_callback=update_status, # Use the new update_status helper
                     rich_console=rich_console_instance, # Pass the captured console instance
                     codebase_context=st.session_state.get('codebase_context', {}),
-                    context_token_budget_ratio=st.session_state.context_token_budget_ratio,
+                    # REMOVED: context_token_budget_ratio=st.session_state.context_token_budget_ratio, # This is now handled by ChimeraSettings
                     context_analyzer=context_analyzer_instance, # Pass the cached analyzer
                     # --- MODIFICATION: Add is_self_analysis parameter ---
                     # NOTE: `is_self_analysis_prompt` is not defined in this file,
@@ -1162,7 +1177,8 @@ def _run_socratic_debate_process():
                     # --- REMOVED INLINE IMPORT ---
                     # from src.constants import is_self_analysis_prompt # Assuming this import is missing
                     # --- END REMOVED INLINE IMPORT ---
-                    is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate)
+                    is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate),
+                    settings=current_settings # PASS THE CHIMERASETTINGS OBJECT
                     # --- END MODIFICATION ---
                 )
                 

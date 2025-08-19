@@ -3,6 +3,20 @@ from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, validator, model_validator
 import logging # Added for logger
 import re # Added for regex in file_path validation
+from pathlib import Path # Import Path for file_name extraction
+
+# Ensure the path_utils module is available for the validator
+try:
+    from src.utils.path_utils import sanitize_and_validate_file_path
+except ImportError:
+    # Provide a fallback or raise an error if path_utils is not found
+    # For this example, we'll log a warning and define a dummy function
+    # to allow the script to load, but validation will be skipped.
+    logger = logging.getLogger(__name__)
+    logger.warning("Could not import 'sanitize_and_validate_file_path' from src.utils.path_utils. File path validation will be skipped.")
+    def sanitize_and_validate_file_path(raw_path: str) -> str:
+        """Dummy function when path_utils is unavailable."""
+        return raw_path # Return raw path without validation
 
 logger = logging.getLogger(__name__) # Initialize logger
 
@@ -32,6 +46,20 @@ class ContextAnalysisOutput(BaseModel):
     architectural_patterns: List[str] = Field(..., alias="architectural_patterns", description="List of observed architectural patterns or design principles.")
     performance_bottlenecks: List[str] = Field(..., alias="performance_bottlenecks", description="List of potential performance issues or areas for optimization.")
 
+    @model_validator(mode='after')
+    def validate_paths_in_context_output(self) -> 'ContextAnalysisOutput':
+        """Validates file paths within key_modules for security."""
+        for module in self.key_modules:
+            if 'name' in module and isinstance(module['name'], str):
+                try:
+                    # Apply sanitization and validation to the file path string
+                    module['name'] = sanitize_and_validate_file_path(module['name'])
+                except ValueError as e:
+                    logger.warning(f"Invalid file path detected in ContextAnalysisOutput.key_modules: '{module['name']}' - {e}")
+                    # Optionally, replace with a safe placeholder or remove the entry
+                    module['name'] = f"INVALID_PATH_DETECTED:{module['name']}"
+        return self
+
 # --- MODIFICATION FOR IMPROVEMENT 4.3 ---
 # Moved LLMOutput and CodeChange definitions here for centralization.
 class CodeChange(BaseModel):
@@ -47,6 +75,7 @@ class CodeChange(BaseModel):
         # For better separation, this validation might be better handled outside the model
         # or by passing a validation callable. For now, keeping the import here.
         try:
+            # Re-importing here to ensure it's available if path_utils was conditionally imported above
             from src.utils.path_utils import sanitize_and_validate_file_path
             return sanitize_and_validate_file_path(v)
         except ImportError:
@@ -91,8 +120,47 @@ class CritiqueOutput(BaseModel):
     suggestions: List[str] = Field(default_factory=list, alias="SUGGESTIONS", description="Actionable suggestions for improvement.")
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
 
+    @model_validator(mode='after')
+    def validate_paths_in_suggestions(self) -> 'CritiqueOutput':
+        """Validates potential file paths within suggestions for security."""
+        # This is a heuristic; if suggestions can contain file paths, validate them.
+        # For example, if a suggestion is "Modify src/utils/helper.py to...", extract and validate "src/utils/helper.py".
+        # This requires more sophisticated regex to identify paths within natural language.
+        # For a high-impact, low-effort change, we'll focus on direct string matches.
+        # A more robust solution might involve a custom Pydantic type for 'FilePathString'.
+        sanitized_suggestions = []
+        for suggestion in self.suggestions:
+            # Example: simple regex to find strings that look like file paths
+            potential_paths = re.findall(r'\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b', suggestion, re.IGNORECASE)
+            for path in potential_paths:
+                try:
+                    sanitized_path = sanitize_and_validate_file_path(path)
+                    suggestion = suggestion.replace(path, sanitized_path) # Replace with sanitized version
+                except ValueError as e:
+                    logger.warning(f"Invalid file path detected in CritiqueOutput.suggestions: '{path}' - {e}")
+                    suggestion = suggestion.replace(path, f"INVALID_PATH_DETECTED:{path}")
+            sanitized_suggestions.append(suggestion)
+        self.suggestions = sanitized_suggestions
+        return self
+
 # NEW: Pydantic model for General_Synthesizer's output
 class GeneralOutput(BaseModel):
     general_output: str = Field(..., alias="general_output", description="The synthesized general output.")
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+
+    @model_validator(mode='after')
+    def validate_paths_in_general_output(self) -> 'GeneralOutput':
+        """Validates potential file paths within general output for security."""
+        # Apply similar logic as CritiqueOutput if general_output can contain file paths.
+        sanitized_output = self.general_output
+        potential_paths = re.findall(r'\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b', sanitized_output, re.IGNORECASE)
+        for path in potential_paths:
+            try:
+                sanitized_path = sanitize_and_validate_file_path(path)
+                sanitized_output = sanitized_output.replace(path, sanitized_path)
+            except ValueError as e:
+                logger.warning(f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}")
+                sanitized_output = sanitized_output.replace(path, f"INVALID_PATH_DETECTED:{path}")
+        self.general_output = sanitized_output
+        return self
 # --- END MODIFICATION ---
