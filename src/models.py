@@ -1,22 +1,9 @@
 # src/models.py
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, validator, model_validator
-import logging # Added for logger
-import re # Added for regex in file_path validation
-from pathlib import Path # Import Path for file_name extraction
-
-# Ensure the path_utils module is available for the validator
-try:
-    from src.utils.path_utils import sanitize_and_validate_file_path
-except ImportError:
-    # Provide a fallback or raise an error if path_utils is not found
-    # For this example, we'll log a warning and define a dummy function
-    # to allow the script to load, but validation will be skipped.
-    logger = logging.getLogger(__name__)
-    logger.warning("Could not import 'sanitize_and_validate_file_path' from src.utils.path_utils. File path validation will be skipped.")
-    def sanitize_and_validate_file_path(raw_path: str) -> str:
-        """Dummy function when path_utils is unavailable."""
-        return raw_path # Return raw path without validation
+import logging
+import re
+from pathlib import Path
 
 logger = logging.getLogger(__name__) # Initialize logger
 
@@ -49,6 +36,13 @@ class ContextAnalysisOutput(BaseModel):
     @model_validator(mode='after')
     def validate_paths_in_context_output(self) -> 'ContextAnalysisOutput':
         """Validates file paths within key_modules for security."""
+        # Import sanitize_and_validate_file_path locally here
+        try:
+            from src.utils.path_utils import sanitize_and_validate_file_path
+        except ImportError as e:
+            logger.warning(f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation.")
+            return self # Skip validation if import fails
+
         for module in self.key_modules:
             if 'name' in module and isinstance(module['name'], str):
                 try:
@@ -71,17 +65,15 @@ class CodeChange(BaseModel):
     @validator('file_path')
     def validate_file_path(cls, v):
         """Validates and sanitizes the file path."""
-        # This validator relies on src.utils.path_utils.sanitize_and_validate_file_path
-        # For better separation, this validation might be better handled outside the model
-        # or by passing a validation callable. For now, keeping the import here.
+        # Import sanitize_and_validate_file_path locally here
         try:
-            # Re-importing here to ensure it's available if path_utils was conditionally imported above
             from src.utils.path_utils import sanitize_and_validate_file_path
+        except ImportError as e:
+            logger.warning(f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation.")
+            return v # Proceed without strict validation if import fails
+        
+        try:
             return sanitize_and_validate_file_path(v)
-        except ImportError:
-            # Fallback if path_utils is not available during model definition
-            logger.warning("Could not import path_utils for file_path validation. Proceeding without strict validation.")
-            return v
         except ValueError as ve:
             raise ValueError(f"Invalid file path: {ve}") from ve
         
@@ -123,11 +115,13 @@ class CritiqueOutput(BaseModel):
     @model_validator(mode='after')
     def validate_paths_in_suggestions(self) -> 'CritiqueOutput':
         """Validates potential file paths within suggestions for security."""
-        # This is a heuristic; if suggestions can contain file paths, validate them.
-        # For example, if a suggestion is "Modify src/utils/helper.py to...", extract and validate "src/utils/helper.py".
-        # This requires more sophisticated regex to identify paths within natural language.
-        # For a high-impact, low-effort change, we'll focus on direct string matches.
-        # A more robust solution might involve a custom Pydantic type for 'FilePathString'.
+        # Import sanitize_and_validate_file_path locally here
+        try:
+            from src.utils.path_utils import sanitize_and_validate_file_path
+        except ImportError as e:
+            logger.warning(f"Could not import 'sanitize_and_validate_file_path' for CritiqueOutput validation: {e}. Skipping path validation.")
+            return self # Skip validation if import fails
+
         sanitized_suggestions = []
         for suggestion in self.suggestions:
             # Example: simple regex to find strings that look like file paths
@@ -151,7 +145,13 @@ class GeneralOutput(BaseModel):
     @model_validator(mode='after')
     def validate_paths_in_general_output(self) -> 'GeneralOutput':
         """Validates potential file paths within general output for security."""
-        # Apply similar logic as CritiqueOutput if general_output can contain file paths.
+        # Import sanitize_and_validate_file_path locally here
+        try:
+            from src.utils.path_utils import sanitize_and_validate_file_path
+        except ImportError as e:
+            logger.warning(f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation.")
+            return self # Skip validation if import fails
+
         sanitized_output = self.general_output
         potential_paths = re.findall(r'\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b', sanitized_output, re.IGNORECASE)
         for path in potential_paths:
