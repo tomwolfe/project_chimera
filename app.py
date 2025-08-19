@@ -225,7 +225,7 @@ EXAMPLE_PROMPTS = {
         },
     }
 }
-# --- END MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
+# --- END EXAMPLE_PROMPTS STRUCTURE ---
 
 # --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
 # This should be called early to ensure all subsequent logs are structured.
@@ -292,7 +292,7 @@ def _initialize_session_state(pm: PersonaManager):
         "all_personas": pm.all_personas,
         "persona_sets": pm.persona_sets,
         "user_prompt_input": "", # Will be set by example selector or custom prompt
-        "max_tokens_budget_input": 1000000,
+        "max_tokens_budget_input": 1000000, # Corrected default value
         "show_intermediate_steps_checkbox": True,
         "selected_model_selectbox": "gemini-2.5-flash-lite",
         "selected_example_name": "", # Will be set by example selector
@@ -562,7 +562,16 @@ with st.sidebar:
 
     with st.expander("Resource Management", expanded=False):
         st.markdown("---")
-        st.number_input("Max Total Tokens Budget:", min_value=1000, max_value=1000000, step=1000, key="max_tokens_budget_input")
+        # --- FIX: Added value parameter to number_input to correctly initialize it ---
+        st.number_input(
+            "Max Total Tokens Budget:", 
+            min_value=1000, 
+            max_value=1000000, 
+            step=1000, 
+            key="max_tokens_budget_input",
+            value=st.session_state.max_tokens_budget_input # This is the crucial fix
+        )
+        # --- END FIX ---
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
         st.markdown("---")
         # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
@@ -1067,8 +1076,7 @@ def _run_socratic_debate_process():
     # --- END SANITIZATION ---
 
     st.session_state.debate_ran = False
-    # --- FIX START ---
-    # Initialize final_answer to a default error state, in case of early failure
+    # --- FIX START: Initialize final_answer to a default error state, in case of early failure ---
     final_answer = {
         "COMMIT_MESSAGE": "Debate Failed - Unhandled Error",
         "RATIONALE": "An unexpected error occurred before a final answer could be synthesized.",
@@ -1168,7 +1176,7 @@ def _run_socratic_debate_process():
                     status_callback=update_status, # Use the new update_status helper
                     rich_console=rich_console_instance, # Pass the captured console instance
                     codebase_context=st.session_state.get('codebase_context', {}),
-                    # REMOVED: context_token_budget_ratio=st.session_state.context_token_budget_ratio, # This is now handled by ChimeraSettings
+                    # REMOVED: context_token_budget_ratio=st.session_state.context_token_budget_ratio, # This is now managed by ChimeraSettings
                     context_analyzer=context_analyzer_instance, # Pass the cached analyzer
                     # --- MODIFICATION: Add is_self_analysis parameter ---
                     # NOTE: `is_self_analysis_prompt` is not defined in this file,
@@ -1264,7 +1272,7 @@ if st.session_state.debate_ran:
         file_name = f"chimera_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}{'_full' if 'Complete' in format_choice else '_summary'}.{'md' if 'Complete' in format_choice else 'txt'}"
         
         st.download_button(
-            "⬇️ Download Selected Format",
+            label="⬇️ Download Selected Format",
             data=report_content,
             file_name=file_name,
             use_container_width=True,
@@ -1299,18 +1307,18 @@ if st.session_state.debate_ran:
             except ValidationError as e:
                 st.error(f"Failed to parse final LLM output into LLMOutput model: {e}")
                 parsed_llm_output = LLMOutput(
-                    COMMIT_MESSAGE="Parsing Error",
-                    RATIONALE=f"Failed to parse final LLM output into expected structure. Error: {e}", # Corrected here
-                    CODE_CHANGES=[],
+                    commit_message="Parsing Error",
+                    rationale=f"Failed to parse final LLM output into expected structure. Error: {e}", # Corrected here
+                    code_changes=[],
                     malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
                 )
                 malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks)
         else:
             st.error(f"Final answer is not a structured dictionary or a list of dictionaries. Raw output type: {type(raw_output_data).__name__}")
             parsed_llm_output = LLMOutput(
-                COMMIT_MESSAGE="Error: Output not structured.",
-                RATIONALE=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}", # Corrected here
-                CODE_CHANGES=[],
+                commit_message="Error: Output not structured.",
+                rationale=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}", # Corrected here
+                code_changes=[],
                 malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}", "raw_string_snippet": str(raw_output_data)[:500]}]
             )
             malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks)
