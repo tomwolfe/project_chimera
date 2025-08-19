@@ -81,7 +81,7 @@ def load_demo_codebase_context(file_path: str = "data/demo_codebase_context.json
     except json.JSONDecodeError as e:
         raise ValueError(f"Error decoding JSON from '{file_path}'. Please check its format: {e}") from e
     except IOError as e:
-        raise IOError(f"IO error reading demo context file '{file_path}'. Check permissions: {e}") from e
+        raise IOError(f"IO error reading config file '{file_path}'. Check permissions: {e}") from e
 
 # Redirect rich output to a string buffer for Streamlit display
 @contextlib.contextmanager
@@ -270,7 +270,7 @@ def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manag
         return ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR) # Also pass cache_dir to fallback
 
 # Get the persona manager instance (also cached)
-# --- FIX START: REMOVE @st.cache_resource from get_persona_manager() ---
+# --- FIX START: REMOVED @st.cache_resource from get_persona_manager() ---
 # This is the core fix for the CacheReplayClosureError.
 # @st.cache_resource # <--- REMOVED THIS LINE
 def get_persona_manager():
@@ -554,11 +554,7 @@ with st.sidebar:
             # Optionally, disable the run button or show a more prominent warning.
             # For now, just displaying the error.
         # --- END MODIFICATION ---
-        st.markdown("Security Note: Input sanitization is applied to mitigate prompt injection risks, but it is not foolproof against highly sophisticated adversarial attacks.")
-        st.markdown("---")
-        # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
         st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], key="selected_model_selectbox")
-        # --- END MODIFICATION ---
         st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite` or `gemini-2.5-flash`.")
 
     with st.expander("Resource Management", expanded=False):
@@ -621,10 +617,11 @@ tabs = st.tabs(tab_names)
 
 for i, tab_name in enumerate(tab_names):
     with tabs[i]:
-        # Update selected_prompt_category when a tab is clicked
-        # This is implicitly handled by Streamlit if the key for st.tabs is linked to session state.
-        # We can add an explicit callback if needed, but usually not necessary for simple tab clicks.
-        
+        # --- FIX START: Explicitly set the current prompt category when a tab is active ---
+        # This ensures that `st.session_state.selected_prompt_category` always matches the active tab.
+        st.session_state.selected_prompt_category = tab_name
+        # --- FIX END ---
+
         if tab_name == CUSTOM_PROMPT_KEY:
             st.markdown("Create your own specialized prompt for unique requirements.")
             # The main user_prompt_input text area is now used for custom prompts
@@ -633,11 +630,17 @@ for i, tab_name in enumerate(tab_names):
                                       height=150,
                                       key="custom_prompt_text_area") # Unique key for this widget
             
-            # Update the main user_prompt_input state when this text area changes
-            if custom_prompt_text != st.session_state.user_prompt_input:
+            # --- FIX START: Ensure custom prompt state is correctly set ---
+            # If the user types in the custom prompt area, it's a custom prompt.
+            # If they switch to this tab, and the current prompt isn't already marked custom,
+            # mark it as custom.
+            if custom_prompt_text != st.session_state.user_prompt_input or \
+               st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
+                
                 st.session_state.user_prompt_input = custom_prompt_text
                 st.session_state.selected_example_name = CUSTOM_PROMPT_KEY # Mark as custom
                 st.session_state.selected_prompt_category = CUSTOM_PROMPT_KEY # Mark category as custom
+            # --- FIX END ---
             
             with st.expander("💡 Prompt Engineering Tips"):
                 st.markdown("""
@@ -677,46 +680,75 @@ for i, tab_name in enumerate(tab_names):
             }
 
             if filtered_prompts_in_category:
+                options_keys = list(filtered_prompts_in_category.keys())
+                
+                # Determine the initial index for the selectbox
+                current_prompt_text_in_state = st.session_state.user_prompt_input
+                initial_selectbox_index = 0 # Default to first option if no match
+                
+                found_match_in_current_tab = False
+                for idx, key in enumerate(options_keys):
+                    if filtered_prompts_in_category[key]["prompt"] == current_prompt_text_in_state:
+                        initial_selectbox_index = idx
+                        found_match_in_current_tab = True
+                        break
+                
+                # --- FIX START: More robust state synchronization for example tabs ---
+                # If the current prompt in session state is NOT one of the examples in this tab,
+                # OR if the current prompt is a custom prompt (meaning it's not an example),
+                # then we should reset the session state to the first example of this tab.
+                # This ensures that when switching categories, the prompt defaults to the first of the new category.
+                if not found_match_in_current_tab or st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+                    st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
+                    st.session_state.selected_example_name = options_keys[0]
+                    # st.session_state.selected_prompt_category = tab_name # Already set at the top of the tab loop
+                    initial_selectbox_index = 0 # Ensure selectbox also points to the first option
+                # --- FIX END ---
+                        
                 # Use st.selectbox for better space efficiency and searchability
-                selected_example_key = st.selectbox(
+                selected_example_key_from_widget = st.selectbox(
                     "Select task:",
-                    options=list(filtered_prompts_in_category.keys()),
+                    options=options_keys,
+                    index=initial_selectbox_index, # Set the initial index based on session state
                     format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
                     label_visibility="collapsed",
                     key=f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
                 )
                 
-                # Update session state based on the selected example
-                if selected_example_key:
-                    st.session_state.selected_example_name = selected_example_key # Crucial for the new logic
-                    st.session_state.user_prompt_input = filtered_prompts_in_category[selected_example_key]["prompt"]
-                    st.session_state.selected_prompt_category = tab_name # Update category state
-                    
-                    # Display description and full prompt
-                    selected_prompt_details = filtered_prompts_in_category[selected_example_key]
-                    st.info(f"**Description:** {selected_prompt_details['description']}")
-                    with st.expander("View Full Prompt Text"):
-                        st.code(selected_prompt_details['prompt'], language='text')
-                        st.button(
-                            "Copy Prompt",
-                            help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
-                            use_container_width=True,
-                            type="secondary",
-                            key=f"copy_prompt_{selected_example_key}")
+                # UNCONDITIONALLY update session state to reflect the selectbox's current value.
+                # This is crucial. If the user changes the selectbox, or if it defaulted,
+                # the session state MUST reflect it.
+                if selected_example_key_from_widget: # Ensure a selection was made (not empty list)
+                    st.session_state.selected_example_name = selected_example_key_from_widget
+                    st.session_state.user_prompt_input = filtered_prompts_in_category[selected_example_key_from_widget]["prompt"]
+                    # st.session_state.selected_prompt_category = tab_name # Already set at the top of the tab loop
+                
+                # Display description and full prompt based on the *updated* session state
+                # This ensures the displayed info matches the internal state.
+                selected_prompt_details = filtered_prompts_in_category[st.session_state.selected_example_name]
+                st.info(f"**Description:** {selected_prompt_details['description']}")
+                with st.expander("View Full Prompt Text"):
+                    st.code(selected_prompt_details['prompt'], language='text')
+                    st.button(
+                        "Copy Prompt",
+                        help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
+                        use_container_width=True,
+                        type="secondary",
+                        key=f"copy_prompt_{st.session_state.selected_example_name}")
 
-                    # This block now only *displays* the hint and button to apply it for examples.
-                    display_suggested_framework = selected_prompt_details.get("framework_hint")
-                    if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
-                        st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
-                        if st.button(f"Apply '{display_suggested_framework}' Framework",
-                                    type="primary",
-                                    use_container_width=True,
-                                    key=f"apply_suggested_framework_example_{selected_example_key}"):
-                            st.session_state.selected_persona_set = display_suggested_framework
-                            st.rerun()
+                # This block now only *displays* the hint and button to apply it for examples.
+                display_suggested_framework = selected_prompt_details.get("framework_hint")
+                if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
+                    st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
+                    if st.button(f"Apply '{display_suggested_framework}' Framework",
+                                type="primary",
+                                use_container_width=True,
+                                key=f"apply_suggested_framework_example_{st.session_state.selected_example_name}"):
+                        st.session_state.selected_persona_set = display_suggested_framework
+                        st.rerun()
 
-                    st.session_state.codebase_context = {}
-                    st.session_state.uploaded_files = []
+                st.session_state.codebase_context = {}
+                st.session_state.uploaded_files = []
             else:
                 st.info("No example prompts match your search in this category.")
 
@@ -737,10 +769,7 @@ with col1:
             suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
             if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate.")
-                if st.button(f"Apply '{suggested_domain}' Framework", 
-                            type="primary", 
-                            use_container_width=True, 
-                            key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
+                if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key="apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
                     st.session_state.selected_persona_set = suggested_domain
                     st.rerun() # Re-added to ensure UI updates
     # --- END REFINED LOGIC ---
@@ -1313,7 +1342,7 @@ if st.session_state.debate_ran:
                     commit_message="Parsing Error",
                     rationale=f"Failed to parse final LLM output into expected structure. Error: {e}", # Corrected here
                     code_changes=[],
-                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
+                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(raw_output_data)[:500]}] # Changed to use raw_output_data
                 )
                 malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks)
         else:
@@ -1476,7 +1505,7 @@ if st.session_state.debate_ran:
         if st.session_state.show_intermediate_steps_checkbox:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items()
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("malformed_blocks")}
+                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and not k.startswith("malformed_blocks")} # Removed debate_history
             sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0] if '_' in x else '', x)) # Sort by persona name first, then step name
             for step_key in sorted_step_keys:
                 persona_name = step_key.split('_')[0]
