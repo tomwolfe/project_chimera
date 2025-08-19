@@ -19,27 +19,67 @@ class CircuitBreaker:
     - HALF-OPEN: Allows a single operation. If it succeeds, transitions to CLOSED. If it fails, transitions back to OPEN.
     """
     
-    def __init__(self, failure_threshold: int = 3, recovery_timeout: float = 30.0, expected_exception: Type[Exception] = Exception):
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: float = 30.0, 
+                 expected_exception: Type[Exception] = Exception,
+                 min_failure_threshold: int = 2, max_failure_threshold: int = 10,
+                 history_window_size: int = 20): # Track last N calls for adaptive logic
         """
         Args:
             failure_threshold: Number of consecutive failures before opening the circuit.
             recovery_timeout: Seconds to wait before transitioning from OPEN to HALF-OPEN.
             expected_exception: The type of exception that counts as a failure.
+            min_failure_threshold: Minimum allowed dynamic failure threshold.
+            max_failure_threshold: Maximum allowed dynamic failure threshold.
+            history_window_size: Number of recent calls to consider for adaptive threshold adjustment.
         """
         if failure_threshold <= 0:
             raise ValueError("failure_threshold must be positive.")
         if recovery_timeout <= 0:
             raise ValueError("recovery_timeout must be positive.")
             
-        self.failure_threshold = failure_threshold
+        self.base_failure_threshold = failure_threshold # Store initial default
+        self.current_failure_threshold = failure_threshold # This will be dynamic
         self.recovery_timeout = recovery_timeout
         self.expected_exception = expected_exception
-        
+        self.min_failure_threshold = min_failure_threshold
+        self.max_failure_threshold = max_failure_threshold
+        self.history_window_size = history_window_size
+
         self.failures = 0
         self.last_failure_time = 0.0
         self.state = "closed"  # Initial state
+        self.call_history = [] # Stores (timestamp, success_boolean) for adaptive logic
         
         self.logger = logging.getLogger(__name__)
+
+    def _record_call(self, success: bool):
+        """Records a call's outcome and updates adaptive metrics."""
+        current_time = time.time()
+        self.call_history.append((current_time, success))
+        
+        # Keep only calls within the history window
+        # Prune older entries to maintain window size and relevance
+        self.call_history = [c for c in self.call_history if current_time - c[0] < self.recovery_timeout * 2] # Keep relevant history
+        if len(self.call_history) > self.history_window_size:
+            self.call_history = self.call_history[-self.history_window_size:]
+
+        self._adjust_threshold()
+
+    def _adjust_threshold(self):
+        """Dynamically adjusts the failure threshold based on recent performance."""
+        if len(self.call_history) < self.history_window_size / 2: # Need enough data to make a decision
+            return
+
+        recent_failures = sum(1 for _, s in self.call_history if not s)
+        failure_rate = recent_failures / len(self.call_history)
+
+        if failure_rate < 0.1: # Very low failure rate, increase tolerance
+            self.current_failure_threshold = min(self.max_failure_threshold, self.current_failure_threshold + 1)
+            self.logger.debug(f"Failure rate low ({failure_rate:.2f}), increasing threshold to {self.current_failure_threshold}")
+        elif failure_rate > 0.3: # High failure rate, decrease tolerance
+            self.current_failure_threshold = max(self.min_failure_threshold, self.current_failure_threshold - 1)
+            self.logger.debug(f"Failure rate high ({failure_rate:.2f}), decreasing threshold to {self.current_failure_threshold}")
+        # Otherwise, keep current threshold
 
     def is_open(self) -> bool:
         """Checks if the circuit is open and if the recovery timeout has passed."""
@@ -60,6 +100,7 @@ class CircuitBreaker:
             
             try:
                 result = func(*args, **kwargs)
+                self._record_call(True) # Record success
                 # If the call was successful, reset the circuit
                 if self.state == "half_open":
                     self.state = "closed"
@@ -74,9 +115,10 @@ class CircuitBreaker:
             except self.expected_exception as e:
                 self.failures += 1
                 self.last_failure_time = time.time()
-                self.logger.error(f"Call to {func.__name__} failed ({self.failures}/{self.failure_threshold} failures).", exc_info=True)
+                self._record_call(False) # Record failure
+                self.logger.error(f"Call to {func.__name__} failed ({self.failures}/{self.current_failure_threshold} failures).", exc_info=True)
                 
-                if self.failures >= self.failure_threshold:
+                if self.failures >= self.current_failure_threshold:
                     self.state = "open"
                     self.logger.error(f"Circuit breaker OPENED for {func.__name__} after {self.failures} failures.")
                 
@@ -84,5 +126,6 @@ class CircuitBreaker:
             except Exception as e:
                 # Handle unexpected exceptions differently if needed, or let them propagate
                 self.logger.error(f"An unexpected error occurred during call to {func.__name__}.", exc_info=True)
+                self._record_call(False) # Record failure for unexpected errors too
                 raise # Re-raise any other exceptions
         return wrapper

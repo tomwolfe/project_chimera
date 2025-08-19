@@ -5,11 +5,11 @@ based on prompt analysis and intermediate results.
 """
 
 from typing import List, Dict, Set, Optional, Any
-import re # Import re for regular expressions
+import re
 import json
 from pathlib import Path
 import logging
-from functools import lru_cache # Import lru_cache for caching
+from functools import lru_cache
 
 from src.models import PersonaConfig
 from src.constants import SELF_ANALYSIS_KEYWORDS, SELF_ANALYSIS_PERSONA_SEQUENCE
@@ -87,7 +87,25 @@ class PersonaRouter:
        """Standardized method to detect self-analysis prompts using central constants"""
        return is_self_analysis_prompt(prompt)
 
-    def _apply_dynamic_adjustment(self, sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str) -> List[str]:
+    def _should_include_test_engineer(self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]]) -> bool:
+        """Determine if Test_Engineer persona is needed based on prompt and context."""
+        
+        # Keywords indicating testing focus in the prompt
+        testing_keywords = ["test", "unit test", "integration test", "e2e test", "test coverage", 
+                            "bug", "fix bug", "debug", "qa", "quality assurance", "validate", 
+                            "verify", "assertion", "test case", "test suite", "pytest", "unittest"]
+        if any(keyword in prompt_lower for keyword in testing_keywords):
+            return True
+        
+        # Check for test files in context analysis results
+        if context_analysis_results and context_analysis_results.get("relevant_files"):
+            for file_path, _ in context_analysis_results["relevant_files"]:
+                if "test" in file_path.lower() or "spec" in file_path.lower() or file_path.startswith('tests/'):
+                    return True
+        
+        return False
+
+    def _apply_dynamic_adjustment(self, sequence: List[str], intermediate_results: Optional[Dict[str, Any]], prompt_lower: str, domain: str, context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
         """Apply dynamic adjustments to persona sequence based on intermediate results quality metrics."""
         if not intermediate_results:
             intermediate_results = {}
@@ -137,6 +155,16 @@ class PersonaRouter:
                 if "Generalist_Assistant" not in adjusted_sequence and "Generalist_Assistant" in self.all_personas:
                     self._insert_persona_before_arbitrator(adjusted_sequence, "Generalist_Assistant")
         
+        # --- Conditional inclusion/exclusion of Test_Engineer ---
+        if domain == "Software Engineering":
+            if "Test_Engineer" in adjusted_sequence and not self._should_include_test_engineer(prompt_lower, context_analysis_results):
+                adjusted_sequence.remove("Test_Engineer")
+                logger.info("Removed Test_Engineer from sequence as no testing context/keywords detected.")
+            elif "Test_Engineer" not in adjusted_sequence and self._should_include_test_engineer(prompt_lower, context_analysis_results):
+                # If Test_Engineer is not in the base sequence but is needed, insert it
+                self._insert_persona_before_arbitrator(adjusted_sequence, "Test_Engineer")
+                logger.info("Added Test_Engineer to sequence due to testing context/keywords detected.")
+
         return adjusted_sequence
 
     def _insert_persona_before_arbitrator(self, sequence: List[str], persona: str):
@@ -168,21 +196,21 @@ class PersonaRouter:
             logger.info("Detected self-analysis prompt. Applying dynamic persona sequence.")
             
             # Start with a core self-analysis sequence
-            base_sequence = ["Code_Architect", "Test_Engineer", "Constructive_Critic", "Impartial_Arbitrator", "Devils_Advocate"]
+            base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE.copy()
             
-            # Dynamic adaptation based on specific self-analysis keywords
+            # Dynamic adaptation for self-analysis based on specific keywords
             # Prioritize Security_Auditor if security keywords are present
-            if any(kw in prompt_lower for kw in ["security", "vulnerability", "exploit", "authentication", "threat", "risk"]):
+            if any(kw in prompt_lower for kw in ["security", "vulnerability", "exploit", "authentication", "threat", "risk"]) and "Security_Auditor" not in base_sequence:
                 self._insert_persona_before_arbitrator(base_sequence, "Security_Auditor")
                 logger.info("Self-analysis prompt is security-focused. Added Security_Auditor.")
             
             # Prioritize DevOps_Engineer if performance/DevOps keywords are present
-            if any(kw in prompt_lower for kw in ["performance", "efficiency", "scalability", "devops", "ci/cd", "deployment"]):
+            if any(kw in prompt_lower for kw in ["performance", "efficiency", "scalability", "devops", "ci/cd", "deployment"]) and "DevOps_Engineer" not in base_sequence:
                 self._insert_persona_before_arbitrator(base_sequence, "DevOps_Engineer")
                 logger.info("Self-analysis prompt is performance/DevOps-focused. Added DevOps_Engineer.")
 
             # Prioritize Code_Architect if maintainability/structure keywords are present
-            if any(kw in prompt_lower for kw in ["maintainability", "readability", "structure", "refactor", "clean code"]):
+            if any(kw in prompt_lower for kw in ["maintainability", "readability", "structure", "refactor", "clean code"]) and "Code_Architect" not in base_sequence:
                 # If Code_Architect is already in the sequence, move it to the front
                 if "Code_Architect" in base_sequence:
                     base_sequence.remove("Code_Architect")
@@ -237,15 +265,19 @@ class PersonaRouter:
 
         # Apply dynamic adjustments based on context analysis and intermediate results
         # This will now apply to both self-analysis and general sequences
-        final_sequence = self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower)
+        final_sequence = self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower, domain, context_analysis_results)
         
         # Further adjustments based on context analysis results (e.g., presence of test files)
+        # This block is now largely redundant due to _apply_dynamic_adjustment handling Test_Engineer
+        # and other persona inclusions based on context. Keeping it for now, but could be removed
+        # if _apply_dynamic_adjustment covers all necessary logic.
         if context_analysis_results:
             relevant_files = context_analysis_results.get("relevant_files", [])
             test_file_count = sum(1 for file_path, _ in relevant_files if file_path.startswith('tests/'))
             code_file_count = sum(1 for file_path, _ in relevant_files if file_path.endswith(('.py', '.js', '.ts', '.java', '.go')))
             
             # Insert Test_Engineer if many test files are relevant and it's not already in sequence
+            # This is now handled by _apply_dynamic_adjustment, but keeping as a fallback/double-check
             if test_file_count > 3 and "Test_Engineer" not in final_sequence:
                 self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
             

@@ -8,9 +8,7 @@ import logging
 from functools import lru_cache
 
 from src.persona.routing import PersonaRouter
-# --- MODIFICATION FOR SUGGESTION 3: Import NEGATION_PATTERNS ---
-from src.constants import NEGATION_PATTERNS
-# --- END MODIFICATION ---
+from src.constants import NEGATION_PATTERNS # Import NEGATION_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +134,35 @@ class ContextRelevanceAnalyzer:
         ]
         return keywords
 
+    def _calculate_negation_impact(self, prompt_lower: str, keyword_start_pos: int, max_proximity: int = 75) -> float:
+        """
+        Calculates a multiplier (0.0 to 1.0) based on negation proximity to a keyword.
+        Closer negations result in a lower multiplier (stronger negative impact).
+        """
+        min_multiplier = 0.1 # Max penalty (e.g., "not keyword" makes it 10% as relevant)
+        max_multiplier = 1.0 # No penalty
+
+        closest_negation_distance = float('inf')
+        for neg_pattern, base_penalty_factor in NEGATION_PATTERNS:
+            for neg_match in re.finditer(neg_pattern, prompt_lower):
+                negation_end_pos = neg_match.end()
+                # Only consider negations *before* the keyword
+                if negation_end_pos < keyword_start_pos:
+                    distance = keyword_start_pos - negation_end_pos
+                    if distance <= max_proximity:
+                        closest_negation_distance = min(closest_negation_distance, distance)
+
+        if closest_negation_distance == float('inf'):
+            return max_multiplier # No relevant negation found
+
+        # Linear interpolation for multiplier:
+        # At distance 0, multiplier is min_multiplier.
+        # At distance max_proximity, multiplier is max_multiplier.
+        # (1 - (distance / max_proximity)) scales from 1 to 0 as distance goes from 0 to max_proximity
+        # This makes the multiplier go from min_multiplier to max_multiplier
+        decay_factor = 1 - (closest_negation_distance / max_proximity)
+        return min_multiplier + (max_multiplier - min_multiplier) * decay_factor
+
     # --- MODIFICATION FOR SUGGESTION 3: Implement 7-line negation proximity check ---
     def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str], active_personas: Optional[List[str]] = None) -> float:
         """
@@ -146,17 +173,13 @@ class ContextRelevanceAnalyzer:
         file_path_lower = file_path.lower()
         prompt_lower = " ".join(key_terms).lower() # Reconstruct prompt for negation search
 
-        # Check for negation presence in the prompt
-        negation_penalty = 1.0
-        for neg_pattern, penalty in NEGATION_PATTERNS:
-            if re.search(neg_pattern, prompt_lower):
-                negation_penalty *= penalty
-                break # Apply the strongest penalty if multiple negations apply
-
         for term in key_terms:
             # Use regex for exact word match in file path
             if re.search(r'\b' + re.escape(term) + r'\b', file_path_lower):
-                boost += (0.1 * negation_penalty) # Apply boost, modified by negation
+                keyword_start_pos_in_prompt = prompt_lower.find(term)
+                if keyword_start_pos_in_prompt != -1:
+                    negation_multiplier = self._calculate_negation_impact(prompt_lower, keyword_start_pos_in_prompt)
+                    boost += (0.1 * negation_multiplier) # Apply boost, modified by negation impact
 
         # --- Persona-specific relevance boost ---
         if active_personas:

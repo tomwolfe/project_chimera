@@ -22,7 +22,7 @@ from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_
 # --- END MODIFICATION ---
 from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
 from src.persona_manager import PersonaManager
-from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, SchemaValidationError
+from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError, SchemaValidationError
 # --- MODIFICATION: Added is_self_analysis_prompt to src.constants import ---
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # Added import for suggestion 1.1
 # --- END MODIFICATION ---
@@ -280,79 +280,52 @@ persona_manager_instance = get_persona_manager()
 context_analyzer_instance = get_context_analyzer(persona_manager_instance)
 
 # --- Session State Initialization ---
-# Moved this function definition BEFORE its first call.
 def _initialize_session_state(pm: PersonaManager):
     """Initializes or resets all session state variables to their default values."""
-    # --- FIX: Ensure initialization flag is set first ---
-    st.session_state.initialized = True
-    # --- END FIX ---
+    # Define all default session state variables in one dictionary
+    defaults = {
+        "initialized": True,
+        "api_key_input": os.getenv("GEMINI_API_KEY", ""),
+        "persona_manager": pm,
+        "all_personas": pm.all_personas,
+        "persona_sets": pm.persona_sets,
+        "user_prompt_input": "", # Will be set by example selector or custom prompt
+        "max_tokens_budget_input": 1000000,
+        "show_intermediate_steps_checkbox": True,
+        "selected_model_selectbox": "gemini-2.5-flash-lite",
+        "selected_example_name": "", # Will be set by example selector
+        "selected_prompt_category": "", # Will be set by example selector
+        "selected_persona_set": pm.available_domains[0] if pm.available_domains else "General",
+        "debate_ran": False,
+        "final_answer_output": "",
+        "intermediate_steps_output": {},
+        "process_log_output_text": "",
+        "last_config_params": {},
+        "codebase_context": {},
+        "uploaded_files": [],
+        "persona_audit_log": [],
+        "persona_edit_mode": False,
+        "persona_changes_detected": False,
+        "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO,
+        "save_framework_input": "",
+        "framework_description": "",
+        "load_framework_select": "",
+        "_session_id": str(uuid.uuid4()), # For rate limiting
+        "debate_progress": 0.0, # For progress bar
+        "personas": {} # To hold the currently active personas for the selected framework
+    }
 
-    st.session_state.api_key_input = os.getenv("GEMINI_API_KEY", "")
-    # --- START FIX (from LLM's suggestion 1) ---
-    # Initialize persona manager in session state
-    st.session_state.persona_manager = pm
-    st.session_state.all_personas = pm.all_personas
-    st.session_state.persona_sets = pm.persona_sets
-    # --- END FIX ---
-    
-    # Set default to the first example prompt from the first category
+    # Set default example prompt after defaults are loaded
     default_example_category = list(EXAMPLE_PROMPTS.keys())[0]
     default_example_name = list(EXAMPLE_PROMPTS[default_example_category].keys())[0]
-    st.session_state.user_prompt_input = EXAMPLE_PROMPTS[default_example_category][default_example_name]["prompt"]
-    st.session_state.max_tokens_budget_input = 1000000
-    st.session_state.show_intermediate_steps_checkbox = True
-    # --- MODIFICATION: Added 'gemini-2.5-flash' to the selectbox options ---
-    st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
-    # --- END MODIFICATION ---
-    # Set default example name to the first one in the first category
-    st.session_state.selected_example_name = default_example_name # Initialize this to the default example
-    st.session_state.selected_prompt_category = default_example_category # Track selected category for tabs
-    
-    # FIX START: Initialize selected_persona_set BEFORE using it
-    # Get default framework from PersonaManager
-    default_framework = pm.available_domains[0] if pm.available_domains else "General"
-    st.session_state.selected_persona_set = default_framework
-    # FIX END
+    defaults["user_prompt_input"] = EXAMPLE_PROMPTS[default_example_category][default_example_name]["prompt"]
+    defaults["selected_example_name"] = default_example_name
+    defaults["selected_prompt_category"] = default_example_category
 
-    st.session_state.debate_ran = False
-    st.session_state.final_answer_output = ""
-    st.session_state.intermediate_steps_output = {}
-    st.session_state.process_log_output_text = ""
-    st.session_state.last_config_params = {}
-    st.session_state.codebase_context = {}
-    st.session_state.uploaded_files = []
-    # REMOVED: st.session_state.example_selector_widget = st.session_state.selected_example_name
-    # REMOVED: st.session_state.selected_persona_set_widget = st.session_state.selected_persona_set # This line now works
-    st.session_state.persona_audit_log = []
-    st.session_state.persona_edit_mode = False
-    st.session_state.persona_changes_detected = False
-    
-    # --- FIX: Ensure context_token_budget_ratio is initialized before use ---
-    # The value parameter should correctly reference the session state variable
-    st.session_state.context_token_budget_ratio = CONTEXT_TOKEN_BUDGET_RATIO
-    # --- END FIX ---
-
-    st.session_state.save_framework_input = ""
-    st.session_state.framework_description = ""
-    st.session_state.load_framework_select = ""
-    # --- FIX START: Remove custom_user_prompt_input as a separate state variable ---
-    # st.session_state.custom_user_prompt_input = "" # Key for custom prompt text area - REMOVED
-    # --- FIX END ---
-    
-    # --- ADDED FOR RATE LIMITING ---
-    # Initialize a session ID for the rate limiter if not already present
-    if '_session_id' not in st.session_state:
-        st.session_state._session_id = str(uuid.uuid4())
-    # --- END ADDED ---
-
-    # --- FIX START: Initialize debate_progress for the progress bar ---
-    st.session_state.debate_progress = 0.0
-    # --- FIX END ---
-
-    # --- REMOVED: Variables for managing prompt suggestions (simplified logic below) ---
-    # st.session_state.current_prompt_framework_hint = EXAMPLE_PROMPTS[default_example_category][default_example_name].get("framework_hint")
-    # st.session_state.is_custom_prompt = False # Default to false, as initial prompt is an example
-    # --- END REMOVED ---
+    # Apply defaults to session state if not already present
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 # --- Session State Initialization Call ---
 # Ensure session state is initialized on first run
@@ -463,6 +436,102 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
         "new_value": new_value
     })
     st.session_state.persona_changes_detected = True # Mark changes for Improvement 4.1
+
+# --- NEW: HELPER FUNCTION FOR ACTION-ORIENTED ERROR MESSAGING ---
+def handle_debate_errors(error: Exception):
+    """Displays user-friendly, action-oriented error messages based on exception type."""
+    error_type = type(error).__name__
+    
+    if isinstance(error, LLMProviderError):
+        if "INVALID_API_KEY" in str(error):
+            st.error("""
+            🔑 **API Key Error: Invalid or Missing Key**
+            
+            We couldn't authenticate with the Gemini API. Please ensure:
+            - Your Gemini API Key is correctly entered in the sidebar.
+            - The key is valid and active.
+            - You have access to the selected model (`gemini-2.5-flash-lite`, `gemini-2.5-flash`, or `gemini-2.5-pro`).
+            
+            [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
+            """)
+        else:
+            st.error(f"""
+            🌐 **LLM Provider Error: Connection Issue**
+            
+            An issue occurred while connecting to the Gemini API. This might be a temporary network problem or an API service disruption.
+            
+            **Details:** `{str(error)}`
+            
+            Please try again in a moment. If the issue persists, check your internet connection or the [Gemini API status page](https://status.cloud.google.com/).
+            """)
+    elif isinstance(error, RateLimitExceededError):
+        st.error(f"""
+        ⏳ **Rate Limit Exceeded**
+        
+        You've hit the API rate limit for this session. To prevent abuse and manage resources, we limit the number of requests.
+        
+        **Details:** `{str(error)}`
+        
+        Please wait a few moments before trying again. If you require higher limits, consider deploying your own instance or upgrading your Google Cloud project's quota.
+        """)
+    elif isinstance(error, TokenBudgetExceededError):
+        st.error(f"""
+        📈 **Token Budget Exceeded**
+        
+        The Socratic debate process consumed more tokens than the allocated budget. This can happen with very complex prompts or extensive codebase contexts.
+        
+        **Details:** `{str(error)}`
+        
+        Please consider:
+        - Simplifying your prompt.
+        - Reducing the amount of codebase context provided.
+        - Increasing the 'Max Total Tokens Budget' in the sidebar (use with caution, as this increases cost).
+        """)
+    elif isinstance(error, SchemaValidationError):
+        st.error(f"""
+        🚫 **Output Format Error: LLM Response Invalid**
+        
+        The AI generated an output that did not conform to the expected structured format (JSON schema). This indicates the LLM struggled to follow instructions precisely.
+        
+        **Details:** `{str(error)}`
+        
+        The system's circuit breaker has registered this failure. You can try:
+        - Rephrasing your prompt to be clearer.
+        - Reducing the complexity of the task.
+        - Trying a different LLM model (e.g., `gemini-2.5-pro` for more complex tasks).
+        """)
+    elif isinstance(error, CircuitBreakerError):
+        st.error(f"""
+        ⛔ **Circuit Breaker Open: Service Temporarily Unavailable**
+        
+        The system has detected repeated failures from the LLM provider and has temporarily stopped making calls to prevent further issues.
+        
+        **Details:** `{str(error)}`
+        
+        The circuit will attempt to reset itself after a short timeout. Please wait a minute and try again.
+        """)
+    elif isinstance(error, ChimeraError):
+        st.error(f"""
+        🔥 **Project Chimera Internal Error**
+        
+        An internal error occurred within the Project Chimera system. This is an unexpected issue.
+        
+        **Details:** `{str(error)}`
+        
+        Please report this issue if it persists.
+        """)
+    else:
+        st.error(f"""
+        ❌ **An Unexpected Error Occurred**
+        
+        An unhandled error prevented the Socratic debate from completing.
+        
+        **Details:** `{str(error)}`
+        
+        Please try again. If the issue persists, please report it with the prompt you used.
+        """)
+    logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
+# --- END NEW HELPER FUNCTION ---
 
 
 # --- MODIFICATIONS FOR SIDEBAR GROUPING (Suggestion 4.2) ---
@@ -955,12 +1024,10 @@ def _run_socratic_debate_process():
         # We call the wrapper with a dummy function to trigger the check.
         session_rate_limiter(lambda: None)() 
     except RateLimitExceededError as e:
-        st.error(f"Request blocked: {e}")
-        logger.warning(f"Rate limit exceeded for session. {e}", extra={'request_id': request_id})
+        handle_debate_errors(e) # Use the new error handler
         return # Stop execution if rate limit is hit
     except Exception as e: # Catch other potential issues with the limiter itself
-        st.error(f"An error occurred with the rate limiting system: {e}")
-        logger.error(f"Error in rate limiter check: {e}", extra={'request_id': request_id})
+        handle_debate_errors(e) # Use the new error handler
         return
     # --- END RATE LIMITING CHECK ---
 
@@ -1102,90 +1169,20 @@ def _run_socratic_debate_process():
                 final_total_tokens = intermediate_steps.get('Total_Tokens_Used', 0)
                 final_total_cost = intermediate_steps.get('Total_Estimated_Cost_USD', 0.0)
             
-            except TokenBudgetExceededError as e:
-                logger.error("Token budget exceeded during debate.", extra={'request_id': request_id})
-                # Now final_answer is guaranteed to be defined (as None or a dict)
-                if not isinstance(final_answer, dict): 
-                    final_answer = {
-                        "COMMIT_MESSAGE": "Debate Failed - Token Budget Exceeded",
-                        "RATIONALE": f"The Socratic debate exceeded the allocated token budget. Please consider increasing the budget or simplifying the prompt. Error details: {str(e)}",
-                        "CODE_CHANGES": [],
-                        "malformed_blocks": [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
-                    }
-                elif "malformed_blocks" not in final_answer:
-                    final_answer["malformed_blocks"] = [{"type": "TOKEN_BUDGET_ERROR", "message": str(e), "details": e.details}]
-                
-                status.update(label=f"Socratic Debate Failed: Token Budget Exceeded", state="error", expanded=True)
-                st.error(f"**Error:** The process exceeded the token budget. Please consider reducing the complexity of your prompt, "
-                         f"or increasing the 'Max Total Tokens Budget' in the sidebar if necessary. "
-                         f"Details: {str(e)}")
+            except (TokenBudgetExceededError, SchemaValidationError, ChimeraError, CircuitBreakerError, LLMProviderError) as e:
+                handle_debate_errors(e) # Use the new error handler for specific Chimera errors
+                status.update(label=f"Socratic Debate Failed: {type(e).__name__}", state="error", expanded=True)
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            
-            except SchemaValidationError as sve: # This block is modified for error recovery
-                logger.error(f"Socratic Debate failed due to SchemaValidationError: {sve}", exc_info=True, extra={'request_id': request_id})
-                # The SchemaValidationError is now expected to be caught by the CircuitBreaker in llm_provider.py
-                # We re-raise it here so the main app.py error handling can display a user-friendly message,
-                # but the CircuitBreaker will have already registered the failure.
-                status.update(label=f"Socratic Debate Failed: Output Schema Invalid", state="error", expanded=True)
-                st.error(f"**Output Error:** The LLM produced output that did not conform to the expected structure. "
-                         f"This indicates a potential issue with the LLM's adherence to instructions. "
-                         f"The system's circuit breaker has registered this failure. Details: {str(sve)}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-                # Re-raise the exception to ensure it's propagated if needed by higher-level error handling
-                raise sve # Re-raise the SchemaValidationError
-            
-            except ChimeraError as ce:
-                # Handle Chimera-specific errors
-                logger.error(f"Socratic Debate failed due to ChimeraError: {ce}", exc_info=True, extra={'request_id': request_id})
-                if not isinstance(final_answer, dict):
-                    final_answer = {
-                        "COMMIT_MESSAGE": "Debate Failed (Chimera Error)",
-                        "RATIONALE": f"A Chimera-specific error occurred during the debate: {str(ce)}",
-                        "CODE_CHANGES": [],
-                        "malformed_blocks": [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
-                    }
-                elif "malformed_blocks" not in final_answer:
-                    final_answer["malformed_blocks"] = [{"type": "CHIMERA_ERROR", "message": str(ce), "details": ce.details}]
-                
-                status.update(label=f"Socratic Debate Failed: Chimera Error", state="error", expanded=True)
-                st.error(f"**Chimera Error:** {ce}")
-                st.session_state.debate_ran = True
-                if debate_instance:
-                    st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
-                final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
-                final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
-            
             except Exception as e:
-                # Handle any other unexpected exceptions
-                logger.exception("Unexpected error during debate execution.", extra={'request_id': request_id}) # Use logger.exception for traceback
-                # Now final_answer is guaranteed to be defined (as None or a dict)
-                if not isinstance(final_answer, dict):
-                    final_answer = {
-                        "COMMIT_MESSAGE": "Debate Failed (Unexpected Error)",
-                        "RATIONALE": f"An unexpected error occurred during the Socratic debate: {str(e)}",
-                        "CODE_CHANGES": [],
-                        "malformed_blocks": [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
-                    }
-                elif "malformed_blocks" not in final_answer:
-                    final_answer["malformed_blocks"] = [{"type": "UNEXPECTED_ERROR", "message": str(e), "error_details": {"traceback": traceback.format_exc()}}]
-                
-                status.update(label=f"Socratic Debate Failed: An unexpected error occurred: {e}", state="error", expanded=True)
-                st.error(f"**Unexpected Error:** {e}")
+                handle_debate_errors(e) # Use the new error handler for unexpected errors
+                status.update(label=f"Socratic Debate Failed: An unexpected error occurred", state="error", expanded=True)
                 st.session_state.debate_ran = True
                 if debate_instance:
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
-                
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
             
