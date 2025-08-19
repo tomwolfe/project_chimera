@@ -305,7 +305,7 @@ def _initialize_session_state(pm: PersonaManager):
     st.session_state.selected_model_selectbox = "gemini-2.5-flash-lite"
     # --- END MODIFICATION ---
     # Set default example name to the first one in the first category
-    st.session_state.selected_example_name = default_example_name
+    st.session_state.selected_example_name = default_example_name # Initialize this to the default example
     st.session_state.selected_prompt_category = default_example_category # Track selected category for tabs
     
     # FIX START: Initialize selected_persona_set BEFORE using it
@@ -348,6 +348,11 @@ def _initialize_session_state(pm: PersonaManager):
     # --- FIX START: Initialize debate_progress for the progress bar ---
     st.session_state.debate_progress = 0.0
     # --- FIX END ---
+
+    # --- REMOVED: Variables for managing prompt suggestions (simplified logic below) ---
+    # st.session_state.current_prompt_framework_hint = EXAMPLE_PROMPTS[default_example_category][default_example_name].get("framework_hint")
+    # st.session_state.is_custom_prompt = False # Default to false, as initial prompt is an example
+    # --- END REMOVED ---
 
 # --- Session State Initialization Call ---
 # Ensure session state is initialized on first run
@@ -459,6 +464,7 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
     })
     st.session_state.persona_changes_detected = True # Mark changes for Improvement 4.1
 
+
 # --- MODIFICATIONS FOR SIDEBAR GROUPING (Suggestion 4.2) ---
 with st.sidebar:
     st.header("Configuration")
@@ -546,6 +552,7 @@ for i, tab_name in enumerate(tab_names):
             st.session_state.uploaded_files = []
             
             # Analyze the custom prompt to determine the appropriate framework
+            # This suggestion is always shown for custom prompts
             suggested_domain_for_custom = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
             
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
@@ -581,10 +588,10 @@ for i, tab_name in enumerate(tab_names):
                 
                 # Update session state based on the selected example
                 if selected_example_key:
-                    st.session_state.selected_example_name = selected_example_key
+                    st.session_state.selected_example_name = selected_example_key # Crucial for the new logic
                     st.session_state.user_prompt_input = filtered_prompts_in_category[selected_example_key]["prompt"]
                     st.session_state.selected_prompt_category = tab_name # Update category state
-
+                    
                     # Display description and full prompt
                     selected_prompt_details = filtered_prompts_in_category[selected_example_key]
                     st.info(f"**Description:** {selected_prompt_details['description']}")
@@ -597,18 +604,8 @@ for i, tab_name in enumerate(tab_names):
                             type="secondary",
                             key=f"copy_prompt_{selected_example_key}")
 
-                    # MODIFIED: Framework suggestion logic for example prompts
-                    example_prompt_text = filtered_prompts_in_category[selected_example_key]["prompt"]
-                    framework_hint = filtered_prompts_in_category[selected_example_key].get("framework_hint")
-
-                    # Determine which framework to suggest for display
-                    display_suggested_framework = None
-                    if framework_hint:
-                        display_suggested_framework = framework_hint
-                    else:
-                        # Fallback to dynamic recommendation if no hint
-                        display_suggested_framework = recommend_domain_from_keywords(example_prompt_text, DOMAIN_KEYWORDS)
-
+                    # This block now only *displays* the hint and button to apply it for examples.
+                    display_suggested_framework = selected_prompt_details.get("framework_hint")
                     if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
                         st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
                         if st.button(f"Apply '{display_suggested_framework}' Framework",
@@ -633,21 +630,20 @@ col1, col2 = st.columns(2, gap="medium") # ADDED: gap="medium" for better spacin
 with col1:
     st.subheader("Reasoning Framework")
     
-    if user_prompt.strip():
-        # --- FIX: Pass DOMAIN_KEYWORDS to the recommendation function ---
-        suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
-        # --- END FIX ---
-        # --- FIX: Update the primary session state variable directly ---
-        if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
-            st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
-            # MODIFIED START: Use dynamic key to prevent widget ID conflicts
-            if st.button(f"Apply '{suggested_domain}' Framework", 
-                        type="primary", 
-                        use_container_width=True, 
-                        key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
-            # MODIFIED END
-                st.session_state.selected_persona_set = suggested_domain
-                st.rerun() # Re-added to ensure UI updates
+    # --- REFINED LOGIC FOR DYNAMIC SUGGESTION DISPLAY ---
+    # Only show dynamic suggestion if the "Custom Prompt" tab is selected.
+    if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+        if user_prompt.strip():
+            suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
+            if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
+                st.info(f"💡 Based on your prompt, the **'{suggested_domain}'** framework might be appropriate.")
+                if st.button(f"Apply '{suggested_domain}' Framework", 
+                            type="primary", 
+                            use_container_width=True, 
+                            key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
+                    st.session_state.selected_persona_set = suggested_domain
+                    st.rerun() # Re-added to ensure UI updates
+    # --- END REFINED LOGIC ---
     
     # --- MODIFICATION FOR IMPROVEMENT 1.2: Centralize Persona/Framework Data Access ---
     # Use the PersonaManager instance to get available domains for the selectbox
@@ -1272,7 +1268,7 @@ if st.session_state.debate_ran:
                 st.error(f"Failed to parse final LLM output into LLMOutput model: {e}")
                 parsed_llm_output = LLMOutput(
                     COMMIT_MESSAGE="Parsing Error",
-                    RATIONALE=f"Failed to parse final LLM output into expected structure. Error: {e}",
+                    RATIONALE=f"Failed to parse final LLM output into expected structure. Error: {e}", # Corrected here
                     CODE_CHANGES=[],
                     malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
                 )
@@ -1281,7 +1277,7 @@ if st.session_state.debate_ran:
             st.error(f"Final answer is not a structured dictionary or a list of dictionaries. Raw output type: {type(raw_output_data).__name__}")
             parsed_llm_output = LLMOutput(
                 COMMIT_MESSAGE="Error: Output not structured.",
-                RATIONALE=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}",
+                RATIONALE=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}", # Corrected here
                 CODE_CHANGES=[],
                 malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}", "raw_string_snippet": str(raw_output_data)[:500]}]
             )
