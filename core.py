@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # core.py
 import yaml
 import time
@@ -69,7 +68,7 @@ class SocraticDebate:
                  all_personas: Optional[Dict[str, PersonaConfig]] = None,
                  persona_sets: Optional[Dict[str, List[str]]] = None,
                  domain: Optional[str] = None,
-                 max_total_tokens_budget: int = 10000,
+                 # REMOVE THIS PARAMETER: max_total_tokens_budget: int = 10000,
                  model_name: str = "gemini-2.5-flash-lite",
                  status_callback: Optional[Callable] = None,
                  rich_console: Optional[Console] = None,
@@ -88,7 +87,8 @@ class SocraticDebate:
         
         self.settings = settings or ChimeraSettings() # Use provided settings or default
         # REMOVED: self.context_token_budget_ratio = context_token_budget_ratio # Now managed by self.settings
-        self.max_total_tokens_budget = max_total_tokens_budget
+        # MODIFY THIS LINE: Get max_total_tokens_budget from settings
+        self.max_total_tokens_budget = self.settings.total_budget
         self.tokens_used = 0 # Total tokens used across all phases
         self.model_name = model_name
         self.status_callback = status_callback

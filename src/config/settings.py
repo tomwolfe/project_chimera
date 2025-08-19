@@ -9,7 +9,9 @@ class ChimeraSettings(BaseModel):
     debate_token_budget_ratio: float = Field(default=0.8, ge=0.5, le=0.95)
     self_analysis_context_ratio: float = Field(default=0.35, ge=0.1, le=0.6)
     self_analysis_debate_ratio: float = Field(default=0.65, ge=0.4, le=0.9)
-    
+    # ADD THIS LINE: Define the total_budget field
+    total_budget: int = Field(default=10000, ge=1000, le=1000000) # Default to 10k, but allow up to 1M
+
     @model_validator(mode='after')
     def normalize_token_budget_ratios(self) -> Self:
         # Calculate sum of ratios
