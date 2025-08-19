@@ -629,7 +629,7 @@ def on_custom_prompt_change():
     st.session_state.selected_prompt_category = CUSTOM_PROMPT_KEY
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
-    st.rerun() # Force rerun to update UI (e.g., clear context)
+    st.rerun() # Force rerun to update the UI (e.g., clear context)
 
 def on_example_select_change(selectbox_key, tab_name):
     # The value of the selectbox is now available in st.session_state[selectbox_key]
@@ -639,6 +639,18 @@ def on_example_select_change(selectbox_key, tab_name):
     st.session_state.selected_example_name = selected_example_key
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]["prompt"]
     st.session_state.selected_prompt_category = tab_name
+    
+    # --- APPLYING THE FIX LOGIC HERE ---
+    # Determine the domain/framework to use based on the selected example.
+    # This ensures that when an example prompt is selected, the correct framework hint is used.
+    framework_hint = EXAMPLE_PROMPTS[tab_name][selected_example_key].get("framework_hint")
+    if framework_hint:
+        st.session_state.selected_persona_set = framework_hint
+        logger.debug(f"Framework hint '{framework_hint}' applied for example '{selected_example_key}'.")
+    else:
+        logger.warning(f"No framework hint found for example '{selected_example_key}'. Using current framework selection.")
+    # --- END APPLYING THE FIX LOGIC ---
+    
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
     
@@ -646,7 +658,7 @@ def on_example_select_change(selectbox_key, tab_name):
     if "custom_prompt_text_area_widget" in st.session_state:
         st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
     
-    st.rerun() # Force a rerun to update the UI with the new prompt and clear context
+    st.rerun() # Force rerun to update the UI (e.g., clear context)
 
 # --- MODIFIED PROMPT SELECTION UI ---
 st.subheader("What would you like to do?")
@@ -654,6 +666,7 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
+# The 'key' argument is not supported for st.tabs.
 tabs = st.tabs(tab_names)
 # --- END FIX ---
 
@@ -701,57 +714,60 @@ for i, tab_name in enumerate(tab_names):
                    search_term_for_category.lower() in details["prompt"].lower()
             }
 
-            # --- FIX START: Guard against empty filtered prompts and manage state ---
-            if not filtered_prompts_in_category:
+            # --- FIX START: Robust handling of filtered prompts and initial selection ---
+            options_keys = list(filtered_prompts_in_category.keys())
+            
+            # If the filtered list is empty, display a message and skip the rest of the UI for this tab
+            if not options_keys:
                 st.info("No example prompts match your search in this category.")
-                # Ensure state is cleared if no prompts match
+                # Ensure state is cleared if no prompts match and this tab is active
                 if st.session_state.selected_prompt_category == tab_name:
                     st.session_state.user_prompt_input = ""
                     st.session_state.selected_example_name = ""
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
             else:
-                options_keys = list(filtered_prompts_in_category.keys())
-                
-                # Determine initial index for selectbox
+                # Determine the index for the selectbox
                 initial_selectbox_index = 0
-                # If the current prompt in session state matches an example in this tab, select it
-                if st.session_state.selected_example_name in options_keys and \
-                   st.session_state.user_prompt_input == filtered_prompts_in_category[st.session_state.selected_example_name]["prompt"]:
-                    initial_selectbox_index = options_keys.index(st.session_state.selected_example_name)
+                
+                # Check if the current selection is valid within the filtered list for this tab
+                current_selected_example_name = st.session_state.selected_example_name
+                current_selected_prompt_category = st.session_state.selected_prompt_category
+
+                if current_selected_prompt_category == tab_name and \
+                   current_selected_example_name in options_keys:
+                    # If the current selection is valid, find its index
+                    initial_selectbox_index = options_keys.index(current_selected_example_name)
                 else:
-                    # Fallback to the first option if no match or if it's a custom prompt
+                    # If the current selection is not valid for this tab (e.g., filtered out, or wrong tab),
+                    # default to the first item and update session state accordingly.
                     initial_selectbox_index = 0
-                    # If this tab is active and the current prompt is not an example from this tab,
-                    # set it to the first example of this tab.
-                    # This logic should only set the initial state, not trigger reruns.
-                    if st.session_state.selected_prompt_category == tab_name and \
-                       (st.session_state.selected_example_name == CUSTOM_PROMPT_KEY or \
-                        st.session_state.user_prompt_input != filtered_prompts_in_category[options_keys[0]]["prompt"]):
-                        
-                        st.session_state.selected_example_name = options_keys[0]
-                        st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
-                        st.session_state.selected_prompt_category = tab_name
-                        # Update custom text area if it exists
-                        if "custom_prompt_text_area_widget" in st.session_state:
-                            st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
-                        # No st.rerun() here. Let the next render cycle pick up the change.
+                    # Update session state to reflect the first valid option
+                    st.session_state.selected_example_name = options_keys[0]
+                    st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
+                    st.session_state.selected_prompt_category = tab_name
+                    # Update custom text area if it exists
+                    if "custom_prompt_text_area_widget" in st.session_state:
+                        st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
+                    # No rerun here. The selectbox will render with the new default.
 
                 # Define the key for the selectbox
                 selectbox_key = f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
 
+                # Use the calculated initial_selectbox_index and the (potentially updated) session state value
                 selected_example_key_from_widget = st.selectbox(
                     "Select task:",
                     options=options_keys,
-                    index=initial_selectbox_index,
+                    index=initial_selectbox_index, # Use the calculated index
                     format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
                     label_visibility="collapsed",
-                    key=selectbox_key, # Use the defined key
-                    on_change=on_example_select_change, # Use on_change callback
-                    args=(selectbox_key, tab_name) # Pass the key and tab_name as fixed args
+                    key=selectbox_key,
+                    on_change=on_example_select_change,
+                    args=(selectbox_key, tab_name)
                 )
                 
-                # Display description and full prompt based on the *updated* session state
+                # Access selected_prompt_details using the current state of st.session_state.selected_example_name
+                # This is now guaranteed to be a valid key in filtered_prompts_in_category
                 selected_prompt_details = filtered_prompts_in_category[st.session_state.selected_example_name]
                 st.info(f"**Description:** {selected_prompt_details['description']}")
                 with st.expander("View Full Prompt Text"):
@@ -773,7 +789,7 @@ for i, tab_name in enumerate(tab_names):
                                 key=f"apply_suggested_framework_example_{st.session_state.selected_example_name}"):
                         st.session_state.selected_persona_set = display_suggested_framework
                         st.rerun() # Re-added to ensure UI updates
-            # --- FIX END ---
+            # --- END FIX ---
 
 # The main user_prompt text_area is now implicitly managed by the tab selection.
 user_prompt = st.session_state.user_prompt_input # Ensure this line remains to get the current prompt
@@ -834,10 +850,10 @@ with col1:
 
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
-        # --- FIX START ---
-        # Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:'
+        # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
+        # The 'key' argument is not supported for st.tabs. Removing it.
         tab_names_framework = ["Save Current Framework", "Load/Manage Frameworks"]
-        tabs_framework = st.tabs(tab_names_framework, key="framework_management_tabs")
+        tabs_framework = st.tabs(tab_names_framework) # REMOVED: key="framework_management_tabs"
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
@@ -868,11 +884,10 @@ with col1:
                 else:
                     st.error(message)
         
-        # --- FIX START ---
-        with tabs_framework[1]: # Corresponds to "Load/Manage Frameworks"
+        # --- FIX START: Corresponds to "Load/Manage Frameworks" ---
+        with tabs_framework[1]:
         # --- FIX END ---
-            # --- FIX START ---
-            # Changed to use persona_manager.available_domains directly
+            # --- FIX START: Changed to use persona_manager.available_domains directly ---
             # FIX: Access persona_manager from session state
             all_available_frameworks_for_load = [""] + st.session_state.persona_manager.available_domains
             # --- FIX END ---
@@ -1195,28 +1210,42 @@ def _run_socratic_debate_process():
         # Capture rich output and console instance for process log
         with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
             try:
-                domain_for_run = st.session_state.selected_persona_set
-                # Get persona sequence using the persona manager, which now uses persona_sets
-                # FIX: Access persona_manager from session state
-                current_domain_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(domain_for_run)
-                # FIX: Access all_personas from session state
-                personas_for_run = {name: st.session_state.all_personas[name] for name in current_domain_persona_names if name in st.session_state.all_personas}
-
-                if not personas_for_run:
-                    raise ValueError(f"No personas found for the selected framework '{domain_for_run}'. Please check your configuration.")
+                # --- FIX START: Implement logic to determine domain_for_run ---
+                # This logic replaces the assumption that st.session_state.selected_persona_set is always correct.
+                # It prioritizes example hints for example prompts.
                 
-                # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
-                # Use the cached context analyzer instance
-                # FIX: Access context_analyzer from session state
-                # context_analyzer_instance = get_context_analyzer() # REMOVED: Now passed directly
-                # --- END MODIFICATION ---
-
-                # Pass the request_id to the SocraticDebate instance for logging
-                # This line was causing the UnboundLocalError if SocraticDebate() failed
-                # to initialize. Now debate_instance is initialized to None above.
-                logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance) if debate_instance else 'N/A'})
+                domain_for_run = st.session_state.selected_persona_set # Default to current selection
                 
-                # --- MODIFICATION FOR SUGGESTION #3: Pass ChimeraSettings instance ---
+                if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
+                    # For example prompts, use the framework hint from the example
+                    # Ensure the selected category and example are valid before accessing
+                    selected_category = st.session_state.selected_prompt_category
+                    selected_example = st.session_state.selected_example_name
+                    
+                    if selected_category and selected_category in EXAMPLE_PROMPTS:
+                        if selected_example and selected_example in EXAMPLE_PROMPTS[selected_category]:
+                            framework_hint = EXAMPLE_PROMPTS[selected_category][selected_example].get("framework_hint")
+                            if framework_hint:
+                                domain_for_run = framework_hint
+                                # Log this change for debugging
+                                logger.debug(f"Using framework hint '{framework_hint}' for example prompt '{selected_example}'.")
+                            else:
+                                # If hint is missing, fall back to user's selection
+                                logger.warning(f"Framework hint missing for example '{selected_example}'. Falling back to '{domain_for_run}'.")
+                        else:
+                            # If selected_example is invalid, fall back
+                            logger.warning(f"Selected example '{selected_example}' not found in category '{selected_category}'. Falling back to '{domain_for_run}'.")
+                    else:
+                        # If selected_category is invalid, fall back
+                        logger.warning(f"Selected category '{selected_category}' not found in EXAMPLE_PROMPTS. Falling back to '{domain_for_run}'.")
+                else:
+                    # For custom prompts, the domain is already correctly set by the user's selection
+                    # in the sidebar (st.session_state.selected_persona_set).
+                    # So, domain_for_run remains st.session_state.selected_persona_set.
+                    logger.debug("Using user-selected framework for custom prompt.")
+                    
+                # --- FIX END ---
+
                 # Create a ChimeraSettings instance, potentially overriding defaults with app_config values
                 # The UI slider for context_token_budget_ratio directly updates session state.
                 # max_tokens_budget_input from the UI is used for the total budget.
@@ -1237,20 +1266,14 @@ def _run_socratic_debate_process():
                     # FIX: Access all_personas and persona_sets from session state
                     all_personas=st.session_state.all_personas,
                     persona_sets=st.session_state.persona_sets, # Pass persona_sets
-                    domain=domain_for_run, # Pass the domain
+                    domain=domain_for_run, # <<< CHANGED FROM st.session_state.selected_persona_set to domain_for_run
                     status_callback=update_status, # Use the new update_status helper
                     rich_console=rich_console_instance, # Pass the captured console instance
                     codebase_context=st.session_state.get('codebase_context', {}),
                     # REMOVED: context_token_budget_ratio=st.session_state.context_token_budget_ratio, # This is now managed by ChimeraSettings
                     # FIX: Access context_analyzer from session state
                     context_analyzer=st.session_state.context_analyzer, # Pass the cached analyzer
-                    # --- MODIFICATION: Add is_self_analysis parameter ---
-                    # NOTE: `is_self_analysis_prompt` is not defined in this file,
-                    # it's assumed to be imported or defined elsewhere in the project.
-                    # For this fix, I'll assume it's available.
-                    # --- REMOVED INLINE IMPORT ---
-                    # from src.constants import is_self_analysis_prompt # Assuming this import is missing
-                    # --- END REMOVED INLINE IMPORT ---
+                    # --- MODIFICATION FOR SUGGESTION #3: Add is_self_analysis parameter ---
                     is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate),
                     settings=current_settings # PASS THE CHIMERASETTINGS OBJECT
                     # --- END MODIFICATION ---
@@ -1271,7 +1294,7 @@ def _run_socratic_debate_process():
                     "max_tokens_budget": st.session_state.max_tokens_budget_input,
                     "model_name": st.session_state.selected_model_selectbox,
                     "show_intermediate_steps": st.session_state.show_intermediate_steps_checkbox,
-                    "domain": domain_for_run
+                    "domain": domain_for_run # Use the determined domain for logging
                 }
                 st.session_state.debate_ran = True
                 status.update(label="Socratic Debate Complete!", state="complete", expanded=False)
