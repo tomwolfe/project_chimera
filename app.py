@@ -563,13 +563,32 @@ with st.sidebar:
         st.number_input("Max Total Tokens Budget:", min_value=1000, max_value=1000000, step=1000, key="max_tokens_budget_input")
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
         st.markdown("---")
-        # --- FIX: Ensure context_token_budget_ratio is initialized before use ---
-        # The value parameter should correctly reference the session state variable
+        # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
+        current_ratio_value = st.session_state.context_token_budget_ratio
+        user_prompt_text = st.session_state.get("user_prompt_input", "") # Use the correct session state key
+
+        # Determine smart default based on prompt type and current default ratio
+        # Only suggest a new default if the user hasn't explicitly changed it from the initial config value.
+        if user_prompt_text and current_ratio_value == CONTEXT_TOKEN_BUDGET_RATIO: # CONTEXT_TOKEN_BUDGET_RATIO is 0.25 from config.yaml
+            if is_self_analysis_prompt(user_prompt_text):
+                smart_default_ratio = 0.35 # Higher for self-analysis
+                help_text_dynamic = "Self-analysis prompts often benefit from more context tokens (35%+)."
+            else:
+                smart_default_ratio = 0.20 # Slightly lower for general prompts to save debate tokens
+                help_text_dynamic = "Percentage of total token budget allocated to context analysis."
+            
+            # Update session state only if it's still at the initial default
+            st.session_state.context_token_budget_ratio = smart_default_ratio
+            current_ratio_value = smart_default_ratio # Update local variable for slider value
+
+        else:
+            help_text_dynamic = "Percentage of total token budget allocated to context analysis."
+
         st.slider(
-            "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=st.session_state.context_token_budget_ratio,
-            step=0.05, key="context_token_budget_ratio", help="Percentage of total token budget allocated to context analysis."
+            "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=current_ratio_value,
+            step=0.05, key="context_token_budget_ratio", help=help_text_dynamic
         )
-        # --- END FIX ---
+        # --- END MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 
 st.header("Project Setup & Input")

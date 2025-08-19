@@ -76,6 +76,13 @@ class CircuitBreaker:
         if failure_rate < 0.1: # Very low failure rate, increase tolerance
             self.current_failure_threshold = min(self.max_failure_threshold, self.current_failure_threshold + 1)
             self.logger.debug(f"Failure rate low ({failure_rate:.2f}), increasing threshold to {self.current_failure_threshold}")
+        elif failure_rate < 0.3:  # NEW: Handle moderate failure rates (0.1 to 0.3)
+            # Gradually reduce threshold, but not as aggressively as high failure rates.
+            # This provides a "grace period" for temporary spikes without immediately opening the circuit.
+            if self.current_failure_threshold > self.min_failure_threshold:
+                self.current_failure_threshold = max(self.min_failure_threshold,
+                                                  self.current_failure_threshold - 0.5) # Use 0.5 step for gradual adjustment
+            self.logger.debug(f"Moderate failure rate ({failure_rate:.2f}), gentle threshold adjustment to {self.current_failure_threshold}")
         elif failure_rate > 0.3: # High failure rate, decrease tolerance
             self.current_failure_threshold = max(self.min_failure_threshold, self.current_failure_threshold - 1)
             self.logger.debug(f"Failure rate high ({failure_rate:.2f}), decreasing threshold to {self.current_failure_threshold}")

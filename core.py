@@ -570,7 +570,7 @@ class SocraticDebate:
             self._log_with_context("error", f"Error during final synthesis turn by {synthesis_persona_name}: {e}", exc_info=True)
             self.rich_console.print(f"[red]Error during final synthesis turn: {e}[/red]")
             # Re-raise critical exceptions, otherwise return a structured error
-            if isinstance(e, (TokenBudgetExceededError, ChimeraError, SchemaValidationError, CircuitBreakerError)):
+            if isinstance(e, (TokenBudgetExceededError, ChimeraError, CircuitBreakerError)):
                 raise e
             return {"error": f"Synthesis turn failed: {e}", "malformed_blocks": [{"type": "SYNTHESIS_ERROR", "message": str(e)}]}
 
@@ -600,34 +600,21 @@ class SocraticDebate:
                 parser = LLMOutputParser()
                 parsed_output = parser.parse_and_validate(raw_llm_output, schema_model)
                 
-                # Check if parse_and_validate indicated a critical failure (e.g., "Parsing error")
-                if parsed_output.get("malformed_blocks") and \
-                   (parsed_output.get("COMMIT_MESSAGE") == "Parsing error" or \
-                    parsed_output.get("CRITIQUE_SUMMARY") == "LLM_GENERATION_ERROR" or \
-                    parsed_output.get("error_type") == "SCHEMA_VALIDATION_FAILED"):
-                    
-                    self._log_with_context("error", f"Schema validation failed for {persona_name} output (critical failure): {parsed_output.get('RATIONALE', 'Unknown parsing error')}",
-                                           persona=persona_name, exc_info=True)
-                    self.status_callback(f"[red]Schema validation failed critically for {persona_name}. Circuit breaker may trip.[/red]",
-                                         state="error",
-                                         current_total_tokens=self.tokens_used,
-                                         current_total_cost=self.get_total_estimated_cost())
-                    
-                    raise SchemaValidationError(
-                        error_type="LLM_OUTPUT_MALFORMED",
-                        field_path="root",
-                        invalid_value=raw_llm_output, # Pass raw output for context
-                        details={"malformed_blocks": parsed_output.get("malformed_blocks", []),
-                                 "parser_rationale": parsed_output.get("RATIONALE", "No specific rationale provided by parser.")}
-                    )
+                # MODIFIED: Remove the aggressive re-raising of SchemaValidationError.
+                # The LLMOutputParser already returns a structured dictionary (even if it's an error structure)
+                # and populates 'malformed_blocks' if issues are found.
+                # The 'malformed_blocks' field is part of the expected schema for reporting errors.
+                # Therefore, if the parser successfully returns a dictionary with this field,
+                # it should not be treated as a SchemaValidationError at this stage.
                 
-                # If output is not critically malformed, but has malformed_blocks, just log and return
+                # If the parsed_output contains malformed_blocks, log it and add to intermediate steps.
+                # This allows the debate to continue and the UI to display the malformed blocks.
                 if parsed_output.get("malformed_blocks"):
-                    self._log_with_context("warning", f"LLM output for {persona_name} contained non-critical malformed blocks.",
+                    self._log_with_context("warning", f"LLM output for {persona_name} contained malformed blocks.",
                                            persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
                     self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
                 
-                return parsed_output
+                return parsed_output # Always return the parsed_output, even if it contains error info
             else:
                 # Persona is not expected to produce structured JSON, return raw text
                 self._log_with_context("info", f"Persona {persona_name} is not configured for structured JSON output. Returning raw text.", persona=persona_name)
