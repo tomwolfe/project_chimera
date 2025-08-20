@@ -735,71 +735,60 @@ for i, tab_name in enumerate(tab_names):
                     st.session_state.selected_example_name = ""
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
-            else:
-                # Determine the index for the selectbox
-                initial_selectbox_index = 0
-                
-                # Check if the current selection is valid within the filtered list for this tab
-                current_selected_example_name = st.session_state.selected_example_name
-                current_selected_prompt_category = st.session_state.selected_prompt_category
+                continue # <-- ADDED THIS LINE for robustness if search yields no results
+            
+            initial_selectbox_index = 0
+            
+            # Check if the current selection is valid within the filtered list for this tab
+            current_selected_example_name = st.session_state.selected_example_name
+            current_selected_prompt_category = st.session_state.selected_prompt_category
 
-                if current_selected_prompt_category == tab_name and \
-                   current_selected_example_name in options_keys:
-                    # If the current selection is valid, find its index
-                    initial_selectbox_index = options_keys.index(current_selected_example_name)
-                else:
-                    # If the current selection is not valid for this tab (e.g., filtered out, or wrong tab),
-                    # default to the first item and update session state accordingly.
-                    initial_selectbox_index = 0
-                    # Update session state to reflect the first valid option
-                    st.session_state.selected_example_name = options_keys[0]
-                    st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
-                    st.session_state.selected_prompt_category = tab_name
-                    # Update active_example_framework_hint for the new default example
-                    st.session_state.active_example_framework_hint = filtered_prompts_in_category[options_keys[0]].get("framework_hint")
-                    # Update custom text area if it exists
-                    if "custom_prompt_text_area_widget" in st.session_state:
-                        st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
-                    # No rerun here. The selectbox will render with the new default.
+            if current_selected_prompt_category == tab_name and \
+               current_selected_example_name in options_keys:
+                # If the current selection is valid, find its index
+                initial_selectbox_index = options_keys.index(current_selected_example_name)
+            # --- REMOVED THE ENTIRE 'else' BLOCK HERE ---
+            # This was the problematic block that was overwriting st.session_state.user_prompt_input
+            # when rendering tabs that were not the currently active one.
 
-                # Define the key for the selectbox
-                selectbox_key = f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
+            # Define the key for the selectbox
+            selectbox_key = f"select_example_{tab_name.replace(' ', '_').replace('&', '').replace('(', '').replace(')', '')}"
 
-                # Use the calculated initial_selectbox_index and the (potentially updated) session state value
-                selected_example_key_from_widget = st.selectbox(
-                    "Select task:",
-                    options=options_keys,
-                    index=initial_selectbox_index, # Use the calculated index
-                    format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
-                    label_visibility="collapsed",
-                    key=selectbox_key,
-                    on_change=on_example_select_change,
-                    args=(selectbox_key, tab_name)
-                )
-                
-                # Access selected_prompt_details using the current state of st.session_state.selected_example_name
-                # This is now guaranteed to be a valid key in filtered_prompts_in_category
-                selected_prompt_details = filtered_prompts_in_category[st.session_state.selected_example_name]
-                st.info(f"**Description:** {selected_prompt_details['description']}")
-                with st.expander("View Full Prompt Text"):
-                    st.code(selected_prompt_details['prompt'], language='text')
-                    st.button(
-                        "Copy Prompt",
-                        help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
-                        use_container_width=True,
-                        type="secondary",
-                        key=f"copy_prompt_{st.session_state.selected_example_name}")
+            # Use the calculated initial_selectbox_index and the (potentially updated) session state value
+            selected_example_key_for_this_tab = st.selectbox( # Renamed variable for clarity
+                "Select task:",
+                options=options_keys,
+                index=initial_selectbox_index, # Use the calculated index
+                format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
+                label_visibility="collapsed",
+                key=selectbox_key,
+                on_change=on_example_select_change,
+                args=(selectbox_key, tab_name)
+            )
+            
+            # Access selected_prompt_details using the current state of selected_example_key_for_this_tab
+            # This is now guaranteed to be a valid key in filtered_prompts_in_category
+            selected_prompt_details = filtered_prompts_in_category[selected_example_key_for_this_tab]
+            st.info(f"**Description:** {selected_prompt_details['description']}")
+            with st.expander("View Full Prompt Text"):
+                st.code(selected_prompt_details['prompt'], language='text')
+                st.button(
+                    "Copy Prompt",
+                    help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
+                    use_container_width=True,
+                    type="secondary",
+                    key=f"copy_prompt_{selected_example_key_for_this_tab}")
 
-                # This block now only *displays* the hint and button to apply it for examples.
-                display_suggested_framework = selected_prompt_details.get("framework_hint")
-                if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
-                    st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
-                    if st.button(f"Apply '{display_suggested_framework}' Framework",
-                                type="primary",
-                                use_container_width=True,
-                                key=f"apply_suggested_framework_example_{st.session_state.selected_example_name}"):
-                        st.session_state.selected_persona_set = display_suggested_framework
-                        st.rerun() # Re-added to ensure UI updates
+            # This block now only *displays* the hint and button to apply it for examples.
+            display_suggested_framework = selected_prompt_details.get("framework_hint")
+            if display_suggested_framework and display_suggested_framework != st.session_state.selected_persona_set:
+                st.info(f"💡 Based on this example, the **'{display_suggested_framework}'** framework might be appropriate.")
+                if st.button(f"Apply '{display_suggested_framework}' Framework",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"apply_suggested_framework_example_{selected_example_key_for_this_tab}"):
+                    st.session_state.selected_persona_set = display_suggested_framework
+                    st.rerun() # Re-added to ensure UI updates
             # --- END FIX ---
 
 # The main user_prompt text_area is now implicitly managed by the tab selection.
