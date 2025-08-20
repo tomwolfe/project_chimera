@@ -31,6 +31,7 @@ import traceback # Needed for error handling in app.py
 from collections import defaultdict # For Suggestion 3.2
 from pydantic import ValidationError # Import ValidationError for parsing errors
 import html # Needed for html.escape in sanitize_user_input
+import difflib # Needed for diff view
 
 # --- NEW IMPORTS FOR ENHANCEMENTS ---
 import uuid # For request ID generation
@@ -295,6 +296,7 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "selected_model_selectbox": "gemini-2.5-flash-lite",
         "selected_example_name": "", # Will be set by example selector
         "selected_prompt_category": "", # Will be set by example selector
+        "active_example_framework_hint": None, # --- ADDED THIS LINE ---
         # "selected_persona_set": pm.available_domains[0] if pm.available_domains else "General", # Will be initialized below
         "debate_ran": False,
         "final_answer_output": "",
@@ -344,6 +346,8 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[default_example_category][default_example_name]["prompt"]
         st.session_state.selected_example_name = default_example_name
         st.session_state.selected_prompt_category = default_example_category
+        # --- ADDED: Initialize active_example_framework_hint for the default example ---
+        st.session_state.active_example_framework_hint = EXAMPLE_PROMPTS[default_example_category][default_example_name].get("framework_hint")
 
 
 # --- Session State Initialization Call ---
@@ -626,6 +630,7 @@ def on_custom_prompt_change():
     st.session_state.user_prompt_input = st.session_state.custom_prompt_text_area_widget
     st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
     st.session_state.selected_prompt_category = CUSTOM_PROMPT_KEY
+    st.session_state.active_example_framework_hint = None # Clear hint for custom prompt
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
     st.rerun() # Force rerun to update the UI (e.g., clear context)
@@ -639,16 +644,15 @@ def on_example_select_change(selectbox_key, tab_name):
     st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]["prompt"]
     st.session_state.selected_prompt_category = tab_name
     
-    # --- APPLYING THE FIX LOGIC HERE ---
-    # Determine the domain/framework to use based on the selected example.
-    # This ensures that when an example prompt is selected, the correct framework hint is used.
+    # --- FIX START: Store framework hint separately ---
     framework_hint = EXAMPLE_PROMPTS[tab_name][selected_example_key].get("framework_hint")
     if framework_hint:
-        st.session_state.selected_persona_set = framework_hint
-        logger.debug(f"Framework hint '{framework_hint}' applied for example '{selected_example_key}'.")
+        st.session_state.active_example_framework_hint = framework_hint
+        logger.debug(f"Framework hint '{framework_hint}' stored for example '{selected_example_key}'.")
     else:
-        logger.warning(f"No framework hint found for example '{selected_example_key}'. Using current framework selection.")
-    # --- END APPLYING THE FIX LOGIC ---
+        st.session_state.active_example_framework_hint = None # Clear if no hint
+        logger.warning(f"No framework hint found for example '{selected_example_key}'.")
+    # --- FIX END ---
     
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
@@ -745,6 +749,8 @@ for i, tab_name in enumerate(tab_names):
                     st.session_state.selected_example_name = options_keys[0]
                     st.session_state.user_prompt_input = filtered_prompts_in_category[options_keys[0]]["prompt"]
                     st.session_state.selected_prompt_category = tab_name
+                    # Update active_example_framework_hint for the new default example
+                    st.session_state.active_example_framework_hint = filtered_prompts_in_category[options_keys[0]].get("framework_hint")
                     # Update custom text area if it exists
                     if "custom_prompt_text_area_widget" in st.session_state:
                         st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
@@ -1213,35 +1219,22 @@ def _run_socratic_debate_process():
                 # This logic replaces the assumption that st.session_state.selected_persona_set is always correct.
                 # It prioritizes example hints for example prompts.
                 
-                domain_for_run = st.session_state.selected_persona_set # Default to current selection
+                domain_for_run = st.session_state.selected_persona_set # Default to sidebar selection
                 
-                if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY:
-                    # For example prompts, use the framework hint from the example
-                    # Ensure the selected category and example are valid before accessing
-                    selected_category = st.session_state.selected_prompt_category
-                    selected_example = st.session_state.selected_example_name
-                    
-                    if selected_category and selected_category in EXAMPLE_PROMPTS:
-                        if selected_example and selected_example in EXAMPLE_PROMPTS[selected_category]:
-                            framework_hint = EXAMPLE_PROMPTS[selected_category][selected_example].get("framework_hint")
-                            if framework_hint:
-                                # Log this change for debugging
-                                logger.debug(f"Using framework hint '{framework_hint}' for example prompt '{selected_example}'.")
-                            else:
-                                # If hint is missing, fall back to user's selection
-                                logger.warning(f"Framework hint missing for example '{selected_example}'. Falling back to '{domain_for_run}'.")
-                        else:
-                            # If selected_example is invalid, fall back
-                            logger.warning(f"Selected example '{selected_example}' not found in category '{selected_category}'. Falling back to '{domain_for_run}'.")
-                    else:
-                        # If selected_category is invalid, fall back
-                        logger.warning(f"Selected category '{selected_category}' not found in EXAMPLE_PROMPTS. Falling back to '{domain_for_run}'.")
-                else:
-                    # For custom prompts, the domain is already correctly set by the user's selection
-                    # in the sidebar (st.session_state.selected_persona_set).
-                    # So, domain_for_run remains st.session_state.selected_persona_set.
-                    logger.debug("Using user-selected framework for custom prompt.")
-                    
+                # 1. Highest priority: Framework hint from a selected example (if not a custom prompt)
+                if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY and \
+                   st.session_state.active_example_framework_hint:
+                    domain_for_run = st.session_state.active_example_framework_hint
+                    logger.debug(f"Using active example framework hint: {domain_for_run}")
+                # 2. Next priority: Recommended domain for custom prompts
+                elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+                    suggested_domain = recommend_domain_from_keywords(current_user_prompt_for_debate, DOMAIN_KEYWORDS)
+                    if suggested_domain:
+                        domain_for_run = suggested_domain
+                        logger.debug(f"Using recommended domain for custom prompt: {domain_for_run}")
+                # 3. Otherwise, use the user's manual selection from the sidebar (already set as default)
+                
+                logger.info(f"Final domain selected for debate: {domain_for_run}")
                 # --- FIX END ---
 
                 # Create a ChimeraSettings instance, potentially overriding defaults with app_config values
