@@ -307,7 +307,7 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "uploaded_files": [],
         "persona_audit_log": [],
         "persona_edit_mode": False,
-        "persona_changes_detected": False,
+        "persona_changes_detected": False, # ADDED: For Developer Maintainability: Streamlined Persona Management UI
         "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG, # Use value from config.yaml as initial default
         "save_framework_input": "",
         "framework_description": "",
@@ -333,7 +333,8 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
 
     if "context_analyzer" not in st.session_state:
         # Pass the persona_router from the persona_manager to the context_analyzer
-        analyzer = ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR)
+        # Pass codebase_context to ContextRelevanceAnalyzer during initialization
+        analyzer = ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR, codebase_context=st.session_state.codebase_context)
         if st.session_state.persona_manager.persona_router:
             analyzer.set_persona_router(st.session_state.persona_manager.persona_router)
         st.session_state.context_analyzer = analyzer
@@ -1015,7 +1016,8 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
     # Re-check for changes if not already flagged
     if not st.session_state.persona_changes_detected:
         # Iterate over currently loaded personas for the framework
-        for p_name in st.session_state.personas.keys(): 
+        current_framework_persona_names = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
+        for p_name in current_framework_persona_names: 
             persona: PersonaConfig = st.session_state.persona_manager.all_personas.get(p_name)
             # Get the original persona configuration from the manager's cache
             original_persona_config = st.session_state.persona_manager._original_personas.get(p_name)
@@ -1035,6 +1037,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
             # FIX: Access persona_manager from session state
             if st.session_state.persona_manager.reset_all_personas_for_current_framework(st.session_state.selected_persona_set):
                 st.toast("All personas for the current framework reset to default.")
+                st.session_state.persona_changes_detected = False # Reset flag after successful reset
                 st.rerun() # Rerun to update UI widgets with reset values
             else:
                 st.error("Could not reset all personas for the current framework.")
@@ -1100,6 +1103,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                 # FIX: Access persona_manager from session state
                 if st.session_state.persona_manager.reset_persona_to_default(p_name):
                     st.toast(f"Persona '{p_name.replace('_', ' ')}' reset to default.")
+                    st.session_state.persona_changes_detected = False # Reset flag after individual persona reset
                     st.rerun() # Rerun to update UI widgets with reset values
                 else:
                     st.error(f"Could not reset persona '{p_name}'.")

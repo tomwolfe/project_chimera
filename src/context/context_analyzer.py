@@ -6,22 +6,24 @@ import re
 from typing import Dict, List, Tuple, Optional
 import logging
 from functools import lru_cache
+import os # Import os for basename
 
 from src.persona.routing import PersonaRouter
-from src.constants import NEGATION_PATTERNS # Import NEGATION_PATTERNS
+from src.constants import NEGATION_PATTERNS
 
 logger = logging.getLogger(__name__)
 
 class ContextRelevanceAnalyzer:
     """Analyzes code context relevance using semantic embeddings."""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_dir: str = None):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_dir: str = None, codebase_context: Optional[Dict[str, str]] = None): # ADD codebase_context to __init__
         """Initialize the analyzer with a sentence transformer model.
         
         Args:
             model_name: The name of the SentenceTransformer model to use.
             cache_dir: Optional. The directory where the model should be loaded from or cached to.
                        If None, SentenceTransformer uses its default caching mechanism.
+            codebase_context: Optional. The full codebase context dictionary.
         """
         self.cache_dir = cache_dir # Store the cache_dir
         # Pass cache_folder directly to SentenceTransformer
@@ -31,6 +33,7 @@ class ContextRelevanceAnalyzer:
         # --- FIX START ---
         self.last_relevant_files: List[Tuple[str, float]] = [] # Store the last computed relevant files
         # --- FIX END ---
+        self.codebase_context = codebase_context or {} # Store codebase_context
 
     def set_persona_router(self, router: PersonaRouter):
         """Sets the PersonaRouter instance for this analyzer."""
@@ -78,6 +81,7 @@ class ContextRelevanceAnalyzer:
     def compute_file_embeddings(self, codebase_context: Dict[str, str]):
         """Compute embeddings for all files in the codebase context."""
         self.file_embeddings = {} # Clear existing embeddings
+        self.codebase_context = codebase_context # Ensure internal codebase_context is updated
         for file_path, content in codebase_context.items():
             clean_content = self._clean_code_content(content)
             key_elements = self._extract_key_elements(content)
@@ -92,15 +96,14 @@ class ContextRelevanceAnalyzer:
                 logger.error(f"Failed to compute embedding for {file_path}: {e}")
     # --- END MODIFICATION ---
     
-    def find_relevant_files(self, prompt: str, top_k: int = 5, active_personas: Optional[List[str]] = None) -> List[Tuple[str, float]]:
+    @lru_cache(maxsize=128) # Cache relevant files based on prompt and active personas
+    def find_relevant_files(self, prompt: str, max_context_tokens: int, active_personas: Optional[List[str]] = None) -> List[Tuple[str, float]]:
         """
-        Find the most relevant files to the prompt with enhanced weighting.
-        Incorporates prompt keyword analysis to boost similarity scores.
+        Find the most relevant files to the prompt with enhanced weighting,
+        considering the maximum allowed tokens for context.
         """
-        if not self.file_embeddings:
-            # --- FIX START ---
-            self.last_relevant_files = [] # Ensure it's cleared if no embeddings
-            # --- FIX END ---
+        if not self.file_embeddings or not self.codebase_context:
+            self.last_relevant_files = []
             return []
 
         prompt_embedding = self.model.encode([prompt], convert_to_numpy=True)[0]
@@ -117,9 +120,30 @@ class ContextRelevanceAnalyzer:
             
             similarities.append((file_path, float(weighted_similarity)))
         
+        # Sort by similarity
+        sorted_files = sorted(similarities, key=lambda x: x[1], reverse=True)
+
+        # Dynamically select files based on max_context_tokens
+        selected_files_with_content = []
+        current_tokens = 0
+        
+        # Use a simple character-based heuristic for token estimation if no tokenizer is available
+        # A more robust solution would involve injecting the tokenizer from SocraticDebate.
+        CHARS_PER_TOKEN = 4 
+        
+        for file_path, score in sorted_files:
+            content = self.codebase_context.get(file_path, "") 
+            file_token_estimate = len(content) / CHARS_PER_TOKEN
+            
+            if current_tokens + file_token_estimate <= max_context_tokens:
+                selected_files_with_content.append((file_path, score))
+                current_tokens += file_token_estimate
+            else:
+                break # Stop adding files if budget is exceeded
+
         # --- FIX START ---
         # Store the results in the instance attribute
-        self.last_relevant_files = sorted(similarities, key=lambda x: x[1], reverse=True)[:top_k]
+        self.last_relevant_files = selected_files_with_content
         return self.last_relevant_files
         # --- FIX END ---
 
@@ -211,3 +235,92 @@ class ContextRelevanceAnalyzer:
         
         return summary
     # --- FIX END ---
+
+    # NEW: Intelligent context summarization
+    def generate_context_summary(self, relevant_file_paths: List[str], max_tokens: int, debate_topic: str) -> str:
+        """
+        Generates a concise, intelligent summary of relevant files, respecting token limits.
+        Focuses on high-level structure and key implementation details related to the debate topic.
+        """
+        summary_parts = [f"Relevant code context for '{debate_topic}':"]
+        current_tokens = self._estimate_token_count(summary_parts[0])
+
+        # Extract high-level structure first
+        structure_info = self._extract_structure_info(relevant_file_paths)
+        if structure_info:
+            header = "\nSystem Structure:"
+            summary_parts.append(header)
+            current_tokens += self._estimate_token_count(header)
+            
+            for line in structure_info.split('\n'):
+                line_tokens = self._estimate_token_count(line)
+                if current_tokens + line_tokens <= max_tokens:
+                    summary_parts.append(line)
+                    current_tokens += line_tokens
+                else:
+                    break
+            if current_tokens >= max_tokens: return "\n".join(summary_parts)
+
+        # Add key implementation details
+        details_header = "\nKey Implementation Details:"
+        details_parts = []
+        details_tokens = self._estimate_token_count(details_header)
+
+        for file_path in relevant_file_paths:
+            content = self.codebase_context.get(file_path, "")
+            if not content: continue
+            
+            lines = content.split('\n')
+            file_relevant_lines = []
+            topic_keywords = debate_topic.lower().split()
+
+            # Prioritize lines with direct keyword matches
+            for line in lines:
+                line_lower = line.lower()
+                if any(kw in line_lower for kw in topic_keywords) and not line.strip().startswith('#'):
+                    file_relevant_lines.append(line.strip())
+            
+            # If not enough direct matches, take some initial non-comment lines
+            if len(file_relevant_lines) < 3:
+                file_relevant_lines = [l.strip() for l in lines[:15] if l.strip() and not l.strip().startswith('#')]
+            
+            if file_relevant_lines:
+                file_summary_header = f"\nFile: {os.path.basename(file_path)}:"
+                details_tokens += self._estimate_token_count(file_summary_header)
+                if current_tokens + details_tokens > max_tokens: break
+
+                details_parts.append(file_summary_header)
+                for line in file_relevant_lines[:5]: # Take up to 5 lines per file
+                    line_tokens = self._estimate_token_count(line)
+                    if current_tokens + details_tokens + line_tokens <= max_tokens:
+                        details_parts.append(f"  {line}")
+                        details_tokens += line_tokens
+                    else:
+                        break
+        
+        if details_parts:
+            summary_parts.extend(details_parts)
+
+        return "\n".join(summary_parts)
+
+    def _extract_structure_info(self, relevant_file_paths: List[str]) -> str:
+        """Extract high-level structure information from relevant files."""
+        structure_parts = []
+        for file_path in relevant_file_paths[:5]: # Only look at top 5 files for high-level structure
+            content = self.codebase_context.get(file_path, "")
+            if not content: continue
+            
+            classes = re.findall(r'class\s+(\w+)\s*(\(.*\))?\s*:', content)
+            functions = re.findall(r'def\s+(\w+)\s*\(', content)
+            
+            file_summary = f"- {os.path.basename(file_path)}"
+            if classes:
+                file_summary += f" (Classes: {', '.join([c[0] for c in classes[:3]])}{'...' if len(classes) > 3 else ''})"
+            if functions:
+                file_summary += f" (Functions: {', '.join(functions[:5])}{'...' if len(functions) > 5 else ''})"
+            structure_parts.append(file_summary)
+        return "\n".join(structure_parts)
+
+    def _estimate_token_count(self, text: str) -> int:
+        """Estimate token count for a text string (fallback heuristic)."""
+        return max(1, len(text) // 4) # ~4 characters per token

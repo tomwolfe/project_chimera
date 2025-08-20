@@ -12,7 +12,8 @@ class ChimeraSettings(BaseModel):
     # Ratios for allocating the total token budget across different phases.
     # These are normalized to sum to 1.0 in the model_validator.
     context_token_budget_ratio: float = Field(default=0.2, ge=0.05, le=0.5, description="Proportion of total budget for context analysis.")
-    debate_token_budget_ratio: float = Field(default=0.8, ge=0.5, le=0.95, description="Proportion of total budget for debate turns.")
+    debate_token_budget_ratio: float = Field(default=0.7, ge=0.5, le=0.95, description="Proportion of total budget for debate turns.")
+    synthesis_token_budget_ratio: float = Field(default=0.1, ge=0.05, le=0.2, description="Proportion of total budget for final synthesis.") # ADD THIS LINE
     
     # Specific ratios for self-analysis prompts, also normalized.
     self_analysis_context_ratio: float = Field(default=0.35, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
@@ -29,41 +30,38 @@ class ChimeraSettings(BaseModel):
         maintaining their relative proportions. This is crucial for
         correctly allocating the total budget across phases.
         """
-        # Normalize general ratios
-        total_ratio = (
+        # Normalize general ratios (context, debate, synthesis)
+        total_general_ratio = (
             self.context_token_budget_ratio +
-            self.debate_token_budget_ratio
+            self.debate_token_budget_ratio +
+            self.synthesis_token_budget_ratio # INCLUDE SYNTHESIS
         )
         
-        # Normalize self-analysis ratios
+        # Apply normalization factors
+        if total_general_ratio > 0:
+            ratio_factor = 1.0 / total_general_ratio
+            self.context_token_budget_ratio *= ratio_factor
+            self.debate_token_budget_ratio *= ratio_factor
+            self.synthesis_token_budget_ratio *= ratio_factor # NORMALIZE SYNTHESIS
+        else:
+            # Fallback if ratios are zero or invalid
+            self.context_token_budget_ratio = 0.2
+            self.debate_token_budget_ratio = 0.7
+            self.synthesis_token_budget_ratio = 0.1 # DEFAULT SYNTHESIS
+        
+        # Normalize self-analysis ratios (context, debate)
         self_analysis_total = (
             self.self_analysis_context_ratio +
             self.self_analysis_debate_ratio
         )
         
-        # Apply normalization factors
-        if total_ratio > 0:
-            ratio_factor = 1.0 / total_ratio
-            final_context_ratio = self.context_token_budget_ratio * ratio_factor
-            final_debate_ratio = self.debate_token_budget_ratio * ratio_factor
-        else:
-            # Fallback if ratios are zero or invalid
-            final_context_ratio = 0.2
-            final_debate_ratio = 0.8
-        
         if self_analysis_total > 0:
             self_analysis_ratio_factor = 1.0 / self_analysis_total
-            final_self_analysis_context_ratio = self.self_analysis_context_ratio * self_analysis_ratio_factor
-            final_self_analysis_debate_ratio = self.self_analysis_debate_ratio * self_analysis_ratio_factor
+            self.self_analysis_context_ratio *= self_analysis_ratio_factor
+            self.self_analysis_debate_ratio *= self_analysis_ratio_factor
         else:
             # Fallback for self-analysis ratios
-            final_self_analysis_context_ratio = 0.35
-            final_self_analysis_debate_ratio = 0.65
-        
-        # Update the model's fields with the normalized values
-        self.context_token_budget_ratio = final_context_ratio
-        self.debate_token_budget_ratio = final_debate_ratio
-        self.self_analysis_context_ratio = final_self_analysis_context_ratio
-        self.self_analysis_debate_ratio = final_self_analysis_debate_ratio
+            self.self_analysis_context_ratio = 0.35
+            self.self_analysis_debate_ratio = 0.65
         
         return self

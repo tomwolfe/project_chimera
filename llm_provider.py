@@ -10,13 +10,15 @@ from collections import defaultdict
 import streamlit as st
 import logging
 from functools import wraps
-from typing import Callable, Any, Dict, Optional
+from typing import Callable, Any, Dict, Optional, Type
 import google.genai as genai
 from google.genai import types
 from google.genai.errors import APIError
 import hashlib
 import random
 import socket
+import json # Added for structured logging helper
+
 from rich.console import Console
 
 # --- Tokenizer Interface and Implementation ---
@@ -32,6 +34,10 @@ from src.exceptions import ChimeraError, LLMProviderError, GeminiAPIError, LLMUn
 
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
 from src.resilience.circuit_breaker import CircuitBreaker
+# --- END NEW IMPORT ---
+
+# --- NEW IMPORT FOR ERROR HANDLER ---
+from src.utils.error_handler import handle_errors
 # --- END NEW IMPORT ---
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
@@ -57,27 +63,29 @@ class GeminiProvider:
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None, rich_console: Optional[Console] = None):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite", tokenizer: Tokenizer = None, rich_console: Optional[Console] = None, request_id: Optional[str] = None): # ADD request_id parameter
         self._api_key = api_key
         self.model_name = model_name
         self.rich_console = rich_console or Console(stderr=True)
+        self.request_id = request_id # Store request_id
+        self._log_extra = {"request_id": self.request_id or "N/A"} # Prepare log extra data for this instance
         
         try:
             self.client = genai.Client(api_key=self._api_key)
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Failed to initialize genai.Client: {error_msg}")
+            self._log_with_context("error", f"Failed to initialize genai.Client: {error_msg}", exc_info=True) # Use _log_with_context
             error_msg_lower = error_msg.lower()
             if "api key not valid" in error_msg_lower or "invalid_argument" in error_msg_lower or "invalid_api_key" in error_msg_lower:
-                raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY") from e
+                raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY", original_exception=e) from e # Pass original_exception
             else:
-                raise LLMProviderError(f"Failed to initialize Gemini client: {error_msg}") from e
+                raise LLMProviderError(f"Failed to initialize Gemini client: {error_msg}", original_exception=e) from e # Pass original_exception
         
         try:
             self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
         except Exception as e:
-            logger.error(f"Failed to initialize GeminiTokenizer: {e}")
-            raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}") from e
+            self._log_with_context("error", f"Failed to initialize GeminiTokenizer: {e}", exc_info=True) # Use _log_with_context
+            raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}", original_exception=e) from e # Pass original_exception
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -90,6 +98,23 @@ class GeminiProvider:
                 self._api_key == other.api_key and
                 type(self.tokenizer) == type(other.tokenizer))
 
+    def _log_with_context(self, level: str, message: str, **kwargs):
+        """Helper to add request context to all logs from this instance."""
+        exc_info = kwargs.pop('exc_info', None)
+        log_data = {**self._log_extra, **kwargs}
+        # Convert non-serializable objects to strings for logging to prevent errors
+        for k, v in log_data.items():
+            try:
+                json.dumps({k: v}) 
+            except TypeError:
+                log_data[k] = str(v) 
+        
+        logger_method = getattr(logger, level) # Use the module-level logger
+        if exc_info is not None:
+            logger_method(message, exc_info=exc_info, extra=log_data)
+        else:
+            logger_method(message, extra=log_data)
+
     def _get_pricing_model_name(self) -> str:
         if "flash" in self.model_name:
             return "gemini-1.5-flash"
@@ -101,7 +126,7 @@ class GeminiProvider:
         pricing_model = self._get_pricing_model_name()
         costs = TOKEN_COSTS_PER_1K_TOKENS.get(pricing_model)
         if not costs:
-            logger.warning(f"No pricing information for model '{self.model_name}'. Cost estimation will be $0.")
+            self._log_with_context("warning", f"No pricing information for model '{self.model_name}'. Cost estimation will be $0.")
             return 0.0
 
         input_cost = (input_tokens / 1000) * costs["input"]
@@ -109,11 +134,12 @@ class GeminiProvider:
         return input_cost + output_cost
 
     # --- CIRCUIT BREAKER APPLIED HERE ---
+    @handle_errors(log_level="ERROR") # Apply the decorator here
     @CircuitBreaker(
         failure_threshold=3,
         recovery_timeout=60, # Wait 60 seconds before trying again
         # Count API errors, circuit breaker rejections, and schema validation errors as failures
-        expected_exception=(APIError, CircuitBreakerError, SchemaValidationError)
+        expected_exception=(APIError, CircuitBreakerError, SchemaValidationError, LLMUnexpectedError, GeminiAPIError) # Include custom exceptions
     )
     def generate(self, prompt: str, system_prompt: str, temperature: float, max_tokens: int, persona_config: PersonaConfig = None, intermediate_results: Dict[str, Any] = None, requested_model_name: str = None) -> tuple[str, int, int]:
         """
@@ -127,17 +153,17 @@ class GeminiProvider:
         final_model_to_use = requested_model_name
         
         if final_model_to_use and final_model_to_use != self.model_name:
-            logger.debug(f"Requested model '{final_model_to_use}' differs from provider's initialized model '{self.model_name}'.")
+            self._log_with_context("debug", f"Requested model '{final_model_to_use}' differs from provider's initialized model '{self.model_name}'.")
             if not hasattr(self, 'tokenizer') or self.tokenizer.model_name != final_model_to_use:
-                 logger.debug(f"Tokenizer model name mismatch. Requested: {final_model_to_use}, Current: {getattr(self.tokenizer, 'model_name', 'N/A')}. Re-initializing tokenizer.")
+                 self._log_with_context("debug", f"Tokenizer model name mismatch. Requested: {final_model_to_use}, Current: {getattr(self.tokenizer, 'model_name', 'N/A')}. Re-initializing tokenizer.")
                  try:
                      self.tokenizer = GeminiTokenizer(model_name=final_model_to_use, genai_client=self.client)
                  except ValueError as e:
-                     logger.error(f"Failed to re-initialize tokenizer for model '{final_model_to_use}': {e}")
+                     self._log_with_context("error", f"Failed to re-initialize tokenizer for model '{final_model_to_use}': {e}", exc_info=True)
                      # Fallback to the original model's tokenizer if re-initialization fails
                      self.tokenizer = GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
                      final_model_to_use = self.model_name
-                     logger.warning(f"Falling back to default model '{self.model_name}' due to tokenizer issue.")
+                     self._log_with_context("warning", f"Falling back to default model '{self.model_name}' due to tokenizer issue.")
             current_model_name = final_model_to_use
         else:
             current_model_name = self.model_name
@@ -174,7 +200,7 @@ class GeminiProvider:
                         generated_text = content.parts[0].text
                 
                 output_tokens = self.tokenizer.count_tokens(generated_text) # USE self.tokenizer.count_tokens
-                logger.debug(f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)")
+                self._log_with_context("debug", f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)")
                 
                 return generated_text, input_tokens, output_tokens
                 
@@ -194,7 +220,7 @@ class GeminiProvider:
                 elif isinstance(e, socket.gaierror): # Network-related errors
                     should_retry = True
                 elif "access denied" in error_msg.lower() or "permission" in error_msg.lower(): # Permission issues might be transient
-                    logger.warning(f"Access denied or permission error encountered: {error_msg}")
+                    self._log_with_context("warning", f"Access denied or permission error encountered: {error_msg}")
                     should_retry = True
 
                 if should_retry and attempt < self.MAX_RETRIES:
@@ -203,18 +229,18 @@ class GeminiProvider:
                     jitter = random.uniform(0, 0.5 * min(self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR ** attempt), self.MAX_BACKOFF_SECONDS))
                     sleep_time = backoff_time + jitter
                     
-                    log_message = f"[yellow]Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})[/yellow]"
+                    log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
                     if self.rich_console:
-                        self.rich_console.print(log_message)
+                        self.rich_console.print(f"[yellow]{log_message}[/yellow]")
                     else:
-                        logger.warning(log_message)
+                        self._log_with_context("warning", log_message) # Use _log_with_context
                     time.sleep(sleep_time)
                 else:
                     # If not retrying or max retries reached, raise a specific error
                     if isinstance(e, APIError):
-                        raise GeminiAPIError(error_msg, getattr(e, 'code', None)) from e
+                        raise GeminiAPIError(error_msg, getattr(e, 'code', None), original_exception=e) from e
                     else:
-                        raise LLMUnexpectedError(error_msg) from e
+                        raise LLMUnexpectedError(error_msg, original_exception=e) from e
             
             # If loop finishes without returning or raising, it means max retries were exceeded
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
@@ -222,4 +248,4 @@ class GeminiProvider:
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"
-        return self.count_tokens(combined_text)
+        return self.tokenizer.count_tokens(combined_text)

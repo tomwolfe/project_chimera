@@ -80,7 +80,7 @@ class CodeChange(BaseModel):
     @validator('action')
     def validate_action(cls, v):
         """Validates the action type."""
-        valid_actions = ["ADD", "MODIFY", "REMOVE"]
+        valid_actions = ["ADD", "MODIFY", "REMOVE"] # Ensure 'APPEND' is NOT here
         if v not in valid_actions:
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
         return v

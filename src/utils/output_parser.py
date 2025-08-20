@@ -7,7 +7,8 @@ import sys
 import traceback
 from typing import Dict, Any, List, Optional, Type
 from pathlib import Path # Import Path for file_name extraction
-from pydantic import BaseModel, Field, validator, model_validator, ValidationError
+from pydantic import BaseModel, ValidationError # Keep Pydantic ValidationError
+from jsonschema import validate, ValidationError as JsonSchemaValidationError # Import jsonschema's ValidationError
 
 # --- MODIFICATION FOR IMPROVEMENT 4.3 ---
 # Import models from src.models
@@ -16,10 +17,6 @@ from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOut
 # --- END MODIFICATION ---
 
 logger = logging.getLogger(__name__)
-
-class InvalidSchemaError(Exception):
-    """Exception raised when the LLM output does not match the expected schema."""
-    pass
 
 class LLMOutputParser:
     def __init__(self):
@@ -183,6 +180,16 @@ class LLMOutputParser:
         self.logger.debug("Failed to extract a valid JSON block after all attempts.")
         return None
 
+    def _repair_json_string(self, json_str: str) -> str:
+        """Applies common JSON repair heuristics."""
+        # Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+        # Replace single quotes with double quotes (if not escaped)
+        json_str = re.sub(r"(?<!\\)'", '"', json_str)
+        # Handle unquoted keys (simple heuristic, might fail on complex cases)
+        json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+        return json_str
+
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
@@ -205,36 +212,28 @@ class LLMOutputParser:
             extracted_json_str = self._extract_and_sanitize_json_string(raw_output) # Finally, use the robust general extractor
         
         if not extracted_json_str:
-            self.logger.error("Failed to extract any JSON structure from the output.")
             malformed_blocks_list.append({
                 "type": "JSON_EXTRACTION_FAILED",
                 "message": "Could not find or extract a valid JSON structure from the output.",
                 "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "")
             })
-            # Return a default error structure that conforms to LLMOutput schema
-            return {
-                "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": f"Failed to parse LLM output as JSON. Error: Could not extract valid JSON structure.\nAttempted raw output: {raw_output[:500]}...",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-        # 2. Parse JSON string
+        # 2. Parse JSON string with repair attempts
         try:
             parsed_data = json.loads(extracted_json_str)
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON decoding failed after extraction: {e}")
-            malformed_blocks_list.append({
-                "type": "JSON_DECODE_ERROR",
-                "message": str(e),
-                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
-            })
-            return {
-                "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": f"Failed to parse LLM output as JSON. Error: {e}\nAttempted JSON string: {extracted_json_str[:500]}...",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
+        except json.JSONDecodeError:
+            repaired_json_str = self._repair_json_string(extracted_json_str)
+            try:
+                parsed_data = json.loads(repaired_json_str)
+                self.logger.warning("Successfully repaired JSON string during decoding.")
+            except json.JSONDecodeError as e:
+                malformed_blocks_list.append({
+                    "type": "JSON_DECODE_ERROR",
+                    "message": str(e),
+                    "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+                })
+                return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
         # 3. Handle cases where JSON is a list (e.g., LLM returns an array of outputs)
         if isinstance(parsed_data, list):
@@ -246,12 +245,7 @@ class LLMOutputParser:
                     "message": "The LLM returned an empty JSON list.",
                     "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
                 })
-                return {
-                    "COMMIT_MESSAGE": "Parsing error",
-                    "RATIONALE": "Failed to parse LLM output: Returned an empty JSON list.",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": malformed_blocks_list
-                }
+                return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
             
             # Take the first element for validation
             data_to_validate = parsed_data[0]
@@ -266,12 +260,7 @@ class LLMOutputParser:
                 "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}.",
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
-            return {
-                "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": f"Failed to parse LLM output into a valid JSON structure.",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
         # Ensure data_to_validate is not None (e.g., if list was empty, though handled above)
         if data_to_validate is None:
@@ -281,12 +270,7 @@ class LLMOutputParser:
                 "message": "No valid data could be extracted for schema validation.",
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
-             return {
-                "COMMIT_MESSAGE": "Parsing error",
-                "RATIONALE": "Failed to extract valid data for validation.",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
+             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
         # --- START FIX: Handle raw CodeChange output when LLMOutput is expected ---
         if schema_model == LLMOutput and isinstance(data_to_validate, dict):
@@ -318,7 +302,7 @@ class LLMOutputParser:
             # Add any malformed blocks found during extraction/parsing
             result_dict["malformed_blocks"] = malformed_blocks_list 
             return result_dict
-        except ValidationError as validation_e:
+        except ValidationError as validation_e: # Pydantic ValidationError
             self.logger.error(f"Schema validation failed for {schema_model.__name__}: {validation_e}")
             malformed_blocks_list.append({
                 "type": "SCHEMA_VALIDATION_ERROR",
@@ -327,55 +311,7 @@ class LLMOutputParser:
             })
             
             # Construct a fallback output dictionary based on the expected schema type
-            fallback_output: Dict[str, Any] = {
-                "error_type": "SCHEMA_VALIDATION_FAILED",
-                "error_message": f"Schema validation failed for {schema_model.__name__}: {str(validation_e)}",
-                "raw_llm_output_snippet": extracted_json_str[:500],
-                "malformed_blocks": malformed_blocks_list
-            }
-
-            # Attempt to salvage parts of the LLM's output if it was partially valid
-            if schema_model == LLMOutput and isinstance(data_to_validate, dict):
-                # Check if it looks like a CodeChange object directly (has FILE_PATH, ACTION, and one of FULL_CONTENT/LINES)
-                is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
-                                      ("FULL_CONTENT" in data_to_validate or "LINES" in data_to_validate)
-                
-                if is_code_change_like:
-                    self.logger.warning("LLM output was a raw CodeChange object, but LLMOutput schema was expected. Wrapping it.")
-                    file_name = Path(data_to_validate.get("FILE_PATH", "unknown_file")).name
-                    action = data_to_validate.get("ACTION", "change").lower() # Extract action for better message
-                    
-                    # Construct the expected LLMOutput structure
-                    wrapped_data = {
-                        "COMMIT_MESSAGE": f"Feat: {action.capitalize()} {file_name}", # More specific commit message
-                        "RATIONALE": f"The LLM generated a direct code change for {file_name} as part of the solution. This was wrapped into the expected LLMOutput format.",
-                        "CODE_CHANGES": [data_to_validate], # Wrap the single CodeChange object in a list
-                        "malformed_blocks": malformed_blocks_list # Include any existing malformed blocks
-                    }
-                    data_to_validate = wrapped_data
-            # Add salvage logic for other schema types if needed
-            elif schema_model == CritiqueOutput and isinstance(data_to_validate, dict):
-                fallback_output["CRITIQUE_SUMMARY"] = data_to_validate.get("CRITIQUE_SUMMARY", "Schema validation failed for critique.")
-                fallback_output["CRITIQUE_POINTS"] = data_to_validate.get("CRITIQUE_POINTS", []) if isinstance(data_to_validate.get("CRITIQUE_POINTS"), list) else []
-                fallback_output["SUGGESTIONS"] = data_to_validate.get("SUGGESTIONS", []) if isinstance(data_to_validate.get("SUGGESTIONS"), list) else []
-            elif schema_model == ContextAnalysisOutput and isinstance(data_to_validate, dict):
-                fallback_output["key_modules"] = data_to_validate.get("key_modules", []) if isinstance(data_to_validate.get("key_modules"), list) else []
-                fallback_output["security_concerns"] = data_to_validate.get("security_concerns", []) if isinstance(data_to_validate.get("security_concerns"), list) else []
-                fallback_output["architectural_patterns"] = data_to_validate.get("architectural_patterns", []) if isinstance(data_to_validate.get("architectural_patterns"), list) else []
-                fallback_output["performance_bottlenecks"] = data_to_validate.get("performance_bottlenecks", []) if isinstance(data_to_validate.get("performance_bottlenecks"), list) else []
-            # ADD THIS NEW SALVAGE LOGIC FOR GeneralOutput
-            elif schema_model == GeneralOutput and isinstance(data_to_validate, dict):
-                fallback_output["general_output"] = data_to_validate.get("general_output", "Schema validation failed for general output.")
-            # END NEW SALVAGE LOGIC
-
-            # Ensure malformed_blocks is always present in the final fallback output
-            if "malformed_blocks" not in fallback_output:
-                fallback_output["malformed_blocks"] = malformed_blocks_list
-            # NEW: Ensure malformed_code_change_items is always present
-            if "malformed_code_change_items" not in fallback_output:
-                fallback_output["malformed_code_change_items"] = []
-
-            return fallback_output
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output, data_to_validate)
         except Exception as general_e:
             self.logger.error(f"An unexpected error occurred during schema validation: {general_e}")
             malformed_blocks_list.append({
@@ -383,9 +319,34 @@ class LLMOutputParser:
                 "message": str(general_e),
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
-            return {
-                "COMMIT_MESSAGE": "Unexpected validation error",
-                "RATIONALE": f"An unexpected error occurred during schema validation: {general_e}\nRaw output: {extracted_json_str[:500]}...",
-                "CODE_CHANGES": [],
-                "malformed_blocks": malformed_blocks_list
-            }
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
+
+    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Creates a structured fallback output based on the schema model."""
+        partial_data = partial_data or {}
+        fallback_output: Dict[str, Any] = {
+            "malformed_blocks": malformed_blocks,
+            "error_type": "LLM_OUTPUT_MALFORMED",
+            "error_message": f"LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}..."
+        }
+
+        # Populate schema-specific fields with defaults or partial data
+        if schema_model == LLMOutput:
+            fallback_output["COMMIT_MESSAGE"] = partial_data.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
+            fallback_output["RATIONALE"] = partial_data.get("RATIONALE", "Failed to generate valid structured output.")
+            fallback_output["CODE_CHANGES"] = partial_data.get("CODE_CHANGES", [])
+            fallback_output["conflict_resolution"] = partial_data.get("CONFLICT_RESOLUTION")
+            fallback_output["unresolved_conflict"] = partial_data.get("UNRESOLVED_CONFLICT")
+        elif schema_model == CritiqueOutput:
+            fallback_output["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", "Critique output malformed.")
+            fallback_output["CRITIQUE_POINTS"] = partial_data.get("CRITIQUE_POINTS", [])
+            fallback_output["SUGGESTIONS"] = partial_data.get("SUGGESTIONS", [])
+        elif schema_model == ContextAnalysisOutput:
+            fallback_output["key_modules"] = partial_data.get("key_modules", [])
+            fallback_output["security_concerns"] = partial_data.get("security_concerns", [])
+            fallback_output["architectural_patterns"] = partial_data.get("architectural_patterns", [])
+            fallback_output["performance_bottlenecks"] = partial_data.get("performance_bottlenecks", [])
+        elif schema_model == GeneralOutput:
+            fallback_output["general_output"] = partial_data.get("general_output", "General output malformed.")
+        
+        return fallback_output

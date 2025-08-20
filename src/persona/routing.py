@@ -4,6 +4,8 @@ Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
+import numpy as np # NEW IMPORT
+from sentence_transformers import SentenceTransformer # NEW IMPORT
 from typing import List, Dict, Set, Optional, Any
 import re
 import json
@@ -24,6 +26,10 @@ class PersonaRouter:
         self.all_personas = all_personas
         self.persona_sets = persona_sets # Store persona sets
         
+        # Initialize SentenceTransformer for semantic routing
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.persona_embeddings = self._generate_persona_embeddings() # NEW
+
         self.domain_keywords = {
             "architecture": {
                 "positive": [
@@ -83,6 +89,14 @@ class PersonaRouter:
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"]
         }
     
+    def _generate_persona_embeddings(self) -> Dict[str, Any]:
+        """Generates embeddings for all persona descriptions for semantic routing."""
+        embeddings = {}
+        for name, config in self.all_personas.items():
+            if config.description:
+                embeddings[name] = self.model.encode([config.description])[0]
+        return embeddings
+
     def is_self_analysis_prompt(self, prompt: str) -> bool:
        """Standardized method to detect self-analysis prompts using central constants"""
        return is_self_analysis_prompt(prompt)
@@ -110,50 +124,43 @@ class PersonaRouter:
         if not intermediate_results:
             intermediate_results = {}
         
-        quality_metrics = {}
-        # Extract quality metrics from intermediate results
-        for step_name, result in intermediate_results.items():
-            if isinstance(result, dict):
-                # Check for quality_metrics directly in the result dictionary
-                if 'quality_metrics' in result and isinstance(result['quality_metrics'], dict):
-                    for metric_name, value in result['quality_metrics'].items():
-                        quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
-                # Also check for quality_metrics nested within persona output structures
-                elif step_name.endswith("_Output") and isinstance(result, dict):
-                    if "quality_metrics" in result and isinstance(result["quality_metrics"], dict):
-                        for metric_name, value in result["quality_metrics"].items():
-                            quality_metrics[metric_name] = max(quality_metrics.get(metric_name, 0.0), value)
+        # Extract and map quality metrics from Context_Aware_Assistant's output
+        context_analysis_output = intermediate_results.get("Context_Aware_Assistant_Output")
+        if context_analysis_output and isinstance(context_analysis_output, dict):
+            key_modules = context_analysis_output.get('key_modules', [])
+            security_concerns = context_analysis_output.get('security_concerns', [])
+            
+            avg_code_quality = 1.0 # Default to high
+            avg_complexity = 0.0 # Default to low
+            if key_modules:
+                avg_code_quality = sum(m.get('code_quality_score', 1.0) for m in key_modules) / len(key_modules)
+                avg_complexity = sum(m.get('complexity_score', 0.0) for m in key_modules) / len(key_modules)
+            
+            # Prioritize Security_Auditor if security concerns are high
+            if security_concerns:
+                self._insert_persona_before_arbitrator(sequence, "Security_Auditor") # Use sequence directly
+                logger.info("Prioritized Security_Auditor due to security concerns from context analysis.")
+            
+            # Prioritize Code_Architect if maintainability/code quality is low or complexity is high
+            if avg_code_quality < 0.7 or avg_complexity > 0.7:
+                self._insert_persona_before_arbitrator(sequence, "Code_Architect") # Use sequence directly
+                logger.info("Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis.")
 
         adjusted_sequence = sequence.copy()
         
-        # --- Dynamic Adjustments based on Quality Metrics ---
-        # These are heuristics and can be tuned.
-        # Prioritize Security_Auditor if security risk is high
-        if quality_metrics.get('security_risk_score', 0.0) > 0.7:
-            self._insert_persona_before_arbitrator(adjusted_sequence, "Security_Auditor")
-            logger.info("Prioritized Security_Auditor due to high security risk score.")
-        
-        # Prioritize Test_Engineer if test coverage estimate is low
-        if quality_metrics.get('test_coverage_estimate', 1.0) < 0.5:
-            self._insert_persona_before_arbitrator(adjusted_sequence, "Test_Engineer")
-            logger.info("Prioritized Test_Engineer due to low test coverage estimate.")
-        
-        # Prioritize Code_Architect if maintainability or code quality is low
-        if quality_metrics.get('maintainability_index', 1.0) < 0.7 or quality_metrics.get('code_quality', 1.0) < 0.7:
-            self._insert_persona_before_arbitrator(adjusted_sequence, "Code_Architect")
-            logger.info("Prioritized Code_Architect due to low maintainability or code quality.")
-
-        # --- Dynamic Adjustments based on Prompt Misclassification ---
-        # Check for common misclassifications and correct the sequence
+        # Enhanced misclassification detection for architecture terms
         if "Code_Architect" in adjusted_sequence:
-            # If prompt mentions building architecture but not software architecture
-            if ("building architect" in prompt_lower or "construction architect" in prompt_lower) and \
-               not ("software architect" in prompt_lower or "software" in prompt_lower or "code" in prompt_lower):
-                logger.warning("Misclassification detected: 'building architect' prompt likely triggered Code_Architect. Removing it.")
+            building_arch_terms = ["building", "construction", "structural", "physical", "blueprint", "skyscraper", "house", "design", "floor plan"]
+            software_arch_terms = ["software", "code", "system", "api", "database", "backend", "frontend"]
+            
+            building_count = sum(1 for term in building_arch_terms if term in prompt_lower)
+            software_count = sum(1 for term in software_arch_terms if term in prompt_lower)
+            
+            if building_count > software_count and building_count >= 2 and software_count == 0:
+                logger.warning(f"Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it.")
                 adjusted_sequence.remove("Code_Architect")
-                # If removed, ensure a general assistant is present if not already
-                if "Generalist_Assistant" not in adjusted_sequence and "Generalist_Assistant" in self.all_personas:
-                    self._insert_persona_before_arbitrator(adjusted_sequence, "Generalist_Assistant")
+                if "Creative_Thinker" not in adjusted_sequence and "Creative_Thinker" in self.all_personas:
+                    self._insert_persona_before_arbitrator(adjusted_sequence, "Creative_Thinker")
         
         # --- Conditional inclusion/exclusion of Test_Engineer ---
         if domain == "Software Engineering":
@@ -193,12 +200,12 @@ class PersonaRouter:
         # --- LLM SUGGESTION 2: Dynamic Persona Sequence for Self-Analysis ---
         # Check if it's a self-analysis prompt and apply specific sequences.
         if self.is_self_analysis_prompt(prompt):
-            logger.info("Detected self-analysis prompt. Applying dynamic persona sequence.")
+            logger.info("Detected self-analysis prompt. Applying dynamic persona sequence from 'Self-Improvement' set.")
             
-            # Start with a core self-analysis sequence
-            base_sequence = SELF_ANALYSIS_PERSONA_SEQUENCE.copy()
+            # Use the defined 'Self-Improvement' persona set, with a fallback to the hardcoded sequence
+            base_sequence = self.persona_sets.get("Self-Improvement", SELF_ANALYSIS_PERSONA_SEQUENCE).copy()
             
-            # Dynamic adaptation for self-analysis based on specific keywords
+            # Dynamic adaptation for self-analysis based on specific keywords (existing logic)
             # Prioritize Security_Auditor if security keywords are present
             if any(kw in prompt_lower for kw in ["security", "vulnerability", "exploit", "authentication", "threat", "risk"]) and "Security_Auditor" not in base_sequence:
                 self._insert_persona_before_arbitrator(base_sequence, "Security_Auditor")
@@ -247,18 +254,48 @@ class PersonaRouter:
 
         else:
         # --- END LLM SUGGESTION 2 ---
-            # Use the persona_sets directly from personas.yaml as the base sequence for non-self-analysis prompts
-            if domain not in self.persona_sets:
-                logger.warning(f"Domain '{domain}' not found in persona_sets. Falling back to 'General' sequence.")
-                domain = "General" # Fallback to General if selected domain is not found
-            
-            base_sequence = self.persona_sets.get(domain, [])
-            
-            if not base_sequence: # Fallback if the domain's sequence is empty or not found
-                logger.warning(f"Persona set for domain '{domain}' is empty or invalid. Falling back to default 'General' sequence.")
-                base_sequence = self.persona_sets.get("General", [])
-                if not base_sequence: # Absolute fallback if 'General' is also empty
-                    logger.error("No valid persona sequence found for 'General' domain. Using minimal fallback.")
+            # Semantic similarity for initial persona selection (new)
+            if self.persona_embeddings:
+                prompt_embedding = self.model.encode([prompt])[0]
+                semantic_scores = {}
+                for p_name, p_embedding in self.persona_embeddings.items():
+                    semantic_scores[p_name] = np.dot(prompt_embedding, p_embedding) / (np.linalg.norm(prompt_embedding) * np.linalg.norm(p_embedding))
+                
+                # Boost personas from the selected domain
+                domain_personas = self.persona_sets.get(domain, [])
+                for p_name in domain_personas:
+                    semantic_scores[p_name] = semantic_scores.get(p_name, 0.0) + 0.2 # Small boost for domain relevance
+
+                # Select top N personas based on semantic score
+                top_semantic_personas = sorted(semantic_scores.items(), key=lambda x: x[1], reverse=True)[:5] # Top 5
+                initial_semantic_sequence = [p[0] for p in top_semantic_personas if p[0] in self.all_personas]
+                
+                # Merge with the base sequence from persona_sets, prioritizing semantic matches
+                base_sequence = []
+                for p_name in initial_semantic_sequence:
+                    if p_name not in base_sequence:
+                        base_sequence.append(p_name)
+                for p_name in self.persona_sets.get(domain, []):
+                    if p_name not in base_sequence:
+                        base_sequence.append(p_name)
+                
+                # Ensure synthesis persona is always present and last
+                synthesis_persona = "Impartial_Arbitrator" if domain == "Software Engineering" else "General_Synthesizer"
+                if synthesis_persona not in base_sequence:
+                    base_sequence.append(synthesis_persona)
+                else:
+                    base_sequence.remove(synthesis_persona)
+                    base_sequence.append(synthesis_persona)
+
+                logger.info(f"Initial semantic-driven persona sequence: {base_sequence}")
+            else:
+                # Fallback to existing logic if semantic model fails
+                if domain not in self.persona_sets:
+                    logger.warning(f"Domain '{domain}' not found in persona_sets. Falling back to 'General' sequence.")
+                    domain = "General"
+                base_sequence = self.persona_sets.get(domain, [])
+                if not base_sequence:
+                    logger.error("No valid persona sequence found. Using minimal fallback.")
                     base_sequence = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
 
             final_sequence = base_sequence.copy() # Start with the domain's base sequence
@@ -268,9 +305,6 @@ class PersonaRouter:
         final_sequence = self._apply_dynamic_adjustment(final_sequence, intermediate_results, prompt_lower, domain, context_analysis_results)
         
         # Further adjustments based on context analysis results (e.g., presence of test files)
-        # This block is now largely redundant due to _apply_dynamic_adjustment handling Test_Engineer
-        # and other persona inclusions based on context. Keeping it for now, but could be removed
-        # if _apply_dynamic_adjustment covers all necessary logic.
         if context_analysis_results:
             relevant_files = context_analysis_results.get("relevant_files", [])
             test_file_count = sum(1 for file_path, _ in relevant_files if file_path.startswith('tests/'))

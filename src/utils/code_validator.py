@@ -13,8 +13,8 @@ from pathlib import Path
 import pycodestyle
 import ast
 import json # Added for Bandit output parsing
+import yaml # Added for YAML security checks
 
-# FIX: Removed 'find_project_root' from the import as it's no longer a public function
 from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path
 
 logger = logging.getLogger(__name__)
@@ -131,17 +131,27 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
         
     return issues
 
-# --- NEW FUNCTION FOR IMPROVEMENT 2.2 (AST Security Checks) ---
 def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs AST-based security checks on Python code."""
     issues = []
     try:
         tree = ast.parse(content)
         
-        class SecurityPatternVisitor(ast.NodeVisitor):
+        class EnhancedSecurityPatternVisitor(ast.NodeVisitor):
             def __init__(self, filename):
                 self.filename = filename
                 self.issues = []
+                self.imports = set()
+
+            def visit_Import(self, node):
+                for alias in node.names:
+                    self.imports.add(alias.name)
+                self.generic_visit(node)
+
+            def visit_ImportFrom(self, node):
+                if node.module:
+                    self.imports.add(node.module)
+                self.generic_visit(node)
 
             def visit_Call(self, node):
                 # Check for eval() and exec()
@@ -204,10 +214,85 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                              'line': node.lineno,
                              'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."
                          })
+
+                    # Enhanced deserialization vulnerability detection
+                if (isinstance(node.func, ast.Attribute) and 
+                    isinstance(node.func.value, ast.Name)):
+                    
+                    # Check for pickle.loads with untrusted data
+                    if (node.func.value.id == 'pickle' and node.func.attr == 'loads' and
+                        self._is_potentially_untrusted_input(node)):
+                        self.issues.append({
+                            'type': 'Security Vulnerability (AST)',
+                            'file': self.filename,
+                            'line': node.lineno,
+                            'message': "pickle.loads() with potentially untrusted data can execute arbitrary code. Use a safe serialization format like JSON."
+                        })
+                    
+                    # Check for yaml.load with Loader parameter missing
+                    if (node.func.value.id == 'yaml' and node.func.attr == 'load' and
+                        not self._has_safe_loader_parameter(node)):
+                        self.issues.append({
+                            'type': 'Security Vulnerability (AST)',
+                            'file': self.filename,
+                            'line': node.lineno,
+                            'message': "yaml.load() without Loader parameter is unsafe. Use yaml.safe_load() or specify Loader=yaml.SafeLoader."
+                        })
+                
+                # Check for shell injection patterns in subprocess calls
+                if (isinstance(node.func, ast.Attribute) and 
+                    isinstance(node.func.value, ast.Name) and 
+                    node.func.value.id == 'subprocess' and
+                    node.func.attr in ['call', 'check_call', 'check_output', 'run']):
+                    
+                    # Check if shell=True is explicitly passed or if a string argument contains shell metacharacters
+                    shell_true_arg = False
+                    for keyword in node.keywords:
+                        if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                            shell_true_arg = True
+                            break
+                    
+                    if shell_true_arg:
+                        self.issues.append({
+                            'type': 'Security Vulnerability (AST)',
+                            'file': self.filename,
+                            'line': node.lineno,
+                            'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."
+                        })
+                    else: # Check for shell metacharacters in string arguments if shell=True is not explicit
+                        for arg in node.args:
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                                if any(char in arg.value for char in [';', '|', '&', '$', '`', '>', '<', '(', ')', '#', '*']):
+                                    self.issues.append({
+                                        'type': 'Security Vulnerability (AST)',
+                                        'file': self.filename,
+                                        'line': node.lineno,
+                                        'message': f"Potential shell injection in subprocess.{node.func.attr} with string argument containing shell metacharacters. Consider passing arguments as a list."
+                                    })
                 
                 self.generic_visit(node)
+            
+            def _is_potentially_untrusted_input(self, node) -> bool:
+                """Heuristic to check if function argument might be untrusted input."""
+                if node.args and isinstance(node.args[0], ast.Name):
+                    arg_name = node.args[0].id
+                    untrusted_keywords = ['input', 'user', 'request', 'param', 'data', 'body', 'query', 'json', 'raw']
+                    return any(keyword in arg_name.lower() for keyword in untrusted_keywords)
+                return True # Assume untrusted if we can't determine
+            
+            def _has_safe_loader_parameter(self, node) -> bool:
+                """Check if yaml.load call has a safe Loader parameter."""
+                for keyword in node.keywords:
+                    if keyword.arg == 'Loader':
+                        if (isinstance(keyword.value, ast.Attribute) and 
+                            keyword.value.attr in ['SafeLoader', 'CSafeLoader']):
+                            return True
+                        if (isinstance(keyword.value, ast.Name) and 
+                            keyword.value.id in ['SafeLoader', 'CSafeLoader']):
+                            return True
+                return False
 
-        visitor = SecurityPatternVisitor(filename)
+        visitor = EnhancedSecurityPatternVisitor(filename)
         visitor.visit(tree)
         issues.extend(visitor.issues)
     except SyntaxError as se:
@@ -222,7 +307,6 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
         logger.error(f"Error during AST analysis for {filename}: {e}", exc_info=True)
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed during AST analysis: {e}'})
     return issues
-# --- END NEW FUNCTION ---
 
 def validate_code_output(parsed_change: Dict[str, Any], original_content: str = None) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
@@ -237,8 +321,8 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
     file_path = Path(file_path_str)
     is_python = file_path.suffix.lower() == '.py'
 
-    # MODIFIED: Include 'APPEND' action with 'ADD' for validation
-    if action in ['ADD', 'APPEND']: # <--- MODIFICATION HERE
+    # MODIFIED: Removed 'APPEND' action as it's not defined in the schema/model
+    if action == 'ADD':
         content_to_check = parsed_change.get('FULL_CONTENT', '')
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"New file SHA256: {checksum}"})
