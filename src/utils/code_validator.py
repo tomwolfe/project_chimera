@@ -14,6 +14,7 @@ import pycodestyle
 import ast
 import json # Added for Bandit output parsing
 import yaml # Added for YAML security checks
+from collections import defaultdict # Added for metrics aggregation
 
 from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path
 
@@ -370,7 +371,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         
     return {'issues': issues}
 
-def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, str] = None) -> Dict[str, List[Dict[str, Any]]]:
+def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, str] = None) -> Dict[str, Any]:
     """Validates a batch of code changes and aggregates issues per file."""
     if original_contents is None:
         original_contents = {}
@@ -441,4 +442,34 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             all_validation_results.setdefault(py_file, []).append({'type': 'Missing Unit Test', 'file': py_file, 'message': f"No corresponding unit test file found for this Python change. Expected a file like '{expected_test_file_prefix}.py' in 'tests/'."})
             
     logger.info(f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files.")
+
+    # NEW: Aggregate metrics for Data-Driven Self-Improvement
+    metrics = {
+        "total_code_issues": 0,
+        "issue_types_summary": defaultdict(int),
+        "security_issues_count": 0,
+        "style_issues_count": 0,
+        "syntax_issues_count": 0,
+        "files_with_issues_count": 0,
+        "malformed_code_change_items_count": len(parsed_data.get('malformed_code_change_items', []))
+    }
+
+    for file_path, file_issues in all_validation_results.items():
+        if file_path == '_aggregated_metrics': # Skip the metrics entry itself if it somehow gets here
+            continue
+        if file_issues:
+            metrics["files_with_issues_count"] += 1
+            metrics["total_code_issues"] += len(file_issues)
+            for issue in file_issues:
+                issue_type = issue.get("type", "Unknown")
+                metrics["issue_types_summary"][issue_type] += 1
+                if "security" in issue_type.lower() or "bandit" in issue_type.lower() or "vulnerability" in issue_type.lower():
+                    metrics["security_issues_count"] += 1
+                if "pep8" in issue_type.lower() or "style" in issue_type.lower():
+                    metrics["style_issues_count"] += 1
+                if "syntax" in issue_type.lower():
+                    metrics["syntax_issues_count"] += 1
+    
+    # Add the aggregated metrics to the return dictionary
+    all_validation_results["_aggregated_metrics"] = metrics
     return all_validation_results

@@ -8,6 +8,8 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
 import streamlit as st
+import copy # Added for deepcopy
+import time # Added for time.time()
 
 from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
@@ -28,6 +30,11 @@ class PersonaManager:
         self._original_personas: Dict[str, PersonaConfig] = {}
         self.persona_router: Optional[PersonaRouter] = None
 
+        # NEW: For Adaptive LLM Parameter Adjustment
+        self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
+        self.adjustment_cooldown_seconds = 300 # 5 minutes cooldown
+        self.min_turns_for_adjustment = 5 # Minimum turns before considering adjustment
+
         # Load initial data and custom frameworks, handle errors internally
         load_success, load_msg = self._load_initial_data()
         if not load_success and load_msg:
@@ -40,6 +47,9 @@ class PersonaManager:
         
         # Initialize PersonaRouter with all loaded personas and persona_sets
         self.persona_router = PersonaRouter(self.all_personas, self.persona_sets)
+
+        # NEW: Initialize performance metrics after all personas are loaded
+        self._initialize_performance_metrics()
 
     def _ensure_custom_frameworks_dir(self) -> Tuple[bool, Optional[str]]:
         """Ensures the custom frameworks directory exists, creating it if necessary.
@@ -176,6 +186,19 @@ class PersonaManager:
             logger.error(f"Error loading original personas from {DEFAULT_PERSONAS_FILE}: {e}")
             return False, f"Failed to load original personas: {e}"
 
+    # NEW: For Adaptive LLM Parameter Adjustment
+    def _initialize_performance_metrics(self):
+        """Initializes performance metrics for all loaded personas."""
+        for p_name in self.all_personas.keys():
+            self.persona_performance_metrics[p_name] = {
+                'total_turns': 0,
+                'schema_failures': 0,
+                'truncation_failures': 0,
+                'last_adjusted_temp': self.all_personas[p_name].temperature,
+                'last_adjusted_max_tokens': self.all_personas[p_name].max_tokens,
+                'last_adjustment_timestamp': 0.0
+            }
+
     def save_framework(self, name: str, current_persona_set_name: str, current_active_personas: Dict[str, PersonaConfig]) -> Tuple[bool, str]:
         """Saves the current framework configuration (including persona edits) as a custom framework.
         Returns:
@@ -246,11 +269,18 @@ class PersonaManager:
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
             
+            # Re-initialize performance metrics for potentially new/updated personas
+            self._initialize_performance_metrics()
+
             return True, f"Loaded custom framework: '{framework_name}'", personas_for_session, {framework_name: current_domain_persona_names}, framework_name
             
         elif framework_name in self.persona_sets: # It's a default framework
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
+            
+            # Re-initialize performance metrics for potentially new/updated personas
+            self._initialize_performance_metrics()
+
             return True, f"Loaded default framework: '{framework_name}'", personas_for_session, {framework_name: current_domain_persona_names}, framework_name
         else:
             return False, f"Framework '{framework_name}' not found.", {}, {}, ""
@@ -303,6 +333,17 @@ class PersonaManager:
         current_persona.max_tokens = original_config.max_tokens
         
         logger.info(f"Persona '{persona_name}' reset to default configuration.")
+        
+        # Reset performance metrics for this persona too
+        if persona_name in self.persona_performance_metrics:
+            self.persona_performance_metrics[persona_name] = {
+                'total_turns': 0,
+                'schema_failures': 0,
+                'truncation_failures': 0,
+                'last_adjusted_temp': original_config.temperature,
+                'last_adjusted_max_tokens': original_config.max_tokens,
+                'last_adjustment_timestamp': 0.0
+            }
         return True
 
     def reset_all_personas_for_current_framework(self, framework_name: str) -> bool:
@@ -327,3 +368,67 @@ class PersonaManager:
         else:
             logger.warning(f"Partial success or failure during reset of personas for framework '{framework_name}'.")
         return success
+
+    # NEW: For Adaptive LLM Parameter Adjustment
+    def get_adjusted_persona_config(self, persona_name: str) -> PersonaConfig:
+        """
+        Returns a PersonaConfig with dynamically adjusted parameters based on performance.
+        Returns a deep copy to prevent direct modification of cached objects.
+        """
+        base_config = self.all_personas.get(persona_name)
+        if not base_config:
+            logger.warning(f"Persona '{persona_name}' not found for adjustment.")
+            return PersonaConfig(name="Fallback", system_prompt="Error", temperature=0.7, max_tokens=1024) # Fallback
+
+        adjusted_config = copy.deepcopy(base_config)
+        metrics = self.persona_performance_metrics.get(persona_name)
+
+        if not metrics or metrics['total_turns'] < self.min_turns_for_adjustment or \
+           (time.time() - metrics['last_adjustment_timestamp']) < self.adjustment_cooldown_seconds:
+            return adjusted_config # Not enough data or still in cooldown
+
+        # Calculate failure rates
+        schema_failure_rate = metrics['schema_failures'] / metrics['total_turns']
+        truncation_failure_rate = metrics['truncation_failures'] / metrics['total_turns']
+
+        # Adaptive Temperature Adjustment (for schema failures/malformed output)
+        if schema_failure_rate > 0.2: # More than 20% schema failures
+            adjusted_config.temperature = max(0.1, adjusted_config.temperature - 0.15)
+            logger.info(f"Adjusted {persona_name} temperature to {adjusted_config.temperature:.2f} due to high schema failure rate ({schema_failure_rate:.2f}).")
+        elif schema_failure_rate < 0.05 and adjusted_config.temperature < base_config.temperature:
+            # Gently revert temperature if performance improves and it was previously lowered
+            adjusted_config.temperature = min(base_config.temperature, adjusted_config.temperature + 0.05)
+            logger.info(f"Reverted {persona_name} temperature to {adjusted_config.temperature:.2f} due to improved schema adherence.")
+
+        # Adaptive Max Tokens Adjustment (for truncation)
+        if truncation_failure_rate > 0.15: # More than 15% truncation failures
+            adjusted_config.max_tokens = min(8192, adjusted_config.max_tokens + 512) # Increase by 512 tokens, max 8192
+            logger.info(f"Adjusted {persona_name} max_tokens to {adjusted_config.max_tokens} due to high truncation rate ({truncation_failure_rate:.2f}).")
+        elif truncation_failure_rate < 0.05 and adjusted_config.max_tokens > base_config.max_tokens:
+            # Gently revert max_tokens if truncation improves and it was previously increased
+            adjusted_config.max_tokens = max(base_config.max_tokens, adjusted_config.max_tokens - 256)
+            logger.info(f"Reverted {persona_name} max_tokens to {adjusted_config.max_tokens} due to improved truncation.")
+
+        # Update last adjusted values and timestamp
+        metrics['last_adjusted_temp'] = adjusted_config.temperature
+        metrics['last_adjusted_max_tokens'] = adjusted_config.max_tokens
+        metrics['last_adjustment_timestamp'] = time.time()
+        
+        # Reset counts after adjustment to focus on new performance
+        metrics['schema_failures'] = 0
+        metrics['truncation_failures'] = 0
+        metrics['total_turns'] = 0
+
+        return adjusted_config
+
+    # NEW: For Adaptive LLM Parameter Adjustment
+    def record_persona_performance(self, persona_name: str, success: bool, is_truncated: bool, has_schema_error: bool):
+        """Records performance metrics for a persona after a turn."""
+        metrics = self.persona_performance_metrics.get(persona_name)
+        if metrics:
+            metrics['total_turns'] += 1
+            if has_schema_error:
+                metrics['schema_failures'] += 1
+            if is_truncated:
+                metrics['truncation_failures'] += 1
+            logger.debug(f"Recorded performance for {persona_name}: Success={success}, Truncated={is_truncated}, SchemaError={has_schema_error}")

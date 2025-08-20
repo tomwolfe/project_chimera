@@ -1,5 +1,5 @@
 # src/models.py
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal # Added Literal for ConflictReport
 from pydantic import BaseModel, Field, validator, model_validator
 import logging
 import re
@@ -32,6 +32,14 @@ class ContextAnalysisOutput(BaseModel):
     security_concerns: List[str] = Field(..., alias="security_concerns", description="List of potential security issues or patterns.")
     architectural_patterns: List[str] = Field(..., alias="architectural_patterns", description="List of observed architectural patterns or design principles.")
     performance_bottlenecks: List[str] = Field(..., alias="performance_bottlenecks", description="List of potential performance issues or areas for optimization.")
+    
+    # NEW: Fields for persona-specific summaries (Improvement 3)
+    security_summary: Optional[Dict[str, Any]] = Field(None, alias="security_summary", description="Summary tailored for Security_Auditor.")
+    architecture_summary: Optional[Dict[str, Any]] = Field(None, alias="architecture_summary", description="Summary tailored for Code_Architect.")
+    devops_summary: Optional[Dict[str, Any]] = Field(None, alias="devops_summary", description="Summary tailored for DevOps_Engineer.")
+    testing_summary: Optional[Dict[str, Any]] = Field(None, alias="testing_summary", description="Summary tailored for Test_Engineer.")
+    general_overview: Optional[str] = Field(None, alias="general_overview", description="A general high-level overview of the codebase context.")
+
 
     @model_validator(mode='after')
     def validate_paths_in_context_output(self) -> 'ContextAnalysisOutput':
@@ -163,4 +171,36 @@ class GeneralOutput(BaseModel):
                 logger.warning(f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}")
                 sanitized_output = sanitized_output.replace(path, f"INVALID_PATH_DETECTED:{path}")
         self.general_output = sanitized_output
+        return self
+
+# NEW: Pydantic model for Conflict Report (Improvement 1)
+class ConflictReport(BaseModel):
+    conflict_type: Literal["LOGICAL_INCONSISTENCY", "DATA_DISCREPANCY", "METHODOLOGY_DISAGREEMENT", "RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE"] = Field(..., description="Type of conflict identified.")
+    summary: str = Field(..., description="A concise summary of the conflict.")
+    involved_personas: List[str] = Field(..., description="Names of personas whose outputs are in conflict.")
+    conflicting_outputs_snippet: str = Field(..., description="A brief snippet or reference to the conflicting parts of the debate history.")
+    proposed_resolution_paths: List[str] = Field(default_factory=list, description="2-3 high-level suggestions for resolving this conflict.")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # For parser feedback
+
+# NEW: Pydantic model for SelfImprovementAnalysisOutput (Improvement 4)
+class SelfImprovementAnalysisOutput(BaseModel):
+    analysis_summary: str = Field(..., alias="ANALYSIS_SUMMARY", description="Overall summary of the self-improvement analysis.")
+    impactful_suggestions: List[Dict[str, Any]] = Field(..., alias="IMPACTFUL_SUGGESTIONS", description="List of structured suggestions for improvement.")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+
+    @model_validator(mode='after')
+    def validate_suggestion_structure(self) -> 'SelfImprovementAnalysisOutput':
+        for suggestion in self.impactful_suggestions:
+            if not all(k in suggestion for k in ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT"]):
+                raise ValueError("Each suggestion must contain 'AREA', 'PROBLEM', 'PROPOSED_SOLUTION', 'EXPECTED_IMPACT'.")
+            if "CODE_CHANGES_SUGGESTED" in suggestion:
+                # Validate each code change using the CodeChange model
+                validated_code_changes = []
+                for cc_data in suggestion["CODE_CHANGES_SUGGESTED"]:
+                    try:
+                        validated_code_changes.append(CodeChange.model_validate(cc_data).model_dump(by_alias=True))
+                    except ValidationError as e:
+                        logger.warning(f"Malformed CodeChange in SelfImprovementAnalysisOutput: {e}. Skipping this change.")
+                        # Optionally, add to malformed_blocks or a dedicated field
+                suggestion["CODE_CHANGES_SUGGESTED"] = validated_code_changes
         return self
