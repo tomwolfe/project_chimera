@@ -660,8 +660,14 @@ def on_example_select_change(selectbox_key, tab_name):
     # Update custom text area if it exists
     if "custom_prompt_text_area_widget" in st.session_state:
         st.session_state.custom_prompt_text_area_widget = st.session_state.user_prompt_input
+
+    # --- DEBUG LOGGING FOR on_example_select_change ---
+    logger.debug(f"DEBUG - on_example_select_change called. Selected example: {selected_example_key}")
+    logger.debug(f"DEBUG - Prompt updated to: {EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'][:100]}...")
+    logger.debug(f"DEBUG - Framework hint stored: {framework_hint}")
+    # --- END DEBUG LOGGING ---
     
-    st.rerun() # Force rerun to update the UI (e.g., clear context)
+    st.rerun()
 
 # --- MODIFIED PROMPT SELECTION UI ---
 st.subheader("What would you like to do?")
@@ -798,6 +804,18 @@ for i, tab_name in enumerate(tab_names):
 
 # The main user_prompt text_area is now implicitly managed by the tab selection.
 user_prompt = st.session_state.user_prompt_input # Ensure this line remains to get the current prompt
+
+# --- ADDED: Display currently active prompt for clarity ---
+st.info(f"**Currently Active Prompt:**\n\n{user_prompt}")
+# --- END ADDED ---
+
+# --- DEBUG LOGGING FOR CURRENT STATE ---
+logger.debug(f"DEBUG - Current user_prompt_input (from session state): {st.session_state.user_prompt_input[:100]}...")
+logger.debug(f"DEBUG - Selected example: {st.session_state.selected_example_name}")
+logger.debug(f"DEBUG - Selected prompt category: {st.session_state.selected_prompt_category}")
+logger.debug(f"DEBUG - Active example framework hint: {st.session_state.active_example_framework_hint}")
+logger.debug(f"DEBUG - Sidebar selected persona set: {st.session_state.selected_persona_set}")
+# --- END DEBUG LOGGING ---
 
 # --- START: UI Layout for Framework and Context ---
 # This block is now placed after the tabs, but before the main run button.
@@ -1215,7 +1233,7 @@ def _run_socratic_debate_process():
         # Capture rich output and console instance for process log
         with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
             try:
-                # --- FIX START: Implement logic to determine domain_for_run ---
+                # --- FIX START: Determine domain_for_run with priority ---
                 # This logic replaces the assumption that st.session_state.selected_persona_set is always correct.
                 # It prioritizes example hints for example prompts.
                 
@@ -1236,6 +1254,16 @@ def _run_socratic_debate_process():
                 
                 logger.info(f"Final domain selected for debate: {domain_for_run}")
                 # --- FIX END ---
+
+                # --- DEBUG LOGGING FOR _run_socratic_debate_process ---
+                logger.debug(f"DEBUG - _run_socratic_debate_process started.")
+                logger.debug(f"DEBUG - Prompt at start of debate function: {current_user_prompt_for_debate[:100]}...")
+                logger.debug(f"DEBUG - Domain selection logic - Initial domain_for_run: {st.session_state.selected_persona_set}")
+                logger.debug(f"DEBUG - Domain selection logic - Selected example name: {st.session_state.selected_example_name}")
+                logger.debug(f"DEBUG - Domain selection logic - Active example framework hint: {st.session_state.active_example_framework_hint}")
+                logger.debug(f"DEBUG - Domain selection logic - Sidebar selected persona set: {st.session_state.selected_persona_set}")
+                logger.debug(f"DEBUG - Domain selection logic - Final domain_for_run: {domain_for_run}")
+                # --- END DEBUG LOGGING ---
 
                 # Create a ChimeraSettings instance, potentially overriding defaults with app_config values
                 # The UI slider for context_token_budget_ratio directly updates session state.
