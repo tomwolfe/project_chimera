@@ -1225,7 +1225,6 @@ def _run_socratic_debate_process():
                         if selected_example and selected_example in EXAMPLE_PROMPTS[selected_category]:
                             framework_hint = EXAMPLE_PROMPTS[selected_category][selected_example].get("framework_hint")
                             if framework_hint:
-                                domain_for_run = framework_hint
                                 # Log this change for debugging
                                 logger.debug(f"Using framework hint '{framework_hint}' for example prompt '{selected_example}'.")
                             else:
