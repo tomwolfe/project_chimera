@@ -28,7 +28,6 @@ from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # Adde
 # --- END MODIFICATION ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Added import for caching
 import traceback # Needed for error handling in app.py
-import difflib # For Suggestion 3.1
 from collections import defaultdict # For Suggestion 3.2
 from pydantic import ValidationError # Import ValidationError for parsing errors
 import html # Needed for html.escape in sanitize_user_input
