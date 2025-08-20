@@ -237,7 +237,8 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
     file_path = Path(file_path_str)
     is_python = file_path.suffix.lower() == '.py'
 
-    if action == 'ADD':
+    # MODIFIED: Include 'APPEND' action with 'ADD' for validation
+    if action in ['ADD', 'APPEND']: # <--- MODIFICATION HERE
         content_to_check = parsed_change.get('FULL_CONTENT', '')
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"New file SHA256: {checksum}"})
