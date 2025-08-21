@@ -85,6 +85,7 @@ class SocraticDebate:
         
         self.initial_prompt = initial_prompt
         self.codebase_context = codebase_context
+        self.domain = domain # Added this line as per the fix
 
         # Initialize the LLM provider.
         try:

@@ -119,7 +119,7 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         # --- FIX APPLIED HERE ---
         # Define the replacement string outside the f-string expression to avoid SyntaxError.
         # The f-string parser cannot handle raw string literals with backslashes directly within the expression part.
-        escaped_newline_for_display = r'\\n'
+        escaped_newline_for_display = '\\n' # Changed from r'\\n' to '\\n'
         # --- END FIX ---
 
         for entry in persona_audit_log:
@@ -634,7 +634,7 @@ def on_custom_prompt_change():
     st.session_state.active_example_framework_hint = None # Clear hint for custom prompt
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
-    st.rerun() # Force rerun to update the UI (e.g., clear context)
+    st.rerun()
 
 def on_example_select_change(selectbox_key, tab_name):
     # The value of the selectbox is now available in st.session_state[selectbox_key]
@@ -890,7 +890,7 @@ with col1:
                 
                 # MODIFIED: Handle return from save_framework
                 # FIX: Access persona_manager from session state
-                success, message = st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data)
+                success, message, = st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data, framework_description_input)
                 if success:
                     st.toast(message)
                     st.rerun()
@@ -1495,9 +1495,12 @@ if st.session_state.debate_ran:
                 for file_path, file_issues in issues_by_file.items():
                     with st.expander(f"File: `{file_path}` ({len(file_issues)} issues)", expanded=False):
                         issues_by_type = defaultdict(list)
-                        for issue_type, type_issues in issues_by_type.items():
+                        for issue in file_issues:
+                            issues_by_type[issue.get('type', 'Unknown')].append(issue)
+                        
+                        for issue_type, type_issues in sorted(issues_by_type.items()):
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
-                                for issue in type_issues: # Corrected variable name from type_types to type_issues
+                                for issue in type_issues:
                                     # Use markdown for better formatting of issue details
                                     line_info = f" (Line: {issue.get('line_number', 'N/A')}, Col: {issue.get('column_number', 'N/A')})" if issue.get('line_number') else ""
                                     st.markdown(f"- **{issue.get('code', '')}**: {issue['message']}{line_info}")
