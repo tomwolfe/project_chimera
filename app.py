@@ -1495,9 +1495,6 @@ if st.session_state.debate_ran:
                 for file_path, file_issues in issues_by_file.items():
                     with st.expander(f"File: `{file_path}` ({len(file_issues)} issues)", expanded=False):
                         issues_by_type = defaultdict(list)
-                        for issue in file_issues:
-                            issues_by_type[issue.get('type', 'Unknown Issue Type')].append(issue)
-                        
                         for issue_type, type_issues in issues_by_type.items():
                             with st.expander(f"**{issue_type}** ({len(type_issues)} issues)", expanded=False):
                                 for issue in type_issues: # Corrected variable name from type_types to type_issues

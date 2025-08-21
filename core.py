@@ -34,7 +34,7 @@ from src.utils.output_parser import LLMOutputParser
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput # Added ConflictReport, SelfImprovementAnalysisOutput
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
-from src.constants import SELF_ANALYSIS_KEYWORDS
+from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # Ensure is_self_analysis_prompt is imported
 from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
 from src.persona_manager import PersonaManager # Import PersonaManager
@@ -101,17 +101,19 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
-        self.all_personas = all_personas or {}
-        self.persona_sets = persona_sets or {}
-        self.domain = domain
-        
         # NEW: Store PersonaManager instance
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning("PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI.")
-            self.persona_manager = PersonaManager() # Fallback, though app.py should provide it.
+            # Fallback: If no PersonaManager is provided, create a new one.
+            # This ensures the debate can still run, but persona changes won't persist across Streamlit reruns.
+            self.persona_manager = PersonaManager() 
             self.all_personas = self.persona_manager.all_personas # Ensure consistency
             self.persona_sets = self.persona_manager.persona_sets # Ensure consistency
+        else:
+            # If PersonaManager is provided, use its current state for personas and sets
+            self.all_personas = self.persona_manager.all_personas
+            self.persona_sets = self.persona_manager.persona_sets
 
         # Initialize PersonaRouter with all loaded personas AND persona_sets
         self.persona_router = PersonaRouter(self.all_personas, self.persona_sets)
@@ -120,6 +122,10 @@ class SocraticDebate:
         self.context_analyzer = context_analyzer
         if self.context_analyzer and self.codebase_context and not self.context_analyzer.codebase_context:
             self.context_analyzer.codebase_context = self.codebase_context
+        # Ensure context analyzer has the persona router if it wasn't set during its init
+        if self.context_analyzer and not self.context_analyzer.persona_router:
+            self.context_analyzer.set_persona_router(self.persona_router)
+
 
         # If codebase_context was provided, compute embeddings now if context_analyzer is available.
         if self.codebase_context and self.context_analyzer:
@@ -166,32 +172,15 @@ class SocraticDebate:
             # Analyze prompt complexity
             prompt_complexity = self._analyze_prompt_complexity(self.initial_prompt)
             
-            # Adjust ratios based on complexity
-            debate_ratio = self.settings.debate_token_budget_ratio
-            synthesis_ratio = self.settings.synthesis_token_budget_ratio
-
-            if prompt_complexity == "high":
-                debate_ratio = min(self.settings.debate_token_budget_ratio * 1.1, 0.9)
-                synthesis_ratio = max(self.settings.synthesis_token_budget_ratio * 0.9, 0.05)
-            elif prompt_complexity == "medium":
-                pass # Use default ratios
-            else:  # low complexity
-                debate_ratio = max(self.settings.debate_token_budget_ratio * 0.9, 0.5)
-                synthesis_ratio = min(self.settings.synthesis_token_budget_ratio * 1.1, 0.3)
-            
-            # Further adjust for self-analysis prompts
+            # Adjust ratios based on complexity and self-analysis flag
             if self.is_self_analysis:
-                debate_ratio = max(debate_ratio, self.settings.self_analysis_debate_ratio)
-                synthesis_ratio = min(synthesis_ratio, 1.0 - debate_ratio)
-            
-            # Normalize to ensure sum is 1.0 for debate and synthesis
-            total_dynamic_ratio = debate_ratio + synthesis_ratio
-            if total_dynamic_ratio > 0:
-                debate_ratio /= total_dynamic_ratio
-                synthesis_ratio /= total_dynamic_ratio
-            else: # Fallback if ratios are zero
-                debate_ratio = 0.8
-                synthesis_ratio = 0.2
+                debate_ratio = self.settings.self_analysis_debate_ratio
+                context_ratio = self.settings.self_analysis_context_ratio
+                synthesis_ratio = 1.0 - (debate_ratio + context_ratio) # Ensure sum is 1.0
+            else:
+                debate_ratio = self.settings.debate_token_budget_ratio
+                context_ratio = self.settings.context_token_budget_ratio
+                synthesis_ratio = self.settings.synthesis_token_budget_ratio
 
             # Estimate tokens for context and initial input
             context_str = self.context_analyzer.get_context_summary() if self.context_analyzer else ""
@@ -199,30 +188,36 @@ class SocraticDebate:
             
             remaining_tokens = max(0, self.max_total_tokens_budget - self.initial_input_tokens)
             
-            # Calculate debate tokens, ensuring it meets the minimum if possible
-            debate_tokens = int(remaining_tokens * debate_ratio)
-            synthesis_tokens = int(remaining_tokens * synthesis_ratio)
+            # Calculate phase tokens based on adjusted ratios
+            context_tokens_budget = int(remaining_tokens * context_ratio)
+            debate_tokens_budget = int(remaining_tokens * debate_ratio)
+            synthesis_tokens_budget = int(remaining_tokens * synthesis_ratio)
             
             # Define a minimum token allocation to ensure phases can function
             MIN_PHASE_TOKENS = 250 # Keep this as a safeguard
-            debate_tokens = max(MIN_PHASE_TOKENS, debate_tokens)
-            synthesis_tokens = max(MIN_PHASE_TOKENS, synthesis_tokens)
             
-            # Re-distribute if sum exceeds remaining_tokens due to min_phase_tokens
-            total_allocated = debate_tokens + synthesis_tokens
+            # Apply minimums and re-distribute if necessary
+            context_tokens_budget = max(MIN_PHASE_TOKENS, context_tokens_budget)
+            debate_tokens_budget = max(MIN_PHASE_TOKENS, debate_tokens_budget)
+            synthesis_tokens_budget = max(MIN_PHASE_TOKENS, synthesis_tokens_budget)
+            
+            total_allocated = context_tokens_budget + debate_tokens_budget + synthesis_tokens_budget
             if total_allocated > remaining_tokens:
-                diff = total_allocated - remaining_tokens
-                if debate_tokens > synthesis_tokens:
-                    debate_tokens -= diff
-                else:
-                    synthesis_tokens -= diff
-                debate_tokens = max(MIN_PHASE_TOKENS, debate_tokens)
-                synthesis_tokens = max(MIN_PHASE_TOKENS, synthesis_tokens)
-            
+                # Simple proportional reduction if over budget
+                reduction_factor = remaining_tokens / total_allocated
+                context_tokens_budget = int(context_tokens_budget * reduction_factor)
+                debate_tokens_budget = int(debate_tokens_budget * reduction_factor)
+                synthesis_tokens_budget = int(synthesis_tokens_budget * reduction_factor)
+                
+                # Ensure minimums are still met after reduction, if possible
+                context_tokens_budget = max(MIN_PHASE_TOKENS, context_tokens_budget)
+                debate_tokens_budget = max(MIN_PHASE_TOKENS, debate_tokens_budget)
+                synthesis_tokens_budget = max(MIN_PHASE_TOKENS, synthesis_tokens_budget)
+
             self.phase_budgets = {
-                "context": self.initial_input_tokens,
-                "debate": debate_tokens,
-                "synthesis": synthesis_tokens
+                "context": context_tokens_budget,
+                "debate": debate_tokens_budget,
+                "synthesis": synthesis_tokens_budget
             }
             
             self._log_with_context("info", "SocraticDebate token budgets initialized",
@@ -231,11 +226,13 @@ class SocraticDebate:
                                    debate_budget=self.phase_budgets["debate"],
                                    synthesis_budget=self.phase_budgets["synthesis"],
                                    max_total_tokens_budget=self.max_total_tokens_budget,
-                                   prompt_complexity=prompt_complexity)
+                                   prompt_complexity=prompt_complexity,
+                                   is_self_analysis=self.is_self_analysis)
 
         except Exception as e:
             self._log_with_context("error", "Token budget calculation failed",
                                    error=str(e), context="token_budget", exc_info=True, original_exception=e)
+            # Fallback to hardcoded values if calculation fails
             self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.", original_exception=e) from e
@@ -265,7 +262,7 @@ class SocraticDebate:
     def track_token_usage(self, phase: str, tokens: int):
         """Tracks token usage for a given phase."""
         self.tokens_used += tokens
-        cost = self.llm_provider.calculate_usd_cost(tokens, 0)
+        cost = self.llm_provider.calculate_usd_cost(tokens, 0) # Assuming input_tokens for cost tracking here
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
         self.intermediate_steps[f"{phase}_Tokens_Used"] += tokens
         self.intermediate_steps.setdefault(f"{phase}_Estimated_Cost_USD", 0.0)
@@ -387,6 +384,7 @@ class SocraticDebate:
         except Exception as e:
             self._log_with_context("error", f"Error determining persona sequence: {e}", exc_info=True, original_exception=e)
             self.rich_console.print(f"[red]Error determining persona sequence: {e}[/red]")
+            # Fallback to a default sequence if routing fails
             return ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
 
     def _process_context_persona_turn(self, persona_sequence: List[str], context_analysis_results: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -463,11 +461,14 @@ class SocraticDebate:
                 current_persona_name=persona_name
             )
 
-            persona_config = self.all_personas.get(persona_name)
-            if not persona_config:
-                self._log_with_context("error", f"Persona configuration not found for {persona_name}. Skipping turn.", persona=persona_name)
-                debate_history.append({"persona": persona_name, "error": "Config not found"})
-                continue
+            # Get potentially adjusted persona config from PersonaManager
+            persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
+            if not persona_config: # Fallback if get_adjusted_persona_config returns None or invalid
+                persona_config = self.all_personas.get(persona_name)
+                if not persona_config:
+                    self._log_with_context("error", f"Persona configuration not found for {persona_name}. Skipping turn.", persona=persona_name)
+                    debate_history.append({"persona": persona_name, "error": "Config not found"})
+                    continue
 
             # NEW: Prepare persona-specific context
             persona_specific_context_str = ""
@@ -621,22 +622,24 @@ class SocraticDebate:
         Executes the final synthesis persona turn (Impartial_Arbitrator or General_Synthesizer or Self_Improvement_Analyst).
         """
         synthesis_persona_name = None
-        if "Impartial_Arbitrator" in persona_sequence:
+        if self.is_self_analysis: # Prioritize Self_Improvement_Analyst for self-analysis
+            synthesis_persona_name = "Self_Improvement_Analyst"
+        elif "Impartial_Arbitrator" in persona_sequence:
             synthesis_persona_name = "Impartial_Arbitrator"
         elif "General_Synthesizer" in persona_sequence:
             synthesis_persona_name = "General_Synthesizer"
-        elif "Self_Improvement_Analyst" in persona_sequence: # Prioritize Self_Improvement_Analyst for self-analysis
-            synthesis_persona_name = "Self_Improvement_Analyst"
         
         if not synthesis_persona_name:
             self._log_with_context("error", "No synthesis persona (Impartial_Arbitrator, General_Synthesizer, or Self_Improvement_Analyst) found in sequence.")
             return {"error": "No synthesis persona found."}
 
         self._log_with_context("info", f"Executing final synthesis turn for persona: {synthesis_persona_name}")
-        persona_config = self.all_personas.get(synthesis_persona_name)
-        if not persona_config:
-            self._log_with_context("error", f"Synthesis persona configuration not found for {synthesis_persona_name}.")
-            return {"error": f"{synthesis_persona_name} config missing."}
+        persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
+        if not persona_config: # Fallback if get_adjusted_persona_config returns None or invalid
+            persona_config = self.all_personas.get(synthesis_persona_name)
+            if not persona_config:
+                self._log_with_context("error", f"Synthesis persona configuration not found for {synthesis_persona_name}.")
+                return {"error": f"{synthesis_persona_name} config missing."}
 
         final_synthesis_prompt_content = ""
         if synthesis_persona_name == "Self_Improvement_Analyst":
@@ -644,7 +647,13 @@ class SocraticDebate:
             # For self-analysis, we analyze the current project's codebase.
             # The project root is determined by path_utils.PROJECT_ROOT
             # Assuming the script is run from the project root or path_utils correctly finds it.
-            project_root_path = str(Path(__file__).resolve().parents[2]) # Adjust path to project root
+            # Import PROJECT_ROOT here to avoid circular dependencies at module level
+            try:
+                from src.utils.path_utils import PROJECT_ROOT
+                project_root_path = str(PROJECT_ROOT)
+            except ImportError:
+                self.logger.warning("Could not import PROJECT_ROOT for self-improvement metrics. Using current working directory.")
+                project_root_path = os.getcwd()
             
             try:
                 self_improvement_metrics = ImprovementMetricsCollector.collect_all_metrics(
@@ -704,9 +713,8 @@ class SocraticDebate:
         is_truncated = False
         has_schema_error = False
         
-        # Get potentially adjusted persona config from PersonaManager
-        # NOTE: persona_config parameter is the base config, adjusted_persona_config is the one to use
-        adjusted_persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
+        # Use the persona_config passed to this method, which is already adjusted by PersonaManager
+        adjusted_persona_config = persona_config 
 
         try:
             raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
@@ -735,12 +743,14 @@ class SocraticDebate:
                                            persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
                     self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
                 
-                if parsed_output.get("error_type") == "SCHEMA_VALIDATION_FAILED" or \
-                   any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE"] for block in parsed_output.get("malformed_blocks", [])):
+                # Check for specific error types from the parser indicating schema adherence issues
+                if parsed_output.get("error_type") == "LLM_OUTPUT_MALFORMED" or \
+                   any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE", "SCHEMA_VALIDATION_ERROR"] for block in parsed_output.get("malformed_blocks", [])):
                     has_schema_error = True
-                    raise SchemaValidationError( # Re-raise to trigger circuit breaker
+                    # Re-raise SchemaValidationError to trigger circuit breaker and proper error handling
+                    raise SchemaValidationError( 
                         error_type="LLM_OUTPUT_MALFORMED",
-                        field_path="N/A",
+                        field_path="N/A", # Specific field path might be in parsed_output.get("malformed_blocks")
                         invalid_value=raw_llm_output[:500],
                         details={"persona": persona_name, "raw_output_snippet": raw_llm_output[:500], "malformed_blocks": parsed_output.get("malformed_blocks", [])}
                     )
