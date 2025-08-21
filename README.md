@@ -2,9 +2,6 @@
 
 Project Chimera is an advanced, open-source reasoning engine designed for complex problem-solving, code generation, and self-improvement through a multi-agent Socratic debate framework. It leverages large language models (LLMs) to simulate a collaborative and critical thinking process, leading to more robust and well-reasoned solutions.
 
--   **Project Repository**: [https://github.com/tomwolfe/project_chimera](https://github.com/tomwolfe/project_chimera)
--   **Twitter**: [@Proj_Chimera](https://x.com/Proj_Chimera)
-
 ## Table of Contents
 
 -   [Features](#features)
@@ -32,24 +29,24 @@ Project Chimera is built with a focus on advanced reasoning, robustness, and dev
 
 *   **Socratic Self-Debate Core**: Orchestrates a multi-turn debate among specialized AI personas to explore problems from various angles, identify flaws, and synthesize comprehensive solutions.
 *   **Dynamic Persona Sequencing**: Intelligently selects and orders AI personas based on the user's prompt, chosen domain, and real-time context analysis, ensuring the most relevant experts contribute to the debate.
-*   **Context-Aware Reasoning**: Utilizes semantic search and intelligent summarization to identify and incorporate relevant codebase files, providing the LLMs with precise, token-efficient context.
+*   **Context-Aware Reasoning**: Utilizes semantic search and intelligent summarization to identify and incorporate relevant codebase files, providing the LLMs with precise, token-efficient context through persona-aware filtering.
 *   **Structured Output & Validation**: Employs Pydantic models to enforce strict JSON schema adherence for LLM outputs, ensuring predictable and machine-readable results.
 *   **Code Generation & Validation**: When generating code, it performs automated checks for:
     *   **PEP8 Style Compliance**: Ensures code adheres to Python's style guide.
     *   **Static Security Analysis (Bandit)**: Identifies common security vulnerabilities.
-    *   **Abstract Syntax Tree (AST) Security Checks**: Detects dangerous patterns like `eval()`, `exec()`, `os.system()`, unsafe `subprocess` calls, and insecure deserialization (e.g., `pickle.load`, `yaml.load` without safe loaders).
+    *   **Abstract Syntax Tree (AST) Security Checks**: Detects dangerous patterns like `eval()`, `exec()`, `os.system()`, unsafe `subprocess` calls (e.g., `shell=True`, shell injection), and insecure deserialization (e.g., `pickle.load`, `yaml.load` without safe loaders).
     *   **Unit Test Presence**: Suggests missing unit tests for new or modified Python files.
 *   **Adaptive LLM Parameter Adjustment**: Dynamically fine-tunes persona-specific LLM parameters (e.g., temperature, max tokens) based on real-time performance metrics like schema adherence and truncation rates.
-*   **Conflict Resolution Sub-Debate**: Introduces a "Devils_Advocate" persona to identify and report conflicts, triggering a focused sub-debate among involved personas to resolve disagreements.
+*   **Conflict Resolution Sub-Debate**: Introduces a "Devils_Advocate" persona to critically examine proposals and explicitly flag fundamental flaws or contradictions, triggering a focused sub-debate among involved personas to resolve disagreements.
 *   **Self-Improvement Analysis**: Features a dedicated "Self_Improvement_Analyst" persona that collects objective metrics (code quality, security, debate efficiency, robustness) from the codebase and debate history to propose actionable improvements to Project Chimera itself.
 *   **Robustness & Resilience**:
-    *   **Rate Limiting**: Prevents abuse and manages API usage.
-    *   **Circuit Breaker**: Protects against cascading failures by temporarily halting calls to consistently failing LLM services, with adaptive thresholds.
-    *   **Structured Error Handling**: Catches and logs exceptions with detailed context, providing user-friendly, action-oriented error messages.
-    *   **Prompt Sanitization**: Mitigates prompt injection and XSS risks in user inputs.
+    *   **Rate Limiting**: Prevents abuse and manages API usage per session.
+    *   **Circuit Breaker**: Protects against cascading failures by temporarily halting calls to consistently failing LLM services, with adaptive thresholds based on recent performance.
+    *   **Structured Error Handling**: Catches and logs exceptions with detailed context, providing user-friendly, action-oriented error messages in the UI.
+    *   **Prompt Sanitization**: Mitigates prompt injection and Cross-Site Scripting (XSS) risks in user inputs.
     *   **Secure Path Handling**: Validates and sanitizes file paths to prevent directory traversal and other file system vulnerabilities.
 *   **Flexible Persona Management**: Allows users to view, edit, and reset individual persona parameters, and save/load custom reasoning frameworks for different problem domains.
-*   **Structured Logging**: Implements JSON-formatted logging with request IDs for easier debugging, monitoring, and analysis in production environments.
+*   **Structured Logging**: Implements JSON-formatted logging with unique request IDs for easier debugging, monitoring, and analysis in production environments.
 *   **Streamlit Web UI**: Provides an intuitive and interactive web interface for configuring debates, providing context, and visualizing results.
 
 ## Getting Started
@@ -98,7 +95,7 @@ Follow these steps to get Project Chimera up and running on your local machine.
 
 The main configuration for Project Chimera is handled via `config.yaml` and the Streamlit UI.
 
-1.  **`config.yaml`**: This file defines global settings like domain keywords for prompt classification.
+1.  **`config.yaml`**: This file defines global settings like domain keywords for prompt classification and the default `context_token_budget_ratio`.
     ```yaml
     # config.yaml
     domain_keywords:
@@ -149,7 +146,7 @@ The Project Chimera web application provides a user-friendly interface to intera
 *   **Select LLM Model**: Choose between `gemini-2.5-flash-lite` (default, cost-effective), `gemini-2.5-flash`, or `gemini-2.5-pro` (more capable, potentially higher cost).
 *   **Max Total Tokens Budget**: Set the maximum number of tokens the entire debate process can consume. Higher budgets allow for more extensive debates but increase cost.
 *   **Show Intermediate Reasoning Steps**: Toggle to display detailed outputs from each persona's turn in the results section.
-*   **Context Token Budget Ratio**: Adjust the percentage of the total token budget allocated specifically for context analysis (e.g., codebase summarization). The app provides smart defaults based on your prompt.
+*   **Context Token Budget Ratio**: Adjust the percentage of the total token budget allocated specifically for context analysis (e.g., codebase summarization). The app provides smart defaults based on your prompt type (e.g., higher for self-analysis).
 
 ### Project Setup & Input
 
@@ -161,7 +158,7 @@ The Project Chimera web application provides a user-friendly interface to intera
 
 *   **Select Framework**: Choose a pre-defined persona set (e.g., "Software Engineering", "Science", "Business", "Creative", "Self-Improvement") or a custom framework you've saved. Each framework activates a specific set of AI personas tailored to that domain.
 *   **Custom Framework Management**:
-    *   **Save Current Framework**: Save the currently selected framework, including any persona edits you've made, as a new custom framework. This allows you to persist your customized persona configurations.
+    *   **Save Current Framework**: Save the *currently selected framework*, including any *unsaved persona edits* you've made in the "View and Edit Personas" section, as a new custom framework. This allows you to persist your customized persona configurations.
     *   **Load/Manage Frameworks**: Load previously saved custom frameworks.
 
 ### Codebase Context (Optional)
@@ -172,9 +169,9 @@ The Project Chimera web application provides a user-friendly interface to intera
 ### Persona Management
 
 *   **View and Edit Personas**: Expand this section to inspect and modify the `system_prompt`, `temperature`, and `max_tokens` for each persona within the currently selected framework.
-    *   Changes are temporary unless saved as a custom framework.
-    *   A "Reset All Personas for Current Framework" button allows you to revert all changes to the default configurations.
-    *   Individual persona reset buttons are also available.
+    *   Changes made here are temporary unless explicitly saved as a custom framework using the "Save Current Framework" option.
+    *   A "Reset All Personas for Current Framework" button allows you to revert all changes to the default configurations for the active framework.
+    *   Individual persona reset buttons are also available within each persona's expander.
 
 ### Results & Analysis
 
@@ -199,6 +196,7 @@ After running the debate, the "Results" section will appear:
 ├── .pre-commit-config.yaml   # Configuration for pre-commit hooks
 ├── app.py                    # Streamlit web application UI
 ├── core.py                   # Core Socratic Debate orchestration logic
+├── custom_frameworks/        # Directory for user-saved custom persona frameworks
 ├── data/
 │   └── demo_codebase_context.json # Sample codebase for demo purposes
 ├── Dockerfile                # Docker build instructions
