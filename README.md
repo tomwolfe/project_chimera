@@ -1,7 +1,5 @@
 # Project Chimera: Socratic Self-Debate Engine
 
-![Project Chimera Logo Placeholder](https://raw.githubusercontent.com/tomwolfe/project_chimera/main/docs/logo.png)
-
 Project Chimera is an advanced, open-source reasoning engine designed for complex problem-solving, code generation, and self-improvement through a multi-agent Socratic debate framework. It leverages large language models (LLMs) to simulate a collaborative and critical thinking process, leading to more robust and well-reasoned solutions.
 
 -   **Project Repository**: [https://github.com/tomwolfe/project_chimera](https://github.com/tomwolfe/project_chimera)
