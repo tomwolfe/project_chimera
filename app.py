@@ -705,7 +705,7 @@ for i, tab_name in enumerate(tab_names):
             
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
-                if st.button(f"Apply '{suggested_domain_for_framework}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_custom_prompt_{tab_name}"):
+                if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_custom_prompt_{tab_name}"):
                     st.session_state.selected_persona_set = suggested_domain_for_custom
                     st.rerun()
             
