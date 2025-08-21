@@ -15,7 +15,7 @@ class ChimeraError(Exception):
     def to_dict(self) -> Dict[str, Any]:
         """Convert exception to structured dictionary for logging/reporting."""
         return {
-            "message": str(self),
+            "exception_message": str(self), # RENAMED THIS KEY FROM "message"
             "details": self.details,
             "timestamp": self.timestamp.isoformat(),
             "original_exception_type": type(self.original_exception).__name__ if self.original_exception else None,
