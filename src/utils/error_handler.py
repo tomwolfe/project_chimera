@@ -19,7 +19,9 @@ def handle_errors(default_return: Any = None, log_level: str = "ERROR"):
             except ChimeraError as e:
                 # If it's already a ChimeraError, just log it with its structured info
                 log_method = getattr(logger, log_level.lower())
-                log_method(f"Structured error in {func.__name__}: {e.message}", extra=e.to_dict())
+                # FIX: Use str(e) to access the exception message robustly,
+                # as 'message' attribute might not always be present or accessible directly.
+                log_method(f"Structured error in {func.__name__}: {str(e)}", extra=e.to_dict())
                 raise e # Re-raise the structured error for upstream handling
             except Exception as e:
                 # Wrap any unexpected errors in a generic ChimeraError
