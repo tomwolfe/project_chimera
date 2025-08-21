@@ -246,9 +246,7 @@ else:
 # --- MODIFICATION FOR IMPROVEMENT 3.2 ---
 # Define the function to get a cached instance of ContextRelevanceAnalyzer
 # and inject the persona_router from the PersonaManager.
-# FIX START: REMOVE @st.cache_resource from get_context_analyzer()
-# This is the core fix for the CacheReplayClosureError.
-# @st.cache_resource # <--- REMOVED THIS LINE
+# FIX START: REMOVED @st.cache_resource from get_context_analyzer()
 def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manager_instance
 # FIX END
     """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
@@ -271,8 +269,6 @@ def get_context_analyzer(_pm_instance: PersonaManager): # Pass the persona_manag
 
 # Get the persona manager instance (also cached)
 # --- FIX START: REMOVED @st.cache_resource from get_persona_manager() ---
-# This is the core fix for the CacheReplayClosureError.
-# @st.cache_resource # <--- REMOVED THIS LINE
 def get_persona_manager():
     return PersonaManager()
 # --- FIX END ---
@@ -676,7 +672,6 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
-# The 'key' argument is not supported for st.tabs.
 tabs = st.tabs(tab_names)
 # --- END FIX ---
 
@@ -864,9 +859,7 @@ with col1:
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        # The 'key' argument is not supported for st.tabs. Removing it.
-        tab_names_framework = ["Save Current Framework", "Load/Manage Frameworks"]
-        tabs_framework = st.tabs(tab_names_framework) # REMOVED: key="framework_management_tabs"
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks"])
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
@@ -1287,7 +1280,8 @@ def _run_socratic_debate_process():
                     context_analyzer=st.session_state.context_analyzer, # Pass the cached analyzer
                     # --- MODIFICATION FOR SUGGESTION #3: Add is_self_analysis parameter ---
                     is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate),
-                    settings=current_settings # PASS THE CHIMERASETTINGS OBJECT
+                    settings=current_settings, # PASS THE CHIMERASETTINGS OBJECT
+                    persona_manager=st.session_state.persona_manager # Pass the PersonaManager instance
                     # --- END MODIFICATION ---
                 )
                 

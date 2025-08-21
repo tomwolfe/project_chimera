@@ -97,10 +97,13 @@ class ContextRelevanceAnalyzer:
     # --- END MODIFICATION ---
     
     @lru_cache(maxsize=128) # Cache relevant files based on prompt and active personas
-    def find_relevant_files(self, prompt: str, max_context_tokens: int, active_personas: Optional[List[str]] = None) -> List[Tuple[str, float]]:
+    def find_relevant_files(self, prompt: str, max_context_tokens: int, active_personas: Optional[Tuple[str, ...]] = None) -> List[Tuple[str, float]]:
         """
         Find the most relevant files to the prompt with enhanced weighting,
         considering the maximum allowed tokens for context.
+        
+        FIX: Changed active_personas type hint from List[str] to Tuple[str, ...]
+             because List is unhashable and causes TypeError with @lru_cache.
         """
         if not self.file_embeddings or not self.codebase_context:
             self.last_relevant_files = []
@@ -170,7 +173,7 @@ class ContextRelevanceAnalyzer:
         for neg_pattern, base_penalty_factor in NEGATION_PATTERNS:
             for neg_match in re.finditer(neg_pattern, prompt_lower):
                 negation_end_pos = neg_match.end()
-                # Only consider negations *before* the keyword
+                # Only consider negations *before* the keyword within the specified proximity
                 if negation_end_pos < keyword_start_pos:
                     distance = keyword_start_pos - negation_end_pos
                     if distance <= max_proximity:
@@ -188,7 +191,7 @@ class ContextRelevanceAnalyzer:
         return min_multiplier + (max_multiplier - min_multiplier) * decay_factor
 
     # --- MODIFICATION FOR SUGGESTION 3: Implement 7-line negation proximity check ---
-    def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str], active_personas: Optional[List[str]] = None) -> float:
+    def _apply_keyword_boost(self, file_path: str, base_similarity: float, key_terms: List[str], active_personas: Optional[Tuple[str, ...]] = None) -> float:
         """
         Applies a boost to the similarity score based on keyword matches,
         negation proximity, and active personas.

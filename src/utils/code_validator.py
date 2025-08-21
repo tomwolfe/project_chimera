@@ -34,9 +34,11 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
             lines=content.splitlines(keepends=True),
         )
 
-        errors = checker.check_all()
+        # FIX: checker.check_all() returns the count, not the errors.
+        # Errors are collected in checker.report.results.
+        checker.check_all() 
 
-        for line_num, col_num, code, message in errors:
+        for line_num, col_num, code, message in checker.report.results: # Corrected iteration
             issues.append({
                 "line_number": line_num,
                 "column_number": col_num,
@@ -65,8 +67,9 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     issues = []
     tmp_file_path = None # Initialize to None
     try:
+        # FIX: Set delete=False for NamedTemporaryFile and add explicit cleanup
         with tempfile.NamedTemporaryFile(
-            mode='w+', suffix='.py', encoding='utf-8', delete=False # Set delete=False for explicit cleanup
+            mode='w+', suffix='.py', encoding='utf-8', delete=False 
         ) as temp_file:
             temp_file.write(content)
             temp_file.flush()
@@ -98,15 +101,15 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                     if bandit_results:
                         data = json.loads(bandit_results)
                         for issue in data.get('results', []):
-                            # Original code's use of 'severity' and 'description' is correct for Bandit's JSON output
-                            if issue['level'] != 'info':
-                                issues.append({
-                                    'type': 'Bandit Security Issue',
-                                    'file': filename,
-                                    'line': issue.get('line_number'),
-                                    'code': issue.get('test_id'),
-                                    'message': f"[{issue.get('severity')}] {issue.get('description')}"
-                                })
+                            # FIX: Removed the problematic 'if issue['level'] != 'info':'.
+                            # Bandit's JSON output uses 'severity' and 'description', not 'level'.
+                            issues.append({
+                                'type': 'Bandit Security Issue',
+                                'file': filename,
+                                'line': issue.get('line_number'),
+                                'code': issue.get('test_id'),
+                                'message': f"[{issue.get('severity')}] {issue.get('description')}"
+                            })
                 except json.JSONDecodeError as jde:
                     logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {process.stdout}", exc_info=True)
                     issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})

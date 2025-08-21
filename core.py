@@ -56,8 +56,8 @@ class SocraticDebate:
     def __init__(self, initial_prompt: str, api_key: str,
                  codebase_context: Optional[Dict[str, str]] = None,
                  settings: Optional[ChimeraSettings] = None,
-                 all_personas: Optional[Dict[str, PersonaConfig]] = None,
-                 persona_sets: Optional[Dict[str, List[str]]] = None,
+                 all_personas: Optional[Dict[str, PersonaConfig]] = None, # This parameter is now less critical if persona_manager is passed
+                 persona_sets: Optional[Dict[str, List[str]]] = None, # This parameter is now less critical if persona_manager is passed
                  domain: Optional[str] = None,
                  model_name: str = "gemini-2.5-flash-lite",
                  status_callback: Optional[Callable] = None,
@@ -339,10 +339,11 @@ class SocraticDebate:
         self._log_with_context("info", "Performing context analysis.")
         try:
             # Pass the context budget for dynamic file selection
+            # FIX: Convert persona_sequence to a tuple for lru_cache compatibility
             relevant_files = self.context_analyzer.find_relevant_files(
                 self.initial_prompt, 
                 max_context_tokens=self.phase_budgets["context"], # Pass the allocated context budget
-                active_personas=persona_sequence # Pass the determined persona sequence for persona-aware filtering
+                active_personas=tuple(persona_sequence) # Pass the determined persona sequence for persona-aware filtering
             )
             
             # Generate context summary using the intelligent summarizer
@@ -831,7 +832,8 @@ class SocraticDebate:
 
         # Phase 1: Context Analysis (if applicable)
         self.status_callback("Phase 1: Analyzing Context...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("context"))
-        context_analysis_results = self._perform_context_analysis(persona_sequence) # Pass persona_sequence here
+        # FIX: Pass persona_sequence as a tuple to _perform_context_analysis
+        context_analysis_results = self._perform_context_analysis(persona_sequence) 
         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
         
         # Phase 2: Context Persona Turn (if in sequence)
