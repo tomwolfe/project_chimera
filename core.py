@@ -502,16 +502,23 @@ class SocraticDebate:
                     try:
                         # Validate output against ConflictReport schema
                         conflict_report = ConflictReport.model_validate(output)
-                        resolution_result = self._trigger_conflict_sub_debate(conflict_report, debate_history)
-                        if resolution_result and resolution_result.get("conflict_resolved"):
-                            # Update previous_output to reflect resolution, clear unresolved conflict
-                            previous_output = {"status": "conflict_resolved", "resolution": resolution_result["resolution_summary"]}
-                            self.intermediate_steps["Conflict_Resolution_Attempt"] = resolution_result
-                            self.intermediate_steps["Unresolved_Conflict"] = None # Clear if resolved
+                        if conflict_report.conflict_found: # Check the new flag
+                            resolution_result = self._trigger_conflict_sub_debate(conflict_report, debate_history)
+                            if resolution_result and resolution_result.get("conflict_resolved"):
+                                # Update previous_output to reflect resolution, clear unresolved conflict
+                                previous_output = {"status": "conflict_resolved", "resolution": resolution_result["resolution_summary"]}
+                                self.intermediate_steps["Conflict_Resolution_Attempt"] = resolution_result
+                                self.intermediate_steps["Unresolved_Conflict"] = None # Clear if resolved
+                            else:
+                                # If not resolved, keep the conflict in intermediate steps
+                                self.intermediate_steps["Unresolved_Conflict"] = conflict_report.model_dump()
+                                previous_output = {"status": "conflict_unresolved", "conflict_report": conflict_report.model_dump()}
                         else:
-                            # If not resolved, keep the conflict in intermediate steps
-                            self.intermediate_steps["Unresolved_Conflict"] = conflict_report.model_dump()
-                            previous_output = {"status": "conflict_unresolved", "conflict_report": conflict_report.model_dump()}
+                            # No conflict found, proceed normally
+                            self._log_with_context("info", f"Devils_Advocate reported no conflict: {conflict_report.summary}")
+                            self.intermediate_steps["Unresolved_Conflict"] = None # Ensure it's cleared
+                            self.intermediate_steps["Conflict_Resolution_Attempt"] = None # Ensure it's cleared
+                            previous_output = {"status": "no_conflict_reported", "summary": conflict_report.summary}
                     except ValidationError:
                         # Not a ConflictReport, proceed as normal critique
                         pass # Output is already stored in `output` variable

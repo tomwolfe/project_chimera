@@ -88,7 +88,7 @@ class CodeChange(BaseModel):
     @validator('action')
     def validate_action(cls, v):
         """Validates the action type."""
-        valid_actions = ["ADD", "MODIFY", "REMOVE"] # Ensure 'APPEND' is NOT here
+        valid_actions = ["ADD", "MODIFY", "REMOVE"]
         if v not in valid_actions:
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
         return v
@@ -175,11 +175,12 @@ class GeneralOutput(BaseModel):
 
 # NEW: Pydantic model for Conflict Report (Improvement 1)
 class ConflictReport(BaseModel):
-    conflict_type: Literal["LOGICAL_INCONSISTENCY", "DATA_DISCREPANCY", "METHODOLOGY_DISAGREEMENT", "RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE"] = Field(..., description="Type of conflict identified.")
+    conflict_type: Literal["LOGICAL_INCONSISTENCY", "DATA_DISCREPANCY", "METHODOLOGY_DISAGREEMENT", "RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE", "NO_CONFLICT"] = Field(..., description="Type of conflict identified.")
     summary: str = Field(..., description="A concise summary of the conflict.")
     involved_personas: List[str] = Field(..., description="Names of personas whose outputs are in conflict.")
     conflicting_outputs_snippet: str = Field(..., description="A brief snippet or reference to the conflicting parts of the debate history.")
     proposed_resolution_paths: List[str] = Field(default_factory=list, description="2-3 high-level suggestions for resolving this conflict.")
+    conflict_found: bool = Field(..., description="True if a conflict was identified, False otherwise.") # ADDED THIS LINE
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # For parser feedback
 
 # NEW: Pydantic model for SelfImprovementAnalysisOutput (Improvement 4)

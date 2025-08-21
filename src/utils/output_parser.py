@@ -365,7 +365,8 @@ class LLMOutputParser:
 
         # 4. Validate against schema
         try:
-            validated_output = schema_model(**data_to_validate)
+            # FIX: Use model_validate for Pydantic v2 compatibility
+            validated_output = schema_model.model_validate(data_to_validate)
             result_dict = validated_output.model_dump(by_alias=True)
             result_dict["malformed_blocks"] = malformed_blocks_list
             return result_dict
