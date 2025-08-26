@@ -359,6 +359,7 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "current_debate_cost_usd": 0.0,
         # --- NEW: Session Expiration ---
         "last_activity_timestamp": time.time(), # Initialize with current time
+        "context_ratio_user_modified": False # NEW: Flag for context ratio slider
     }
 
     # Apply defaults to session state if not already present
@@ -731,31 +732,48 @@ with st.sidebar:
         # --- END FIX ---
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
         st.markdown("---")
-        # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
+        # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION --- 
         current_ratio_value = st.session_state.get("context_token_budget_ratio", CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG) # Use get with default
         user_prompt_text = st.session_state.get("user_prompt_input", "") # Use the correct session state key
 
-        # Determine smart default based on prompt type and current default ratio
-        # Only suggest a new default if the user hasn't explicitly changed it from the initial config value.
-        if user_prompt_text and current_ratio_value == CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG: # CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG is 0.25 from config.yaml
+        # Flag to check if the user has manually interacted with the slider
+        if "context_ratio_user_modified" not in st.session_state:
+            st.session_state.context_ratio_user_modified = False
+        
+        def on_context_ratio_change():
+            st.session_state.context_ratio_user_modified = True
+            update_activity_timestamp()
+
+        smart_default_ratio = CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG # Start with config default
+        help_text_dynamic = "Percentage of total token budget allocated to context analysis."
+        
+        if user_prompt_text and not st.session_state.context_ratio_user_modified:
+            recommended_domain = recommend_domain_from_keywords(user_prompt_text, DOMAIN_KEYWORDS)
+            
             if is_self_analysis_prompt(user_prompt_text):
                 smart_default_ratio = 0.35 # Higher for self-analysis
                 help_text_dynamic = "Self-analysis prompts often benefit from more context tokens (35%+)."
+            elif recommended_domain == 'Software Engineering':
+                smart_default_ratio = 0.30 # Slightly higher for SE
+                help_text_dynamic = "Software Engineering prompts often benefit from more context tokens (30%+)."
+            elif recommended_domain == 'Creative':
+                smart_default_ratio = 0.15 # Lower for creative
+                help_text_dynamic = "Creative prompts may require less context tokens (15%+)."
             else:
-                smart_default_ratio = 0.20 # Slightly lower for general prompts to save debate tokens
+                smart_default_ratio = 0.20 # General default
                 help_text_dynamic = "Percentage of total token budget allocated to context analysis."
             
-            # Update session state only if it's still at the initial default
-            st.session_state.context_token_budget_ratio = smart_default_ratio
-            current_ratio_value = smart_default_ratio # Update local variable for slider value
-
-        else:
-            help_text_dynamic = "Percentage of total token budget allocated to context analysis."
+            # Update session state only if it's still at the initial default or if a new smart default is better
+            # This ensures the smart default is applied if the user hasn't touched it, or if it's the initial load.
+            if current_ratio_value == CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG or \
+               (smart_default_ratio != current_ratio_value and not st.session_state.context_ratio_user_modified):
+                st.session_state.context_token_budget_ratio = smart_default_ratio
+                current_ratio_value = smart_default_ratio # Update local variable for slider value
 
         st.slider(
             "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=current_ratio_value,
             step=0.05, key="context_token_budget_ratio", help=help_text_dynamic,
-            on_change=update_activity_timestamp # ADDED update_activity_timestamp
+            on_change=on_context_ratio_change # Use the new on_change callback
         )
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 

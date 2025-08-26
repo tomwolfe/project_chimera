@@ -669,17 +669,62 @@ class SocraticDebate:
                     project_root_path, self.intermediate_steps
                 )
                 self.intermediate_steps["Self_Improvement_Metrics"] = self_improvement_metrics
-                final_synthesis_prompt_content = f"""
-                Analyze the Project Chimera codebase and the recent debate process based on the following objective metrics and debate history.
                 
-                ## Objective Metrics:
-                {json.dumps(self_improvement_metrics, indent=2)}
+                # --- START MODIFICATION FOR SELF_IMPROVEMENT_ANALYST PROMPT GENERATION ---
+                # This logic was originally suggested for src/personas/Self_Improvement_Analyst.py
+                # but is now integrated here as the prompt generation for this persona.
+                metrics = self_improvement_metrics # Use the collected metrics
+                debate_history = debate_persona_results # Use the collected debate history
+
+                normalized_impact_scores = {}
                 
-                ## Debate History:
-                {json.dumps(debate_persona_results, indent=2)}
+                # Define reasonable maximums for normalization (illustrative, can be refined)
+                MAX_TOKENS_FOR_NORM = 100000 # Max tokens for a single debate run
+                MAX_SCHEMA_FAILURES_FOR_NORM = 10
+                MAX_CONFLICT_ATTEMPTS_FOR_NORM = 3
+                MAX_CODE_SMELLS_FOR_NORM = 50
+                MAX_SECURITY_ISSUES_FOR_NORM = 20
+                CRITICAL_AREA_THRESHOLD = 30 # If a critical area has >30% impact, include it
+
+                # Efficiency: Higher token usage -> higher impact score
+                normalized_impact_scores['Efficiency'] = min(100, (metrics.get('performance_efficiency', {}).get('token_usage_stats', {}).get('total_tokens', 0) / MAX_TOKENS_FOR_NORM) * 100)
                 
-                Your task is to identify the most impactful areas for self-improvement across reasoning quality, robustness, efficiency, and developer maintainability. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
-                """
+                # Robustness: Higher schema failures/unresolved conflicts -> higher impact score
+                schema_failures = metrics.get('robustness', {}).get('schema_validation_failures_count', 0)
+                unresolved_conflict_score = 50 if metrics.get('robustness', {}).get('unresolved_conflict_present', False) else 0
+                normalized_impact_scores['Robustness'] = min(100, ((schema_failures / MAX_SCHEMA_FAILURES_FOR_NORM) * 100) + unresolved_conflict_score)
+                
+                # Reasoning Quality: Higher conflict resolution attempts (implies issues) -> higher impact score
+                conflict_attempts = metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('conflict_resolution_attempts', 0)
+                normalized_impact_scores['Reasoning Quality'] = min(100, (conflict_attempts / MAX_CONFLICT_ATTEMPTS_FOR_NORM) * 100)
+                
+                # Maintainability: Higher code smells -> higher impact score
+                code_smells = metrics.get('code_quality', {}).get('code_smells_count', 0)
+                normalized_impact_scores['Maintainability'] = min(100, (code_smells / MAX_CODE_SMELLS_FOR_NORM) * 100)
+
+                # Security: Higher bandit/AST issues -> higher impact score
+                bandit_issues = metrics.get('security', {}).get('bandit_issues_count', 0)
+                ast_issues = metrics.get('security', {}).get('ast_security_issues_count', 0)
+                normalized_impact_scores['Security'] = min(100, ((bandit_issues + ast_issues) / MAX_SECURITY_ISSUES_FOR_NORM) * 100)
+                
+                # Sort by impact (higher = more critical)
+                sorted_impact = sorted(normalized_impact_scores.items(), key=lambda x: x[1], reverse=True)
+                
+                # Select top N areas, but always include critical ones if their score is above a minimum threshold
+                top_areas = []
+                for area, score in sorted_impact:
+                    if len(top_areas) < 2 or score >= CRITICAL_AREA_THRESHOLD:
+                        top_areas.append(area)
+                    # Limit to a reasonable number of areas to avoid overwhelming the LLM
+                    if len(top_areas) >= 4: # Cap at 4 areas for focus
+                        break
+                
+                # Ensure unique areas (in case critical_area_threshold added duplicates)
+                top_areas = list(dict.fromkeys(top_areas))
+                
+                final_synthesis_prompt_content = f"Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.\\n\\n## Objective Metrics:\\n{json.dumps(metrics, indent=2)}\\n\\n## Debate History:\\n{json.dumps(debate_history, indent=2)}"
+                # --- END MODIFICATION FOR SELF_IMPROVEMENT_ANALYST PROMPT GENERATION ---
+
             except Exception as e:
                 self._log_with_context("error", f"Failed to collect self-improvement metrics: {e}")
                 final_synthesis_prompt_content = f"""
@@ -696,7 +741,7 @@ class SocraticDebate:
                 "initial_prompt": self.initial_prompt,
                 "debate_history": debate_persona_results
             }
-            final_synthesis_prompt_content = f"Synthesize the following debate results into a coherent final answer, adhering strictly to your JSON schema:\n\n{json.dumps(full_debate_context, indent=2)}"
+            final_synthesis_prompt_content = f"Synthesize the following debate results into a coherent final answer, adhering strictly to your JSON schema:\\n\\n{json.dumps(full_debate_context, indent=2)}"
 
         prompt = final_synthesis_prompt_content # Use the dynamically generated prompt
         
