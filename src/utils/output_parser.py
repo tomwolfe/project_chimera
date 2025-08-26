@@ -23,6 +23,7 @@ class LLMOutputParser:
         Extracts JSON content explicitly delimited by start and end markers.
         Returns (json_string_content, end_marker_found).
         If only start_marker is found, returns (content_after_start_marker, False).
+        If no valid JSON can be extracted after a missing end marker, returns None.
         """
         self.logger.debug(f"Attempting to extract JSON using markers '{start_marker}' and '{end_marker}'...")
         start_match = re.search(re.escape(start_marker), text)
@@ -41,8 +42,15 @@ class LLMOutputParser:
             end_marker_found = True
             self.logger.debug("Both markers found. Extracted content between them.")
         else:
-            json_content_raw = text_after_start_marker.strip()
-            self.logger.warning("Start marker found, but end marker is missing. Taking all content after start marker.")
+            self.logger.warning("Start marker found, but end marker is missing. Attempting to extract first outermost JSON object from content after start marker.")
+            # If end marker is missing, try to robustly extract a single JSON object
+            # from the content that follows the start marker.
+            json_content_raw = self._extract_first_outermost_json(text_after_start_marker)
+            if json_content_raw:
+                self.logger.debug("Successfully extracted a single JSON object after missing end marker.")
+            else:
+                self.logger.warning("Could not extract a single JSON object after missing end marker.")
+                return None # Return None if no single JSON object can be robustly extracted
 
         if json_content_raw:
             # Basic sanitization for trailing commas before closing braces/brackets
@@ -52,6 +60,61 @@ class LLMOutputParser:
         self.logger.debug("No content found after start marker.")
         return None
         
+    def _extract_first_outermost_json(self, text: str) -> Optional[str]:
+        """
+        Extracts the first outermost balanced JSON object or array from text.
+        This is a robust, stack-based approach to handle nested delimiters.
+        """
+        self.logger.debug("Attempting to extract first outermost JSON block...")
+
+        balance = 0
+        expected_closers_stack = []
+        start_index = -1
+
+        for i, char in enumerate(text):
+            if char == '{':
+                if start_index == -1: # First opening brace
+                    start_index = i
+                    balance = 1
+                    expected_closers_stack.append('}')
+                else:
+                    balance += 1
+                    expected_closers_stack.append('}')
+            elif char == '[':
+                if start_index == -1: # First opening bracket
+                    start_index = i
+                    balance = 1
+                    expected_closers_stack.append(']')
+                else:
+                    balance += 1
+                    expected_closers_stack.append(']')
+            elif char == '}':
+                if start_index != -1:
+                    balance -= 1
+                    if expected_closers_stack and expected_closers_stack[-1] == '}':
+                        expected_closers_stack.pop()
+            elif char == ']':
+                if start_index != -1:
+                    balance -= 1
+                    if expected_closers_stack and expected_closers_stack[-1] == ']':
+                        expected_closers_stack.pop()
+            
+            if start_index != -1 and balance == 0 and not expected_closers_stack:
+                potential_json_str = text[start_index:i+1]
+                try:
+                    json.loads(potential_json_str)
+                    self.logger.debug(f"Successfully extracted first outermost valid JSON block: {potential_json_str[:100]}...")
+                    return potential_json_str.strip()
+                except json.JSONDecodeError:
+                    # If it's not valid JSON despite being balanced, reset and continue
+                    start_index = -1
+                    balance = 0
+                    expected_closers_stack = []
+                    continue
+        
+        self.logger.debug("No first outermost valid JSON block found.")
+        return None
+
     def _extract_json_from_markdown(self, text: str) -> Optional[str]:
         """
         Extracts content from markdown code blocks and then uses robust JSON extraction
@@ -421,6 +484,16 @@ class LLMOutputParser:
         # Initialize a dictionary that will strictly conform to the schema_model
         fallback_data_for_model: Dict[str, Any] = {}
 
+        # Determine if partial_data is a single suggestion dict (for SelfImprovementAnalysisOutput)
+        is_single_suggestion_dict = False
+        if isinstance(partial_data, dict) and "AREA" in partial_data and \
+           "PROBLEM" in partial_data and \
+           "PROPOSED_SOLUTION" in partial_data and \
+           "EXPECTED_IMPACT" in partial_data:
+            # Ensure it's not a CodeChange object which might coincidentally have these keys
+            if not all(k in partial_data for k in ["FILE_PATH", "ACTION"]):
+                is_single_suggestion_dict = True
+
         # Populate schema-specific fields with defaults or partial data
         if schema_model == LLMOutput:
             fallback_data_for_model["COMMIT_MESSAGE"] = partial_data.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
@@ -461,6 +534,11 @@ class LLMOutputParser:
             fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            # Special handling if the LLM returned a single suggestion dict instead of the full analysis
+            if is_single_suggestion_dict:
+                self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
+                fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
+                fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data] # Wrap the single dict in a list
         
         # Now, attempt to validate this constructed fallback_data_for_model against the schema.
         # This ensures that what we return is always a valid Pydantic model instance.
