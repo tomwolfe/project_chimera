@@ -253,41 +253,6 @@ class LLMOutputParser:
 
         return None, repair_log
 
-    def _extract_largest_valid_subobject(self, json_str: str) -> str:
-        """Extracts the largest potentially valid JSON object or array from malformed text."""
-        # Use non-greedy matching for the content within the braces/brackets
-        matches = list(re.finditer(r'(\{.*?\}|\[.*?\])', json_str, re.DOTALL))
-        
-        longest_valid_match = ""
-        for match in matches:
-            potential_json = match.group(0)
-            try:
-                json.loads(potential_json)
-                if len(potential_json) > len(longest_valid_match):
-                    longest_valid_match = potential_json
-            except json.JSONDecodeError:
-                continue
-        return longest_valid_match
-
-    def _convert_to_json_lines(self, json_str: str) -> str:
-        """Converts potential JSON lines format to array format."""
-        lines = json_str.strip().split('\n')
-        json_objects = []
-        
-        for line in lines:
-            line = line.strip()
-            if line.startswith('{') and line.endswith('}'):
-                try:
-                    json.loads(line)  # Validate it's parseable
-                    json_objects.append(line)
-                except json.JSONDecodeError:
-                    continue
-                    
-        if json_objects:
-            return f'[{",".join(json_objects)}]'
-            
-        return json_str # Return original if no valid JSON lines found
-
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
@@ -345,8 +310,9 @@ class LLMOutputParser:
             data_to_validate = parsed_data
         else:
             malformed_blocks_list.append({"type": "INVALID_JSON_STRUCTURE", "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}."})
-            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
-
+            # Pass raw_output as partial_data here, as parsed_data is not a dict/list
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output, raw_output) # Pass raw_output as partial_data
+            
         # Handle raw CodeChange output when LLMOutput is expected
         if schema_model == LLMOutput and isinstance(data_to_validate, dict):
             is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
@@ -376,7 +342,10 @@ class LLMOutputParser:
                 "message": str(validation_e),
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
-            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output, data_to_validate)
+            # The problem is here: `data_to_validate` is passed as `partial_data`.
+            # If `data_to_validate` is a string (as indicated by the Pydantic error),
+            # then `partial_data` in `_create_fallback_output` will be that string.
+            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output, data_to_validate) # <--- `data_to_validate` is a string here!
         except Exception as general_e:
             malformed_blocks_list.append({
                 "type": "UNEXPECTED_VALIDATION_ERROR",
@@ -385,9 +354,12 @@ class LLMOutputParser:
             })
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
-        partial_data = partial_data or {}
+        # FIX: Ensure partial_data is a dictionary for safe .get() calls
+        if not isinstance(partial_data, dict):
+            partial_data = {}
+        
         fallback_output: Dict[str, Any] = {
             "malformed_blocks": malformed_blocks,
             "error_type": "LLM_OUTPUT_MALFORMED",

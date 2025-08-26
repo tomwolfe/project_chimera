@@ -7,6 +7,7 @@ import io
 import contextlib
 import re
 import datetime
+import time # ADDED: For session expiration and rate limit retries
 from typing import Dict, Any, List, Optional
 import yaml
 import logging
@@ -258,6 +259,12 @@ EXAMPLE_PROMPTS = {
 }
 # --- END EXAMPLE_PROMPTS STRUCTURE ---
 
+# --- NEW CONSTANTS FOR SESSION MANAGEMENT AND RETRIES ---
+SESSION_TIMEOUT_SECONDS = 1800 # 30 minutes of inactivity
+MAX_DEBATE_RETRIES = 3 # Max retries for the entire debate process if rate limited
+DEBATE_RETRY_DELAY_SECONDS = 5 # Initial delay for debate retries (will be multiplied by attempt number)
+# --- END NEW CONSTANTS ---
+
 # --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
 # This should be called early to ensure all subsequent logs are structured.
 setup_structured_logging(log_level=logging.INFO)
@@ -309,6 +316,11 @@ def get_persona_manager():
 # context_analyzer_instance = get_context_analyzer(persona_manager_instance)
 # --- END REMOVED ---
 
+# --- Helper to update activity timestamp ---
+def update_activity_timestamp():
+    st.session_state.last_activity_timestamp = time.time()
+    logger.debug("Activity timestamp updated.")
+
 # --- Session State Initialization ---
 def _initialize_session_state(): # Removed pm: PersonaManager parameter
     """Initializes or resets all session state variables to their default values."""
@@ -345,6 +357,8 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         # --- NEW: Real-time Token/Cost Display States ---
         "current_debate_tokens_used": 0,
         "current_debate_cost_usd": 0.0,
+        # --- NEW: Session Expiration ---
+        "last_activity_timestamp": time.time(), # Initialize with current time
     }
 
     # Apply defaults to session state if not already present
@@ -405,6 +419,14 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
 if "initialized" not in st.session_state:
     _initialize_session_state() # Removed pm: PersonaManager parameter
 # --- END Session State Initialization Call ---
+
+# --- NEW: Session Expiration Check ---
+if "initialized" in st.session_state and st.session_state.initialized:
+    if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:
+        st.warning("Your session has expired due to inactivity. Resetting the application.")
+        _initialize_session_state() # Reset all state
+        st.rerun() # Rerun to reflect the reset state
+# --- END NEW: Session Expiration Check ---
 
 
 # --- ENHANCED SANITIZATION FUNCTION ---
@@ -504,6 +526,7 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
         "new_value": new_value
     })
     st.session_state.persona_changes_detected = True # Mark changes for Improvement 4.1
+    update_activity_timestamp() # Update activity on persona change
 
 # --- NEW: HELPER FUNCTION FOR ACTION-ORIENTED ERROR MESSAGING ---
 def handle_debate_errors(error: Exception):
@@ -654,8 +677,9 @@ with st.sidebar:
         api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
                                         key="api_key_input", 
                                         help="Your API key will not be stored.",
-                                        on_change=lambda: setattr(st.session_state, 'api_key_valid_format', 
-                                                                validate_gemini_api_key_format(st.session_state.api_key_input)))
+                                        on_change=lambda: [setattr(st.session_state, 'api_key_valid_format', 
+                                                                validate_gemini_api_key_format(st.session_state.api_key_input)),
+                                                           update_activity_timestamp()]) # ADDED update_activity_timestamp
         
         api_key_col1, api_key_col2 = st.columns([3, 1])
         with api_key_col1:
@@ -669,6 +693,7 @@ with st.sidebar:
         
         with api_key_col2:
             if st.button("Test Key", help="Verify your API key works by making a small API call.", key="test_api_key_button"):
+                update_activity_timestamp() # ADDED update_activity_timestamp
                 if st.session_state.api_key_input:
                     with st.spinner("Testing API connection..."):
                         if test_gemini_api_key_functional(st.session_state.api_key_input):
@@ -687,7 +712,8 @@ with st.sidebar:
 
         st.markdown("Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).")
         st.markdown("---")
-        st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], key="selected_model_selectbox")
+        st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], 
+                     key="selected_model_selectbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
         st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite` or `gemini-2.5-flash`.")
 
     with st.expander("Resource Management", expanded=False):
@@ -699,10 +725,11 @@ with st.sidebar:
             max_value=1000000, 
             step=1000, 
             key="max_tokens_budget_input",
-            value=st.session_state.max_tokens_budget_input # RESTORED THIS LINE
+            value=st.session_state.max_tokens_budget_input, # RESTORED THIS LINE
+            on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
         # --- END FIX ---
-        st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
+        st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
         st.markdown("---")
         # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
         current_ratio_value = st.session_state.get("context_token_budget_ratio", CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG) # Use get with default
@@ -727,7 +754,8 @@ with st.sidebar:
 
         st.slider(
             "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=current_ratio_value,
-            step=0.05, key="context_token_budget_ratio", help=help_text_dynamic
+            step=0.05, key="context_token_budget_ratio", help=help_text_dynamic,
+            on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 
@@ -777,6 +805,7 @@ def on_custom_prompt_change():
     st.session_state.active_example_framework_hint = None # Clear hint for custom prompt
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
+    update_activity_timestamp() # ADDED update_activity_timestamp
     st.rerun()
 
 def on_example_select_change(selectbox_key, tab_name):
@@ -810,7 +839,7 @@ def on_example_select_change(selectbox_key, tab_name):
     logger.debug(f"DEBUG - Prompt updated to: {EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'][:100]}...")
     logger.debug(f"DEBUG - Framework hint stored: {framework_hint}")
     # --- END DEBUG LOGGING ---
-    
+    update_activity_timestamp() # ADDED update_activity_timestamp
     st.rerun()
 
 # --- MODIFIED PROMPT SELECTION UI ---
@@ -849,6 +878,7 @@ for i, tab_name in enumerate(tab_names):
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
                 if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_custom_prompt_{tab_name}"):
                     st.session_state.selected_persona_set = suggested_domain_for_custom
+                    update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun()
             
         else: # Example Prompts Tabs
@@ -857,7 +887,7 @@ for i, tab_name in enumerate(tab_names):
             category_options = EXAMPLE_PROMPTS[tab_name]
             
             # Create search bar for filtering prompts within the current category
-            search_term_for_category = st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}")
+            search_term_for_category = st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
             
             filtered_prompts_in_category = {
                 name: details for name, details in category_options.items()
@@ -931,6 +961,7 @@ for i, tab_name in enumerate(tab_names):
                             use_container_width=True,
                             key=f"apply_suggested_framework_example_{selected_example_key_for_this_tab}"):
                     st.session_state.selected_persona_set = display_suggested_framework
+                    update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun() # Re-added to ensure UI updates
             # --- END FIX ---
 
@@ -965,6 +996,7 @@ with col1:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate.")
                 if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
                     st.session_state.selected_persona_set = suggested_domain
+                    update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun()
     # --- END REFINED LOGIC ---
     
@@ -986,7 +1018,8 @@ with col1:
         options=unique_framework_options,
         index=unique_framework_options.index(current_framework_selection) if current_framework_selection in unique_framework_options else 0,
         key="selected_persona_set", # Changed key to directly manage state
-        help="Choose a domain-specific reasoning framework or a custom saved framework."
+        help="Choose a domain-specific reasoning framework or a custom saved framework.",
+        on_change=update_activity_timestamp # ADDED update_activity_timestamp
     )
     # The 'if selected_framework_for_widget != st.session_state.selected_persona_set: st.rerun()'
     # logic is now implicitly handled by Streamlit when the key matches the session state variable.
@@ -1011,8 +1044,8 @@ with col1:
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
             st.info("This will save the *currently selected framework* along with any *unsaved persona edits* made in the 'View and Edit Personas' section.")
-            new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input')
-            framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50)
+            new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input', on_change=update_activity_timestamp) # ADDED update_activity_timestamp
+            framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50, on_change=update_activity_timestamp) # ADDED update_activity_timestamp
 
             # --- MODIFICATION FOR IMPROVEMENT 4.1 (Persona Changes Detected) ---
             if st.session_state.persona_changes_detected:
@@ -1020,6 +1053,7 @@ with col1:
             # --- END MODIFICATION ---
 
             if st.button("Save Current Framework") and new_framework_name_input:
+                update_activity_timestamp() # ADDED update_activity_timestamp
                 current_framework_name = st.session_state.selected_persona_set
                 # Get the currently active personas for the selected framework
                 current_active_personas_data = {
@@ -1062,9 +1096,11 @@ with col1:
                 "Select a framework to load:",
                 options=unique_framework_options_for_load,
                 index=unique_framework_options_for_load.index(current_selection_for_load) if current_selection_for_load in unique_framework_options_for_load else 0,
-                key='load_framework_select'
+                key='load_framework_select',
+                on_change=update_activity_timestamp # ADDED update_activity_timestamp
             )
             if st.button("Load Selected Framework") and selected_framework_to_load:
+                update_activity_timestamp() # ADDED update_activity_timestamp
                 # MODIFIED: Handle return from load_framework_into_session
                 # FIX: Access persona_manager from session state
                 success, message, loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = \
@@ -1086,6 +1122,7 @@ with col1:
             st.info("Export the currently selected framework to a file for sharing.")
             export_framework_name = st.session_state.selected_persona_set
             if st.button(f"Export '{export_framework_name}'", use_container_width=True, key="export_framework_button"):
+                update_activity_timestamp() # ADDED update_activity_timestamp
                 success, message, exported_content = st.session_state.persona_manager.export_framework_for_sharing(export_framework_name)
                 if success and exported_content:
                     st.download_button(
@@ -1103,9 +1140,10 @@ with col1:
             st.markdown("---")
             st.subheader("Import Framework")
             st.info("Upload a custom framework file (YAML or JSON) to import it.")
-            uploaded_framework_file = st.file_uploader("Upload Framework File", type=["yaml", "json"], key="import_framework_uploader")
+            uploaded_framework_file = st.file_uploader("Upload Framework File", type=["yaml", "json"], key="import_framework_uploader", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
             if uploaded_framework_file is not None:
                 if st.button("Import Uploaded Framework", use_container_width=True, key="perform_import_framework_button"):
+                    update_activity_timestamp() # ADDED update_activity_timestamp
                     file_content = uploaded_framework_file.getvalue().decode("utf-8")
                     success, message = st.session_state.persona_manager.import_framework(file_content, uploaded_framework_file.name)
                     if success:
@@ -1123,7 +1161,8 @@ with col2:
             accept_multiple_files=True,
             type=['py', 'js', 'ts', 'html', 'css', 'json', 'yaml', 'md', 'txt', 'java', 'go', 'rb', 'php'],
             help="Provide files for context. The AI will analyze them to generate consistent code.",
-            key="code_context_uploader"
+            key="code_context_uploader",
+            on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
         
         # If new files are uploaded, process them. This takes precedence over demo context.
@@ -1187,6 +1226,7 @@ st.markdown("---")
 with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode):
     # Keep expander open if user interacts with it
     st.session_state.persona_edit_mode = True
+    update_activity_timestamp() # ADDED update_activity_timestamp when expander is interacted with
     
     # --- MODIFICATION FOR IMPROVEMENT 1.2: Add clear info and reset button ---
     st.info("Edit persona parameters for the **currently selected framework**. Changes are temporary unless saved as a custom framework.")
@@ -1212,6 +1252,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
         st.warning("Unsaved changes detected in persona configurations. Please save as a custom framework or reset to persist them.")
         # Add a button to reset all personas for the current framework
         if st.button("Reset All Personas for Current Framework", key="reset_all_personas_button", use_container_width=True):
+            update_activity_timestamp() # ADDED update_activity_timestamp
             # Call the new method in PersonaManager
             # FIX: Access persona_manager from session state
             if st.session_state.persona_manager.reset_all_personas_for_current_framework(st.session_state.selected_persona_set):
@@ -1279,6 +1320,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
             
             # Reset button for individual persona
             if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}"):
+                update_activity_timestamp() # ADDED update_activity_timestamp
                 # FIX: Access persona_manager from session state
                 if st.session_state.persona_manager.reset_persona_to_default(p_name):
                     st.toast(f"Persona '{p_name.replace('_', ' ')}' reset to default.")
@@ -1335,8 +1377,8 @@ def _run_socratic_debate_process():
         # It uses the __call__ method of the RateLimiter instance
         st.session_state.session_rate_limiter_instance(lambda: None)() 
     except RateLimitExceededError as e:
-        handle_debate_errors(e) # Use the new error handler
-        return # Stop execution if rate limit is hit
+        # Re-raise here to be caught by the retry loop in the main execution block
+        raise e 
     except Exception as e: # Catch other potential issues with the limiter itself
         handle_debate_errors(e) # Use the new error handler
         return
@@ -1521,6 +1563,9 @@ def _run_socratic_debate_process():
                     st.session_state.intermediate_steps_output = debate_instance.intermediate_steps
                 final_total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
                 final_total_cost = st.session_state.intermediate_steps_output.get('Total_Estimated_Cost_USD', 0.0)
+                # Re-raise RateLimitExceededError to be caught by the retry loop
+                if isinstance(e, RateLimitExceededError):
+                    raise e
             except Exception as e:
                 handle_debate_errors(e) # Use the new error handler for unexpected errors
                 status.update(label=f"Socratic Debate Failed: An unexpected error occurred", state="error", expanded=True)
@@ -1544,7 +1589,27 @@ def _run_socratic_debate_process():
 # --- END OF NEW FUNCTION ---
 
 if run_button_clicked:
-    _run_socratic_debate_process()
+    st.session_state.last_activity_timestamp = time.time() # Update activity on run click
+
+    for attempt in range(MAX_DEBATE_RETRIES):
+        try:
+            _run_socratic_debate_process()
+            break # If successful, break the retry loop
+        except RateLimitExceededError as e:
+            if attempt < MAX_DEBATE_RETRIES - 1:
+                wait_time = DEBATE_RETRY_DELAY_SECONDS * (attempt + 1) # Simple exponential backoff for debate retries
+                st.info(f"Rate limit exceeded. Retrying Socratic Debate in {wait_time:.1f} seconds... (Attempt {attempt + 1}/{MAX_DEBATE_RETRIES})")
+                time.sleep(wait_time)
+                # Update activity timestamp after waiting, so session doesn't expire during long waits
+                st.session_state.last_activity_timestamp = time.time()
+            else:
+                st.error(f"Max retries ({MAX_DEBATE_RETRIES}) for Socratic Debate reached due to rate limiting. Please try again later.")
+                handle_debate_errors(e) # Display the final rate limit error
+                break # Exit loop after max retries
+        except Exception as e:
+            # Catch other errors and break, as they are not rate limit related
+            handle_debate_errors(e)
+            break
 
 
 if st.session_state.debate_ran:
@@ -1558,7 +1623,8 @@ if st.session_state.debate_ran:
         format_choice = st.radio("Choose report format:", # Added descriptive label
             ["Complete Report (Markdown)", "Summary (Text)"],
             label_visibility="collapsed",
-            key="report_format_radio" # ADDED UNIQUE KEY
+            key="report_format_radio", # ADDED UNIQUE KEY
+            on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
         
         # Dynamically generate content based on selection
@@ -1579,7 +1645,8 @@ if st.session_state.debate_ran:
             data=report_content,
             file_name=file_name,
             use_container_width=True,
-            type="primary"
+            type="primary",
+            on_click=update_activity_timestamp # ADDED update_activity_timestamp
         )
     # --- END MODIFICATION ---
 
@@ -1746,7 +1813,8 @@ if st.session_state.debate_ran:
                         data=change.full_content,
                         file_name=change.file_path,
                         use_container_width=True,
-                        type="secondary"
+                        type="secondary",
+                        on_click=update_activity_timestamp # ADDED update_activity_timestamp
                     )
 
                 elif change.action == 'REMOVE':
