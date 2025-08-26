@@ -22,7 +22,7 @@ import google.genai as genai
 from google.genai.errors import APIError
 # --- END NEW IMPORTS ---
 
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput # Added CritiqueOutput, GeneralOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput # Added CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput
 # --- MODIFICATION: Added recommend_domain_from_keywords to src.utils import ---
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords # Added sanitize_and_validate_file_path and recommend_domain_from_keywords
 # --- REMOVED: Redundant import ---

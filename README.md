@@ -196,7 +196,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 *   **GitHub**: [tomwolfe/project_chimera](https://github.com/tomwolfe/project_chimera)
 *   **Twitter**: [@Proj_Chimera](https://x.com/Proj_Chimera  )
-*   **Email**: projectchimera.dev@gmail.com
 
 ---
 
