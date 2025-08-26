@@ -13,10 +13,11 @@ import time # Added for time.time()
 
 from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
+from src.config.persistence import ConfigPersistence # NEW IMPORT
 
 logger = logging.getLogger(__name__)
 
-CUSTOM_FRAMEWORKS_DIR = "custom_frameworks"
+# CUSTOM_FRAMEWORKS_DIR = "custom_frameworks" # REMOVED: Now managed by ConfigPersistence
 DEFAULT_PERSONAS_FILE = "personas.yaml"
 
 @st.cache_resource
@@ -25,7 +26,7 @@ class PersonaManager:
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
         self.available_domains: List[str] = []
-        self.all_custom_frameworks_data: Dict[str, Any] = {}
+        self.all_custom_frameworks_data: Dict[str, Any] = {} # Stores full config data for custom frameworks
         self.default_persona_set_name: str = "General"
         self._original_personas: Dict[str, PersonaConfig] = {}
         self.persona_router: Optional[PersonaRouter] = None
@@ -35,6 +36,8 @@ class PersonaManager:
         self.adjustment_cooldown_seconds = 300 # 5 minutes cooldown
         self.min_turns_for_adjustment = 5 # Minimum turns before considering adjustment
 
+        self.config_persistence = ConfigPersistence() # NEW: Initialize ConfigPersistence
+
         # Load initial data and custom frameworks, handle errors internally
         load_success, load_msg = self._load_initial_data()
         if not load_success and load_msg:
@@ -42,7 +45,7 @@ class PersonaManager:
             # In a real app, you might want to raise an exception here or have a more robust fallback.
             # For now, we'll proceed with potentially empty or minimal data, logging the error.
 
-        self._load_custom_frameworks_on_init()
+        self._load_custom_frameworks_on_init() # Call after config_persistence is initialized
         self._load_original_personas()
         
         # Initialize PersonaRouter with all loaded personas and persona_sets
@@ -51,26 +54,8 @@ class PersonaManager:
         # NEW: Initialize performance metrics after all personas are loaded
         self._initialize_performance_metrics()
 
-    def _ensure_custom_frameworks_dir(self) -> Tuple[bool, Optional[str]]:
-        """Ensures the custom frameworks directory exists, creating it if necessary.
-        Returns:
-            Tuple[bool, Optional[str]]: (success_status, message_or_None)
-        """
-        if not os.path.exists(CUSTOM_FRAMEWORKS_DIR):
-            try:
-                os.makedirs(CUSTOM_FRAMEWORKS_DIR)
-                return True, f"Created directory for custom frameworks: '{CUSTOM_FRAMEWORKS_DIR}'"
-            except OSError as e:
-                return False, f"Error creating custom frameworks directory: {e}"
-        return True, None # Directory already exists or was created successfully
-
-    def _sanitize_framework_filename(self, name: str) -> str:
-        """Sanitizes a string to be used as a filename for custom frameworks."""
-        sanitized = re.sub(r'[<>:"/\\|?*\s]+', '_', name)
-        sanitized = re.sub(r'^[^a-zA-Z0-9_]+|[^a-zA-Z0-9_]+$', '', sanitized)
-        if not sanitized:
-            sanitized = "unnamed_framework"
-        return sanitized
+    # REMOVED: _ensure_custom_frameworks_dir as it's now handled by ConfigPersistence
+    # REMOVED: _sanitize_framework_filename as it's now handled by ConfigPersistence
 
     def _load_initial_data(self, file_path: str = DEFAULT_PERSONAS_FILE) -> Tuple[bool, Optional[str]]:
         """Loads the default personas and persona sets from a YAML file.
@@ -116,56 +101,29 @@ class PersonaManager:
             return False, f"Failed to load default personas from {file_path}: {e}"
 
     def _load_custom_frameworks_on_init(self):
-        """Loads custom frameworks available at startup."""
-        dir_success, dir_msg = self._ensure_custom_frameworks_dir()
-        if not dir_success and dir_msg:
-            logger.error(dir_msg) # Log the error if directory creation failed
-
-        saved_names = self._get_saved_custom_framework_names()
+        """Loads custom frameworks available at startup using ConfigPersistence."""
+        saved_names = self.config_persistence._get_saved_custom_framework_names()
         for name in saved_names:
-            config = self._load_custom_framework_config_from_file(name)
+            config = self.config_persistence._load_custom_framework_config_from_file(name)
             if config:
+                # Add personas from custom framework to all_personas
+                for p_name, p_data in config.get('personas', {}).items():
+                    try:
+                        self.all_personas[p_name] = PersonaConfig(**p_data)
+                    except ValidationError as e:
+                        logger.error(f"Validation error for persona '{p_name}' in custom framework '{name}': {e}")
+                        continue
+                # Add persona sets from custom framework to persona_sets
+                self.persona_sets.update(config.get('persona_sets', {}))
+                
+                # Store the full config data for later reference (e.g., versioning)
                 self.all_custom_frameworks_data[name] = config
+
+                # Add framework name to available domains
                 if name not in self.available_domains:
                     self.available_domains.append(name)
         self.available_domains = sorted(list(set(self.available_domains)))
-
-    def _get_saved_custom_framework_names(self) -> List[str]:
-        """Returns a list of names of custom frameworks found on disk."""
-        dir_success, dir_msg = self._ensure_custom_frameworks_dir()
-        if not dir_success and dir_msg:
-            logger.error(dir_msg)
-            return [] # Return empty list if directory is inaccessible
-
-        framework_names = []
-        try:
-            for filename in os.listdir(CUSTOM_FRAMEWORKS_DIR):
-                if filename.endswith(".json"):
-                    framework_names.append(os.path.splitext(filename)[0])
-            return sorted(framework_names)
-        except OSError as e:
-            logger.error(f"Error listing custom frameworks: {e}")
-            return []
-
-    def _load_custom_framework_config_from_file(self, name: str) -> Optional[Dict[str, Any]]:
-        """Loads a specific custom framework configuration from a JSON file.
-        Returns:
-            Optional[Dict[str, Any]]: The loaded configuration data, or None if an error occurs.
-        """
-        filename = f"{self._sanitize_framework_filename(name)}.json"
-        filepath = os.path.join(CUSTOM_FRAMEWORKS_DIR, filename)
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-            return config_data
-        except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
-            if isinstance(e, FileNotFoundError):
-                logger.error(f"Custom framework '{name}' not found at '{filepath}'.")
-            elif isinstance(e, json.JSONDecodeError):
-                logger.error(f"Error decoding JSON from '{filepath}'. Please check its format: {e}")
-            else: # Catch other OSError
-                logger.error(f"Error reading custom framework file '{filepath}': {e}")
-            return None
+        logger.info(f"Loaded {len(saved_names)} custom frameworks.")
 
     def _load_original_personas(self) -> Tuple[bool, Optional[str]]:
         """Loads the original default personas from the YAML file and stores them."""
@@ -199,7 +157,8 @@ class PersonaManager:
                 'last_adjustment_timestamp': 0.0
             }
 
-    def save_framework(self, name: str, current_persona_set_name: str, current_active_personas: Dict[str, PersonaConfig]) -> Tuple[bool, str]:
+    # MODIFIED: save_framework to accept description and use ConfigPersistence
+    def save_framework(self, name: str, current_persona_set_name: str, current_active_personas: Dict[str, PersonaConfig], description: str = "") -> Tuple[bool, str]:
         """Saves the current framework configuration (including persona edits) as a custom framework.
         Returns:
             Tuple[bool, str]: (success_status, message)
@@ -207,9 +166,8 @@ class PersonaManager:
         if not name:
             return False, "Please enter a name for the framework before saving."
         
-        framework_name_sanitized = self._sanitize_framework_filename(name)
-        if not framework_name_sanitized:
-            return False, "Invalid framework name provided after sanitization."
+        # Use the original name for internal dict key and available domains
+        # Sanitization is handled by ConfigPersistence for filename
         
         current_personas_dict = {
             p_name: p_data.model_dump()
@@ -217,49 +175,55 @@ class PersonaManager:
         }
 
         version = 1
-        if framework_name_sanitized in self.all_custom_frameworks_data:
-            version = self.all_custom_frameworks_data[framework_name_sanitized].get('version', 0) + 1
+        if name in self.all_custom_frameworks_data: # Check original name for versioning
+            version = self.all_custom_frameworks_data[name].get('version', 0) + 1
 
         try:
-            # Create a ReasoningFrameworkConfig for validation before saving
-            temp_config_validation = ReasoningFrameworkConfig(
-                framework_name=name, # Use the original name for the framework key
-                personas={p_name: PersonaConfig(**p_data) for p_name, p_data in current_personas_dict.items()},
-                persona_sets={name: list(current_active_personas.keys())}, # Use the framework name as the key for its persona set
-                version=version
+            config_to_save = {
+                "framework_name": name,
+                "description": description, # ADDED DESCRIPTION
+                "personas": current_personas_dict,
+                "persona_sets": {name: list(current_active_personas.keys())}, # Use original name for persona set key
+                "version": version
+            }
+            # Validate the structure before saving
+            ReasoningFrameworkConfig(
+                framework_name=config_to_save["framework_name"],
+                personas={p_name: PersonaConfig(**p_data) for p_name, p_data in config_to_save["personas"].items()},
+                persona_sets=config_to_save["persona_sets"],
+                version=config_to_save["version"]
             )
-            config_to_save = temp_config_validation.model_dump()
         except Exception as e:
+            logger.error(f"Validation error for framework '{name}' before saving: {e}")
             return False, f"Cannot save framework: Invalid data structure. {e}"
         
-        filename = f"{framework_name_sanitized}.json"
-        filepath = os.path.join(CUSTOM_FRAMEWORKS_DIR, filename)
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(config_to_save, f, indent=2)
-            
-            self.all_custom_frameworks_data[framework_name_sanitized] = config_to_save
-            if framework_name_sanitized not in self.available_domains:
-                 self.available_domains.append(framework_name_sanitized)
+        success, message = self.config_persistence.save_user_framework(name, config_to_save)
+        if success:
+            self.all_custom_frameworks_data[name] = config_to_save # Store with original name
+            if name not in self.available_domains:
+                self.available_domains.append(name)
             self.available_domains = sorted(list(set(self.available_domains)))
-            return True, f"Framework '{name}' saved successfully to '{filepath}'!"
-        except OSError as e:
-            return False, f"Error saving framework '{name}' to '{filepath}': {e}"
-        except Exception as e:
-            return False, f"An unexpected error occurred while saving framework '{name}': {e}"
+            return True, message
+        else:
+            return False, message
 
+    # MODIFIED: load_framework_into_session to use ConfigPersistence
     def load_framework_into_session(self, framework_name: str) -> Tuple[bool, str, Dict[str, PersonaConfig], Dict[str, List[str]], str]:
         """Loads a framework's personas and sets, returning them for session state update.
         Returns:
             Tuple[bool, str, Dict[str, PersonaConfig], Dict[str, List[str]], str]:
             (success_status, message, loaded_personas, loaded_persona_sets, new_framework_name)
         """
-        if framework_name in self.all_custom_frameworks_data:
-            loaded_config_data = self.all_custom_frameworks_data[framework_name]
-            
+        loaded_config_data = self.config_persistence._load_custom_framework_config_from_file(framework_name)
+        
+        if loaded_config_data: # It's a custom framework
             # Update all_personas with personas from the custom framework
             for name, data in loaded_config_data.get('personas', {}).items():
-                self.all_personas[name] = PersonaConfig(**data)
+                try:
+                    self.all_personas[name] = PersonaConfig(**data)
+                except ValidationError as e:
+                    logger.error(f"Validation error for persona '{name}' in custom framework '{framework_name}' during load: {e}")
+                    continue
             
             # Update persona_sets with the custom framework's sets
             custom_sets = loaded_config_data.get('persona_sets', {})
@@ -269,8 +233,7 @@ class PersonaManager:
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
             
-            # Re-initialize performance metrics for potentially new/updated personas
-            self._initialize_performance_metrics()
+            self._initialize_performance_metrics() # Re-initialize performance metrics for potentially new/updated personas
 
             return True, f"Loaded custom framework: '{framework_name}'", personas_for_session, {framework_name: current_domain_persona_names}, framework_name
             
@@ -278,8 +241,7 @@ class PersonaManager:
             current_domain_persona_names = self.persona_sets.get(framework_name, [])
             personas_for_session = {name: self.all_personas[name] for name in current_domain_persona_names if name in self.all_personas}
             
-            # Re-initialize performance metrics for potentially new/updated personas
-            self._initialize_performance_metrics()
+            self._initialize_performance_metrics() # Re-initialize performance metrics for potentially new/updated personas
 
             return True, f"Loaded default framework: '{framework_name}'", personas_for_session, {framework_name: current_domain_persona_names}, framework_name
         else:
@@ -368,6 +330,36 @@ class PersonaManager:
         else:
             logger.warning(f"Partial success or failure during reset of personas for framework '{framework_name}'.")
         return success
+
+    # NEW: export_framework_for_sharing method
+    def export_framework_for_sharing(self, framework_name: str) -> Tuple[bool, str, Optional[str]]:
+        """Exports a framework configuration as YAML for sharing using ConfigPersistence."""
+        exported_content = self.config_persistence.export_framework_for_sharing(framework_name)
+        if exported_content:
+            return True, f"Framework '{framework_name}' exported successfully.", exported_content
+        return False, f"Framework '{framework_name}' not found or could not be exported.", None
+
+    # NEW: import_framework method
+    def import_framework(self, file_content: str, filename: str) -> Tuple[bool, str]:
+        """Imports a framework from file content using ConfigPersistence."""
+        success, message, loaded_config_data = self.config_persistence.import_framework_from_file(file_content, filename)
+        if success and loaded_config_data:
+            framework_name = loaded_config_data.get("framework_name") or loaded_config_data.get("name")
+            if framework_name:
+                # Integrate the loaded framework's personas and sets into the manager's state
+                for p_name, p_data in loaded_config_data.get('personas', {}).items():
+                    try:
+                        self.all_personas[p_name] = PersonaConfig(**p_data)
+                    except ValidationError as e:
+                        logger.error(f"Validation error for persona '{p_name}' in imported framework '{framework_name}': {e}")
+                        continue
+                self.persona_sets.update(loaded_config_data.get('persona_sets', {}))
+                
+                if framework_name not in self.available_domains:
+                    self.available_domains.append(framework_name)
+                self.available_domains = sorted(list(set(self.available_domains)))
+                self._initialize_performance_metrics() # Re-initialize performance metrics
+        return success, message
 
     # NEW: For Adaptive LLM Parameter Adjustment
     def get_adjusted_persona_config(self, persona_name: str) -> PersonaConfig:

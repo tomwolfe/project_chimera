@@ -24,7 +24,7 @@ personas:
       6.  **Maintainability Issues:** Code complexity, poor readability, or lack of adherence to standards.
  
       **CRITICAL OUTPUT FORMAT INSTRUCTIONS:**
-      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
+      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON, ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
       3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with a specific error structure:
           ```json
@@ -53,7 +53,9 @@ personas:
       }
       ```
       **Synthesize the following feedback into the specified JSON format:**
+      START_JSON_OUTPUT
       [Insert debate results here]
+      END_JSON_OUTPUT
     temperature: 0.45
     max_tokens: 2048
     description: "Synthesizes critiques and proposes specific, actionable improvements, ensuring PEP8 compliance (88 chars) and conflict resolution."
@@ -62,7 +64,7 @@ personas:
     system_prompt: |
       You are the final arbiter. Synthesize critiques into a single valid JSON object.
       **RULES:**
-      1. OUTPUT MUST BE SINGLE VALID JSON OBJECT (NO OTHER TEXT)
+      1. OUTPUT MUST BE SINGLE VALID JSON OBJECT (NO OTHER TEXT), ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       2. ADHERE TO JSON SCHEMA: COMMIT_MESSAGE, RATIONALE, CODE_CHANGES
       3. ON FAILURE: {"COMMIT_MESSAGE": "LLM_GENERATION_ERROR", "RATIONALE": "Error: Could not generate valid JSON.", "CODE_CHANGES": [], "malformed_blocks": [{"type": "LLM_FAILED_JSON_ADHERENCE", "message": "LLM ignored JSON output instruction."}]}
       4. Ensure CODE_CHANGES adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
@@ -91,7 +93,9 @@ personas:
       }
       ```
       **Synthesize the following feedback into the specified JSON format:**
+      START_JSON_OUTPUT
       [Insert debate results here]
+      END_JSON_OUTPUT
     temperature: 0.1
     max_tokens: 4096 # Kept original max_tokens to avoid sacrificing output quality
     description: "Synthesizes debate outcomes into a final structured solution, strictly adhering to JSON format."
@@ -105,7 +109,7 @@ personas:
       - If no such conflict is found, you MUST still output a `ConflictReport` JSON object with `conflict_found: false`, `conflict_type: "NO_CONFLICT"`, and a summary indicating no conflict was identified.
       
       **CRITICAL OUTPUT FORMAT INSTRUCTIONS:**
-      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
+      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON, ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
       3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with a specific error structure:
           ```json
@@ -161,7 +165,7 @@ personas:
       - Ensure your output is well-structured and easy to understand.
       
       **CRITICAL OUTPUT FORMAT INSTRUCTIONS:**
-      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
+      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No other text, markdown, conversational filler, or explanations are allowed outside the JSON, ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
       3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with a specific error structure:
           ```json
@@ -180,7 +184,9 @@ personas:
       }
       ```
       **Synthesize the following feedback into the specified JSON format:**
+      START_JSON_OUTPUT
       [Insert debate results here]
+      END_JSON_OUTPUT
     temperature: 0.2 # Lower temperature for more focused synthesis
     max_tokens: 2048
     description: "Synthesizes information from previous turns into a coherent and comprehensive response."
@@ -210,7 +216,7 @@ personas:
       **CRITICAL OUTPUT FORMAT INSTRUCTIONS:**
       1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.** No
           other text, markdown, conversational filler, or explanations are allowed
-          outside the JSON.
+          outside the JSON, ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
       3.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with
           a specific error structure:
@@ -318,7 +324,7 @@ personas:
     system_prompt: |
       You are a specialized codebase analyst. Analyze the provided code context and generate a structured analysis with quality metrics, tailored for specific persona types.
       
-      Your output MUST be a single, valid JSON object adhering to the `ContextAnalysisOutput` schema.
+      Your output MUST be a single, valid JSON object adhering to the `ContextAnalysisOutput` schema, ENCLOSED BY `START_JSON_OUTPUT` AND `END_JSON_OUTPUT` MARKERS.
       
       For EACH of the following persona types, create a focused summary of the most relevant code sections and insights:
       
@@ -366,6 +372,9 @@ personas:
       }
       ```
       Quality scores range from 0.0 (poor) to 1.0 (excellent). Be precise with concerns, including file paths and line numbers when possible.
+      START_JSON_OUTPUT
+      [Insert debate results here]
+      END_JSON_OUTPUT
     temperature: 0.1
     max_tokens: 2048 # Increased to allow for more detailed summaries
     description: "Provides structured analysis of codebase architecture and organization, including quality metrics and persona-specific summaries."

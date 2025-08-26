@@ -589,7 +589,7 @@ with st.sidebar:
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox")
         st.markdown("---")
         # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION ---
-        current_ratio_value = st.session_state.context_token_budget_ratio
+        current_ratio_value = st.session_state.get("context_token_budget_ratio", CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG) # Use get with default
         user_prompt_text = st.session_state.get("user_prompt_input", "") # Use the correct session state key
 
         # Determine smart default based on prompt type and current default ratio
@@ -859,7 +859,7 @@ with col1:
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks"])
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"]) # ADDED "Export/Import" tab
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
@@ -881,9 +881,14 @@ with col1:
                     if p_name in st.session_state.persona_manager.get_persona_sequence_for_framework(current_framework_name)
                 }
                 
-                # MODIFIED: Handle return from save_framework
+                # MODIFIED: Handle return from save_framework and pass framework_description_input
                 # FIX: Access persona_manager from session state
-                success, message, = st.session_state.persona_manager.save_framework(new_framework_name_input, current_framework_name, current_active_personas_data, framework_description_input)
+                success, message = st.session_state.persona_manager.save_framework(
+                    new_framework_name_input,
+                    current_framework_name,
+                    current_active_personas_data,
+                    framework_description_input # ADDED THIS LINE
+                )
                 if success:
                     st.toast(message)
                     st.rerun()
@@ -927,6 +932,40 @@ with col1:
                     st.rerun()
                 else:
                     st.error(message)
+
+        # NEW TAB: Export/Import Frameworks
+        with tabs_framework[2]:
+            st.subheader("Export Framework")
+            st.info("Export the currently selected framework to a file for sharing.")
+            export_framework_name = st.session_state.selected_persona_set
+            if st.button(f"Export '{export_framework_name}'", use_container_width=True, key="export_framework_button"):
+                success, message, exported_content = st.session_state.persona_manager.export_framework_for_sharing(export_framework_name)
+                if success and exported_content:
+                    st.download_button(
+                        label=f"Download '{export_framework_name}.yaml'", # Changed to YAML for readability
+                        data=exported_content,
+                        file_name=f"{export_framework_name}.yaml",
+                        mime="application/x-yaml", # Correct MIME type for YAML
+                        use_container_width=True,
+                        key="download_exported_framework"
+                    )
+                    st.success(message)
+                else:
+                    st.error(message)
+
+            st.markdown("---")
+            st.subheader("Import Framework")
+            st.info("Upload a custom framework file (YAML or JSON) to import it.")
+            uploaded_framework_file = st.file_uploader("Upload Framework File", type=["yaml", "json"], key="import_framework_uploader")
+            if uploaded_framework_file is not None:
+                if st.button("Import Uploaded Framework", use_container_width=True, key="perform_import_framework_button"):
+                    file_content = uploaded_framework_file.getvalue().decode("utf-8")
+                    success, message = st.session_state.persona_manager.import_framework(file_content, uploaded_framework_file.name)
+                    if success:
+                        st.toast(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
     # --- END MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION ---
 
 with col2:
@@ -1579,7 +1618,22 @@ if st.session_state.debate_ran:
                 cleaned_step_key = step_key.replace("_Output", "").replace("_Critique", "").replace("_Feedback", "")
                 token_count_key = f"{cleaned_step_key}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A")
-                with st.expander(f"**{display_name}** (Tokens: {tokens_used})"):
+                
+                # NEW: Retrieve and display actual parameters if available
+                actual_temp = st.session_state.intermediate_steps_output.get(f"{persona_name}_Actual_Temperature")
+                actual_max_tokens = st.session_state.intermediate_steps_output.get(f"{persona_name}_Actual_Max_Tokens")
+                
+                persona_params_info = ""
+                if actual_temp is not None or actual_max_tokens is not None:
+                    persona_params_info = " (Parameters: "
+                    if actual_temp is not None:
+                        persona_params_info += f"Temp={actual_temp:.2f}"
+                    if actual_max_tokens is not None:
+                        if actual_temp is not None: persona_params_info += ", "
+                        persona_params_info += f"MaxTokens={actual_max_tokens}"
+                    persona_params_info += ")"
+
+                with st.expander(f"**{display_name}** (Tokens: {tokens_used}){persona_params_info}"): # MODIFIED LINE
                     if isinstance(content, dict):
                         st.json(content)
                     else:

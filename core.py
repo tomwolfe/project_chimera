@@ -738,6 +738,12 @@ class SocraticDebate:
             self.track_token_usage(phase, input_tokens + output_tokens)
             self.check_budget(phase, input_tokens + output_tokens, persona_name)
             
+            # --- START MODIFICATION ---
+            # NEW: Store actual parameters used for this turn
+            self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = adjusted_persona_config.temperature
+            self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = adjusted_persona_config.max_tokens
+            # --- END MODIFICATION ---
+
             # Check for truncation (heuristic, can be improved with LLM-specific signals)
             if output_tokens >= adjusted_persona_config.max_tokens * 0.95: # If output is near max_tokens
                 is_truncated = True
