@@ -4,7 +4,7 @@ import json
 import subprocess
 import ast
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Union # ADDED Union import
 from collections import defaultdict
 from pathlib import Path
 
@@ -12,6 +12,132 @@ from pathlib import Path
 from src.utils.code_validator import _run_pycodestyle, _run_bandit, _run_ast_security_checks
 
 logger = logging.getLogger(__name__)
+
+# --- NEW: AST Visitor for detailed code metrics ---
+class ComplexityVisitor(ast.NodeVisitor):
+    """
+    AST visitor to calculate various code metrics for functions and methods,
+    including cyclomatic complexity, lines of code, nesting depth, and code smells.
+    """
+    def __init__(self, content_lines: List[str]):
+        self.content_lines = content_lines
+        self.function_metrics = [] # Stores metrics for each function/method
+        self.current_function_name = None
+        self.current_function_start_line = None
+
+    def _calculate_loc(self, node: ast.AST) -> int:
+        """Calculates non-blank, non-comment lines of code within a node's body."""
+        if not hasattr(node, 'body') or not node.body:
+            return 0
+        
+        # Ensure node has lineno and end_lineno (available in Python 3.8+)
+        if not hasattr(node.body[0], 'lineno') or not hasattr(node.body[-1], 'end_lineno'):
+            # Fallback for older Python versions or nodes without line info
+            return 0 
+            
+        start_line = node.body[0].lineno
+        end_line = node.body[-1].end_lineno
+        
+        loc_count = 0
+        # Iterate through lines within the function's body
+        for i in range(start_line - 1, end_line):
+            if i < len(self.content_lines): # Ensure index is within bounds
+                line = self.content_lines[i].strip()
+                if line and not line.startswith('#'): # Count non-blank, non-comment lines
+                    loc_count += 1
+        return loc_count
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        """Visits a synchronous function definition."""
+        self._analyze_function(node)
+        self.generic_visit(node) # Continue traversal to nested nodes
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        """Visits an asynchronous function definition."""
+        self._analyze_function(node)
+        self.generic_visit(node) # Continue traversal to nested nodes
+
+    def _analyze_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]):
+        """
+        Performs detailed analysis for a given function or async function node.
+        Calculates cyclomatic complexity, LOC, argument count, nesting depth,
+        and identifies basic code smells and potential bottlenecks.
+        """
+        function_name = node.name
+        start_line = node.lineno
+        end_line = node.end_lineno # Python 3.8+
+        
+        complexity = 1 # Start with 1 for the function's entry point (standard for cyclomatic complexity)
+        max_nesting_depth = 0
+        
+        nested_loops_count = 0
+        
+        # Stack to track block-level nodes for nesting depth and nested loop detection
+        stack = []
+
+        for sub_node in ast.walk(node):
+            # Cyclomatic Complexity points (each decision point adds 1)
+            if isinstance(sub_node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith, ast.ExceptHandler)):
+                complexity += 1
+            elif isinstance(sub_node, ast.BoolOp): # 'and', 'or' operators in conditions
+                complexity += len(sub_node.values) - 1
+            elif isinstance(sub_node, ast.comprehension) and sub_node.ifs: # Conditional comprehensions (e.g., [x for x in y if x > 0])
+                complexity += len(sub_node.ifs)
+
+            # Nesting depth calculation
+            # Increment depth when entering a new block-level node within the current function
+            if isinstance(sub_node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith, ast.ExceptHandler, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                # Only consider nodes that are children of the current function node
+                # and are not the function node itself.
+                if sub_node != node and sub_node not in stack:
+                    stack.append(sub_node)
+                    current_nesting_depth = len(stack)
+                    max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
+            
+            # Nested loops detection
+            if isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor)):
+                # Check if this loop is inside another loop (i.e., there's another loop in the stack before it)
+                if any(isinstance(s, (ast.For, ast.While, ast.AsyncFor)) for s in stack[:-1]):
+                    nested_loops_count += 1
+        
+        # After walking the function's subtree, clear the stack for this function's context
+        stack.clear()
+
+        loc = self._calculate_loc(node)
+        # Count arguments including positional-only, keyword-only, and regular arguments
+        num_args = len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
+
+        # Code Smells (illustrative thresholds, can be configured externally)
+        code_smells = 0
+        if loc > 50: # Long function
+            code_smells += 1
+        if num_args > 5: # Too many arguments
+            code_smells += 1
+        if max_nesting_depth > 3: # Deep nesting
+            code_smells += 1
+        
+        # Potential Bottlenecks (illustrative)
+        bottlenecks = 0
+        if nested_loops_count > 0: # Any nested loops are a potential bottleneck
+            bottlenecks += 1
+        # Further checks could include:
+        # - Excessive recursion (requires more complex call graph analysis)
+        # - Large list/dict comprehensions that might be inefficient
+        
+        self.function_metrics.append({
+            "name": function_name,
+            "start_line": start_line,
+            "end_line": end_line,
+            "loc": loc,
+            "cyclomatic_complexity": complexity,
+            "num_arguments": num_args,
+            "max_nesting_depth": max_nesting_depth,
+            "nested_loops_count": nested_loops_count,
+            "code_smells": code_smells,
+            "potential_bottlenecks": bottlenecks
+        })
+
+# --- END NEW: AST Visitor for detailed code metrics ---
 
 class ImprovementMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
@@ -24,7 +150,12 @@ class ImprovementMetricsCollector:
         metrics = {
             "code_quality": {
                 "pep8_issues_count": 0,
-                "complexity_metrics": {"avg_cyclomatic_complexity": 0.0, "avg_loc_per_function": 0.0},
+                "complexity_metrics": {
+                    "avg_cyclomatic_complexity": 0.0,
+                    "avg_loc_per_function": 0.0,
+                    "avg_num_arguments": 0.0,
+                    "avg_max_nesting_depth": 0.0
+                },
                 "code_smells_count": 0,
                 "detailed_issues": [] # To store all collected issues for detailed analysis
             },
@@ -47,9 +178,11 @@ class ImprovementMetricsCollector:
             }
         }
 
-        total_functions = 0
-        total_loc_in_functions = 0
-        total_complexity = 0
+        total_functions_across_codebase = 0
+        total_loc_across_functions = 0
+        total_complexity_across_functions = 0
+        total_args_across_functions = 0
+        total_nesting_depth_across_functions = 0
         
         # Collect code-specific metrics by iterating through Python files
         for root, _, files in os.walk(codebase_path):
@@ -59,6 +192,7 @@ class ImprovementMetricsCollector:
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
+                            content_lines = content.splitlines() # Pass lines for LOC calculation
                         
                         # Reuse existing code_validator functions
                         pep8_issues = _run_pycodestyle(content, file_path)
@@ -71,35 +205,31 @@ class ImprovementMetricsCollector:
                             metrics["security"]["bandit_issues_count"] += len(bandit_issues)
                             metrics["code_quality"]["detailed_issues"].extend(bandit_issues) # Add to detailed issues for full context
                         
-                        ast_issues = _run_ast_security_checks(content, file_path)
-                        if ast_issues:
-                            metrics["security"]["ast_security_issues_count"] += len(ast_issues)
-                            metrics["code_quality"]["detailed_issues"].extend(ast_issues) # Add to detailed issues
+                        ast_security_issues = _run_ast_security_checks(content, file_path)
+                        if ast_security_issues:
+                            metrics["security"]["ast_security_issues_count"] += len(ast_security_issues)
+                            metrics["code_quality"]["detailed_issues"].extend(ast_security_issues) # Add to detailed issues
 
-                        # Collect complexity and code smell metrics
-                        # Placeholder for now, as _analyze_python_file_ast is not provided in the original snippet
-                        file_complexity, file_loc, file_functions, file_smells, file_bottlenecks = (0, 0, 0, 0, 0) # Default values
-                        try:
-                            file_complexity, file_loc, file_functions, file_smells, file_bottlenecks = cls._analyze_python_file_ast(content, file_path)
-                        except NotImplementedError:
-                            logger.warning(f"'_analyze_python_file_ast' not fully implemented, skipping detailed AST analysis for {file_path}.")
-                        except Exception as ast_e:
-                            logger.error(f"Error during AST analysis for {file_path}: {ast_e}")
-
-
-                        total_complexity += file_complexity
-                        total_loc_in_functions += file_loc
-                        total_functions += file_functions
-                        metrics["code_quality"]["code_smells_count"] += file_smells
-                        metrics["performance_efficiency"]["potential_bottlenecks_count"] += file_bottlenecks
+                        # Collect complexity and code smell metrics using the new AST visitor
+                        file_function_metrics = cls._analyze_python_file_ast(content, content_lines, file_path)
+                        
+                        for func_metric in file_function_metrics:
+                            total_functions_across_codebase += 1
+                            total_complexity_across_functions += func_metric["cyclomatic_complexity"]
+                            total_loc_across_functions += func_metric["loc"]
+                            total_args_across_functions += func_metric["num_arguments"]
+                            total_nesting_depth_across_functions += func_metric["max_nesting_depth"]
+                            metrics["code_quality"]["code_smells_count"] += func_metric["code_smells"]
+                            metrics["performance_efficiency"]["potential_bottlenecks_count"] += func_metric["potential_bottlenecks"]
 
                     except Exception as e:
-                        logger.error(f"Error collecting code metrics for {file_path}: {e}")
+                        logger.error(f"Error collecting code metrics for {file_path}: {e}", exc_info=True)
         
-        if total_functions > 0:
-            # This was the truncated line. Completing it based on the metrics dictionary structure.
-            metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = total_complexity / total_functions
-            metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = total_loc_in_functions / total_functions
+        if total_functions_across_codebase > 0:
+            metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = total_complexity_across_functions / total_functions_across_codebase
+            metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = total_loc_across_functions / total_functions_across_codebase
+            metrics["code_quality"]["complexity_metrics"]["avg_num_arguments"] = total_args_across_functions / total_functions_across_codebase
+            metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = total_nesting_depth_across_functions / total_functions_across_codebase
         
         return metrics
 
@@ -107,12 +237,10 @@ class ImprovementMetricsCollector:
     def _collect_token_usage_stats(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
         """
         Collects token usage statistics from debate intermediate steps.
-        Placeholder implementation.
         """
         total_tokens = debate_intermediate_steps.get("Total_Tokens_Used", 0)
         total_cost = debate_intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
         
-        # Example: breakdown by persona/phase if available in intermediate_steps
         phase_token_usage = {}
         for key, value in debate_intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith("Total_"):
@@ -129,7 +257,6 @@ class ImprovementMetricsCollector:
     def _analyze_debate_efficiency(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyzes the efficiency of the debate process.
-        Placeholder implementation.
         """
         efficiency_summary = {
             "num_turns": len(debate_intermediate_steps.get("Debate_History", [])),
@@ -152,8 +279,6 @@ class ImprovementMetricsCollector:
         Assesses test coverage for the codebase.
         Placeholder implementation.
         """
-        # In a real scenario, this would run a tool like 'coverage.py'
-        # For now, return dummy data.
         return {
             "overall_coverage_percentage": 0.0, # Cannot calculate without running tests
             "files_covered": 0,
@@ -162,51 +287,19 @@ class ImprovementMetricsCollector:
         }
 
     @classmethod
-    def _analyze_python_file_ast(cls, content: str, file_path: str) -> Tuple[int, int, int, int, int]:
+    def _analyze_python_file_ast(cls, content: str, content_lines: List[str], file_path: str) -> List[Dict[str, Any]]:
         """
         Analyzes a Python file's AST for complexity, lines of code in functions,
         number of functions, code smells, and potential bottlenecks.
-        Placeholder implementation.
         """
-        # This is a complex task requiring AST traversal.
-        # For a placeholder, we'll return zeros or simple counts.
-        
-        # Basic LOC count (excluding comments and blank lines)
-        loc = sum(1 for line in content.splitlines() if line.strip() and not line.strip().startswith('#'))
-        
-        functions = 0
-        complexity = 0 # Cyclomatic complexity
-        code_smells = 0
-        bottlenecks = 0
-
         try:
             tree = ast.parse(content)
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    functions += 1
-                    # Simple heuristic for complexity (e.g., number of if/for/while/try/except)
-                    complexity += 1 + sum(isinstance(sub_node, (ast.If, ast.For, ast.While, ast.Try)) for sub_node in ast.walk(node))
-                    
-                    # Simple heuristic for code smells (e.g., long functions, too many arguments)
-                    if len(node.body) > 50: # Arbitrary long function threshold
-                        code_smells += 1
-                    if len(node.args.args) > 5: # Arbitrary too many arguments threshold
-                        code_smells += 1
-                    
-                    # Simple heuristic for potential bottlenecks (e.g., nested loops)
-                    nested_loops = 0
-                    for sub_node in ast.walk(node):
-                        if isinstance(sub_node, (ast.For, ast.While)):
-                            nested_loops += 1
-                    if nested_loops >= 2: # Nested loops
-                        bottlenecks += 1
-
+            visitor = ComplexityVisitor(content_lines)
+            visitor.visit(tree)
+            return visitor.function_metrics
         except SyntaxError as e:
             logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
-            # Return default values if syntax error prevents AST parsing
-            return 0, 0, 0, 0, 0
+            return []
         except Exception as e:
-            logger.error(f"Unexpected error during AST analysis for {file_path}: {e}")
-            return 0, 0, 0, 0, 0
-
-        return complexity, loc, functions, code_smells, bottlenecks
+            logger.error(f"Unexpected error during AST analysis for {file_path}: {e}", exc_info=True)
+            return []
