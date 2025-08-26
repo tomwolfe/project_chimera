@@ -1,6 +1,6 @@
 # src/models.py
 from typing import Dict, Any, Optional, List, Literal # Added Literal for ConflictReport
-from pydantic import BaseModel, Field, validator, model_validator
+from pydantic import BaseModel, Field, validator, model_validator, ConfigDict # ADDED ConfigDict
 import logging
 import re
 from pathlib import Path
@@ -183,14 +183,17 @@ class ConflictReport(BaseModel):
     conflict_found: bool = Field(..., description="True if a conflict was identified, False otherwise.") # ADDED THIS LINE
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # For parser feedback
 
-# NEW: Pydantic model for SelfImprovementAnalysisOutput (Improvement 4)
-class SelfImprovementAnalysisOutput(BaseModel):
+# NEW: Pydantic model for SelfImprovementAnalysisOutputV1 (Original structure, now versioned)
+class SelfImprovementAnalysisOutputV1(BaseModel):
+    """Version 1 of the self-improvement analysis output schema."""
     analysis_summary: str = Field(..., alias="ANALYSIS_SUMMARY", description="Overall summary of the self-improvement analysis.")
     impactful_suggestions: List[Dict[str, Any]] = Field(..., alias="IMPACTFUL_SUGGESTIONS", description="List of structured suggestions for improvement.")
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+    
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode='after')
-    def validate_suggestion_structure(self) -> 'SelfImprovementAnalysisOutput':
+    def validate_suggestion_structure(self) -> 'SelfImprovementAnalysisOutputV1':
         for suggestion in self.impactful_suggestions:
             if not all(k in suggestion for k in ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT"]):
                 raise ValueError("Each suggestion must contain 'AREA', 'PROBLEM', 'PROPOSED_SOLUTION', 'EXPECTED_IMPACT'.")
@@ -201,7 +204,35 @@ class SelfImprovementAnalysisOutput(BaseModel):
                     try:
                         validated_code_changes.append(CodeChange.model_validate(cc_data).model_dump(by_alias=True))
                     except ValidationError as e:
-                        logger.warning(f"Malformed CodeChange in SelfImprovementAnalysisOutput: {e}. Skipping this change.")
+                        logger.warning(f"Malformed CodeChange in SelfImprovementAnalysisOutputV1: {e}. Skipping this change.")
                         # Optionally, add to malformed_blocks or a dedicated field
                 suggestion["CODE_CHANGES_SUGGESTED"] = validated_code_changes
         return self
+
+# NEW: Pydantic model for SelfImprovementAnalysisOutput (Versioned wrapper)
+class SelfImprovementAnalysisOutput(BaseModel):
+    """Current version of the self-improvement analysis output schema with versioning."""
+    version: str = Field(default="1.0", description="Schema version")
+    data: Dict = Field(..., description="Actual analysis data following version-specific schema")
+    metadata: Dict = Field(default_factory=dict, description="Additional metadata about the analysis")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # For parser feedback
+
+    @model_validator(mode='after')
+    def validate_data_structure(self) -> 'SelfImprovementAnalysisOutput':
+        if self.version == "1.0":
+            # Validate against V1 schema
+            try:
+                SelfImprovementAnalysisOutputV1.model_validate(self.data)
+            except ValidationError as e:
+                raise ValueError(f"Data does not match schema version {self.version}: {str(e)}")
+        # Future versions would be handled here
+        else:
+            raise ValueError(f"Unsupported schema version: {self.version}")
+        return self
+    
+    def to_v1(self) -> Dict:
+        """Convert to version 1 format for backward compatibility."""
+        if self.version == "1.0":
+            return self.data
+        # Conversion logic for future versions would go here
+        raise NotImplementedError("Conversion to V1 not implemented for this version")

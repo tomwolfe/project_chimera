@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 # Ensure all relevant models are imported
-from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput
+from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1 # ADDED SelfImprovementAnalysisOutputV1
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +350,74 @@ class LLMOutputParser:
             
         return json_str # Return original if no valid JSON lines found
 
+    # NEW: Helper to clean LLM output from markdown fences and conversational filler
+    def _clean_llm_output(self, raw_output: str) -> str:
+        """Clean common LLM output artifacts like markdown fences and conversational filler."""
+        cleaned = raw_output
+        
+        # Remove Markdown code blocks (```json, ```python, ```, etc.)
+        # This regex is more robust, handling optional language specifiers and ensuring it's at start/end
+        cleaned = re.sub(r'^\s*```(?:json|python|text)?\s*\n', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'\n\s*```\s*$', '', cleaned, flags=re.MULTILINE)
+        
+        # Remove common leading/trailing conversational filler
+        cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', cleaned, flags=reDOTALL | re.IGNORECASE)
+        cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Attempt to find the outermost JSON structure and trim anything outside it
+        json_start = -1
+        json_end = -1
+        
+        # Find first '{' or '['
+        for i, char in enumerate(cleaned):
+            if char == '{' or char == '[':
+                json_start = i
+                break
+        
+        # Find last '}' or ']'
+        for i in range(len(cleaned) - 1, -1, -1):
+            if cleaned[i] == '}' or cleaned[i] == ']':
+                json_end = i + 1
+                break
+        
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            cleaned = cleaned[json_start:json_end]
+        
+        return cleaned.strip()
+
+    # NEW: Helper to detect if text contains what looks like a suggestion item at top level
+    def _detect_potential_suggestion_item(self, text: str) -> Optional[Dict]:
+        """
+        Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
+        at the top level, rather than the full SelfImprovementAnalysisOutput.
+        """
+        # Look for patterns that match a suggestion item's key fields
+        # This is a heuristic, but targets the specific structure of an IMPACTFUL_SUGGESTIONS item
+        area_match = re.search(r'"AREA"\s*:\s*"(Reasoning Quality|Robustness|Efficiency|Maintainability|Security)"', text)
+        problem_match = re.search(r'"PROBLEM"\s*:\s*"[^"]+"', text)
+        proposed_solution_match = re.search(r'"PROPOSED_SOLUTION"\s*:\s*"[^"]+"', text)
+        
+        if area_match and problem_match and proposed_solution_match:
+            # Try to extract the object that contains these fields
+            try:
+                # Find the enclosing braces for this potential object
+                start_idx = text.rfind('{', 0, area_match.start())
+                if start_idx >= 0:
+                    brace_count = 1
+                    for i in range(start_idx + 1, len(text)):
+                        if text[i] == '{':
+                            brace_count += 1
+                        elif text[i] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                obj_str = text[start_idx:i+1]
+                                # Attempt to load as JSON to ensure it's a valid object
+                                return json.loads(obj_str)
+            except Exception as e:
+                self.logger.debug(f"Error extracting potential suggestion item: {e}")
+        
+        return None
+
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
@@ -364,28 +432,31 @@ class LLMOutputParser:
         parsed_data = None
         data_to_validate = None
 
-        # 1. Attempt to extract JSON string using markers
-        marker_extraction_result = self._extract_json_with_markers(raw_output)
+        # NEW: Clean raw output first to remove markdown fences and conversational filler
+        cleaned_raw_output = self._clean_llm_output(raw_output)
+        
+        # 1. Attempt to extract JSON string using markers from the cleaned output
+        marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
         if marker_extraction_result:
             extracted_json_str, end_marker_found = marker_extraction_result
             if not end_marker_found:
                 malformed_blocks_list.append({
                     "type": "MISSING_END_MARKER",
                     "message": "START_JSON_OUTPUT was found, but END_JSON_OUTPUT was missing. Attempted to parse content after START_JSON_OUTPUT.",
-                    "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "")
+                    "raw_string_snippet": cleaned_raw_output[:1000] + ("..." if len(cleaned_raw_output) > 1000 else "")
                 })
         else:
-            # No start marker found, try markdown blocks on the full raw_output
-            extracted_json_str = self._extract_json_from_markdown(raw_output)
+            # No start marker found, try markdown blocks on the full cleaned_raw_output
+            extracted_json_str = self._extract_json_from_markdown(cleaned_raw_output)
             if not extracted_json_str:
-                # No markdown blocks, try robust extraction on the whole raw_output
-                extracted_json_str = self._extract_and_sanitize_json_string(raw_output, remove_markdown_fences=True)
+                # No markdown blocks, try robust extraction on the whole cleaned_raw_output
+                extracted_json_str = self._extract_and_sanitize_json_string(cleaned_raw_output, remove_markdown_fences=True)
         
         if not extracted_json_str:
             malformed_blocks_list.append({
                 "type": "JSON_EXTRACTION_FAILED",
                 "message": "Could not find or extract a valid JSON structure from the output.",
-                "raw_string_snippet": raw_output[:1000] + ("..." if len(raw_output) > 1000 else "")
+                "raw_string_snippet": cleaned_raw_output[:1000] + ("..." if len(cleaned_raw_output) > 1000 else "")
             })
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
@@ -437,7 +508,22 @@ class LLMOutputParser:
 
         # 4. Validate against schema
         try:
-            validated_output = schema_model.model_validate(data_to_validate)
+            # If the schema model is the versioned SelfImprovementAnalysisOutput,
+            # we need to handle the versioning logic here.
+            if schema_model == SelfImprovementAnalysisOutput:
+                # First, try to validate as the versioned wrapper
+                try:
+                    validated_output = schema_model.model_validate(data_to_validate)
+                except ValidationError:
+                    # If it fails, assume it's a V1 data structure and wrap it
+                    v1_data = SelfImprovementAnalysisOutputV1.model_validate(data_to_validate)
+                    validated_output = SelfImprovementAnalysisOutput(
+                        version="1.0",
+                        data=v1_data.model_dump(by_alias=True)
+                    )
+            else:
+                validated_output = schema_model.model_validate(data_to_validate)
+            
             result_dict = validated_output.model_dump(by_alias=True)
             # Ensure malformed_blocks from parsing are added to the final result
             result_dict.setdefault("malformed_blocks", []).extend(malformed_blocks_list)
@@ -485,14 +571,13 @@ class LLMOutputParser:
         fallback_data_for_model: Dict[str, Any] = {}
 
         # Determine if partial_data is a single suggestion dict (for SelfImprovementAnalysisOutput)
+        # NEW: Use the new _detect_potential_suggestion_item helper
         is_single_suggestion_dict = False
-        if isinstance(partial_data, dict) and "AREA" in partial_data and \
-           "PROBLEM" in partial_data and \
-           "PROPOSED_SOLUTION" in partial_data and \
-           "EXPECTED_IMPACT" in partial_data:
-            # Ensure it's not a CodeChange object which might coincidentally have these keys
-            if not all(k in partial_data for k in ["FILE_PATH", "ACTION"]):
+        if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
+            detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
+            if detected_suggestion:
                 is_single_suggestion_dict = True
+                partial_data = detected_suggestion # Use the detected suggestion as partial data
 
         # Populate schema-specific fields with defaults or partial data
         if schema_model == LLMOutput:
@@ -530,7 +615,7 @@ class LLMOutputParser:
             fallback_data_for_model["proposed_resolution_paths"] = partial_data.get("proposed_resolution_paths", [])
             fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True) # Assume conflict if malformed
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
-        elif schema_model == SelfImprovementAnalysisOutput:
+        elif schema_model == SelfImprovementAnalysisOutput or schema_model == SelfImprovementAnalysisOutputV1: # Handle both old and new schema
             fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
@@ -543,7 +628,29 @@ class LLMOutputParser:
         # Now, attempt to validate this constructed fallback_data_for_model against the schema.
         # This ensures that what we return is always a valid Pydantic model instance.
         try:
-            validated_fallback = schema_model.model_validate(fallback_data_for_model)
+            # If the target schema is the versioned wrapper, ensure the data is wrapped correctly
+            if schema_model == SelfImprovementAnalysisOutput:
+                # If we have a V1-like structure, wrap it
+                if "ANALYSIS_SUMMARY" in fallback_data_for_model and "IMPACTFUL_SUGGESTIONS" in fallback_data_for_model:
+                    v1_data = SelfImprovementAnalysisOutputV1.model_validate(fallback_data_for_model)
+                    validated_fallback = SelfImprovementAnalysisOutput(
+                        version="1.0",
+                        data=v1_data.model_dump(by_alias=True),
+                        malformed_blocks=malformed_blocks # Pass malformed blocks to the wrapper
+                    )
+                else: # If it's not even V1-like, create a minimal wrapper
+                    validated_fallback = SelfImprovementAnalysisOutput(
+                        version="1.0",
+                        data={
+                            "ANALYSIS_SUMMARY": error_message_from_partial,
+                            "IMPACTFUL_SUGGESTIONS": [],
+                            "malformed_blocks": malformed_blocks
+                        },
+                        malformed_blocks=malformed_blocks
+                    )
+            else:
+                validated_fallback = schema_model.model_validate(fallback_data_for_model)
+            
             return validated_fallback.model_dump(by_alias=True)
         except ValidationError as e:
             # If even the fallback construction fails validation, it means our fallback logic

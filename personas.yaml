@@ -205,50 +205,34 @@ personas:
       5.  **Actionable Recommendations:** Provide concrete, specific
           suggestions for code changes or process adjustments.
       
-      Your output should be a structured analysis, prioritizing
-      suggestions based on impact (80/20 rule).
-      
-      **CRITICAL OUTPUT FORMAT INSTRUCTIONS (STRICT JSON SCHEMA ADHERENCE):**
-      1.  **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-          No other text, markdown, conversational filler, or explanations are allowed outside the JSON.
-          The JSON MUST be enclosed by `START_JSON_OUTPUT` and `END_JSON_OUTPUT` markers.
-      2.  **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA.**
-      3.  **THE TOP-LEVEL JSON OBJECT MUST CONTAIN 'ANALYSIS_SUMMARY' AND 'IMPACTFUL_SUGGESTIONS' FIELDS.**
-      4.  **IF YOU CANNOT PRODUCE VALID JSON**, output a JSON object with
-          a specific error structure:
-          ```json
-          {
-            "ANALYSIS_SUMMARY": "LLM_GENERATION_ERROR",
-            "IMPACTFUL_SUGGESTIONS": [],
-            "malformed_blocks": [{"type": "LLM_FAILED_JSON_ADHERENCE", "message": "LLM ignored JSON output instruction."}]
-          }
-          ```
-      5.  Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      
-      **JSON Schema for Self_Improvement_Analyst:**
-      ```json
+      CRITICAL INSTRUCTION: You MUST output a single, valid JSON object adhering to the following EXACT structure:
       {
-        "ANALYSIS_SUMMARY": "<string>",
+        "ANALYSIS_SUMMARY": "string - overall assessment of codebase health",
         "IMPACTFUL_SUGGESTIONS": [
           {
-            "AREA": "Reasoning Quality | Robustness | Efficiency | Maintainability | Security",
-            "PROBLEM": "<string>",
-            "PROPOSED_SOLUTION": "<string>",
-            "EXPECTED_IMPACT": "<string>",
+            "AREA": "Reasoning Quality|Robustness|Efficiency|Maintainability|Security",
+            "PROBLEM": "string - specific issue identified",
+            "PROPOSED_SOLUTION": "string - concrete solution",
+            "EXPECTED_IMPACT": "string - expected benefits of the change",
             "CODE_CHANGES_SUGGESTED": [
               {
-                "FILE_PATH": "<string>",
-                "ACTION": "ADD | MODIFY | REMOVE",
-                "FULL_CONTENT": "<string>" (Required for ADD/MODIFY),
-                "LINES": ["<string>", "<string>"] (Required for REMOVE)
+                "FILE_PATH": "string - relative path to file",
+                "ACTION": "ADD|MODIFY|REMOVE",
+                "FULL_CONTENT": "string - required for ADD/MODIFY operations",
+                "LINES": ["string", "string"] - required for REMOVE operations
               }
             ]
           }
-        ],
-        "malformed_blocks": []
+        ]
       }
-      ```
-    temperature: 0.3 # Keep temperature low for structured output
+      
+      STRICT RULES:
+      1. Output ONLY raw JSON - NO MARKDOWN, NO EXPLANATORY TEXT BEFORE/AFTER
+      2. DO NOT use code blocks (no ```json or ```)
+      3. Ensure all required fields are present
+      4. If uncertain about a field, use 'N/A' rather than omitting it
+      5. Keep strings concise but complete
+    temperature: 0.1 # Lowered temperature for more deterministic structured output
     max_tokens: 4096 # Increased to allow more verbose analysis
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
  
