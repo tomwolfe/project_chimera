@@ -28,17 +28,34 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs pycodestyle on the given content using its library API."""
     issues = []
     try:
-        style_guide = pycodestyle.StyleGuide(quiet=True, format='default')
+        # pycodestyle.Checker expects an options object, even if empty.
+        # We'll use a custom reporter to capture messages.
+        options = pycodestyle.parse_options([])[0]
+        
+        class CustomReporter(pycodestyle.BaseReport):
+            def __init__(self, options):
+                super().__init__(options)
+                self.messages = []
+            
+            def error(self, line_number, column_number, text, check):
+                # Extract the error code (e.g., 'E501') from the text
+                code = text.split(' ')[0] 
+                self.messages.append((line_number, column_number, code, text))
+        
+        # Assign our custom reporter to the options
+        options.reporter = CustomReporter
+        
         checker = pycodestyle.Checker(
             filename=filename,
             lines=content.splitlines(keepends=True),
+            options=options # Pass the options with our custom reporter
         )
 
-        # FIX: checker.check_all() returns the count, not the errors.
-        # Errors are collected in checker.report.results.
-        checker.check_all() 
+        # Run checks. The errors will be collected by CustomReporter.
+        checker.check_all()
 
-        for line_num, col_num, code, message in checker.report.results: # Corrected iteration
+        # Access the collected messages from the reporter instance
+        for line_num, col_num, code, message in checker.report.messages:
             issues.append({
                 "line_number": line_num,
                 "column_number": col_num,
@@ -249,7 +266,6 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                     node.func.value.id == 'subprocess' and
                     node.func.attr in ['call', 'check_call', 'check_output', 'run']):
                     
-                    # Check if shell=True is explicitly passed or if a string argument contains shell metacharacters
                     shell_true_arg = False
                     for keyword in node.keywords:
                         if keyword.arg == 'shell' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
@@ -388,7 +404,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         elif parsed_data is not None:
             malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
         
-        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': malformed_blocks_content}
+        return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
 
     code_changes_list = parsed_data.get('CODE_CHANGES', [])
     if not isinstance(code_changes_list, list):
