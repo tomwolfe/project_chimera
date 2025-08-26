@@ -16,11 +16,17 @@ from rich.console import Console
 from core import SocraticDebate
 # --- FIX END ---
 
+# --- NEW IMPORTS FOR API KEY TESTING ---
+import google.genai as genai
+from google.genai.errors import APIError
+# --- END NEW IMPORTS ---
+
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput # Added CritiqueOutput, GeneralOutput
 # --- MODIFICATION: Added recommend_domain_from_keywords to src.utils import ---
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords # Added sanitize_and_validate_file_path and recommend_domain_from_keywords
-# --- END MODIFICATION ---
-from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
+# --- REMOVED: Redundant import ---
+# from src.utils.output_parser import LLMOutputParser # Explicitly import for clarity
+# --- END REMOVED ---
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError # Corrected import, added LLMProviderError, CircuitBreakerError, SchemaValidationError
 # --- MODIFICATION: Added is_self_analysis_prompt to src.constants import ---
@@ -67,6 +73,31 @@ except (FileNotFoundError, ValueError, IOError) as e:
 
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
 CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25) # Store initial ratio from config
+
+# --- NEW: API Key Validation and Test Functions ---
+def validate_gemini_api_key_format(api_key: str) -> bool:
+    """Validate Gemini API key format."""
+    if not api_key or not isinstance(api_key, str):
+        return False
+    # Gemini API keys are typically alphanumeric with hyphens, ~35-40 characters
+    return re.match(r'^[A-Za-z0-9_-]{35,}$', api_key) is not None
+
+def test_gemini_api_key_functional(api_key: str) -> bool:
+    """Attempts a simple API call to validate the key's functionality."""
+    if not api_key:
+        return False
+    try:
+        test_client = genai.Client(api_key=api_key)
+        # Attempt a lightweight call, e.g., listing models
+        test_client.models.list()
+        return True
+    except APIError as e:
+        logger.error(f"API key functional test failed: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error during API key functional test: {e}")
+        return False
+# --- END NEW: API Key Validation and Test Functions ---
 
 # --- Demo Codebase Context Loading ---
 @st.cache_data
@@ -146,7 +177,7 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
         step_keys_to_process = sorted([k for k in intermediate_steps.keys()
-                                       if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("malformed_blocks")],
+                                       if not k.endswith("_Tokens_Used") and not k.endswith("_Estimated_Cost_USD") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and k != "debate_history" and not k.startswith("malformed_blocks")],
                                       key=lambda x: (x.split('_')[0] if '_' in x else '', x)) # Sort by persona name first, then step name
         
         for step_key in step_keys_to_process:
@@ -273,8 +304,10 @@ def get_persona_manager():
     return PersonaManager()
 # --- FIX END ---
 
-# persona_manager_instance = get_persona_manager() # REMOVE THIS LINE
-# context_analyzer_instance = get_context_analyzer(persona_manager_instance) # REMOVE THIS LINE
+# --- REMOVED: These lines are no longer needed as objects are managed in session state ---
+# persona_manager_instance = get_persona_manager()
+# context_analyzer_instance = get_context_analyzer(persona_manager_instance)
+# --- END REMOVED ---
 
 # --- Session State Initialization ---
 def _initialize_session_state(): # Removed pm: PersonaManager parameter
@@ -283,9 +316,6 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
     defaults = {
         "initialized": True,
         "api_key_input": os.getenv("GEMINI_API_KEY", ""),
-        # "persona_manager": pm, # Will be initialized below
-        # "all_personas": pm.all_personas, # Will be initialized below
-        # "persona_sets": pm.persona_sets, # Will be initialized below
         "user_prompt_input": "", # Will be set by example selector or custom prompt
         "max_tokens_budget_input": 1000000, # Corrected default value
         "show_intermediate_steps_checkbox": True,
@@ -293,7 +323,6 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "selected_example_name": "", # Will be set by example selector
         "selected_prompt_category": "", # Will be set by example selector
         "active_example_framework_hint": None, # --- ADDED THIS LINE ---
-        # "selected_persona_set": pm.available_domains[0] if pm.available_domains else "General", # Will be initialized below
         "debate_ran": False,
         "final_answer_output": "",
         "intermediate_steps_output": {},
@@ -310,7 +339,12 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "load_framework_select": "",
         "_session_id": str(uuid.uuid4()), # For rate limiting
         "debate_progress": 0.0, # For progress bar
-        "personas": {} # To hold the currently active personas for the selected framework
+        # --- NEW: API Key Validation States ---
+        "api_key_valid_format": False,
+        "api_key_functional": False,
+        # --- NEW: Real-time Token/Cost Display States ---
+        "current_debate_tokens_used": 0,
+        "current_debate_cost_usd": 0.0,
     }
 
     # Apply defaults to session state if not already present
@@ -325,7 +359,9 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
         st.session_state.selected_persona_set = st.session_state.persona_manager.available_domains[0] if st.session_state.persona_manager.available_domains else "General"
-        st.session_state.personas = st.session_state.persona_manager.all_personas # Initialize with all personas, will be filtered by framework later
+        # Initialize st.session_state.personas with the personas for the *initially selected framework*
+        initial_framework_personas = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
+        st.session_state.personas = {name: st.session_state.persona_manager.all_personas.get(name) for name in initial_framework_personas if name in st.session_state.persona_manager.all_personas}
 
     if "context_analyzer" not in st.session_state:
         # Pass the persona_router from the persona_manager to the context_analyzer
@@ -335,6 +371,23 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
             analyzer.set_persona_router(st.session_state.persona_manager.persona_router)
         st.session_state.context_analyzer = analyzer
     # --- FIX END ---
+
+    # --- CORRECTED: RateLimiter instantiation with key_func ---
+    if "session_rate_limiter_instance" not in st.session_state:
+        # Define a lambda for key_func that accesses session state safely
+        # This ensures the rate limiter uses the unique session ID
+        st.session_state.session_rate_limiter_instance = RateLimiter(
+            calls=10, 
+            period=60.0, 
+            key_func=lambda: st.session_state._session_id
+        )
+    # --- END CORRECTED ---
+
+    # Validate API key format on initialization
+    if st.session_state.api_key_input:
+        st.session_state.api_key_valid_format = validate_gemini_api_key_format(st.session_state.api_key_input)
+        # Do NOT run functional test on init, it's too slow and hits API.
+        # Functional test will be triggered by button.
 
     # Set default example prompt after defaults are loaded
     if "user_prompt_input" not in st.session_state or not st.session_state.user_prompt_input:
@@ -422,13 +475,9 @@ def sanitize_user_input(prompt: str) -> str:
 # --- END ENHANCED SANITIZATION FUNCTION ---
 
 
-# --- NEW: RATE LIMITER INSTANTIATION ---
-# Instantiate the rate limiter (e.g., 10 calls per minute per session)
-# This limiter will be applied to the main action function.
-# Note: For distributed deployments, an in-memory limiter is insufficient.
-# A Redis-based solution or external proxy would be needed.
-session_rate_limiter = RateLimiter(calls=10, period=60.0)
-# --- END RATE LIMITER INSTANTIATION ---
+# --- REMOVED: Module-level RateLimiter instantiation. Now in session state. ---
+# session_rate_limiter = RateLimiter(calls=10, period=60.0)
+# --- END REMOVED ---
 
 
 # --- NEW: HELPER FUNCTION FOR IS_SELF_ANALYSIS_PROMPT ---
@@ -441,7 +490,6 @@ session_rate_limiter = RateLimiter(calls=10, period=60.0)
 
 def reset_app_state():
     """Resets all session state variables to their default values."""
-    # Pass the current persona_manager_instance to ensure it's re-initialized correctly
     _initialize_session_state() # Removed pm: PersonaManager parameter
     st.rerun()
 
@@ -461,29 +509,73 @@ def _log_persona_change(persona_name: str, parameter: str, old_value: Any, new_v
 def handle_debate_errors(error: Exception):
     """Displays user-friendly, action-oriented error messages based on exception type."""
     error_type = type(error).__name__
+    error_str = str(error).lower() # Convert error message to lower for pattern matching
     
-    if isinstance(error, LLMProviderError):
-        if "INVALID_API_KEY" in str(error):
-            st.error("""
-            🔑 **API Key Error: Invalid or Missing Key**
-            
-            We couldn't authenticate with the Gemini API. Please ensure:
-            - Your Gemini API Key is correctly entered in the sidebar.
-            - The key is valid and active.
-            - You have access to the selected model (`gemini-2.5-flash-lite`, `gemini-2.5-flash`, or `gemini-2.5-pro`).
-            
-            [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
-            """)
-        else:
-            st.error(f"""
-            🌐 **LLM Provider Error: Connection Issue**
-            
-            An issue occurred while connecting to the Gemini API. This might be a temporary network problem or an API service disruption.
-            
-            **Details:** `{str(error)}`
-            
-            Please try again in a moment. If the issue persists, check your internet connection or the [Gemini API status page](https://status.cloud.google.com/).
-            """)
+    # --- NEW: Specific patterns for more actionable guidance ---
+    if "invalid_api_key" in error_str or "api key not valid" in error_str:
+        st.error("""
+        🔑 **API Key Error: Invalid or Missing Key**
+        
+        We couldn't authenticate with the Gemini API. Please ensure:
+        - Your Gemini API Key is correctly entered in the sidebar.
+        - The key is valid and active.
+        - You have access to the selected model (`gemini-2.5-flash-lite`, `gemini-2.5-flash`, or `gemini-2.5-pro`).
+        
+        [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
+        """)
+    elif "429" in error_str or "rate limit" in error_str or "quota" in error_str:
+        st.error("""
+        ⏳ **API Rate Limit Exceeded**
+        
+        Google's Gemini API has rate limits based on your project quota.
+        
+        **Immediate Solutions:**
+        - Wait 1-2 minutes before trying again.
+        - Reduce the complexity of your prompt.
+        - Break your request into smaller parts.
+        
+        **Long-term Solutions:**
+        - Request a quota increase in [Google Cloud Console](https://console.cloud.google.com/iam-admin/quotas).
+        - Consider using a less capable but higher-quota model like `gemini-2.5-flash-lite`.
+        """)
+    elif "connection" in error_str or "timeout" in error_str or "network" in error_str or "socket" in error_str:
+        st.error("""
+        📡 **Network Connection Issue**
+        
+        Unable to connect to Google's API servers. This is likely a temporary network issue.
+        
+        **What to try:**
+        - Check your internet connection.
+        - Refresh the page.
+        - Try again in a few minutes.
+        
+        Google API status: [Cloud Status Dashboard](https://status.cloud.google.com/)
+        """)
+    elif "safety" in error_str or "blocked" in error_str or "content" in error_str or "invalid_argument" in error_str:
+        st.error("""
+        🛡️ **Content Safety Filter Triggered**
+        
+        Your prompt or the AI's response was blocked by Google's safety filters.
+        
+        **How to fix:**
+        - Rephrase your prompt to avoid potentially sensitive topics.
+        - Remove any code that might be interpreted as harmful.
+        - Try a less detailed request first.
+        """)
+    # --- END NEW SPECIFIC PATTERNS ---
+    
+    # --- Existing error handling (ensure these are still caught if not covered by new patterns) ---
+    elif isinstance(error, LLMProviderError):
+        # The specific "INVALID_API_KEY" is now handled above, so this catches other LLMProviderErrors
+        st.error(f"""
+        🌐 **LLM Provider Error: Connection Issue**
+        
+        An issue occurred while connecting to the Gemini API. This might be a temporary network problem or an API service disruption.
+        
+        **Details:** `{str(error)}`
+        
+        Please try again in a moment. If the issue persists, check your internet connection or the [Gemini API status page](https://status.cloud.google.com/).
+        """)
     elif isinstance(error, RateLimitExceededError):
         st.error(f"""
         ⏳ **Rate Limit Exceeded**
@@ -559,18 +651,42 @@ with st.sidebar:
     st.header("Configuration")
     
     with st.expander("Core LLM Settings", expanded=True):
-        st.text_input("Enter your Gemini API Key", type="password", key="api_key_input", help="Your API key will not be stored.")
-        st.markdown("Need a Gemini API key? Get one from [Google AI Studio](https://aistudio.google.com/apikey).")
+        api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
+                                        key="api_key_input", 
+                                        help="Your API key will not be stored.",
+                                        on_change=lambda: setattr(st.session_state, 'api_key_valid_format', 
+                                                                validate_gemini_api_key_format(st.session_state.api_key_input)))
+        
+        api_key_col1, api_key_col2 = st.columns([3, 1])
+        with api_key_col1:
+            if st.session_state.api_key_input:
+                if st.session_state.api_key_valid_format:
+                    st.success("✅ API key format is valid.")
+                else:
+                    st.error("❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores.")
+            else:
+                st.info("Please enter your Gemini API Key.")
+        
+        with api_key_col2:
+            if st.button("Test Key", help="Verify your API key works by making a small API call.", key="test_api_key_button"):
+                if st.session_state.api_key_input:
+                    with st.spinner("Testing API connection..."):
+                        if test_gemini_api_key_functional(st.session_state.api_key_input):
+                            st.session_state.api_key_functional = True
+                            st.success("API key is functional!", icon="✅")
+                        else:
+                            st.session_state.api_key_functional = False
+                            st.error("API key functional test failed. Check key or network.", icon="❌")
+                else:
+                    st.warning("Please enter an API key first.")
+        
+        if st.session_state.api_key_input and st.session_state.api_key_functional:
+            st.success("API key is ready for use.")
+        elif st.session_state.api_key_input and not st.session_state.api_key_functional and st.session_state.api_key_valid_format:
+            st.warning("API key format is valid, but functional test failed. Please re-test or check network.")
+
+        st.markdown("Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).")
         st.markdown("---")
-        # --- MODIFICATION FOR API KEY VALIDATION ---
-        # Check if the API key input is not empty and if it has a valid format.
-        # The regex checks for a string of alphanumeric characters, hyphens, and underscores,
-        # typically 35 characters long for Gemini API keys.
-        if st.session_state.api_key_input and not re.match(r'^[A-Za-z0-9_-]{35,}$', st.session_state.api_key_input):
-            st.error("Invalid API key format. Please check your Gemini API Key.")
-            # Optionally, disable the run button or show a more prominent warning.
-            # For now, just displaying the error.
-        # --- END MODIFICATION ---
         st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], key="selected_model_selectbox")
         st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite` or `gemini-2.5-flash`.")
 
@@ -615,10 +731,41 @@ with st.sidebar:
         )
 # --- END MODIFICATIONS FOR SIDEBAR GROUPING ---
 
+    # --- NEW: API Rate Limit Status Display ---
+    # Get current rate limit status without triggering a call
+    is_allowed_check, current_count, time_to_wait, usage_percent = \
+        st.session_state.session_rate_limiter_instance.check_and_record_call(st.session_state._session_id, dry_run=True)
+    
+    st.markdown("---")
+    st.subheader("API Rate Limit Status")
+    
+    progress_text = f"API Usage: {current_count}/{st.session_state.session_rate_limiter_instance.calls} requests"
+    st.progress(int(usage_percent), text=progress_text)
+    
+    if not is_allowed_check:
+        st.warning(f"⏳ Rate limit exceeded. Please wait {time_to_wait:.1f} seconds.")
+    elif usage_percent >= st.session_state.session_rate_limiter_instance.warning_threshold * 100:
+        st.info(f"⚠️ Approaching rate limit. {current_count}/{st.session_state.session_rate_limiter_instance.calls} requests used.")
+    else:
+        st.success("API usage is within limits.")
+
+    # --- NEW: Real-time Token Usage and Cost Display (during debate) ---
+    if st.session_state.debate_ran or st.session_state.current_debate_tokens_used > 0:
+        st.markdown("---")
+        st.subheader("Current Debate Usage")
+        col_tokens, col_cost = st.columns(2)
+        with col_tokens:
+            st.metric("Tokens Used", f"{st.session_state.current_debate_tokens_used:,}")
+        with col_cost:
+            st.metric("Estimated Cost", f"${st.session_state.current_debate_cost_usd:.6f}")
+        st.caption("These metrics update in real-time during the debate.")
+
+
 st.header("Project Setup & Input")
-api_key_feedback_placeholder = st.empty()
-if not st.session_state.api_key_input.strip():
-    api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to enable the 'Run' button.")
+# The API key feedback is now handled by the sidebar, so this can be simplified or removed.
+# api_key_feedback_placeholder = st.empty()
+# if not st.session_state.api_key_input.strip():
+#     api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to enable the 'Run' button.")
 
 CUSTOM_PROMPT_KEY = "Custom Prompt"
 
@@ -691,7 +838,7 @@ for i, tab_name in enumerate(tab_names):
                 - **Be Specific:** Clearly define your goal and desired output.
                 - **Provide Context:** Include relevant background information or code snippets.
                 - **Define Constraints:** Specify any limitations (e.g., language, length, format).
-                - **Example Output:** If possible, provide an example of the desired output format.
+                - **Example Output:** If possible, provide an.example of the desired output format.
                 """)
             
             # Analyze the custom prompt to determine the appropriate framework
@@ -818,7 +965,7 @@ with col1:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate.")
                 if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
                     st.session_state.selected_persona_set = suggested_domain
-                    st.rerun() # Re-added to ensure UI updates
+                    st.rerun()
     # --- END REFINED LOGIC ---
     
     # --- MODIFICATION FOR IMPROVEMENT 1.2: Centralize Persona/Framework Data Access ---
@@ -1144,7 +1291,8 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
 st.markdown("---")
 run_col, reset_col = st.columns([0.8, 0.2])
 with run_col:
-    run_button_clicked = st.button("🚀 Run Socratic Debate", type="primary", use_container_width=True)
+    run_button_clicked = st.button("🚀 Run Socratic Debate", type="primary", use_container_width=True, 
+                               disabled=not (st.session_state.api_key_input and st.session_state.api_key_functional))
 with reset_col:
     st.button("🔄 Reset All", on_click=reset_app_state, use_container_width=True)
 
@@ -1162,21 +1310,30 @@ def _run_socratic_debate_process():
     # Log the start of the process with the request ID
     logger.info("Starting Socratic Debate process.", extra={'request_id': request_id, 'user_prompt': user_prompt})
     
-    api_key_feedback_placeholder.empty()
+    # Reset real-time token/cost display at the start of a new debate
+    st.session_state.current_debate_tokens_used = 0
+    st.session_state.current_debate_cost_usd = 0.0
+
+    # --- NEW: Consolidated API Key and Prompt Validation ---
     if not st.session_state.api_key_input.strip():
-        api_key_feedback_placeholder.warning("Please enter your Gemini API Key in the sidebar to proceed.")
+        st.error("Please enter your Gemini API Key in the sidebar to proceed.")
         logger.warning("API key missing, debate process aborted.", extra={'request_id': request_id})
-        return # Exit if API key is missing
+        return
+    elif not st.session_state.api_key_functional:
+        st.error("Your Gemini API Key is not functional. Please test it in the sidebar.")
+        logger.warning("API key not functional, debate process aborted.", extra={'request_id': request_id})
+        return
     elif not user_prompt.strip():
         st.error("Please enter a prompt.")
         logger.warning("User prompt is empty, debate process aborted.", extra={'request_id': request_id})
-        return # Exit if prompt is empty
+        return
+    # --- END NEW ---
 
     # --- RATE LIMITING CHECK ---
     try:
         # This call will raise RateLimitExceededError if the limit is hit
-        # We call the wrapper with a dummy function to trigger the check.
-        session_rate_limiter(lambda: None)() 
+        # It uses the __call__ method of the RateLimiter instance
+        st.session_state.session_rate_limiter_instance(lambda: None)() 
     except RateLimitExceededError as e:
         handle_debate_errors(e) # Use the new error handler
         return # Stop execution if rate limit is hit
@@ -1255,6 +1412,16 @@ def _run_socratic_debate_process():
                 overall_progress_bar.progress(st.session_state.debate_progress)
     # --- FIX END ---
 
+        # --- NEW: Update status_callback to also update session state for real-time display ---
+        def update_status_with_realtime_metrics(message, state, current_total_tokens, current_total_cost, estimated_next_step_tokens=0, estimated_next_step_cost=0.0, progress_pct: float = None, current_persona_name: str = None):
+            # Call the original update_status logic
+            update_status(message, state, current_total_tokens, current_total_cost, estimated_next_step_tokens, estimated_next_step_cost, progress_pct, current_persona_name)
+            
+            # Update session state for real-time display in sidebar
+            st.session_state.current_debate_tokens_used = current_total_tokens
+            st.session_state.current_debate_cost_usd = current_total_cost
+        # --- END NEW ---
+
         # Capture rich output and console instance for process log
         with capture_rich_output_and_get_console() as (rich_output_buffer, rich_console_instance):
             try:
@@ -1311,7 +1478,7 @@ def _run_socratic_debate_process():
                     all_personas=st.session_state.all_personas,
                     persona_sets=st.session_state.persona_sets, # Pass persona_sets
                     domain=domain_for_run, # <<< CHANGED FROM st.session_state.selected_persona_set to domain_for_run
-                    status_callback=update_status, # Use the new update_status helper
+                    status_callback=update_status_with_realtime_metrics, # Use the NEW update_status_with_realtime_metrics helper
                     rich_console=rich_console_instance, # Pass the captured console instance
                     codebase_context=st.session_state.get('codebase_context', {}),
                     # REMOVED: context_token_budget_ratio=st.session_state.context_token_budget_ratio, # This is now managed by ChimeraSettings
@@ -1609,7 +1776,7 @@ if st.session_state.debate_ran:
         if st.session_state.show_intermediate_steps_checkbox:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {k: v for k, v in st.session_state.intermediate_steps_output.items()
-                             if not k.endswith("_Tokens_Used") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and not k.startswith("malformed_blocks")} # Removed debate_history
+                             if not k.endswith("_Tokens_Used") and not k.endswith("_Estimated_Cost_USD") and k != "Total_Tokens_Used" and k != "Total_Estimated_Cost_USD" and not k.startswith("malformed_blocks")} # Removed debate_history
             sorted_step_keys = sorted(display_steps.keys(), key=lambda x: (x.split('_')[0] if '_' in x else '', x)) # Sort by persona name first, then step name
             for step_key in sorted_step_keys:
                 persona_name = step_key.split('_')[0]

@@ -328,7 +328,7 @@ class SocraticDebate:
         self.rich_console.print(f"[bold green]Starting Socratic Debate for prompt:[/bold green] [italic]{self.initial_prompt}[/italic]")
         self._log_with_context("info", "Debate state initialized.")
 
-    def _perform_context_analysis(self, persona_sequence: List[str]) -> Optional[Dict[str, Any]]:
+    def _perform_context_analysis(self, persona_sequence: Tuple[str, ...]) -> Optional[Dict[str, Any]]: # FIX: Changed to Tuple
         """
         Performs context analysis based on the initial prompt and codebase context.
         """
@@ -343,7 +343,7 @@ class SocraticDebate:
             relevant_files = self.context_analyzer.find_relevant_files(
                 self.initial_prompt, 
                 max_context_tokens=self.phase_budgets["context"], # Pass the allocated context budget
-                active_personas=tuple(persona_sequence) # Pass the determined persona sequence for persona-aware filtering
+                active_personas=persona_sequence # Pass the determined persona sequence for persona-aware filtering
             )
             
             # Generate context summary using the intelligent summarizer
@@ -839,7 +839,7 @@ class SocraticDebate:
         # Phase 1: Context Analysis (if applicable)
         self.status_callback("Phase 1: Analyzing Context...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("context"))
         # FIX: Pass persona_sequence as a tuple to _perform_context_analysis
-        context_analysis_results = self._perform_context_analysis(persona_sequence) 
+        context_analysis_results = self._perform_context_analysis(tuple(persona_sequence)) # FIX: Ensure it's a tuple
         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
         
         # Phase 2: Context Persona Turn (if in sequence)
