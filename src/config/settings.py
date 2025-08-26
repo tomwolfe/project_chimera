@@ -21,7 +21,8 @@ class ChimeraSettings(BaseModel):
     
     # Total token budget for a single Socratic debate run.
     # Changed default to 1000000 to match the UI's maximum and the likely intended default.
-    total_budget: int = Field(default=1000000, ge=1000, le=1000000, description="Maximum total tokens allowed for a single Socratic debate run.")
+    # --- MODIFICATION: Increased le value to 2,000,000 ---
+    total_budget: int = Field(default=1000000, ge=1000, le=2000000, description="Maximum total tokens allowed for a single Socratic debate run.") # <-- MODIFIED THIS LINE
 
     @model_validator(mode='after')
     def normalize_token_budget_ratios(self) -> Self:

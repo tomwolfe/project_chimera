@@ -1,6 +1,6 @@
 # src/utils/code_validator.py
 import io
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Union
 import subprocess
 import sys
 import os
@@ -28,10 +28,12 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs pycodestyle on the given content using its library API."""
     issues = []
     try:
-        # pycodestyle.Checker expects an options object, even if empty.
-        # We'll use a custom reporter to capture messages.
-        options = pycodestyle.parse_options([])[0]
+        # Create a StyleGuide instance. Options can be passed here if needed,
+        # e.g., max_line_length=88. For now, we'll use defaults or config.
+        # The 'quiet=True' option suppresses stdout output from pycodestyle itself.
+        style_guide = pycodestyle.StyleGuide(quiet=True) 
         
+        # Define a custom reporter class
         class CustomReporter(pycodestyle.BaseReport):
             def __init__(self, options):
                 super().__init__(options)
@@ -42,20 +44,21 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
                 code = text.split(' ')[0] 
                 self.messages.append((line_number, column_number, code, text))
         
-        # Assign our custom reporter to the options
-        options.reporter = CustomReporter
-        
+        # Instantiate the custom reporter with the style_guide's options
+        reporter_instance = CustomReporter(style_guide.options)
+
         checker = pycodestyle.Checker(
             filename=filename,
             lines=content.splitlines(keepends=True),
-            options=options # Pass the options with our custom reporter
+            options=style_guide.options, # Pass the options from the style guide
+            report=reporter_instance # Pass our custom reporter instance
         )
 
         # Run checks. The errors will be collected by CustomReporter.
         checker.check_all()
 
         # Access the collected messages from the reporter instance
-        for line_num, col_num, code, message in checker.report.messages:
+        for line_num, col_num, code, message in reporter_instance.messages: # Access messages from reporter_instance
             issues.append({
                 "line_number": line_num,
                 "column_number": col_num,

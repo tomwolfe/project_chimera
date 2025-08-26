@@ -720,16 +720,17 @@ with st.sidebar:
     with st.expander("Resource Management", expanded=False):
         st.markdown("---")
         # --- FIX: Added value parameter to number_input to correctly initialize it ---
+        # --- MODIFICATION: Increased max_value to 2,000,000 ---
         st.number_input(
             "Max Total Tokens Budget:", 
             min_value=1000, 
-            max_value=1000000, 
+            max_value=2000000, # <-- MODIFIED THIS LINE
             step=1000, 
             key="max_tokens_budget_input",
             value=st.session_state.max_tokens_budget_input, # RESTORED THIS LINE
             on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
-        # --- END FIX ---
+        # --- END MODIFICATION ---
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
         st.markdown("---")
         # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION --- 

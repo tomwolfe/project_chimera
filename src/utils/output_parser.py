@@ -397,11 +397,18 @@ class LLMOutputParser:
             # If any other exception occurs, return the fallback output directly.
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
         # Ensure partial_data is always a dictionary for safe .get() calls
-        if not isinstance(partial_data, dict):
-            partial_data = {}
+        # If partial_data is a string, it means the LLM returned a raw string instead of JSON.
+        # We should use this string as a general error message.
+        if isinstance(partial_data, str):
+            error_message_from_partial = partial_data
+            partial_data = {} # Reset to empty dict for .get() calls
+        else:
+            error_message_from_partial = "Failed to generate valid structured output."
+            if not isinstance(partial_data, dict):
+                partial_data = {} # Ensure it's a dict for safe .get()
 
         # Add a general error block if not already present
         if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks):
@@ -417,14 +424,14 @@ class LLMOutputParser:
         # Populate schema-specific fields with defaults or partial data
         if schema_model == LLMOutput:
             fallback_data_for_model["COMMIT_MESSAGE"] = partial_data.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
-            fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", "Failed to generate valid structured output.")
+            fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["CODE_CHANGES"] = partial_data.get("CODE_CHANGES", [])
             fallback_data_for_model["CONFLICT_RESOLUTION"] = partial_data.get("CONFLICT_RESOLUTION")
             fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data.get("UNRESOLVED_CONFLICT")
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
             fallback_data_for_model["malformed_code_change_items"] = partial_data.get("malformed_code_change_items", [])
         elif schema_model == CritiqueOutput:
-            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", "Critique output malformed.")
+            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["CRITIQUE_POINTS"] = partial_data.get("CRITIQUE_POINTS", [])
             fallback_data_for_model["SUGGESTIONS"] = partial_data.get("SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
@@ -437,29 +444,21 @@ class LLMOutputParser:
             fallback_data_for_model["architecture_summary"] = partial_data.get("architecture_summary", {})
             fallback_data_for_model["devops_summary"] = partial_data.get("devops_summary", {})
             fallback_data_for_model["testing_summary"] = partial_data.get("testing_summary", {})
-            fallback_data_for_model["general_overview"] = partial_data.get("general_overview", "")
+            fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == GeneralOutput:
-            # Ensure general_output is always a string
-            if "general_output" in partial_data:
-                fallback_data_for_model["general_output"] = partial_data["general_output"]
-            elif "error_message" in partial_data: # Capture error_message if partial_data is an error dict
-                fallback_data_for_model["general_output"] = partial_data["error_message"]
-            elif "summary" in partial_data: # Capture summary if partial_data is a ConflictReport-like error
-                fallback_data_for_model["general_output"] = partial_data["summary"]
-            else:
-                fallback_data_for_model["general_output"] = "General output malformed."
+            fallback_data_for_model["general_output"] = partial_data.get("general_output", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == ConflictReport:
             fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "UNKNOWN")
-            fallback_data_for_model["summary"] = partial_data.get("summary", "Conflict report malformed.")
+            fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["involved_personas"] = partial_data.get("involved_personas", [])
             fallback_data_for_model["conflicting_outputs_snippet"] = partial_data.get("conflicting_outputs_snippet", "")
             fallback_data_for_model["proposed_resolution_paths"] = partial_data.get("proposed_resolution_paths", [])
             fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True) # Assume conflict if malformed
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == SelfImprovementAnalysisOutput:
-            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", "Self-improvement analysis malformed.")
+            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         
