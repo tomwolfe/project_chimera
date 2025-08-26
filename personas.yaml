@@ -57,7 +57,7 @@ personas:
       [Insert debate results here]
       END_JSON_OUTPUT
     temperature: 0.45
-    max_tokens: 2048
+    max_tokens: 4096 # <--- MODIFIED THIS LINE
     description: "Synthesizes critiques and proposes specific, actionable improvements, ensuring PEP8 compliance (88 chars) and conflict resolution."
  
   - name: "Impartial_Arbitrator"
