@@ -175,13 +175,25 @@ class SocraticDebate:
             
             # Adjust ratios based on complexity and self-analysis flag
             if self.is_self_analysis:
-                debate_ratio = self.settings.self_analysis_debate_ratio
                 context_ratio = self.settings.self_analysis_context_ratio
+                debate_ratio = self.settings.self_analysis_debate_ratio
                 synthesis_ratio = self.settings.self_analysis_synthesis_ratio # MODIFIED: Use dedicated self-analysis synthesis ratio
             else:
-                debate_ratio = self.settings.debate_token_budget_ratio
                 context_ratio = self.settings.context_token_budget_ratio
+                debate_ratio = self.settings.debate_token_budget_ratio
                 synthesis_ratio = self.settings.synthesis_token_budget_ratio
+
+            # NEW: Explicitly normalize ratios to ensure they sum to 1.0 at this point
+            total_current_ratios = context_ratio + debate_ratio + synthesis_ratio
+            if total_current_ratios > 0 and abs(total_current_ratios - 1.0) > 1e-6: # Check if not already 1.0 (with float tolerance)
+                self._log_with_context("warning", f"Token budget ratios sum to {total_current_ratios}, normalizing them.",
+                                       original_context_ratio=context_ratio, original_debate_ratio=debate_ratio,
+                                       original_synthesis_ratio=synthesis_ratio)
+                normalization_factor = 1.0 / total_current_ratios
+                context_ratio *= normalization_factor
+                debate_ratio *= normalization_factor
+                synthesis_ratio *= normalization_factor
+                self._log_with_context("debug", f"Normalized ratios: context={context_ratio}, debate={debate_ratio}, synthesis={synthesis_ratio}")
 
             # Estimate tokens for context and initial input
             context_str = self.context_analyzer.get_context_summary() if self.context_analyzer else ""

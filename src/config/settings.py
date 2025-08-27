@@ -16,8 +16,9 @@ class ChimeraSettings(BaseModel):
     synthesis_token_budget_ratio: float = Field(default=0.1, ge=0.05, le=0.2, description="Proportion of total budget for final synthesis.") # ADD THIS LINE
     
     # Specific ratios for self-analysis prompts, also normalized.
-    self_analysis_context_ratio: float = Field(default=0.35, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
-    self_analysis_debate_ratio: float = Field(default=0.65, ge=0.4, le=0.9, description="Proportion of total budget for debate turns during self-analysis.")
+    # MODIFIED: Adjusted defaults to sum to 1.0 (0.30 + 0.55 + 0.15 = 1.0)
+    self_analysis_context_ratio: float = Field(default=0.30, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
+    self_analysis_debate_ratio: float = Field(default=0.55, ge=0.4, le=0.9, description="Proportion of total budget for debate turns during self-analysis.")
     self_analysis_synthesis_ratio: float = Field(default=0.15, ge=0.05, le=0.3, description="Proportion of total budget for synthesis during self-analysis.") # ADDED THIS LINE
     
     # Total token budget for a single Socratic debate run.
