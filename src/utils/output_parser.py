@@ -276,7 +276,7 @@ class LLMOutputParser:
         """Attempts to parse JSON with incremental repair strategies."""
         repair_log = []
         
-        # Attempt 1: Standard repair
+        # Attempt 1: Apply standard repair and try to load
         repaired_text, current_repairs = self._repair_json_string(json_str)
         repair_log.extend([{"action": "initial_repair", "details": r} for r in current_repairs])
         try:
@@ -285,8 +285,8 @@ class LLMOutputParser:
         except json.JSONDecodeError:
             pass # Continue to next attempt
 
-        # Attempt 2: Extract largest valid sub-object (DeepSeek's idea)
-        largest_sub_object_str = self._extract_largest_valid_subobject(json_str) 
+        # Attempt 2: Extract largest valid sub-object from the repaired text
+        largest_sub_object_str = self._extract_largest_valid_subobject(repaired_text) 
         if largest_sub_object_str:
             repair_log.append({"action": "extracted_largest_subobject", "details": "Attempting to parse largest valid JSON fragment."})
             try:
@@ -296,8 +296,8 @@ class LLMOutputParser:
                 pass
 
         # Attempt 3: Treat as JSON lines (DeepSeek's idea)
-        json_lines_str = self._convert_to_json_lines(json_str)
-        if json_lines_str != json_str: # Only if conversion actually happened
+        json_lines_str = self._convert_to_json_lines(repaired_text)
+        if json_lines_str != repaired_text: # Only if conversion actually happened
             repair_log.append({"action": "converted_to_json_lines", "details": "Attempting to parse as JSON lines."})
             try:
                 result = json.loads(json_lines_str)
@@ -313,6 +313,7 @@ class LLMOutputParser:
         Prioritizes the longest valid JSON block found.
         """
         # Use non-greedy matching for the content within the braces/brackets
+        # This regex is more robust to find any potential JSON block
         matches = list(re.finditer(r'(\{.*?\}|\[.*?\])', json_str, re.DOTALL))
         
         longest_valid_match = "" 
@@ -570,10 +571,12 @@ class LLMOutputParser:
         if isinstance(partial_data, str):
             error_message_from_partial = partial_data
             partial_data = {} # Reset to empty dict for .get() calls
+        elif not isinstance(partial_data, dict): # NEW: Handle if partial_data is a list, int, etc.
+            error_message_from_partial = f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
+            partial_data = {} # Reset to empty dict for .get() calls
         else:
             error_message_from_partial = "Failed to generate valid structured output."
-            if not isinstance(partial_data, dict):
-                partial_data = {} # Ensure it's a dict for safe .get()
+            # partial_data is already a dict, no need to reset
 
         # Add a general error block if not already present
         if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks):

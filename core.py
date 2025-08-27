@@ -782,73 +782,90 @@ class SocraticDebate:
         # Use the persona_config passed to this method, which is already adjusted by PersonaManager
         adjusted_persona_config = persona_config 
 
-        try:
-            raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
-                prompt=prompt,
-                system_prompt=adjusted_persona_config.system_prompt, # Use adjusted config
-                temperature=adjusted_persona_config.temperature,     # Use adjusted config
-                max_tokens=adjusted_persona_config.max_tokens,       # Use adjusted config
-                persona_config=adjusted_persona_config, # Pass adjusted config
-                intermediate_results=self.intermediate_steps,
-                requested_model_name=self.model_name
-            )
-            self.track_token_usage(phase, input_tokens + output_tokens)
-            self.check_budget(phase, input_tokens + output_tokens, persona_name)
-            
-            # --- START MODIFICATION ---
-            # NEW: Store actual parameters used for this turn
-            self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = adjusted_persona_config.temperature
-            self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = adjusted_persona_config.max_tokens
-            # --- END MODIFICATION ---
+        # --- START MODIFICATION: Add retry loop for SchemaValidationError ---
+        max_schema_retries = 2 # Allow 2 retries for schema validation
+        original_system_prompt = adjusted_persona_config.system_prompt # Store original system prompt
+        original_max_tokens = adjusted_persona_config.max_tokens # Store original max tokens
 
-            # Check for truncation (heuristic, can be improved with LLM-specific signals)
-            if output_tokens >= adjusted_persona_config.max_tokens * 0.95: # If output is near max_tokens
-                is_truncated = True
+        for retry_attempt in range(max_schema_retries + 1):
+            try:
+                raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
+                    prompt=prompt,
+                    system_prompt=adjusted_persona_config.system_prompt, # Use adjusted config
+                    temperature=adjusted_persona_config.temperature,     # Use adjusted config
+                    max_tokens=adjusted_persona_config.max_tokens,       # Use adjusted config
+                    persona_config=adjusted_persona_config, # Pass adjusted config
+                    intermediate_results=self.intermediate_steps,
+                    requested_model_name=self.model_name
+                )
+                self.track_token_usage(phase, input_tokens + output_tokens)
+                self.check_budget(phase, input_tokens + output_tokens, persona_name)
+                
+                # NEW: Store actual parameters used for this turn
+                self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = adjusted_persona_config.temperature
+                self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = adjusted_persona_config.max_tokens
+                # --- END MODIFICATION ---
 
-            if persona_name in self.PERSONA_OUTPUT_SCHEMAS:
-                schema_model = self.PERSONA_OUTPUT_SCHEMAS[persona_name]
-                parser = LLMOutputParser()
-                parsed_output = parser.parse_and_validate(raw_llm_output, schema_model)
-                
-                if parsed_output.get("malformed_blocks"):
-                    self._log_with_context("warning", f"LLM output for {persona_name} contained malformed blocks.",
-                                           persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
-                    self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
-                
-                # Check for specific error types from the parser indicating schema adherence issues
-                if parsed_output.get("error_type") == "LLM_OUTPUT_MALFORMED" or \
-                   any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE", "SCHEMA_VALIDATION_ERROR"] for block in parsed_output.get("malformed_blocks", [])):
-                    has_schema_error = True
-                    # Re-raise SchemaValidationError to trigger circuit breaker and proper error handling
-                    raise SchemaValidationError( 
-                        error_type="LLM_OUTPUT_MALFORMED",
-                        field_path="N/A", # Specific field path might be in parsed_output.get("malformed_blocks")
-                        invalid_value=raw_llm_output[:500],
-                        details={"persona": persona_name, "raw_output_snippet": raw_llm_output[:500], "malformed_blocks": parsed_output.get("malformed_blocks", [])}
-                    )
-                
-                # Record success for persona performance
-                self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
-                return parsed_output
-            else:
-                self._log_with_context("info", f"Persona {persona_name} is not configured for structured JSON output. Returning raw text.", persona=persona_name)
-                # Record success for persona performance (even if raw text)
-                self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
-                return raw_llm_output
+                # Check for truncation (heuristic, can be improved with LLM-specific signals)
+                if output_tokens >= adjusted_persona_config.max_tokens * 0.95: # If output is near max_tokens
+                    is_truncated = True
 
-        except (CircuitBreakerError, TokenBudgetExceededError, LLMProviderError, SchemaValidationError) as e:
-            # These are already specific ChimeraErrors, just record failure and re-raise
-            if isinstance(e, TokenBudgetExceededError) and "tokens_needed" in e.details and e.details["tokens_needed"] > adjusted_persona_config.max_tokens:
-                is_truncated = True # More precise truncation detection
-            if isinstance(e, SchemaValidationError):
-                has_schema_error = True
-            self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
-            raise e
-        except Exception as e:
-            # Catch all other unexpected errors, record failure, and re-raise as ChimeraError
-            self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
-            raise ChimeraError(f"An unexpected error occurred during {persona_name}'s turn: {e}",
-                               details={"persona": persona_name, "traceback": traceback.format_exc()}, original_exception=e) from e
+                if persona_name in self.PERSONA_OUTPUT_SCHEMAS:
+                    schema_model = self.PERSONA_OUTPUT_SCHEMAS[persona_name]
+                    parser = LLMOutputParser()
+                    parsed_output = parser.parse_and_validate(raw_llm_output, schema_model)
+                    
+                    if parsed_output.get("malformed_blocks"):
+                        self._log_with_context("warning", f"LLM output for {persona_name} contained malformed blocks.",
+                                               persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
+                        self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
+                    
+                    # Check for specific error types from the parser indicating schema adherence issues
+                    if parsed_output.get("error_type") == "LLM_OUTPUT_MALFORMED" or \
+                       any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE", "SCHEMA_VALIDATION_ERROR"] for block in parsed_output.get("malformed_blocks", [])):
+                        has_schema_error = True
+                        # If this is a retry, and it still fails, re-raise. Otherwise, try again.
+                        if retry_attempt < max_schema_retries:
+                            self._log_with_context("warning", f"Schema validation failed for {persona_name} (attempt {retry_attempt+1}/{max_schema_retries+1}). Retrying with stricter JSON prompt.",
+                                                   persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
+                            # Modify system_prompt for retry to emphasize strict JSON adherence
+                            adjusted_persona_config.system_prompt = original_system_prompt + "\n\nCRITICAL: Your output MUST be a single, valid JSON object. DO NOT include any conversational text or markdown fences outside the JSON. STRICTLY adhere to the schema."
+                            # Also, reduce max_tokens to force conciseness, which might help with truncation
+                            adjusted_persona_config.max_tokens = max(512, int(original_max_tokens * 0.75)) # Reduce by 25%, but not below 512
+                            continue # Continue to the next retry attempt
+                        else:
+                            # Max retries reached, re-raise the SchemaValidationError
+                            raise SchemaValidationError( 
+                                error_type="LLM_OUTPUT_MALFORMED",
+                                field_path="N/A",
+                                invalid_value=raw_llm_output[:500],
+                                details={"persona": persona_name, "raw_output_snippet": raw_llm_output[:500], "malformed_blocks": parsed_output.get("malformed_blocks", [])}
+                            )
+                    
+                    # If we reach here, parsing and validation were successful for this attempt
+                    self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
+                    return parsed_output
+                else:
+                    self._log_with_context("info", f"Persona {persona_name} is not configured for structured JSON output. Returning raw text.", persona=persona_name)
+                    # Record success for persona performance (even if raw text)
+                    self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
+                    return raw_llm_output
+
+            except (CircuitBreakerError, TokenBudgetExceededError, LLMProviderError) as e:
+                # These are not schema validation errors, re-raise immediately
+                if isinstance(e, TokenBudgetExceededError) and "tokens_needed" in e.details and e.details["tokens_needed"] > adjusted_persona_config.max_tokens:
+                    is_truncated = True
+                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
+                raise e
+            except Exception as e:
+                # Catch all other unexpected errors, record failure, and re-raise as ChimeraError
+                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
+                raise ChimeraError(f"An unexpected error occurred during {persona_name}'s turn: {e}",
+                                   details={"persona": persona_name, "traceback": traceback.format_exc()}, original_exception=e) from e
+        # This part should ideally not be reached if max_schema_retries is handled correctly
+        # but as a safeguard, raise an error if somehow we exit the loop without returning
+        raise ChimeraError(f"Exited schema validation retry loop for {persona_name} without a valid output or re-raising an error.")
+        # --- END MODIFICATION ---
 
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
         """
