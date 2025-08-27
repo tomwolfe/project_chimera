@@ -18,6 +18,7 @@ class ChimeraSettings(BaseModel):
     # Specific ratios for self-analysis prompts, also normalized.
     self_analysis_context_ratio: float = Field(default=0.35, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
     self_analysis_debate_ratio: float = Field(default=0.65, ge=0.4, le=0.9, description="Proportion of total budget for debate turns during self-analysis.")
+    self_analysis_synthesis_ratio: float = Field(default=0.15, ge=0.05, le=0.3, description="Proportion of total budget for synthesis during self-analysis.") # ADDED THIS LINE
     
     # Total token budget for a single Socratic debate run.
     # Changed default to 1000000 to match the UI's maximum and the likely intended default.
@@ -50,19 +51,22 @@ class ChimeraSettings(BaseModel):
             self.debate_token_budget_ratio = 0.7
             self.synthesis_token_budget_ratio = 0.1 # DEFAULT SYNTHESIS
         
-        # Normalize self-analysis ratios (context, debate)
+        # Normalize self-analysis ratios (context, debate, synthesis)
         self_analysis_total = (
             self.self_analysis_context_ratio +
-            self.self_analysis_debate_ratio
+            self.self_analysis_debate_ratio +
+            self.self_analysis_synthesis_ratio # ADDED: Include synthesis ratio in normalization
         )
         
         if self_analysis_total > 0:
             self_analysis_ratio_factor = 1.0 / self_analysis_total
             self.self_analysis_context_ratio *= self_analysis_ratio_factor
             self.self_analysis_debate_ratio *= self_analysis_ratio_factor
+            self.self_analysis_synthesis_ratio *= self_analysis_ratio_factor # ADDED: Normalize synthesis ratio
         else:
             # Fallback for self-analysis ratios
             self.self_analysis_context_ratio = 0.35
             self.self_analysis_debate_ratio = 0.65
+            self.self_analysis_synthesis_ratio = 0.15 # ADDED: Default synthesis ratio for fallback
         
         return self

@@ -177,7 +177,7 @@ class SocraticDebate:
             if self.is_self_analysis:
                 debate_ratio = self.settings.self_analysis_debate_ratio
                 context_ratio = self.settings.self_analysis_context_ratio
-                synthesis_ratio = 1.0 - (debate_ratio + context_ratio) # Ensure sum is 1.0
+                synthesis_ratio = self.settings.self_analysis_synthesis_ratio # MODIFIED: Use dedicated self-analysis synthesis ratio
             else:
                 debate_ratio = self.settings.debate_token_budget_ratio
                 context_ratio = self.settings.context_token_budget_ratio
