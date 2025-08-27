@@ -873,7 +873,7 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
-tabs = st.tabs(tab_names, key="main_prompt_tabs") # FIX: Added key to st.tabs
+tabs = st.tabs(tab_names) # FIX: Added key to st.tabs
 # --- END FIX ---
 
 for i, tab_name in enumerate(tab_names):
@@ -1065,9 +1065,9 @@ with col1:
         st.session_state.personas = current_domain_personas
 
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
-    with st.expander("⚙️ Custom Framework Management", expanded=False, key="custom_framework_management_expander"): # ADDED key
+    with st.expander("⚙️ Custom Framework Management", expanded=False): # ADDED key
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"], key="framework_management_tabs") # FIX: Added key to st.tabs
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"]) # FIX: Added key to st.tabs
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
@@ -1253,7 +1253,7 @@ with col2:
 
 # --- NEW: Persona Editing UI (Improvement 1.2 & 4.1) ---
 st.markdown("---")
-with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode, key="persona_edit_expander"): # FIX: Add key
+with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode): # FIX: Add key
     # Keep expander open if user interacts with it
     st.session_state.persona_edit_mode = True
     update_activity_timestamp() # ADDED update_activity_timestamp when expander is interacted with
