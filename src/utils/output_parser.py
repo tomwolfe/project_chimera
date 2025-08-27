@@ -506,6 +506,22 @@ class LLMOutputParser:
                 }
                 data_to_validate = wrapped_data
 
+        # --- START FIX: Pre-process for SelfImprovementAnalysisOutput if a single suggestion is detected ---
+        # This block should come *before* general schema validation for SelfImprovementAnalysisOutput.
+        # It ensures that if the LLM returned a single suggestion, it's correctly wrapped *before* Pydantic validation attempts.
+        if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1] and isinstance(data_to_validate, dict):
+            # Use extracted_json_str for detection as data_to_validate might be parsed dict already
+            detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str) 
+            if detected_suggestion:
+                self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
+                # Construct the V1 structure directly from the detected suggestion
+                data_to_validate = {
+                    "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section.",
+                    "IMPACTFUL_SUGGESTIONS": [detected_suggestion],
+                    "malformed_blocks": malformed_blocks_list # Carry forward any parsing malformations
+                }
+        # --- END FIX ---
+
         # 4. Validate against schema
         try:
             # If the schema model is the versioned SelfImprovementAnalysisOutput,
