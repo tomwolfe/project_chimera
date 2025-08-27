@@ -148,10 +148,9 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         md_content += "| Timestamp | Persona | Parameter | Old Value | New Value |\n"
         md_content += "|---|---|---|---|---|\n"
         
-        # --- FIX APPLIED HERE ---
         # Define the replacement string outside the f-string expression to avoid SyntaxError.
         # The f-string parser cannot handle raw string literals with backslashes directly within the expression part.
-        escaped_newline_for_display = '\\n' # Changed from r'\\n' to '\\n'
+        escaped_newline_for_display = '\\n'
         # --- END FIX ---
 
         for entry in persona_audit_log:
@@ -161,7 +160,6 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
             old_val_display = (old_val_str[:50] + '...') if len(old_val_str) > 50 else old_val_str
             new_val_display = (new_val_str[:50] + '...') if len(new_val_str) > 50 else new_val_str
             
-            # --- FIX APPLIED HERE ---
             # Move the replace operation OUTSIDE the f-string expression
             old_val_display_escaped = old_val_display.replace('\n', escaped_newline_for_display)
             new_val_display_escaped = new_val_display.replace('\n', escaped_newline_for_display)
@@ -373,6 +371,7 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         st.session_state.persona_manager = PersonaManager()
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
+        # Ensure selected_persona_set is initialized to a valid default
         st.session_state.selected_persona_set = st.session_state.persona_manager.available_domains[0] if st.session_state.persona_manager.available_domains else "General"
         # Initialize st.session_state.personas with the personas for the *initially selected framework*
         initial_framework_personas = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
@@ -677,6 +676,7 @@ with st.sidebar:
     with st.expander("Core LLM Settings", expanded=True):
         api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
                                         key="api_key_input", 
+                                        value=st.session_state.api_key_input, # FIX: Add value parameter
                                         help="Your API key will not be stored.",
                                         on_change=lambda: [setattr(st.session_state, 'api_key_valid_format', 
                                                                 validate_gemini_api_key_format(st.session_state.api_key_input)),
@@ -713,8 +713,14 @@ with st.sidebar:
 
         st.markdown("Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey).")
         st.markdown("---")
-        st.selectbox("Select LLM Model", ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], 
-                     key="selected_model_selectbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
+        
+        # FIX: Corrected st.selectbox to use 'index' instead of 'value'
+        model_options = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
+        current_model_index = model_options.index(st.session_state.selected_model_selectbox) if st.session_state.selected_model_selectbox in model_options else 0
+        st.selectbox("Select LLM Model", model_options, 
+                     key="selected_model_selectbox", 
+                     index=current_model_index, # FIX: Use index instead of value
+                     on_change=update_activity_timestamp) # ADDED update_activity_timestamp
         st.markdown("💡 **Note:** `gemini-2.5-pro` access may require a paid API key. If you encounter issues, try `gemini-2.5-flash-lite` or `gemini-2.5-flash`.")
 
     with st.expander("Resource Management", expanded=False):
@@ -731,7 +737,7 @@ with st.sidebar:
             on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
         # --- END MODIFICATION ---
-        st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
+        st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", value=st.session_state.show_intermediate_steps_checkbox, on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
         st.markdown("---")
         # --- START MODIFICATION FOR TOKEN BUDGET OPTIMIZATION --- 
         current_ratio_value = st.session_state.get("context_token_budget_ratio", CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG) # Use get with default
@@ -772,7 +778,8 @@ with st.sidebar:
                 current_ratio_value = smart_default_ratio # Update local variable for slider value
 
         st.slider(
-            "Context Token Budget Ratio", min_value=0.05, max_value=0.5, value=current_ratio_value,
+            "Context Token Budget Ratio", min_value=0.05, max_value=0.5, 
+            value=current_ratio_value, # FIX: Add value parameter
             step=0.05, key="context_token_budget_ratio", help=help_text_dynamic,
             on_change=on_context_ratio_change # Use the new on_change callback
         )
@@ -867,7 +874,7 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
-tabs = st.tabs(tab_names)
+tabs = st.tabs(tab_names, key="main_prompt_tabs") # FIX: Added key to st.tabs
 # --- END FIX ---
 
 for i, tab_name in enumerate(tab_names):
@@ -906,13 +913,13 @@ for i, tab_name in enumerate(tab_names):
             category_options = EXAMPLE_PROMPTS[tab_name]
             
             # Create search bar for filtering prompts within the current category
-            search_term_for_category = st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
+            st.text_input(f"Search prompts in {tab_name}", key=f"search_{tab_name}", value="", on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
             
             filtered_prompts_in_category = {
                 name: details for name, details in category_options.items()
-                if not search_term_for_category or \
-                   search_term_for_category.lower() in name.lower() or \
-                   search_term_for_category.lower() in details["prompt"].lower()
+                if not st.session_state[f"search_{tab_name}"] or \
+                   st.session_state[f"search_{tab_name}"].lower() in name.lower() or \
+                   st.session_state[f"search_{tab_name}"].lower() in details["prompt"].lower()
             }
 
             # --- FIX START: Robust handling of filtered prompts and initial selection ---
@@ -954,6 +961,7 @@ for i, tab_name in enumerate(tab_names):
                 format_func=lambda x: f"{x} - {filtered_prompts_in_category[x]['description'][:60]}...",
                 label_visibility="collapsed",
                 key=selectbox_key,
+                # value=options_keys[initial_selectbox_index], # FIX: Removed 'value' parameter
                 on_change=on_example_select_change,
                 args=(selectbox_key, tab_name)
             )
@@ -964,12 +972,12 @@ for i, tab_name in enumerate(tab_names):
             st.info(f"**Description:** {selected_prompt_details['description']}")
             with st.expander("View Full Prompt Text"):
                 st.code(selected_prompt_details['prompt'], language='text')
-                st.button(
-                    "Copy Prompt",
-                    help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
-                    use_container_width=True,
-                    type="secondary",
-                    key=f"copy_prompt_{selected_example_key_for_this_tab}")
+                # st.button( # FIX: Removed non-functional copy button
+                #     "Copy Prompt",
+                #     help="Copy the prompt text from the code block above to your clipboard. If this fails, please copy manually.",
+                #     use_container_width=True,
+                #     type="secondary",
+                #     key=f"copy_prompt_{selected_example_key_for_this_tab}")
 
             # This block now only *displays* the hint and button to apply it for examples.
             display_suggested_framework = selected_prompt_details.get("framework_hint")
@@ -1032,11 +1040,12 @@ with col1:
         st.session_state.selected_persona_set = current_framework_selection
         
     # Use the primary session state variable as the key for direct updates
-    selected_framework_for_widget = st.selectbox(
+    st.selectbox(
         "Select Framework",
         options=unique_framework_options,
         index=unique_framework_options.index(current_framework_selection) if current_framework_selection in unique_framework_options else 0,
         key="selected_persona_set", # Changed key to directly manage state
+        # value=current_framework_selection, # FIX: Removed 'value' parameter
         help="Choose a domain-specific reasoning framework or a custom saved framework.",
         on_change=update_activity_timestamp # ADDED update_activity_timestamp
     )
@@ -1058,20 +1067,20 @@ with col1:
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"]) # ADDED "Export/Import" tab
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"], key="framework_management_tabs") # FIX: Added key to st.tabs
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
             st.info("This will save the *currently selected framework* along with any *unsaved persona edits* made in the 'View and Edit Personas' section.")
-            new_framework_name_input = st.text_input("Enter a name for your framework:", key='save_framework_input', on_change=update_activity_timestamp) # ADDED update_activity_timestamp
-            framework_description_input = st.text_area("Framework Description (Optional):", key='framework_description', height=50, on_change=update_activity_timestamp) # ADDED update_activity_timestamp
+            st.text_input("Enter a name for your framework:", key='save_framework_input', value=st.session_state.save_framework_input, on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
+            st.text_area("Framework Description (Optional):", key='framework_description', value=st.session_state.framework_description, height=50, on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
 
             # --- MODIFICATION FOR IMPROVEMENT 4.1 (Persona Changes Detected) ---
             if st.session_state.persona_changes_detected:
                 st.warning("Unsaved persona changes detected. Save as a custom framework to persist them.")
             # --- END MODIFICATION ---
 
-            if st.button("Save Current Framework") and new_framework_name_input:
+            if st.button("Save Current Framework") and st.session_state.save_framework_input: # Use session state for button logic
                 update_activity_timestamp() # ADDED update_activity_timestamp
                 current_framework_name = st.session_state.selected_persona_set
                 # Get the currently active personas for the selected framework
@@ -1084,10 +1093,10 @@ with col1:
                 # MODIFIED: Handle return from save_framework and pass framework_description_input
                 # FIX: Access persona_manager from session state
                 success, message = st.session_state.persona_manager.save_framework(
-                    new_framework_name_input,
+                    st.session_state.save_framework_input, # Use session state for input
                     current_framework_name,
                     current_active_personas_data,
-                    framework_description_input # ADDED THIS LINE
+                    st.session_state.framework_description # ADDED THIS LINE
                 )
                 if success:
                     st.toast(message)
@@ -1111,19 +1120,20 @@ with col1:
             elif st.session_state.selected_persona_set in st.session_state.persona_manager.all_custom_frameworks_data:
                 current_selection_for_load = st.session_state.selected_persona_set
             
-            selected_framework_to_load = st.selectbox(
+            st.selectbox(
                 "Select a framework to load:",
                 options=unique_framework_options_for_load,
                 index=unique_framework_options_for_load.index(current_selection_for_load) if current_selection_for_load in unique_framework_options_for_load else 0,
                 key='load_framework_select',
+                # value=st.session_state.load_framework_select, # FIX: Removed 'value' parameter
                 on_change=update_activity_timestamp # ADDED update_activity_timestamp
             )
-            if st.button("Load Selected Framework") and selected_framework_to_load:
+            if st.button("Load Selected Framework") and st.session_state.load_framework_select: # Use session state for button logic
                 update_activity_timestamp() # ADDED update_activity_timestamp
                 # MODIFIED: Handle return from load_framework_into_session
                 # FIX: Access persona_manager from session state
                 success, message, loaded_personas_dict, loaded_persona_sets_dict, new_selected_framework_name = \
-                    st.session_state.persona_manager.load_framework_into_session(selected_framework_to_load)
+                    st.session_state.persona_manager.load_framework_into_session(st.session_state.load_framework_select) # Use session state for input
                 
                 if success:
                     st.session_state.all_personas.update(loaded_personas_dict)
@@ -1140,8 +1150,7 @@ with col1:
             st.subheader("Export Framework")
             st.info("Export the currently selected framework to a file for sharing.")
             export_framework_name = st.session_state.selected_persona_set
-            if st.button(f"Export '{export_framework_name}'", use_container_width=True, key="export_framework_button"):
-                update_activity_timestamp() # ADDED update_activity_timestamp
+            if st.button(f"Export '{export_framework_name}'", use_container_width=True, key="export_framework_button", on_click=update_activity_timestamp): # FIX: Add on_click
                 success, message, exported_content = st.session_state.persona_manager.export_framework_for_sharing(export_framework_name)
                 if success and exported_content:
                     st.download_button(
@@ -1150,7 +1159,8 @@ with col1:
                         file_name=f"{export_framework_name}.yaml",
                         mime="application/x-yaml", # Correct MIME type for YAML
                         use_container_width=True,
-                        key="download_exported_framework"
+                        key="download_exported_framework",
+                        on_click=update_activity_timestamp # FIX: Add on_click
                     )
                     st.success(message)
                 else:
@@ -1161,8 +1171,7 @@ with col1:
             st.info("Upload a custom framework file (YAML or JSON) to import it.")
             uploaded_framework_file = st.file_uploader("Upload Framework File", type=["yaml", "json"], key="import_framework_uploader", on_change=update_activity_timestamp) # ADDED update_activity_timestamp
             if uploaded_framework_file is not None:
-                if st.button("Import Uploaded Framework", use_container_width=True, key="perform_import_framework_button"):
-                    update_activity_timestamp() # ADDED update_activity_timestamp
+                if st.button("Import Uploaded Framework", use_container_width=True, key="perform_import_framework_button", on_click=update_activity_timestamp): # FIX: Add on_click
                     file_content = uploaded_framework_file.getvalue().decode("utf-8")
                     success, message = st.session_state.persona_manager.import_framework(file_content, uploaded_framework_file.name)
                     if success:
@@ -1175,16 +1184,18 @@ with col1:
 with col2:
     st.subheader("Codebase Context (Optional)")
     if st.session_state.selected_persona_set == "Software Engineering":
-        uploaded_files = st.file_uploader(
+        st.file_uploader(
             "Upload up to 100 relevant files",
             accept_multiple_files=True,
             type=['py', 'js', 'ts', 'html', 'css', 'json', 'yaml', 'md', 'txt', 'java', 'go', 'rb', 'php'],
             help="Provide files for context. The AI will analyze them to generate consistent code.",
             key="code_context_uploader",
+            # value=st.session_state.uploaded_files, # FIX: Removed 'value' parameter
             on_change=update_activity_timestamp # ADDED update_activity_timestamp
         )
         
         # If new files are uploaded, process them. This takes precedence over demo context.
+        uploaded_files = st.session_state.code_context_uploader # Access uploaded files via key
         if uploaded_files:
             current_uploaded_file_names = {f.name for f in uploaded_files}
             previous_uploaded_file_names = {f.name for f in st.session_state.uploaded_files}
@@ -1242,7 +1253,7 @@ with col2:
 
 # --- NEW: Persona Editing UI (Improvement 1.2 & 4.1) ---
 st.markdown("---")
-with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode):
+with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode, key="persona_edit_expander"): # FIX: Add key
     # Keep expander open if user interacts with it
     st.session_state.persona_edit_mode = True
     update_activity_timestamp() # ADDED update_activity_timestamp when expander is interacted with
