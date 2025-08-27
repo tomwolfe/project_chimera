@@ -344,7 +344,7 @@ def _initialize_session_state(): # Removed pm: PersonaManager parameter
         "persona_edit_mode": False,
         "persona_changes_detected": False, # ADDED: For Developer Maintainability: Streamlined Persona Management UI
         "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG, # Use value from config.yaml as initial default
-        "save_framework_input": "",
+        "save_framework_input": "",  # ADD THIS LINE
         "framework_description": "",
         "load_framework_select": "",
         "_session_id": str(uuid.uuid4()), # For rate limiting
@@ -874,7 +874,7 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
-tabs = st.tabs(tab_names, key="main_prompt_tabs") # FIX: Added key to st.tabs
+tabs = st.tabs(tab_names) # FIX: Added key to st.tabs
 # --- END FIX ---
 
 for i, tab_name in enumerate(tab_names):
@@ -1067,13 +1067,13 @@ with col1:
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
     with st.expander("⚙️ Custom Framework Management", expanded=False):
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"], key="framework_management_tabs") # FIX: Added key to st.tabs
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"]) # FIX: Added key to st.tabs
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
             st.info("This will save the *currently selected framework* along with any *unsaved persona edits* made in the 'View and Edit Personas' section.")
-            st.text_input("Enter a name for your framework:", key='save_framework_input', value=st.session_state.save_framework_input, on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
-            st.text_area("Framework Description (Optional):", key='framework_description', value=st.session_state.framework_description, height=50, on_change=update_activity_timestamp) # FIX: Add value parameter, ADDED update_activity_timestamp
+            st.text_input("Enter a name for your framework:", key='save_framework_input', value=st.session_state.get('save_framework_input', ''), on_change=update_activity_timestamp)
+            st.text_area("Framework Description (Optional):", key='framework_description', value=st.session_state.get('framework_description', ''), height=50, on_change=update_activity_timestamp)
 
             # --- MODIFICATION FOR IMPROVEMENT 4.1 (Persona Changes Detected) ---
             if st.session_state.persona_changes_detected:
@@ -1253,7 +1253,7 @@ with col2:
 
 # --- NEW: Persona Editing UI (Improvement 1.2 & 4.1) ---
 st.markdown("---")
-with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode, key="persona_edit_expander"): # FIX: Add key
+with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode): # FIX: Add key
     # Keep expander open if user interacts with it
     st.session_state.persona_edit_mode = True
     update_activity_timestamp() # ADDED update_activity_timestamp when expander is interacted with
