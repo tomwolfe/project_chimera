@@ -15,7 +15,7 @@ import logging
 import random
 from pathlib import Path
 from collections import defaultdict
-from typing import List, Dict, Tuple, Any, Callable, Optional, Type # ADDED List
+from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union # ADDED Union
 import numpy as np
 from google import genai
 from google.genai import types
@@ -39,6 +39,7 @@ from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
 from src.persona_manager import PersonaManager # Import PersonaManager
 from src.self_improvement.metrics_collector import ImprovementMetricsCollector # New import for Self-Improvement
+from src.self_improvement.content_validator import ContentAlignmentValidator # NEW IMPORT
 
 # Configure logging for the core module itself
 logger = logging.getLogger(__name__)
@@ -127,6 +128,11 @@ class SocraticDebate:
         if self.context_analyzer and not self.context_analyzer.persona_router:
             self.context_analyzer.set_persona_router(self.persona_router)
 
+        # NEW: Initialize ContentAlignmentValidator
+        self.content_validator = ContentAlignmentValidator(
+            original_prompt=self.initial_prompt,
+            debate_domain=self.domain # Pass the determined domain
+        )
 
         # If codebase_context was provided, compute embeddings now if context_analyzer is available.
         if self.codebase_context and self.context_analyzer:
@@ -388,61 +394,23 @@ class SocraticDebate:
             self.rich_console.print(f"[red]Error during context analysis: {e}[/red]")
             return {"error": f"Context analysis failed: {e}"}
 
-    # MODIFIED: _determine_persona_sequence to call the new _select_persona_sequence
-    def _select_persona_sequence(self, prompt: str) -> List[str]:
-        """Select appropriate persona sequence based on prompt analysis."""
-        prompt_analysis = self.persona_manager._analyze_prompt_complexity(prompt) # Calls persona_manager's method
-        
-        # Base sequence depends on framework
-        if self.domain == "Self-Improvement": # Use self.domain
-            base_sequence = self.persona_sets.get("Self-Improvement", []).copy()
-        else:
-            base_sequence = self.persona_sets.get("Default", []).copy() # Assuming "Default" is a fallback or general
-
-        # Domain-specific adjustments
-        if prompt_analysis['primary_domain'] == 'security':
-            # Ensure Security_Auditor is prioritized
-            if 'Security_Auditor' in base_sequence:
-                base_sequence.remove('Security_Auditor')
-                base_sequence.insert(1, 'Security_Auditor')
-        elif prompt_analysis['primary_domain'] == 'testing':
-            # Ensure Test_Engineer is included for testing-related prompts
-            if 'Test_Engineer' not in base_sequence:
-                base_sequence.insert(2, 'Test_Engineer')
-        
-        # Complexity-based adjustments
-        if prompt_analysis['complexity_score'] > 0.7:
-            # Add deeper analysis personas for complex prompts
-            if 'Constructive_Critic' not in base_sequence:
-                base_sequence.append('Constructive_Critic')
-        
-        # Ensure uniqueness and order by removing duplicates while preserving order
-        seen = set()
-        unique_sequence = []
-        for persona in base_sequence:
-            if persona not in seen:
-                unique_sequence.append(persona)
-                seen.add(persona)
-        
-        return unique_sequence
-
-    # MODIFIED: _determine_persona_sequence to call the new _select_persona_sequence
-    def _determine_persona_sequence(self, prompt: str, domain: str, intermediate_results: Dict[str, Any], context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
+    def _get_final_persona_sequence(self, prompt: str, context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
         """
-        Determines the optimal sequence of personas for processing the prompt.
-        This method now primarily delegates to _select_persona_sequence.
+        Delegates to the PersonaRouter to determine the optimal persona sequence,
+        incorporating prompt analysis, domain, and context analysis results.
         """
-        self._log_with_context("info", "Determining persona sequence.", prompt=prompt, domain=domain)
-        try:
-            # Delegate to the new _select_persona_sequence method
-            sequence = self._select_persona_sequence(prompt)
-            self._log_with_context("info", f"Persona sequence determined: {sequence}", sequence=sequence)
-            return sequence
-        except Exception as e:
-            self._log_with_context("error", f"Error determining persona sequence: {e}", exc_info=True, original_exception=e)
-            self.rich_console.print(f"[red]Error determining persona sequence: {e}[/red]")
-            # Fallback to a default sequence if routing fails
+        if not self.persona_router:
+            self._log_with_context("error", "PersonaRouter not initialized. Falling back to default sequence.")
             return ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
+
+        # Call the PersonaRouter's main method for sequence determination
+        sequence = self.persona_router.determine_persona_sequence(
+            prompt=prompt,
+            domain=self.domain, # Pass the domain determined in __init__
+            intermediate_results=self.intermediate_steps, # Pass current intermediate results
+            context_analysis_results=context_analysis_results
+        )
+        return sequence
 
     def _process_context_persona_turn(self, persona_sequence: List[str], context_analysis_results: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
@@ -552,6 +520,26 @@ class SocraticDebate:
 
             try:
                 output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate")
+                
+                # NEW: Content Alignment Validation
+                is_aligned, validation_message = self.content_validator.validate(persona_name, output)
+                if not is_aligned:
+                    self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
+                                           persona=persona_name, validation_message=validation_message)
+                    # Add a malformed block to indicate content drift
+                    self.intermediate_steps.setdefault("malformed_blocks", []).append({
+                        "type": "CONTENT_MISALIGNMENT",
+                        "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
+                        "persona": persona_name,
+                        "raw_string_snippet": str(output)[:500]
+                    })
+                    # Optionally, modify the output to reflect the issue, or even trigger a re-prompt
+                    # For now, we'll just log and add a malformed block.
+                    # If the output is a dict, we can add a specific field.
+                    if isinstance(output, dict):
+                        output["content_misalignment_warning"] = validation_message
+                    else:
+                        output = f"WARNING: Content misalignment detected: {validation_message}\n\n{output}"
                 
                 # NEW: Check for ConflictReport from Devils_Advocate
                 if persona_name == "Devils_Advocate" and isinstance(output, dict):
@@ -1070,16 +1058,19 @@ class SocraticDebate:
         """
         self._initialize_debate_state()
         
-        # Determine persona sequence based on initial prompt and context analysis (needed early for context pruning)
-        # Pass dummy context_analysis_results for initial sequence determination, it will be updated later
-        persona_sequence = self._select_persona_sequence(self.initial_prompt) # MODIFIED LINE
-        self.intermediate_steps["Persona_Sequence"] = persona_sequence
+        # Determine initial persona sequence (before context analysis)
+        initial_persona_sequence = self._get_final_persona_sequence(self.initial_prompt, None)
+        self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
 
         # Phase 1: Context Analysis (if applicable)
         self.status_callback("Phase 1: Analyzing Context...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("context"))
-        # FIX: Pass persona_sequence as a tuple to _perform_context_analysis
-        context_analysis_results = self._perform_context_analysis(tuple(persona_sequence)) # FIX: Ensure it's a tuple
+        context_analysis_results = self._perform_context_analysis(tuple(initial_persona_sequence))
         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
+        
+        # Re-determine persona sequence after context analysis to allow for dynamic adjustments
+        # based on the insights gained from the context.
+        persona_sequence = self._get_final_persona_sequence(self.initial_prompt, context_analysis_results)
+        self.intermediate_steps["Persona_Sequence"] = persona_sequence # Store the final sequence for debate
         
         # Phase 2: Context Persona Turn (if in sequence)
         context_persona_turn_results = None

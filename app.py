@@ -151,7 +151,7 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
         # Define the replacement string outside the f-string expression to avoid SyntaxError.
         # The f-string parser cannot handle raw string literals with backslashes directly within the expression part.
         escaped_newline_for_display = '\\n'
-        # --- END FIX ---
+        # --- FIX END ---
 
         for entry in persona_audit_log:
             # Truncate long values for better table display
@@ -164,7 +164,7 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
             old_val_display_escaped = old_val_display.replace('\n', escaped_newline_for_display)
             new_val_display_escaped = new_val_display.replace('\n', escaped_newline_for_display)
             md_content += f"| {entry.get('timestamp')} | {entry.get('persona')} | {entry.get('parameter')} | `{old_val_display_escaped}` | `{new_val_display_escaped}` |\n"
-            # --- END FIX ---
+            # --- FIX END ---
         md_content += "\n---\n\n"
 
     md_content += "## Process Log\n\n"
@@ -677,10 +677,10 @@ with st.sidebar:
         api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
                                         key="api_key_input", 
                                         value=st.session_state.api_key_input, # FIX: Add value parameter
-                                        help="Your API key will not be stored.",
                                         on_change=lambda: [setattr(st.session_state, 'api_key_valid_format', 
                                                                 validate_gemini_api_key_format(st.session_state.api_key_input)),
-                                                           update_activity_timestamp()]) # ADDED update_activity_timestamp
+                                                           update_activity_timestamp()], # ADDED update_activity_timestamp
+                                        help="Your API key will not be stored.")
         
         api_key_col1, api_key_col2 = st.columns([3, 1])
         with api_key_col1:
@@ -693,8 +693,7 @@ with st.sidebar:
                 st.info("Please enter your Gemini API Key.")
         
         with api_key_col2:
-            if st.button("Test Key", help="Verify your API key works by making a small API call.", key="test_api_key_button"):
-                update_activity_timestamp() # ADDED update_activity_timestamp
+            if st.button("Test Key", help="Verify your API key works by making a small API call.", key="test_api_key_button", on_click=update_activity_timestamp): # ADDED update_activity_timestamp
                 if st.session_state.api_key_input:
                     with st.spinner("Testing API connection..."):
                         if test_gemini_api_key_functional(st.session_state.api_key_input):
@@ -874,7 +873,7 @@ st.subheader("What would you like to do?")
 # Create organized tabs for different prompt categories
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 # --- FIX START: Removed 'key' argument for st.tabs() ---
-tabs = st.tabs(tab_names) # FIX: Added key to st.tabs
+tabs = st.tabs(tab_names, key="main_prompt_tabs") # FIX: Added key to st.tabs
 # --- END FIX ---
 
 for i, tab_name in enumerate(tab_names):
@@ -902,7 +901,7 @@ for i, tab_name in enumerate(tab_names):
             
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
-                if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_custom_prompt_{tab_name}"):
+                if st.button(f"Apply '{suggested_domain_for_custom}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_custom_prompt_{tab_name}", on_click=update_activity_timestamp): # ADDED on_click
                     st.session_state.selected_persona_set = suggested_domain_for_custom
                     update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun()
@@ -986,7 +985,8 @@ for i, tab_name in enumerate(tab_names):
                 if st.button(f"Apply '{display_suggested_framework}' Framework",
                             type="primary",
                             use_container_width=True,
-                            key=f"apply_suggested_framework_example_{selected_example_key_for_this_tab}"):
+                            key=f"apply_suggested_framework_example_{selected_example_key_for_this_tab}",
+                            on_click=update_activity_timestamp): # ADDED on_click
                     st.session_state.selected_persona_set = display_suggested_framework
                     update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun() # Re-added to ensure UI updates
@@ -1021,7 +1021,7 @@ with col1:
             suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
             if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate.")
-                if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}"):
+                if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}", on_click=update_activity_timestamp): # ADDED on_click
                     st.session_state.selected_persona_set = suggested_domain
                     update_activity_timestamp() # ADDED update_activity_timestamp
                     st.rerun()
@@ -1065,9 +1065,9 @@ with col1:
         st.session_state.personas = current_domain_personas
 
     # --- MODIFICATIONS FOR FRAMEWORK MANAGEMENT CONSOLIDATION (Suggestion 1.1) ---
-    with st.expander("⚙️ Custom Framework Management", expanded=False):
+    with st.expander("⚙️ Custom Framework Management", expanded=False, key="custom_framework_management_expander"): # ADDED key
         # --- FIX START: Correct usage of st.tabs: call st.tabs once to get tab objects, then use 'with tabs[index]:' ---
-        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"]) # FIX: Added key to st.tabs
+        tabs_framework = st.tabs(["Save Current Framework", "Load/Manage Frameworks", "Export/Import"], key="framework_management_tabs") # FIX: Added key to st.tabs
 
         with tabs_framework[0]: # Corresponds to "Save Current Framework"
         # --- FIX END ---
@@ -1080,7 +1080,7 @@ with col1:
                 st.warning("Unsaved persona changes detected. Save as a custom framework to persist them.")
             # --- END MODIFICATION ---
 
-            if st.button("Save Current Framework") and st.session_state.save_framework_input: # Use session state for button logic
+            if st.button("Save Current Framework", on_click=update_activity_timestamp) and st.session_state.save_framework_input: # Use session state for button logic, ADDED on_click
                 update_activity_timestamp() # ADDED update_activity_timestamp
                 current_framework_name = st.session_state.selected_persona_set
                 # Get the currently active personas for the selected framework
@@ -1128,7 +1128,7 @@ with col1:
                 # value=st.session_state.load_framework_select, # FIX: Removed 'value' parameter
                 on_change=update_activity_timestamp # ADDED update_activity_timestamp
             )
-            if st.button("Load Selected Framework") and st.session_state.load_framework_select: # Use session state for button logic
+            if st.button("Load Selected Framework", on_click=update_activity_timestamp) and st.session_state.load_framework_select: # Use session state for button logic, ADDED on_click
                 update_activity_timestamp() # ADDED update_activity_timestamp
                 # MODIFIED: Handle return from load_framework_into_session
                 # FIX: Access persona_manager from session state
@@ -1253,7 +1253,7 @@ with col2:
 
 # --- NEW: Persona Editing UI (Improvement 1.2 & 4.1) ---
 st.markdown("---")
-with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode): # FIX: Add key
+with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode, key="persona_edit_expander"): # FIX: Add key
     # Keep expander open if user interacts with it
     st.session_state.persona_edit_mode = True
     update_activity_timestamp() # ADDED update_activity_timestamp when expander is interacted with
@@ -1281,7 +1281,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
     if st.session_state.persona_changes_detected:
         st.warning("Unsaved changes detected in persona configurations. Please save as a custom framework or reset to persist them.")
         # Add a button to reset all personas for the current framework
-        if st.button("Reset All Personas for Current Framework", key="reset_all_personas_button", use_container_width=True):
+        if st.button("Reset All Personas for Current Framework", key="reset_all_personas_button", use_container_width=True, on_click=update_activity_timestamp): # ADDED on_click
             update_activity_timestamp() # ADDED update_activity_timestamp
             # Call the new method in PersonaManager
             # FIX: Access persona_manager from session state
@@ -1349,7 +1349,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
                 persona.max_tokens = new_max_tokens
             
             # Reset button for individual persona
-            if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}"):
+            if st.button(f"Reset {p_name.replace('_', ' ')} to Default", key=f"reset_persona_{p_name}", on_click=update_activity_timestamp): # ADDED on_click
                 update_activity_timestamp() # ADDED update_activity_timestamp
                 # FIX: Access persona_manager from session state
                 if st.session_state.persona_manager.reset_persona_to_default(p_name):
