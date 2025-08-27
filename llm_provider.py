@@ -209,19 +209,31 @@ class GeminiProvider:
                 error_msg = str(e).encode('utf-8', 'replace').decode('utf-8')
                 
                 should_retry = False
+                error_details = {} # NEW: Dictionary to hold specific error details for logging
+
                 if isinstance(e, APIError):
+                    error_details['api_error_code'] = getattr(e, 'code', None)
                     # Check for specific API error codes that indicate transient issues
                     if e.code in self.RETRYABLE_ERROR_CODES:
                         should_retry = True
                     # Check for retryable HTTP status codes from the response object
                     http_status_code = getattr(e, 'response', None)
-                    if http_status_code and http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
-                        should_retry = True
+                    if http_status_code:
+                        error_details['http_status_code'] = http_status_code.status_code
+                        if http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
+                            should_retry = True
                 elif isinstance(e, socket.gaierror): # Network-related errors
                     should_retry = True
+                    error_details['network_error'] = "socket.gaierror"
                 elif "access denied" in error_msg.lower() or "permission" in error_msg.lower(): # Permission issues might be transient
-                    self._log_with_context("warning", f"Access denied or permission error encountered: {error_msg}")
+                    self._log_with_context("warning", f"Access denied or permission error encountered: {error_msg}", **error_details)
                     should_retry = True
+                # NEW: Add check for context window exceeded or similar errors
+                elif "context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower() or "max_input_tokens" in error_msg.lower():
+                    self._log_with_context("error", f"LLM context window exceeded: {error_msg}", **error_details)
+                    # This is typically not retryable with the same prompt, so we should break
+                    raise LLMUnexpectedError(f"LLM context window exceeded: {error_msg}", original_exception=e) from e
+
 
                 if should_retry and attempt < self.MAX_RETRIES:
                     # Calculate backoff time with jitter
@@ -233,7 +245,7 @@ class GeminiProvider:
                     if self.rich_console:
                         self.rich_console.print(f"[yellow]{log_message}[/yellow]")
                     else:
-                        self._log_with_context("warning", log_message) # Use _log_with_context
+                        self._log_with_context("warning", log_message, **error_details) # Use _log_with_context and include error_details
                     time.sleep(sleep_time)
                 else:
                     # If not retrying or max retries reached, raise a specific error

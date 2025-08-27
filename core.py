@@ -145,7 +145,7 @@ class SocraticDebate:
         self._calculate_token_budgets()
 
     def _log_with_context(self, level: str, message: str, **kwargs):
-        """Helper to add request context to all logs using the class-specific logger."""
+        """Helper to add request context to all logs from this instance using the class-specific logger."""
         exc_info = kwargs.pop('exc_info', None)
         original_exception = kwargs.pop('original_exception', None) # Extract original_exception
         log_data = {**self._log_extra, **kwargs}
@@ -638,6 +638,118 @@ class SocraticDebate:
         self._log_with_context("warning", "Conflict could not be resolved in sub-debate.")
         return None
 
+    # --- NEW HELPER FUNCTIONS FOR SELF_IMPROVEMENT_ANALYST PROMPT TRUNCATION ---
+    def _summarize_metrics_for_llm(self, metrics: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
+        """
+        Intelligently summarizes the metrics dictionary to fit within a token budget.
+        Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
+        """
+        summarized_metrics = json.loads(json.dumps(metrics)) # Deep copy
+        
+        # Estimate current token count
+        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+        
+        # If already within budget, return as is
+        if current_tokens <= max_tokens:
+            return summarized_metrics
+
+        self._log_with_context("debug", f"Summarizing metrics for LLM. Current tokens: {current_tokens}, Max: {max_tokens}")
+
+        # Strategy: Aggressively truncate 'detailed_issues' first
+        if 'code_quality' in summarized_metrics and 'detailed_issues' in summarized_metrics['code_quality']:
+            original_issue_count = len(summarized_metrics['code_quality']['detailed_issues'])
+            if original_issue_count > 10: # Keep only top 10 issues
+                summarized_metrics['code_quality']['detailed_issues'] = summarized_metrics['code_quality']['detailed_issues'][:10]
+                self._log_with_context("debug", f"Truncated detailed_issues from {original_issue_count} to 10.")
+                current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                if current_tokens <= max_tokens:
+                    return summarized_metrics
+
+        # Further truncation: Remove less critical detailed metrics if still over budget
+        if 'code_quality' in summarized_metrics and 'complexity_metrics' in summarized_metrics['code_quality']:
+            # Keep averages, but remove raw counts if they are too verbose
+            pass # For now, complexity_metrics are usually concise.
+
+        # If still over budget, consider removing entire verbose sections
+        if current_tokens > max_tokens:
+            if 'code_quality' in summarized_metrics:
+                # Remove detailed_issues entirely if still too large
+                if 'detailed_issues' in summarized_metrics['code_quality']:
+                    del summarized_metrics['code_quality']['detailed_issues']
+                    self._log_with_context("debug", "Removed detailed_issues entirely.")
+                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                    if current_tokens <= max_tokens:
+                        return summarized_metrics
+            
+            if 'maintainability' in summarized_metrics and 'test_coverage_summary' in summarized_metrics['maintainability']:
+                # Keep only overall_coverage_percentage if present
+                if 'coverage_details' in summarized_metrics['maintainability']['test_coverage_summary']:
+                    del summarized_metrics['maintainability']['test_coverage_summary']['coverage_details']
+                    self._log_with_context("debug", "Removed coverage_details.")
+                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                    if current_tokens <= max_tokens:
+                        return summarized_metrics
+
+        # As a last resort, convert to a very high-level summary string
+        if current_tokens > max_tokens:
+            self._log_with_context("warning", "Metrics still too large after truncation. Converting to high-level summary string.")
+            summary_str = f"Overall Code Quality: PEP8 issues: {metrics['code_quality']['pep8_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
+                          f"Security Issues: Bandit: {metrics['security']['bandit_issues_count']}, AST: {metrics['security']['ast_security_issues_count']}. " \
+                          f"Token Usage: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']} tokens, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. " \
+                          f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}, Unresolved conflicts: {metrics['robustness']['unresolved_conflict_present']}."
+            return {"summary_string": summary_str}
+
+        return summarized_metrics
+
+    def _summarize_debate_history_for_llm(self, debate_history: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
+        """
+        Summarizes the debate history to fit within a token budget.
+        Prioritizes recent turns and concise summaries of each turn's output.
+        """
+        summarized_history = []
+        current_tokens = 0
+        
+        # Start with the most recent turns
+        for turn in reversed(debate_history):
+            turn_copy = json.loads(json.dumps(turn)) # Deep copy
+            
+            # Try to summarize the 'output' field if it's a dict
+            # This is a heuristic to reduce verbosity without losing core message
+            if 'output' in turn_copy and isinstance(turn_copy['output'], dict):
+                if 'CRITIQUE_SUMMARY' in turn_copy['output']:
+                    turn_copy['output'] = {'CRITIQUE_SUMMARY': turn_copy['output']['CRITIQUE_SUMMARY']}
+                elif 'summary' in turn_copy['output']:
+                    turn_copy['output'] = {'summary': turn_copy['output']['summary']}
+                elif 'general_output' in turn_copy['output']:
+                    turn_copy['output'] = {'general_output': turn_copy['output']['general_output'][:200] + "..." if len(turn_copy['output']['general_output']) > 200 else turn_copy['output']['general_output']}
+                elif 'architecturalAnalysis' in turn_copy['output']:
+                    turn_copy['output'] = {'overallAssessment': turn_copy['output']['architecturalAnalysis']['overallAssessment']}
+                elif 'operational_analysis' in turn_copy['output']:
+                    turn_copy['output'] = {'operational_analysis_summary': "Operational analysis performed."} # Very high level
+                elif 'CRITIQUE_POINTS' in turn_copy['output']:
+                    turn_copy['output'] = {'CRITIQUE_SUMMARY': turn_copy['output'].get('CRITIQUE_SUMMARY', 'Critique provided.')}
+                else:
+                    # Fallback for other dicts: keep only a few top-level keys or convert to string
+                    turn_copy['output'] = {k: str(v)[:100] for k, v in list(turn_copy['output'].items())[:3]}
+            elif 'output' in turn_copy and isinstance(turn_copy['output'], str):
+                turn_copy['output'] = turn_copy['output'][:200] + "..." if len(turn_copy['output']) > 200 else turn_copy['output']
+
+            turn_tokens = self.tokenizer.count_tokens(json.dumps(turn_copy))
+            
+            if current_tokens + turn_tokens <= max_tokens:
+                summarized_history.insert(0, turn_copy) # Add to front to maintain original order
+                current_tokens += turn_tokens
+            else:
+                self._log_with_context("debug", f"Stopped summarizing debate history due to token limit. Included {len(summarized_history)} turns.")
+                break
+        
+        if not summarized_history and debate_history: # If even one turn couldn't fit, provide a very brief summary
+            self._log_with_context("warning", "Debate history too large, providing minimal summary.")
+            return [{"summary": f"Debate history contains {len(debate_history)} turns. Too verbose to include in full."}]
+
+        return summarized_history
+    # --- END NEW HELPER FUNCTIONS ---
+
     def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
         Executes the final synthesis persona turn (Impartial_Arbitrator or General_Synthesizer or Self_Improvement_Analyst).
@@ -686,7 +798,17 @@ class SocraticDebate:
                 # This logic was originally suggested for src/personas/Self_Improvement_Analyst.py
                 # but is now integrated here as the prompt generation for this persona.
                 metrics = self_improvement_metrics # Use the collected metrics
-                debate_history = debate_persona_results # Use the collected debate history
+                debate_history_full = debate_persona_results # Use the collected debate history
+
+                # Calculate token budget for the prompt content (excluding system prompt and max_output_tokens)
+                # Allocate a portion of the synthesis budget for the prompt content
+                # Use a slightly lower ratio for prompt content to leave more room for LLM output
+                prompt_content_budget = int(self.phase_budgets["synthesis"] * 0.6) # e.g., 60% for content, 40% for output
+                
+                # Summarize metrics and debate history to fit the budget
+                # Allocate 60% of prompt_content_budget to metrics, 40% to debate history
+                summarized_metrics = self._summarize_metrics_for_llm(metrics, int(prompt_content_budget * 0.6))
+                summarized_debate_history = self._summarize_debate_history_for_llm(debate_history_full, int(prompt_content_budget * 0.4))
 
                 normalized_impact_scores = {}
                 
@@ -734,7 +856,7 @@ class SocraticDebate:
                 # Ensure unique areas (in case critical_area_threshold added duplicates)
                 top_areas = list(dict.fromkeys(top_areas))
                 
-                final_synthesis_prompt_content = f"Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.\\n\\n## Objective Metrics:\\n{json.dumps(metrics, indent=2)}\\n\\n## Debate History:\\n{json.dumps(debate_history, indent=2)}"
+                final_synthesis_prompt_content = f"Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.\\n\\n## Objective Metrics:\\n{json.dumps(summarized_metrics, indent=2)}\\n\\n## Debate History:\\n{json.dumps(summarized_debate_history, indent=2)}"
                 # --- END MODIFICATION FOR SELF_IMPROVEMENT_ANALYST PROMPT GENERATION ---
 
             except Exception as e:

@@ -623,11 +623,9 @@ class LLMOutputParser:
             fallback_data_for_model["testing_summary"] = partial_data.get("testing_summary", {})
             fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
-        elif schema_model == GeneralOutput:
-            fallback_data_for_model["general_output"] = partial_data.get("general_output", error_message_from_partial) # Use error_message_from_partial
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == ConflictReport:
-            fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "UNKNOWN")
+            # FIX: Changed default for conflict_type from "UNKNOWN" to a valid Literal value
+            fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
             fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial) # Use error_message_from_partial
             fallback_data_for_model["involved_personas"] = partial_data.get("involved_personas", [])
             fallback_data_for_model["conflicting_outputs_snippet"] = partial_data.get("conflicting_outputs_snippet", "")
