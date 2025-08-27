@@ -3,7 +3,7 @@ import os
 import json
 import yaml
 import datetime
-import re
+import re # ADDED: For _analyze_prompt_complexity
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
@@ -424,3 +424,31 @@ class PersonaManager:
             if is_truncated:
                 metrics['truncation_failures'] += 1
             logger.debug(f"Recorded performance for {persona_name}: Success={success}, Truncated={is_truncated}, SchemaError={has_schema_error}")
+
+    def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
+        """Analyze prompt complexity with domain-specific weighting."""
+        word_count = len(prompt.split())
+        sentence_count = len(re.findall(r'[.!?]+', prompt))
+        
+        # Domain-specific keywords with weights
+        domain_keywords = {
+            'security': ['vulnerability', 'security', 'exploit', 'attack', 'threat', 'authentication', 'authorization'],
+            'testing': ['test', 'validate', 'verify', 'coverage', 'edge case', 'boundary condition'],
+            'architecture': ['design', 'pattern', 'modular', 'scalability', 'performance', 'bottleneck']
+        }
+        
+        prompt_lower = prompt.lower()
+        domain_scores = {domain: sum(1 for kw in keywords if kw in prompt_lower) 
+                       for domain, keywords in domain_keywords.items()}
+        
+        # Determine primary domain based on highest score
+        primary_domain = max(domain_scores, key=domain_scores.get) if max(domain_scores.values()) > 0 else None
+        
+        # Complexity calculation remains, but now with domain awareness
+        complexity_score = min(1.0, word_count / 500 + sentence_count / 20)
+        
+        return {
+            'complexity_score': complexity_score,
+            'primary_domain': primary_domain,
+            'domain_scores': domain_scores
+        }

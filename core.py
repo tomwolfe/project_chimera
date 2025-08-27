@@ -15,7 +15,7 @@ import logging
 import random
 from pathlib import Path
 from collections import defaultdict
-from typing import List, Dict, Tuple, Any, Callable, Optional, Type
+from typing import List, Dict, Tuple, Any, Callable, Optional, Type # ADDED List
 import numpy as np
 from google import genai
 from google.genai import types
@@ -170,8 +170,9 @@ class SocraticDebate:
     def _calculate_token_budgets(self):
         """Calculates token budgets for different phases based on context, model limits, and prompt type."""
         try:
-            # Analyze prompt complexity
-            prompt_complexity = self._analyze_prompt_complexity(self.initial_prompt)
+            # Analyze prompt complexity using persona_manager's new method
+            prompt_analysis = self.persona_manager._analyze_prompt_complexity(self.initial_prompt) # MODIFIED LINE
+            complexity_score = prompt_analysis['complexity_score'] # NEW LINE
             
             # Adjust ratios based on complexity and self-analysis flag
             if self.is_self_analysis:
@@ -179,9 +180,32 @@ class SocraticDebate:
                 debate_ratio = self.settings.self_analysis_debate_ratio
                 synthesis_ratio = self.settings.self_analysis_synthesis_ratio # MODIFIED: Use dedicated self-analysis synthesis ratio
             else:
-                context_ratio = self.settings.context_token_budget_ratio
-                debate_ratio = self.settings.debate_token_budget_ratio
-                synthesis_ratio = self.settings.synthesis_token_budget_ratio
+                # Base ratios
+                base_context_ratio = self.settings.context_token_budget_ratio
+                base_output_ratio = self.settings.synthesis_token_budget_ratio # Use settings for base output ratio
+                
+                # Adjust ratios based on prompt characteristics
+                if 'code' in self.initial_prompt.lower() or 'implement' in self.initial_prompt.lower(): # Use self.initial_prompt
+                    # Code generation needs more output tokens
+                    context_ratio = max(0.4, base_context_ratio - 0.15)
+                    synthesis_ratio = min(0.5, base_output_ratio + 0.15) # Changed to synthesis_ratio
+                elif complexity_score > 0.7: # Use complexity_score from prompt_analysis
+                    # Complex analytical prompts need more context processing
+                    context_ratio = min(0.7, base_context_ratio + 0.15)
+                    synthesis_ratio = max(0.2, base_output_ratio - 0.05) # Changed to synthesis_ratio
+                else:
+                    context_ratio = base_context_ratio
+                    synthesis_ratio = base_output_ratio
+                
+                # Ensure debate_ratio is adjusted to fill the remaining
+                debate_ratio = 1.0 - context_ratio - synthesis_ratio
+                if debate_ratio < 0.05: # Ensure a minimum for debate
+                    debate_ratio = 0.05
+                    # Re-normalize if debate_ratio was too low
+                    remaining_for_context_synthesis = 1.0 - debate_ratio
+                    context_ratio = context_ratio / (context_ratio + synthesis_ratio) * remaining_for_context_synthesis
+                    synthesis_ratio = synthesis_ratio / (context_ratio + synthesis_ratio) * remaining_for_context_synthesis
+
 
             # NEW: Explicitly normalize ratios to ensure they sum to 1.0 at this point
             total_current_ratios = context_ratio + debate_ratio + synthesis_ratio
@@ -239,7 +263,7 @@ class SocraticDebate:
                                    debate_budget=self.phase_budgets["debate"],
                                    synthesis_budget=self.phase_budgets["synthesis"],
                                    max_total_tokens_budget=self.max_total_tokens_budget,
-                                   prompt_complexity=prompt_complexity,
+                                   prompt_complexity=prompt_analysis, # MODIFIED: Use dict output
                                    is_self_analysis=self.is_self_analysis)
 
         except Exception as e:
@@ -250,27 +274,7 @@ class SocraticDebate:
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.", original_exception=e) from e
     
-    def _analyze_prompt_complexity(self, prompt: str) -> str:
-        """Analyze prompt complexity based on various factors."""
-        word_count = len(prompt.split())
-        sentence_count = len(re.findall(r'[.!?]+', prompt))
-        
-        technical_terms = ["implement", "algorithm", "architecture", "refactor", 
-                          "optimize", "debug", "vulnerability", "security", "design pattern",
-                          "scalability", "performance", "maintainability", "robustness", "efficiency"]
-        technical_count = sum(1 for term in technical_terms if term in prompt.lower())
-        
-        step_indicators = ["first", "then", "next", "after", "finally", "step", "phase", "plan", "strategy"]
-        step_count = sum(1 for indicator in step_indicators if indicator in prompt.lower())
-        
-        complexity_score = (word_count / 50) + (technical_count * 2) + (step_count * 1.5)
-        
-        if complexity_score > 3:
-            return "high"
-        elif complexity_score > 1.5:
-            return "medium"
-        else:
-            return "low"
+    # REMOVED: Original _analyze_prompt_complexity method (moved to persona_manager.py)
 
     def track_token_usage(self, phase: str, tokens: int):
         """Tracks token usage for a given phase."""
@@ -384,15 +388,54 @@ class SocraticDebate:
             self.rich_console.print(f"[red]Error during context analysis: {e}[/red]")
             return {"error": f"Context analysis failed: {e}"}
 
+    # MODIFIED: _determine_persona_sequence to call the new _select_persona_sequence
+    def _select_persona_sequence(self, prompt: str) -> List[str]:
+        """Select appropriate persona sequence based on prompt analysis."""
+        prompt_analysis = self.persona_manager._analyze_prompt_complexity(prompt) # Calls persona_manager's method
+        
+        # Base sequence depends on framework
+        if self.domain == "Self-Improvement": # Use self.domain
+            base_sequence = self.persona_sets.get("Self-Improvement", []).copy()
+        else:
+            base_sequence = self.persona_sets.get("Default", []).copy() # Assuming "Default" is a fallback or general
+
+        # Domain-specific adjustments
+        if prompt_analysis['primary_domain'] == 'security':
+            # Ensure Security_Auditor is prioritized
+            if 'Security_Auditor' in base_sequence:
+                base_sequence.remove('Security_Auditor')
+                base_sequence.insert(1, 'Security_Auditor')
+        elif prompt_analysis['primary_domain'] == 'testing':
+            # Ensure Test_Engineer is included for testing-related prompts
+            if 'Test_Engineer' not in base_sequence:
+                base_sequence.insert(2, 'Test_Engineer')
+        
+        # Complexity-based adjustments
+        if prompt_analysis['complexity_score'] > 0.7:
+            # Add deeper analysis personas for complex prompts
+            if 'Constructive_Critic' not in base_sequence:
+                base_sequence.append('Constructive_Critic')
+        
+        # Ensure uniqueness and order by removing duplicates while preserving order
+        seen = set()
+        unique_sequence = []
+        for persona in base_sequence:
+            if persona not in seen:
+                unique_sequence.append(persona)
+                seen.add(persona)
+        
+        return unique_sequence
+
+    # MODIFIED: _determine_persona_sequence to call the new _select_persona_sequence
     def _determine_persona_sequence(self, prompt: str, domain: str, intermediate_results: Dict[str, Any], context_analysis_results: Optional[Dict[str, Any]]) -> List[str]:
         """
         Determines the optimal sequence of personas for processing the prompt.
+        This method now primarily delegates to _select_persona_sequence.
         """
         self._log_with_context("info", "Determining persona sequence.", prompt=prompt, domain=domain)
         try:
-            sequence = self.persona_router.determine_persona_sequence(
-                prompt, domain, intermediate_results, context_analysis_results
-            )
+            # Delegate to the new _select_persona_sequence method
+            sequence = self._select_persona_sequence(prompt)
             self._log_with_context("info", f"Persona sequence determined: {sequence}", sequence=sequence)
             return sequence
         except Exception as e:
@@ -842,7 +885,7 @@ class SocraticDebate:
                 normalized_impact_scores['Security'] = min(100, ((bandit_issues + ast_issues) / MAX_SECURITY_ISSUES_FOR_NORM) * 100)
                 
                 # Sort by impact (higher = more critical)
-                sorted_impact = sorted(normalized_impact_scores.items(), key=lambda x: x[1], reverse=True)
+                sorted_impact = sorted(normalized_impact_scores.items(), key=lambda x: x[1], reverse=True)[:5] # Top 5 areas
                 
                 # Select top N areas, but always include critical ones if their score is above a minimum threshold
                 top_areas = []
@@ -1029,7 +1072,7 @@ class SocraticDebate:
         
         # Determine persona sequence based on initial prompt and context analysis (needed early for context pruning)
         # Pass dummy context_analysis_results for initial sequence determination, it will be updated later
-        persona_sequence = self._determine_persona_sequence(self.initial_prompt, self.domain, self.intermediate_steps, {})
+        persona_sequence = self._select_persona_sequence(self.initial_prompt) # MODIFIED LINE
         self.intermediate_steps["Persona_Sequence"] = persona_sequence
 
         # Phase 1: Context Analysis (if applicable)

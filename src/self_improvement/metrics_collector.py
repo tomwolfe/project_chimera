@@ -13,6 +13,83 @@ from src.utils.code_validator import _run_pycodestyle, _run_bandit, _run_ast_sec
 
 logger = logging.getLogger(__name__)
 
+# Placeholder for PEP8 descriptions. In a real scenario, this would be a comprehensive mapping.
+PEP8_DESCRIPTIONS = {
+    "E101": "Indentation contains mixed spaces and tabs",
+    "E111": "Indentation is not a multiple of four",
+    "E114": "Indentation is not a multiple of four (comment)",
+    "E117": "Over-indented",
+    "E121": "Continuation line under-indented for hanging indent",
+    "E122": "Continuation line missing indentation or outdented",
+    "E123": "Closing bracket does not match indentation of opening bracket's line",
+    "E124": "Closing bracket does not match visual indentation",
+    "E125": "Continuation line with same indent as next logical line",
+    "E126": "Continuation line over-indented for hanging indent",
+    "E127": "Continuation line over-indented for visual indent",
+    "E128": "Continuation line under-indented for visual indent",
+    "E129": "Visual indentation is not a multiple of four",
+    "E131": "Continuation line unaligned for hanging indent",
+    "E133": "First argument on line not indented",
+    "E201": "Whitespace after '('",
+    "E202": "Whitespace before ')'",
+    "E203": "Whitespace before ':'",
+    "E211": "Whitespace before '['",
+    "E221": "Multiple spaces before operator",
+    "E222": "Multiple spaces after operator",
+    "E225": "Missing whitespace around operator",
+    "E226": "Missing whitespace around arithmetic operator",
+    "E227": "Missing whitespace around bitwise or shift operator",
+    "E228": "Missing whitespace around modulo operator",
+    "E231": "Missing whitespace after ','",
+    "E251": "Unexpected whitespace around keyword / parameter equals",
+    "E261": "At least two spaces before inline comment",
+    "E262": "Inline comment should start with '# '",
+    "E265": "Block comment should start with '# '",
+    "E266": "Too many leading '#' for block comment",
+    "E271": "Multiple spaces after keyword",
+    "E272": "Multiple spaces before keyword",
+    "E301": "Expected 1 blank line, found 0 (before class/def)",
+    "E302": "Expected 2 blank lines, found 0 (before class/def)",
+    "E303": "Too many blank lines (3 or more)",
+    "E304": "Blank lines found after function decorator",
+    "E305": "Expected 2 blank lines after class or function definition, found 0",
+    "E306": "Expected 1 blank line before nested class or function definition, found 0",
+    "E401": "Multiple imports on one line",
+    "E402": "Module level import not at top of file",
+    "E501": "Line too long",
+    "E502": "The backslash is redundant between brackets",
+    "E701": "Multiple statements on one line (colon)",
+    "E702": "Multiple statements on one line (semicolon)",
+    "E703": "Statement ends with a semicolon",
+    "E711": "Comparison to None should be 'if cond is None:'",
+    "E712": "Comparison to True should be 'if cond is True:' or 'if cond:'",
+    "E713": "Test for membership should be 'not in'",
+    "E714": "Test for object identity should be 'is not'",
+    "E721": "Do not compare types, use isinstance()",
+    "E722": "Do not use bare 'except:'",
+    "E731": "Do not assign a lambda expression, use a def",
+    "E741": "Ambiguous variable name 'l', 'O', or 'I'",
+    "E742": "Ambiguous class name 'l', 'O', or 'I'",
+    "E743": "Ambiguous function name 'l', 'O', or 'I'",
+    "E901": "SyntaxError or IndentationError",
+    "E902": "IOError",
+    "W191": "Visual indentation contains mixed spaces and tabs",
+    "W291": "Trailing whitespace",
+    "W292": "No newline at end of file",
+    "W293": "Blank line contains whitespace",
+    "W391": "Blank line at end of file",
+    "W503": "Line break before binary operator",
+    "W504": "Line break after binary operator",
+    "W601": "Invalid escape sequence 'x'",
+    "W602": "Deprecated form of raising exception",
+    "W603": "Invalid comparison with '== None'",
+    "W604": "Backticks are deprecated",
+    "W605": "Invalid escape sequence 'x'",
+    "W606": "f-string contains backslash",
+    "W607": "Invalid escape sequence 'x'"
+}
+
+
 # --- NEW: AST Visitor for detailed code metrics ---
 class ComplexityVisitor(ast.NodeVisitor):
     """
@@ -157,7 +234,8 @@ class ImprovementMetricsCollector:
                     "avg_max_nesting_depth": 0.0
                 },
                 "code_smells_count": 0,
-                "detailed_issues": [] # To store all collected issues for detailed analysis
+                "detailed_issues": [], # To store all collected issues for detailed analysis
+                "pep8_violations": [] # NEW: Dedicated list for PEP8 violations
             },
             "security": {
                 "bandit_issues_count": 0,
@@ -199,6 +277,7 @@ class ImprovementMetricsCollector:
                         if pep8_issues:
                             metrics["code_quality"]["pep8_issues_count"] += len(pep8_issues)
                             metrics["code_quality"]["detailed_issues"].extend(pep8_issues)
+                            metrics["code_quality"]["pep8_violations"].extend(pep8_issues) # NEW: Add to dedicated list
                         
                         bandit_issues = _run_bandit(content, file_path)
                         if bandit_issues:
@@ -303,3 +382,68 @@ class ImprovementMetricsCollector:
         except Exception as e:
             logger.error(f"Unexpected error during AST analysis for {file_path}: {e}", exc_info=True)
             return []
+
+def analyze_pep8_patterns(violations: List[Dict]) -> Dict:
+    """Analyze PEP8 violations to identify the most impactful patterns."""
+    # Count frequency of each error code
+    error_counts = {}
+    file_impact = {}
+    
+    for violation in violations:
+        code = violation['code']
+        file_path = violation['filename'] # Corrected from 'file_path' to 'filename'
+        
+        error_counts[code] = error_counts.get(code, 0) + 1
+        
+        if file_path not in file_impact:
+            file_impact[file_path] = set()
+        file_impact[file_path].add(code)
+    
+    # Calculate files impacted per error code
+    code_file_counts = {}
+    for file_path, codes in file_impact.items():
+        for code in codes:
+            code_file_counts[code] = code_file_counts.get(code, 0) + 1
+    
+    # Identify top patterns by both frequency and file impact
+    top_patterns = []
+    for code, count in sorted(error_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
+        files_affected = code_file_counts.get(code, 0)
+        severity = count * files_affected
+        top_patterns.append({
+            'code': code,
+            'count': count,
+            'files_affected': files_affected,
+            'severity': severity,
+            'description': PEP8_DESCRIPTIONS.get(code, 'No description available')
+        })
+    
+    return {
+        'total_violations': len(violations),
+        'top_patterns': top_patterns
+    }
+
+def prioritize_maintenance_tasks(metrics: Dict) -> List[Dict]:
+    """Prioritize maintenance tasks using the 80/20 principle."""
+    # Focus on the top PEP8 patterns first
+    # Use the dedicated 'pep8_violations' list from the metrics
+    pep8_analysis = analyze_pep8_patterns(metrics['code_quality']['pep8_violations'])
+    
+    # Create actionable tasks for the most impactful patterns
+    tasks = []
+    for i, pattern in enumerate(pep8_analysis['top_patterns']):
+        # Calculate impact score (combining frequency and file spread)
+        impact_score = pattern['count'] * pattern['files_affected']
+        
+        # Create specific remediation task
+        tasks.append({
+            'id': f'MAINT-00{i+1}',
+            'title': f'Fix {pattern["code"]} violations ({pattern["count"]} occurrences)',
+            'description': f'Resolve {pattern["code"]} ({pattern["description"]}) violations affecting {pattern["files_affected"]} files',
+            'impact_score': impact_score,
+            'estimated_effort': min(5, pattern['count'] // 100 + 1), # Simple heuristic for effort
+            'priority': i + 1
+        })
+    
+    # Sort by priority (lowest number = highest priority)
+    return sorted(tasks, key=lambda x: x['priority'])
