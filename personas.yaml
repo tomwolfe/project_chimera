@@ -25,14 +25,16 @@ personas:
  
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      -   Ensure all code snippets within `SUGGESTIONS` (if any) adhere to PEP8 (line length <= 88).
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. USE ONLY DOUBLE QUOTES for all keys and string values.
+      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      10. Ensure all code snippets within `SUGGESTIONS` (if any) adhere to PEP8 (line length <= 88).
       ---
 
       **JSON Schema:**
@@ -61,14 +63,16 @@ personas:
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      -   Ensure `CODE_CHANGES` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. USE ONLY DOUBLE QUOTES for all keys and string values.
+      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      10. Ensure `CODE_CHANGES` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
       ---
       
       **JSON Schema:**
@@ -105,13 +109,13 @@ personas:
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      3. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      4. ALL KEYS MUST BE IN DOUBLE QUOTES
+      5. NO TRAILING COMMAS
+      6. PROPERLY NESTED BRACES AND BRACKETS
+      7. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       ---
 
       **JSON Schema for ConflictReport:**
@@ -157,13 +161,15 @@ personas:
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. USE ONLY DOUBLE QUOTES for all keys and string values.
+      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       ---
       
       **JSON Schema:**
@@ -196,13 +202,15 @@ personas:
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. USE ONLY DOUBLE QUOTES for all keys and string values.
+      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       ---
 
       **JSON Schema for SelfImprovementAnalysisOutput (V1 data structure):**
@@ -301,13 +309,15 @@ personas:
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      -   **YOUR ENTIRE RESPONSE MUST BE A SINGLE, VALID JSON OBJECT.**
-      -   **DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.**
-      -   **STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-      -   **USE ONLY DOUBLE QUOTES** for all keys and string values.
-      -   **ENSURE COMMAS** separate all properties in objects and elements in arrays.
-      -   **DO NOT include trailing commas** after the last property in an object or the last element in an array.
-      -   Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
+      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. USE ONLY DOUBLE QUOTES for all keys and string values.
+      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       ---
       
       For EACH of the following persona types, create a focused summary of the most relevant code sections and insights:

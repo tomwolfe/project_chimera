@@ -235,29 +235,45 @@ class LLMOutputParser:
     def _repair_json_string(self, json_str: str) -> Tuple[str, List[str]]:
         """Applies common JSON repair heuristics and logs repairs."""
         repair_log = []
+        original_json_str = json_str # Initialize original_json_str here
         
-        # 1. Remove trailing commas before closing braces/brackets
-        original_json_str = json_str
-        json_str = re.sub(r',\s*([\}\]])', r'\1', json_str)
+        # 1. FIRST: Handle the specific numbered array element issue (e.g., "0:{")
+        # This is the primary issue seen in Devils_Advocate output
+        json_str = re.sub(r'\d+\s*:\s*{', '{', json_str)
+        json_str = re.sub(r',\s*\d+\s*:\s*{', ', {', json_str)
         if original_json_str != json_str:
-            repair_log.append("Removed trailing commas.")
+            repair_log.append("Fixed numbered array elements (e.g., '0:{' -> '{').")
+            original_json_str = json_str # Update original_json_str for next check
         
-        # 2. Replace single quotes with double quotes (careful not to break escaped quotes)
+        # 2. Handle cases where entire array is wrapped in quotes
+        json_str = re.sub(r'"\[\s*{', '[{', json_str)
+        json_str = re.sub(r'}\s*\]"', '}]', json_str)
+        if original_json_str != json_str:
+            repair_log.append("Fixed array incorrectly wrapped in quotes.")
+            original_json_str = json_str # Update original_json_str for next check
+        
+        # 3. Replace single quotes with double quotes (careful not to break escaped quotes)
         # This is a complex problem for regex. A simpler, less aggressive approach:
         # Only replace single quotes that are likely delimiters, not within values.
         # This regex attempts to target single quotes that are not part of a word.
-        original_json_str = json_str
-        json_str = re.sub(r"(?<![a-zA-Z0-9_])'(?![a-zA-Z0-9_])", '"', json_str)
+        json_str = re.sub(r"(?<!\\)\'", '"', json_str) # Use this more robust regex
         if original_json_str != json_str:
-            repair_log.append("Replaced likely single quotes with double quotes.")
+            repair_log.append("Replaced single quotes with double quotes.")
+            original_json_str = json_str # Update original_json_str for next check
 
-        # 3. Handle unquoted keys (simple heuristic, might fail on complex cases)
-        original_json_str = json_str
+        # 4. Handle unquoted keys (simple heuristic, might fail on complex cases)
         json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
         if original_json_str != json_str:
             repair_log.append("Added quotes to unquoted keys.")
+            original_json_str = json_str # Update original_json_str for next check
 
-        # 4. Attempt to balance braces and brackets (add missing closers at the end)
+        # 5. Handle trailing commas in objects/arrays
+        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+        if original_json_str != json_str:
+            repair_log.append("Removed trailing commas in objects/arrays.")
+            original_json_str = json_str # Update original_json_str for next check
+        
+        # 6. Balance braces and brackets (add missing closers at the end)
         open_braces = json_str.count('{')
         close_braces = json_str.count('}')
         if open_braces > close_braces:
