@@ -361,7 +361,7 @@ class LLMOutputParser:
         cleaned = re.sub(r'\n\s*```\s*$', '', cleaned, flags=re.MULTILINE)
         
         # Remove common leading/trailing conversational filler
-        cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', cleaned, flags=reDOTALL | re.IGNORECASE)
+        cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
         cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
         
         # Attempt to find the outermost JSON structure and trim anything outside it
