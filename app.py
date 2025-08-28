@@ -31,8 +31,9 @@ import difflib
 
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # <-- THIS LINE WAS MODIFIED
 from src.config.settings import ChimeraSettings
+from pathlib import Path # Added for Path in Self-Improvement download button
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -81,6 +82,15 @@ def test_gemini_api_key_functional(api_key: str) -> bool:
     except Exception as e:
         logger.error(f"Unexpected error during API key functional test: {e}")
         return False
+
+# --- NEW: Callback for API Key Input ---
+def on_api_key_change():
+    """Callback to validate API key format and update activity timestamp."""
+    # Access the current value directly from the widget's key in session_state
+    api_key_value = st.session_state.api_key_input
+    st.session_state.api_key_valid_format = validate_gemini_api_key_format(api_key_value)
+    update_activity_timestamp()
+# --- END NEW: Callback for API Key Input ---
 # --- END NEW: API Key Validation and Test Functions ---
 
 # --- Demo Codebase Context Loading ---
@@ -562,9 +572,7 @@ with st.sidebar:
         api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
                                         key="api_key_input", 
                                         value=st.session_state.api_key_input,
-                                        on_change=lambda: [setattr(st.session_state, 'api_key_valid_format', 
-                                                                validate_gemini_api_key_format(st.session_state.api_key_input)),
-                                                           update_activity_timestamp()],
+                                        on_change=on_api_key_change, # MODIFIED THIS LINE
                                         help="Your API key will not be stored.")
         
         api_key_col1, api_key_col2 = st.columns([3, 1])
