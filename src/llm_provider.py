@@ -72,7 +72,9 @@ class GeminiProvider:
         
         try:
             self.client = genai.Client(api_key=self._api_key)
-        except Exception as e:
+        # --- MODIFICATION START ---
+        # Catch specific errors related to API key initialization
+        except (APIError, ValueError) as e: # Catch APIError for network/auth issues, ValueError for client-side validation
             error_msg = str(e)
             self._log_with_context("error", f"Failed to initialize genai.Client: {error_msg}", exc_info=True) # Use _log_with_context
             error_msg_lower = error_msg.lower()
@@ -80,6 +82,10 @@ class GeminiProvider:
                 raise LLMProviderError(f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.", provider_error_code="INVALID_API_KEY", original_exception=e) from e # Pass original_exception
             else:
                 raise LLMProviderError(f"Failed to initialize Gemini client: {error_msg}", original_exception=e) from e # Pass original_exception
+        except Exception as e: # Catch any other unexpected errors
+            self._log_with_context("error", f"An unexpected error occurred during genai.Client initialization: {e}", exc_info=True)
+            raise LLMProviderError(f"Failed to initialize Gemini client unexpectedly: {e}", original_exception=e) from e
+        # --- MODIFICATION END ---
         
         try:
             self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)

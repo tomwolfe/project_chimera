@@ -105,12 +105,16 @@ class CodeChange(BaseModel):
             if self.diff_content is not None: # Ensure no diff for ADD
                 raise ValueError(f"DIFF_CONTENT should not be provided for action 'ADD' on file '{self.file_path}'.")
         elif self.action == "MODIFY":
-            if self.full_content is None and self.diff_content is None:
+            # --- MODIFICATION START ---
+            if self.diff_content is not None:
+                # If diff_content is provided, it takes precedence. Clear full_content if present.
+                if self.full_content is not None:
+                    logger.warning(f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT.")
+                    self.full_content = None
+            elif self.full_content is None:
+                # If neither diff_content nor full_content is provided, raise error.
                 raise ValueError(f"Either FULL_CONTENT or DIFF_CONTENT is required for action 'MODIFY' on file '{self.file_path}'.")
-            if self.full_content is not None and self.diff_content is not None:
-                # Prefer diff_content for token efficiency if both are provided
-                self.full_content = None
-                logger.warning(f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT.")
+            # --- MODIFICATION END ---
         elif self.action == "REMOVE":
             if not isinstance(self.lines, list) or not self.lines:
                 raise ValueError(f"LINES must be a non-empty list for action 'REMOVE' on file '{self.file_path}'.")
