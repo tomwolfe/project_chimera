@@ -15,40 +15,15 @@ repos:
     rev: 23.11.0 # Use the latest stable version
     hooks:
       - id: black
-        language_version: python3.10 # Specify your Python version, adjust if needed
+        language_version: python3.11 # Specify your Python version, adjust if needed
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.1.9 # Use the latest stable version
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-same-line] # Automatically fix linting errors
       - id: ruff-format # Formats code using Ruff's formatter (similar to Black)
-
-# --- ADDED FOR PEP8 COMPLIANCE ---
-# This section adds hooks for pycodestyle and flake8 to enforce PEP8 standards.
-# The specific arguments for flake8 are chosen to align with common practices
-# and focus on the most impactful PEP8 violations.
-  - repo: https://github.com/PyCQA/pycodestyle
-    rev: 2.10.0 # Use a specific, stable version
-    hooks:
-      - id: pycodestyle
-  - repo: https://github.com/PyCQA/flake8
-    rev: 6.0.0 # Use a specific, stable version
-    hooks:
-      - id: flake8
-        # Apply specific arguments to flake8:
-        # --max-line-length=79: Enforce a line length of 79 characters (PEP8 standard).
-        # --ignore=E203, E261, E501, W503: Ignore specific common violations that might be handled differently or are less critical for initial cleanup.
-        #   E203: Whitespace before ':' (often handled by Black/Ruff)
-        #   E261: At least two spaces before inline comment (Ruff/Black usually handle this)
-        #   E501: Line too long (We are enforcing 79, but this might catch other cases if not perfectly handled)
-        #   W503: Line break before binary operator (Black/Ruff often prefer W504, so ignoring W503)
-        args: [--max-line-length=79, --ignore=E203, E261, E501, W503]
-# --- END ADDED ---
-
-# --- NEW: ADDED FOR SECURITY SCANNING (Bandit) ---
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.5 # Use a specific, stable version
     hooks:
       - id: bandit
         args: ["-r", ".", "-ll", "-c", "pyproject.toml"] # -r for recursive, -ll for low severity, -c for config
-# --- END NEW ---

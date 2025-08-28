@@ -15,6 +15,7 @@ import ast
 import json # Added for Bandit output parsing
 import yaml # Added for YAML security checks
 from collections import defaultdict # Added for metrics aggregation
+from src.utils.command_executor import execute_command_safely # NEW IMPORT
 
 from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path
 
@@ -103,46 +104,52 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path) # Use str(Path)
             ]
             
-            process = subprocess.run(
+            # Use the new execute_command_safely function
+            stdout, stderr = execute_command_safely(
                 command,
-                capture_output=True,
-                text=True,
-                check=False,
-                shell=False,
-                timeout=30
+                timeout=30,
+                check=False # Bandit returns 1 for issues, 0 for no issues, so check=True would fail.
+                            # We handle return code manually below.
             )
+            
+            # The original subprocess.run call's 'process' object is not directly available here.
+            # We need to infer success/failure from stdout/stderr and potential exceptions.
+            # Bandit's JSON output is in stdout.
+            try:
+                bandit_results = stdout.strip()
+                if bandit_results:
+                    data = json.loads(bandit_results)
+                    for issue in data.get('results', []):
+                        # FIX: Removed the problematic 'if issue['level'] != 'info':'.
+                        # Bandit's JSON output uses 'severity' and 'description', not 'level'.
+                        issues.append({
+                            'type': 'Bandit Security Issue',
+                            'file': filename,
+                            'line': issue.get('line_number'),
+                            'code': issue.get('test_id'),
+                            'message': f"[{issue.get('severity')}] {issue.get('description')}"
+                        })
+                # If Bandit itself had an error (e.g., parsing its own config), it might print to stderr
+                # and not produce valid JSON. We should check stderr for errors if stdout was empty or malformed.
+                if not bandit_results and stderr:
+                    logger.error(f"Bandit produced no JSON output but had stderr: {stderr}")
+                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit produced no output but had stderr: {stderr}'})
+            except json.JSONDecodeError as jde:
+                logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {stdout}", exc_info=True)
+                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
+            except Exception as e:
+                logger.error(f"Unexpected error processing Bandit output for {filename}: {e}", exc_info=True)
+                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
 
-            if process.returncode not in (0, 1):
-                logger.error(f"Bandit execution failed for {filename} with return code {process.returncode}. Stderr: {process.stderr}")
-                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed: {process.stderr}'})
-            else:
-                try:
-                    bandit_results = process.stdout.strip()
-                    if bandit_results:
-                        data = json.loads(bandit_results)
-                        for issue in data.get('results', []):
-                            # FIX: Removed the problematic 'if issue['level'] != 'info':'.
-                            # Bandit's JSON output uses 'severity' and 'description', not 'level'.
-                            issues.append({
-                                'type': 'Bandit Security Issue',
-                                'file': filename,
-                                'line': issue.get('line_number'),
-                                'code': issue.get('test_id'),
-                                'message': f"[{issue.get('severity')}] {issue.get('description')}"
-                            })
-                except json.JSONDecodeError as jde:
-                    logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {process.stdout}", exc_info=True)
-                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
-                except Exception as e:
-                    logger.error(f"Unexpected error processing Bandit output for {filename}: {e}", exc_info=True)
-                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
-
-    except FileNotFoundError:
+    except FileNotFoundError as e: # execute_command_safely can raise this
         logger.error("Bandit command not found. Ensure Bandit is installed and in the PATH.")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit executable not found. Please install Bandit.'})
-    except subprocess.TimeoutExpired:
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit executable not found: {e}. Please install Bandit.'})
+    except subprocess.TimeoutExpired as e: # execute_command_safely can raise this
         logger.error(f"Bandit execution timed out for {filename}.")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': 'Bandit execution timed out.'})
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit execution timed out: {e}.'})
+    except subprocess.CalledProcessError as e: # execute_command_safely can raise this if check=True
+        logger.error(f"Bandit execution failed for {filename} with exit code {e.returncode}. Stderr: {e.stderr.strip()}")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed: {e.stderr.strip()}'})
     except Exception as e: # Catch any other unexpected errors during the try block
         logger.error(f"Unexpected error running Bandit on {filename}: {e}", exc_info=True)
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})

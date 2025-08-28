@@ -186,6 +186,22 @@ class GeminiProvider:
                 prompt_with_system = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
                 input_tokens = self.tokenizer.count_tokens(prompt_with_system) # USE self.tokenizer.count_tokens
                 
+                # --- NEW: Log LLM Input ---
+                # Log a snippet of the prompt for quick overview
+                self._log_with_context("debug", "LLM Prompt Snippet",
+                                       model=model_name_to_use or self.model_name,
+                                       input_tokens=input_tokens,
+                                       prompt_snippet=prompt_with_system[:500] + "..." if len(prompt_with_system) > 500 else prompt_with_system)
+                # Log the full system prompt and user prompt for detailed debugging if needed
+                self._log_with_context("info", "LLM Prompt Sent",
+                                       model=model_name_to_use or self.model_name,
+                                       temperature=config.temperature,
+                                       max_output_tokens=config.max_output_tokens,
+                                       full_system_prompt=system_prompt,
+                                       full_user_prompt=prompt,
+                                       input_tokens=input_tokens)
+                # --- END NEW ---
+                
                 # Make the actual API call
                 response = self.client.models.generate_content(
                     model=model_name_to_use or self.model_name,
@@ -201,6 +217,19 @@ class GeminiProvider:
                 
                 output_tokens = self.tokenizer.count_tokens(generated_text) # USE self.tokenizer.count_tokens
                 self._log_with_context("debug", f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)")
+                
+                # --- NEW: Log LLM Output ---
+                # Log a snippet of the generated text for quick overview
+                self._log_with_context("debug", "LLM Response Snippet",
+                                       model=model_name_to_use or self.model_name,
+                                       output_tokens=output_tokens,
+                                       generated_text_snippet=generated_text[:500] + "..." if len(generated_text) > 500 else generated_text)
+                # Log the full generated text for detailed analysis
+                self._log_with_context("info", "LLM Response Received",
+                                       model=model_name_to_use or self.model_name,
+                                       output_tokens=output_tokens,
+                                       full_generated_text=generated_text)
+                # --- END NEW ---
                 
                 return generated_text, input_tokens, output_tokens
                 

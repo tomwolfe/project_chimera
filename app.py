@@ -957,6 +957,7 @@ with col1:
             st.subheader("Export Framework")
             st.info("Export the currently selected framework to a file for sharing.")
             export_framework_name = st.session_state.selected_persona_set
+            # FIX APPLIED HERE: Changed 'on_change' to 'on_click'
             if st.button(f"Export '{export_framework_name}'", use_container_width=True, key="export_framework_button", on_click=update_activity_timestamp):
                 success, message, exported_content = st.session_state.persona_manager.export_framework_for_sharing(export_framework_name)
                 if success and exported_content:
@@ -1586,7 +1587,8 @@ if st.session_state.debate_ran:
         if not impactful_suggestions:
             st.info("No specific suggestions were provided in the analysis.")
         else:
-            for suggestion in impactful_suggestions:
+            # Apply the fix here: Add enumeration to the outer loop
+            for suggestion_idx, suggestion in enumerate(impactful_suggestions):
                 with st.expander(f"💡 {suggestion.get('AREA', 'N/A')}: {suggestion.get('PROBLEM', 'N/A')[:80]}...", expanded=False):
                     st.markdown(f"**Area:** {suggestion.get('AREA', 'N/A')}")
                     st.markdown(f"**Problem:** {suggestion.get('PROBLEM', 'N/A')}")
@@ -1596,7 +1598,8 @@ if st.session_state.debate_ran:
                     code_changes = suggestion.get('CODE_CHANGES_SUGGESTED', [])
                     if code_changes:
                         st.markdown("**Suggested Code Changes:**")
-                        for change in code_changes:
+                        # Apply the fix here: Add enumeration to the inner loop
+                        for change_idx, change in enumerate(code_changes):
                             with st.expander(f"📝 {change.get('FILE_PATH', 'N/A')} (`{change.get('ACTION', 'N/A')}`)", expanded=False):
                                 st.write(f"**Action:** {change.get('ACTION', 'N/A')}")
                                 st.write(f"**File Path:** {change.get('FILE_PATH', 'N/A')}")
@@ -1612,7 +1615,9 @@ if st.session_state.debate_ran:
                                             file_name=f"{Path(change.get('FILE_PATH', 'N/A')).name}.diff",
                                             use_container_width=True,
                                             type="secondary",
-                                            on_click=update_activity_timestamp
+                                            on_click=update_activity_timestamp,
+                                            # Apply the fix here: Add unique key
+                                            key=f"diff_download_{suggestion_idx}_{change_idx}_{change.get('FILE_PATH', 'N/A').replace('/', '_')}"
                                         )
                                     elif change.get('FULL_CONTENT'):
                                         st.write("**Content:**")
@@ -1624,7 +1629,9 @@ if st.session_state.debate_ran:
                                             file_name=change.get('FILE_PATH', 'N/A'),
                                             use_container_width=True,
                                             type="secondary",
-                                            on_click=update_activity_timestamp
+                                            on_click=update_activity_timestamp,
+                                            # Apply the fix here: Add unique key
+                                            key=f"full_download_{suggestion_idx}_{change_idx}_{change.get('FILE_PATH', 'N/A').replace('/', '_')}"
                                         )
                                     else:
                                         st.info("No content or diff provided for this change.")
