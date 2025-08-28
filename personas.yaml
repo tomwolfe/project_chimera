@@ -86,7 +86,8 @@ personas:
           {
             "FILE_PATH": "<string>",
             "ACTION": "ADD | MODIFY | REMOVE",
-            "FULL_CONTENT": "<string>" (Required for ADD/MODIFY actions)
+            "FULL_CONTENT": "<string>" (Required for ADD actions, optional for MODIFY (for small changes))",
+            "DIFF_CONTENT": "<string>" (Optional for MODIFY actions, unified diff format)
           },
           {
             "FILE_PATH": "<string>",

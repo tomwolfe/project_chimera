@@ -27,7 +27,7 @@ from functools import lru_cache
 import uuid
 
 # --- IMPORT MODIFICATIONS ---
-from llm_provider import GeminiProvider
+from src.llm_provider import GeminiProvider
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
@@ -1109,9 +1109,7 @@ class SocraticDebate:
         # --- END MODIFICATION ---
 
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
-        """
-        Synthesizes the final answer and prepares the intermediate steps for display.
-        """
+        """Synthesizes the final answer and prepares the intermediate steps for display."""
         final_answer = synthesis_persona_results
         
         if not isinstance(final_answer, dict):
