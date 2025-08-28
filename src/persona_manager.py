@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 # CUSTOM_FRAMEWORKS_DIR = "custom_frameworks" # REMOVED: Now managed by ConfigPersistence
 DEFAULT_PERSONAS_FILE = "personas.yaml"
 
-@st.cache_resource
 class PersonaManager:
     def __init__(self, domain_keywords: Dict[str, List[str]]): # Accept domain_keywords
         self.all_personas: Dict[str, PersonaConfig] = {}
