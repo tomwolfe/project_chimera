@@ -1,6 +1,6 @@
 # src/models.py
 from typing import Dict, Any, Optional, List, Literal
-from pydantic import BaseModel, Field, validator, model_validator, ConfigDict, ValidationError # ADDED ValidationError
+from pydantic import BaseModel, Field, validator, model_validator, ConfigDict, ValidationError, field_validator # ADDED field_validator
 import logging
 import re
 from pathlib import Path
@@ -71,7 +71,8 @@ class CodeChange(BaseModel):
     lines: List[str] = Field(default_factory=list, alias="LINES")
     diff_content: Optional[str] = Field(None, alias="DIFF_CONTENT", description="Unified diff format for MODIFY actions (for larger files).") # ADD THIS LINE
 
-    @validator('file_path')
+    @field_validator('file_path') # CHANGED: @validator to @field_validator
+    @classmethod # ADDED: @classmethod
     def validate_file_path(cls, v):
         """Validates and sanitizes the file path."""
         # Import sanitize_and_validate_file_path locally here
@@ -86,7 +87,8 @@ class CodeChange(BaseModel):
         except ValueError as ve:
             raise ValueError(f"Invalid file path: {ve}") from ve
         
-    @validator('action')
+    @field_validator('action') # CHANGED: @validator to @field_validator
+    @classmethod # ADDED: @classmethod
     def validate_action(cls, v):
         """Validates the action type."""
         valid_actions = ["ADD", "MODIFY", "REMOVE"]

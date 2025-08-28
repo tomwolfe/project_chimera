@@ -484,15 +484,34 @@ class LLMOutputParser:
                         "conflict_found": True,
                         "malformed_blocks": malformed_blocks_list
                     }
-            elif schema_model == GeneralOutput:
-                # GeneralOutput can handle lists directly, so no transformation_needed here
-                data_to_validate = parsed_data
-            else:
-                self.logger.warning(f"LLM returned a list for schema {schema_model.__name__} which expects a dict. Creating generic fallback.")
-                data_to_validate = {
-                    "general_output": f"LLM returned a list instead of a single object for {schema_model.__name__}. First item: {str(parsed_data[0])[:100]}...",
-                    "malformed_blocks": malformed_blocks_list
-                }
+            elif schema_model == GeneralOutput: # MODIFIED: This block was previously incorrect
+                transformation_needed = True
+                malformed_blocks_list.append({"type": "TOP_LEVEL_LIST_WRAPPING", "message": f"LLM returned a top-level JSON array, which was wrapped into an object for schema {schema_model.__name__}."})
+                if not parsed_data: # Handle empty list specifically
+                    data_to_validate = {
+                        "general_output": "[]", # Represent empty list as string
+                        "malformed_blocks": malformed_blocks_list
+                    }
+                elif all(isinstance(item, str) for item in parsed_data):
+                    self.logger.warning("LLM returned a list of strings for GeneralOutput. Concatenating them.")
+                    data_to_validate = {
+                        "general_output": "\n".join(parsed_data),
+                        "malformed_blocks": malformed_blocks_list
+                    }
+                elif all(isinstance(item, dict) for item in parsed_data):
+                    self.logger.warning("LLM returned a list of dicts for GeneralOutput. Summarizing content.")
+                    # Summarize the dicts into a string
+                    summarized_content = "LLM returned a list of objects. Summarized content: " + json.dumps(parsed_data[:3]) + ("..." if len(parsed_data) > 3 else "")
+                    data_to_validate = {
+                        "general_output": summarized_content,
+                        "malformed_blocks": malformed_blocks_list
+                    }
+                else:
+                    self.logger.warning("LLM returned a mixed/unexpected list for GeneralOutput. Creating generic fallback.")
+                    data_to_validate = {
+                        "general_output": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:100]}...",
+                        "malformed_blocks": malformed_blocks_list
+                    }
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
@@ -643,6 +662,9 @@ class LLMOutputParser:
                 self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
                 fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data]
+        elif schema_model == GeneralOutput: # ADDED: Explicit handling for GeneralOutput
+            fallback_data_for_model["general_output"] = partial_data.get("general_output", error_message_from_partial)
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
 
         try:
             if schema_model == SelfImprovementAnalysisOutput:
