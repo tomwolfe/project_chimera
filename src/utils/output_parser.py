@@ -353,8 +353,7 @@ class LLMOutputParser:
         parsed_data = None
         data_to_validate = None
         
-        # Flag to indicate if any repair or structural transformation was needed
-        transformation_occurred = False
+        transformation_needed = False
 
         # NEW: Clean raw output first to remove markdown fences and conversational filler
         cleaned_raw_output = self._clean_llm_output(raw_output)
@@ -364,21 +363,23 @@ class LLMOutputParser:
         if marker_extraction_result:
             extracted_json_str, end_marker_found = marker_extraction_result
             if not end_marker_found:
-                malformed_blocks_list.append({
-                    "type": "MISSING_END_MARKER",
-                    "message": "START_JSON_OUTPUT was found, but END_JSON_OUTPUT was missing. Attempted to parse content after START_JSON_OUTPUT.",
-                    "raw_string_snippet": cleaned_raw_output[:1000] + ("..." if len(cleaned_raw_output) > 1000 else "")
-                })
-                transformation_occurred = True
+                malformed_blocks_list.append({"type": "MISSING_END_MARKER", "message": "START_JSON_OUTPUT was found, but END_JSON_OUTPUT was missing. Attempted to parse content after START_JSON_OUTPUT.", "raw_string_snippet": cleaned_raw_output[:1000] + ("..." if len(cleaned_raw_output) > 1000 else "")})
+                transformation_needed = True
         else:
-            # No start marker found, try markdown blocks on the full cleaned_raw_output
-            extracted_json_str = self._extract_json_from_markdown(cleaned_raw_output)
-            if not extracted_json_str:
-                # No markdown blocks, try robust extraction on the whole cleaned_raw_output
-                extracted_json_str = self._extract_first_outermost_json(cleaned_raw_output)
-                if extracted_json_str:
-                    transformation_occurred = True # If this succeeded, it means initial extraction methods failed
-
+            # If no markers, try direct parsing of the cleaned output first.
+            # If it works, no further extraction/repair is needed for this step.
+            try:
+                parsed_data = json.loads(cleaned_raw_output)
+                extracted_json_str = cleaned_raw_output
+            except json.JSONDecodeError:
+                # No start marker found, try markdown blocks on the full cleaned_raw_output
+                extracted_json_str = self._extract_json_from_markdown(cleaned_raw_output)
+                if not extracted_json_str:
+                    # No markdown blocks, try robust extraction on the whole cleaned_raw_output
+                    extracted_json_str = self._extract_first_outermost_json(cleaned_raw_output)
+                    if extracted_json_str:
+                        transformation_needed = True # If this succeeded, it means initial direct parsing failed
+        
         if not extracted_json_str:
             malformed_blocks_list.append({
                 "type": "JSON_EXTRACTION_FAILED",
@@ -387,16 +388,19 @@ class LLMOutputParser:
             })
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-        # 2. Parse JSON string with incremental repair attempts
-        parsed_data, repair_log = self._parse_with_incremental_repair(extracted_json_str)
-        if repair_log:
-            malformed_blocks_list.append({
-                "type": "JSON_REPAIR_ATTEMPTED",
-                "message": "JSON repair heuristics applied.",
-                "details": repair_log,
-                "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
-            })
-            transformation_occurred = True
+        # If parsed_data is still None, it means direct parsing of cleaned_raw_output failed,
+        # and we need to proceed with incremental repair on extracted_json_str.
+        if parsed_data is None:
+            # 2. Parse JSON string with incremental repair attempts
+            parsed_data, repair_log = self._parse_with_incremental_repair(extracted_json_str)
+            if repair_log:
+                malformed_blocks_list.append({
+                    "type": "JSON_REPAIR_ATTEMPTED",
+                    "message": "JSON repair heuristics applied.",
+                    "details": repair_log,
+                    "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
+                })
+                transformation_needed = True
 
         if parsed_data is None:
             malformed_blocks_list.append({
@@ -407,8 +411,9 @@ class LLMOutputParser:
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
         # 3. Handle cases where JSON is a list or a single dict
-        if isinstance(parsed_data, list):
-            transformation_occurred = True # A list was returned when a dict was likely expected
+        if isinstance(parsed_data, list) and schema_model not in [GeneralOutput]: # GeneralOutput can accept lists directly
+            transformation_needed = True # A list was returned when a dict was likely expected
+            malformed_blocks_list.append({"type": "TOP_LEVEL_LIST_WRAPPING", "message": f"LLM returned a top-level JSON array, which was wrapped into an object for schema {schema_model.__name__}."})
             if not parsed_data:
                 malformed_blocks_list.append({"type": "EMPTY_JSON_LIST", "message": "The LLM returned an empty JSON list."})
                 return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
@@ -480,26 +485,8 @@ class LLMOutputParser:
                         "malformed_blocks": malformed_blocks_list
                     }
             elif schema_model == GeneralOutput:
-                if all(isinstance(item, str) for item in parsed_data):
-                    self.logger.warning("LLM returned a list of strings for GeneralOutput. Concatenating them.")
-                    data_to_validate = {
-                        "general_output": "\n".join(parsed_data),
-                        "malformed_blocks": malformed_blocks_list
-                    }
-                elif all(isinstance(item, dict) for item in parsed_data):
-                    self.logger.warning("LLM returned a list of dicts for GeneralOutput. Summarizing them.")
-                    summary_text = "LLM returned a list of objects. Summarized content:\n" + \
-                                   "\n".join([f"- {str(item)[:100]}..." for item in parsed_data[:3]])
-                    data_to_validate = {
-                        "general_output": summary_text,
-                        "malformed_blocks": malformed_blocks_list
-                    }
-                else:
-                    self.logger.warning(f"LLM returned an unexpected list for GeneralOutput. Creating generic fallback.")
-                    data_to_validate = {
-                        "general_output": f"LLM returned an unexpected list for GeneralOutput. First item: {str(parsed_data[0])[:100]}...",
-                        "malformed_blocks": malformed_blocks_list
-                    }
+                # GeneralOutput can handle lists directly, so no transformation_needed here
+                data_to_validate = parsed_data
             else:
                 self.logger.warning(f"LLM returned a list for schema {schema_model.__name__} which expects a dict. Creating generic fallback.")
                 data_to_validate = {
@@ -521,7 +508,7 @@ class LLMOutputParser:
             malformed_blocks_list.append({"type": "INVALID_JSON_STRUCTURE", "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}."})
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-        # Handle raw CodeChange output when LLMOutput is expected
+        # Handle raw CodeChange output when LLMOutput is expected (and it's not already a full LLMOutput)
         if schema_model == LLMOutput and isinstance(data_to_validate, dict):
             is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
                                   ("FULL_CONTENT" in data_to_validate or "LINES" in data_to_validate)
@@ -536,7 +523,7 @@ class LLMOutputParser:
                     "malformed_blocks": malformed_blocks_list
                 }
                 data_to_validate = wrapped_data
-                transformation_occurred = True # Mark as transformed
+                transformation_needed = True # Mark as transformed
 
         # 4. Validate against schema
         try:
@@ -555,8 +542,8 @@ class LLMOutputParser:
 
             result_dict = validated_output.model_dump(by_alias=True)
             # Ensure malformed_blocks from parsing are added to the final result
-            # Add a general LLM_OUTPUT_MALFORMED block if any transformation occurred
-            if transformation_occurred and not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks_list):
+            # Add a general LLM_OUTPUT_MALFORMED block if any transformation was needed
+            if transformation_needed and not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks_list):
                  malformed_blocks_list.insert(0, {
                     "type": "LLM_OUTPUT_MALFORMED",
                     "message": "LLM output required structural transformation or repair to conform to schema.",
@@ -583,6 +570,9 @@ class LLMOutputParser:
     def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]],
                                 raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
+        
+        # Create a copy to avoid modifying the original list passed from parse_and_validate
+        current_malformed_blocks = malformed_blocks.copy()
 
         error_message_from_partial = "Failed to generate valid structured output."
         if isinstance(partial_data, str):
@@ -594,8 +584,8 @@ class LLMOutputParser:
             error_message_from_partial = "No valid JSON data could be extracted or parsed."
 
         # Add a general error block if not already present
-        if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks):
-            malformed_blocks.insert(0, {
+        if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in current_malformed_blocks):
+            current_malformed_blocks.insert(0, {
                 "type": "LLM_OUTPUT_MALFORMED",
                 "message": f"LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
                 "raw_string_snippet": raw_output_snippet[:1000] + ("..." if len(raw_output_snippet) > 1000 else "")
@@ -618,14 +608,14 @@ class LLMOutputParser:
             fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", error_message_from_partial)
             fallback_data_for_model["CODE_CHANGES"] = partial_data.get("CODE_CHANGES", [])
             fallback_data_for_model["CONFLICT_RESOLUTION"] = partial_data.get("CONFLICT_RESOLUTION")
-            fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data.get("UNRESOLVED_CONFLICT")
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data.get("UNRESOLVED_CONFLICT") # Use the copied list
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
             fallback_data_for_model["malformed_code_change_items"] = partial_data.get("malformed_code_change_items", [])
         elif schema_model == CritiqueOutput:
             fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", error_message_from_partial)
             fallback_data_for_model["CRITIQUE_POINTS"] = partial_data.get("CRITIQUE_POINTS", [])
             fallback_data_for_model["SUGGESTIONS"] = partial_data.get("SUGGESTIONS", [])
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == ContextAnalysisOutput:
             fallback_data_for_model["key_modules"] = partial_data.get("key_modules", [])
             fallback_data_for_model["security_concerns"] = partial_data.get("security_concerns", [])
@@ -636,7 +626,7 @@ class LLMOutputParser:
             fallback_data_for_model["devops_summary"] = partial_data.get("devops_summary", {})
             fallback_data_for_model["testing_summary"] = partial_data.get("testing_summary", {})
             fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial)
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == ConflictReport:
             fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
             fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial)
@@ -644,11 +634,11 @@ class LLMOutputParser:
             fallback_data_for_model["conflicting_outputs_snippet"] = partial_data.get("conflicting_outputs_snippet", "")
             fallback_data_for_model["proposed_resolution_paths"] = partial_data.get("proposed_resolution_paths", [])
             fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True)
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == SelfImprovementAnalysisOutput or schema_model == SelfImprovementAnalysisOutputV1:
             fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial)
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
-            fallback_data_for_model["malformed_blocks"] = malformed_blocks
+            fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
             if is_single_suggestion_dict:
                 self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
@@ -661,7 +651,7 @@ class LLMOutputParser:
                     validated_fallback = SelfImprovementAnalysisOutput(
                         version="1.0",
                         data=v1_data.model_dump(by_alias=True),
-                        malformed_blocks=malformed_blocks
+                        malformed_blocks=current_malformed_blocks
                     )
                 else:
                     validated_fallback = SelfImprovementAnalysisOutput(
@@ -669,9 +659,9 @@ class LLMOutputParser:
                         data={
                             "ANALYSIS_SUMMARY": error_message_from_partial,
                             "IMPACTFUL_SUGGESTIONS": [],
-                            "malformed_blocks": malformed_blocks
+                            "malformed_blocks": current_malformed_blocks
                         },
-                        malformed_blocks=malformed_blocks
+                        malformed_blocks=current_malformed_blocks
                     )
             else:
                 validated_fallback = schema_model.model_validate(fallback_data_for_model)
@@ -683,5 +673,5 @@ class LLMOutputParser:
                 exc_info=True)
             return {
                 "general_output": f"CRITICAL PARSING ERROR: Fallback for {schema_model.__name__} is invalid. {str(e)}",
-                "malformed_blocks": malformed_blocks + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
+                "malformed_blocks": current_malformed_blocks + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
             }
