@@ -874,7 +874,16 @@ class SocraticDebate:
                 top_areas = list(dict.fromkeys(top_areas))
                 
                 final_synthesis_prompt_content = f"Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.\\n\\n## Objective Metrics:\\n{json.dumps(summarized_metrics, indent=2)}\\n\\n## Debate History:\\n{json.dumps(summarized_debate_history, indent=2)}"
-                # --- END MODIFICATION FOR SELF_IMPROVEMENT_ANALYST PROMPT GENERATION ---
+                
+                # --- START MODIFICATION: Dynamic hint for Self_Improvement_Analyst to use DIFF_CONTENT for large codebases ---
+                if self.codebase_context:
+                    total_code_chars = sum(len(content) for content in self.codebase_context.values())
+                    # Heuristic: If many files or total content is large, suggest diffs
+                    if len(self.codebase_context) > 5 or total_code_chars > 50000: # Example thresholds
+                        prompt_hint = "\\n\\nCRITICAL REMINDER FOR CODE_CHANGES_SUGGESTED: For larger modifications, provide DIFF_CONTENT (unified diff format) instead of FULL_CONTENT to conserve tokens. Provide FULL_CONTENT only for very small additions or modifications (< 50 lines)."
+                        final_synthesis_prompt_content += prompt_hint
+                        self._log_with_context("info", "Added dynamic diff content hint to Self_Improvement_Analyst prompt due to large codebase context.")
+                # --- END MODIFICATION ---
 
             except Exception as e:
                 self._log_with_context("error", f"Failed to collect self-improvement metrics: {e}")

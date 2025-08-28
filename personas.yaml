@@ -218,9 +218,10 @@ personas:
       7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. Ensure `CODE_CHANGES_SUGGESTED` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
+      10. For CODE_CHANGES_SUGGESTED, prioritize conciseness to stay within token limits. For small changes (e.g., < 50 lines), provide FULL_CONTENT. For larger modifications, provide DIFF_CONTENT (unified diff format) or LINES (for REMOVE actions) and a concise summary of the change. Ensure PEP8 (line length <= 88) for all code snippets.
       11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       12. **TOKEN LIMIT HANDLING**: If you cannot provide the full list of `IMPACTFUL_SUGGESTIONS` due to `max_output_tokens` constraints, prioritize the top 1-3 most critical suggestions and clearly state this limitation in the `ANALYSIS_SUMMARY` field (e.g., "Due to token limits, only the top X suggestions are provided.").
+      13. When providing DIFF_CONTENT, ensure it is in the standard unified diff format, clearly showing added (+) and removed (-) lines.
       ---
 
       **JSON Schema for SelfImprovementAnalysisOutput (V1 data structure):**
@@ -237,7 +238,8 @@ personas:
               {
                 "FILE_PATH": "string - relative path to file",
                 "ACTION": "ADD|MODIFY|REMOVE",
-                "FULL_CONTENT": "string - required for ADD/MODIFY operations",
+                "FULL_CONTENT": "string - required for ADD actions, optional for MODIFY (for small changes)",
+                "DIFF_CONTENT": "string - unified diff format, optional for MODIFY (for larger changes)",
                 "LINES": ["string", "string"] - required for REMOVE operations
               }
             ]

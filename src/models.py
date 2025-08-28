@@ -69,6 +69,7 @@ class CodeChange(BaseModel):
     action: str = Field(..., alias="ACTION")
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
     lines: List[str] = Field(default_factory=list, alias="LINES")
+    diff_content: Optional[str] = Field(None, alias="DIFF_CONTENT", description="Unified diff format for MODIFY actions (for larger files).") # ADD THIS LINE
 
     @validator('file_path')
     def validate_file_path(cls, v):
@@ -95,12 +96,24 @@ class CodeChange(BaseModel):
 
     @model_validator(mode='after')
     def check_content_based_on_action(self) -> 'CodeChange':
-        """Ensures that full_content is provided for ADD/MODIFY and lines for REMOVE."""
-        if self.action in ["ADD", "MODIFY"] and self.full_content is None:
-            raise ValueError(f"full_content is required for action '{self.action}' on file '{self.file_path}'.")
-        # FIX: Ensure lines is a non-empty list for REMOVE
-        if self.action == "REMOVE" and (not isinstance(self.lines, list) or not self.lines):
-            raise ValueError(f"lines must be a non-empty list for action 'REMOVE' on file '{self.file_path}'. Found type: {type(self.lines).__name__} or empty.")
+        """Ensures content is provided based on action type and prioritizes diff_content for MODIFY."""
+        if self.action == "ADD":
+            if self.full_content is None:
+                raise ValueError(f"FULL_CONTENT is required for action 'ADD' on file '{self.file_path}'.")
+            if self.diff_content is not None: # Ensure no diff for ADD
+                raise ValueError(f"DIFF_CONTENT should not be provided for action 'ADD' on file '{self.file_path}'.")
+        elif self.action == "MODIFY":
+            if self.full_content is None and self.diff_content is None:
+                raise ValueError(f"Either FULL_CONTENT or DIFF_CONTENT is required for action 'MODIFY' on file '{self.file_path}'.")
+            if self.full_content is not None and self.diff_content is not None:
+                # Prefer diff_content for token efficiency if both are provided
+                self.full_content = None
+                logger.warning(f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT.")
+        elif self.action == "REMOVE":
+            if not isinstance(self.lines, list) or not self.lines:
+                raise ValueError(f"LINES must be a non-empty list for action 'REMOVE' on file '{self.file_path}'.")
+            if self.full_content is not None or self.diff_content is not None: # Ensure no full/diff content for REMOVE
+                raise ValueError(f"FULL_CONTENT or DIFF_CONTENT should not be provided for action 'REMOVE' on file '{self.file_path}'.")
         return self
 
 class LLMOutput(BaseModel):
