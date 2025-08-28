@@ -10,15 +10,18 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 # Ensure all relevant models are imported
-from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1 # ADDED SelfImprovementAnalysisOutputV1
+from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, \
+    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
 
 logger = logging.getLogger(__name__)
+
 
 class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
-    def _extract_json_with_markers(self, text: str, start_marker: str = "START_JSON_OUTPUT", end_marker: str = "END_JSON_OUTPUT") -> Optional[Tuple[str, bool]]:
+    def _extract_json_with_markers(self, text: str, start_marker: str = "START_JSON_OUTPUT",
+                                   end_marker: str = "END_JSON_OUTPUT") -> Optional[Tuple[str, bool]]:
         """
         Extracts JSON content explicitly delimited by start and end markers.
         Returns (json_string_content, end_marker_found).
@@ -33,7 +36,7 @@ class LLMOutputParser:
 
         text_after_start_marker = text[start_match.end():]
         end_match = re.search(re.escape(end_marker), text_after_start_marker)
-        
+
         json_content_raw = ""
         end_marker_found = False
 
@@ -42,7 +45,8 @@ class LLMOutputParser:
             end_marker_found = True
             self.logger.debug("Both markers found. Extracted content between them.")
         else:
-            self.logger.warning("Start marker found, but end marker is missing. Attempting to extract first outermost JSON object from content after start marker.")
+            self.logger.warning(
+                "Start marker found, but end marker is missing. Attempting to extract first outermost JSON object from content after start marker.")
             # If end marker is missing, try to robustly extract a single JSON object
             # from the content that follows the start marker.
             json_content_raw = self._extract_first_outermost_json(text_after_start_marker)
@@ -50,16 +54,16 @@ class LLMOutputParser:
                 self.logger.debug("Successfully extracted a single JSON object after missing end marker.")
             else:
                 self.logger.warning("Could not extract a single JSON object after missing end marker.")
-                return None # Return None if no single JSON object can be robustly extracted
+                return None  # Return None if no single JSON object can be robustly extracted
 
         if json_content_raw:
             # Basic sanitization for trailing commas before closing braces/brackets
             json_content_raw = re.sub(r',\s*([\}\]])', r'\1', json_content_raw)
             return json_content_raw, end_marker_found
-        
+
         self.logger.debug("No content found after start marker.")
         return None
-        
+
     def _extract_first_outermost_json(self, text: str) -> Optional[str]:
         """
         Extracts the first outermost balanced JSON object or array from text.
@@ -73,7 +77,7 @@ class LLMOutputParser:
 
         for i, char in enumerate(text):
             if char == '{':
-                if start_index == -1: # First opening brace
+                if start_index == -1:  # First opening brace
                     start_index = i
                     balance = 1
                     expected_closers_stack.append('}')
@@ -81,7 +85,7 @@ class LLMOutputParser:
                     balance += 1
                     expected_closers_stack.append('}')
             elif char == '[':
-                if start_index == -1: # First opening bracket
+                if start_index == -1:  # First opening bracket
                     start_index = i
                     balance = 1
                     expected_closers_stack.append(']')
@@ -98,20 +102,20 @@ class LLMOutputParser:
                     balance -= 1
                     if expected_closers_stack and expected_closers_stack[-1] == ']':
                         expected_closers_stack.pop()
-            
+
             if start_index != -1 and balance == 0 and not expected_closers_stack:
-                potential_json_str = text[start_index:i+1]
+                potential_json_str = text[start_index:i + 1]
                 try:
                     json.loads(potential_json_str)
                     self.logger.debug(f"Successfully extracted first outermost valid JSON block: {potential_json_str[:100]}...")
                     return potential_json_str.strip()
-                except json.JSONDecodeError:
+                except json.JSONDecodeError: # Corrected typo from JSONDecodeDecodeError
                     # If it's not valid JSON despite being balanced, reset and continue
                     start_index = -1
                     balance = 0
                     expected_closers_stack = []
                     continue
-        
+
         self.logger.debug("No first outermost valid JSON block found.")
         return None
 
@@ -127,21 +131,21 @@ class LLMOutputParser:
         # regardless of the language specifier (json, python, etc.)
         # It also handles cases where the closing fence might be missing at the very end of the string.
         markdown_block_pattern = r'```(?:json|python|text|)\s*(.*?)(?:```|\Z)'
-        
+
         matches = list(re.finditer(markdown_block_pattern, text, re.DOTALL | re.MULTILINE))
-        
+
         for match in matches:
             block_content = match.group(1).strip()
             if block_content:
                 self.logger.debug(f"Extracted raw content from markdown block: {block_content[:100]}...")
-                
+
                 # Now, apply the robust JSON extraction on this block content
                 # This will find the first balanced and valid JSON object/array within the block
-                extracted_json = self._extract_and_sanitize_json_string(block_content, remove_markdown_fences=False) # Pass False
+                extracted_json = self._extract_and_sanitize_json_string(block_content, remove_markdown_fences=False)
                 if extracted_json:
                     self.logger.debug("Successfully extracted and validated JSON from markdown block content.")
                     return extracted_json
-        
+
         self.logger.debug("No valid JSON block found in markdown code blocks.")
         return None
 
@@ -149,7 +153,7 @@ class LLMOutputParser:
         """
         Attempts to extract the outermost valid JSON object or array from text.
         Uses a robust, stack-based approach to handle nested delimiters.
-        
+
         Args:
             text: The input string potentially containing JSON.
             remove_markdown_fences: If True, attempts to remove markdown fences and conversational filler.
@@ -163,8 +167,10 @@ class LLMOutputParser:
             text_cleaned = re.sub(r'```(?:json|python|text)?\s*', '', text_cleaned, flags=re.MULTILINE)
             text_cleaned = re.sub(r'\s*```', '', text_cleaned, flags=re.MULTILINE)
             # Remove common leading/trailing conversational filler
-            text_cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', text_cleaned, flags=re.DOTALL | re.IGNORECASE)
-            text_cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', text_cleaned, flags=re.DOTALL | re.IGNORECASE)
+            text_cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', text_cleaned,
+                                  flags=re.DOTALL | re.IGNORECASE)
+            text_cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', text_cleaned,
+                                  flags=re.DOTALL | re.IGNORECASE)
             text_cleaned = text_cleaned.strip()
 
         # Find potential start of JSON (either '{' or '[')
@@ -172,7 +178,7 @@ class LLMOutputParser:
         for i, char in enumerate(text_cleaned):
             if char == '{' or char == '[':
                 potential_starts.append(i)
-        
+
         if not potential_starts:
             self.logger.debug("No JSON start delimiters found.")
             return None
@@ -180,7 +186,7 @@ class LLMOutputParser:
         # Iterate through potential start points and try to find a balanced JSON structure
         for start_index in potential_starts:
             balance = 0
-            expected_closers_stack = [] 
+            expected_closers_stack = []
 
             if text_cleaned[start_index] == '{':
                 balance = 1
@@ -189,7 +195,7 @@ class LLMOutputParser:
                 balance = 1
                 expected_closers_stack.append(']')
             else:
-                continue 
+                continue
 
             for i in range(start_index + 1, len(text_cleaned)):
                 char = text_cleaned[i]
@@ -206,7 +212,7 @@ class LLMOutputParser:
                         expected_closers_stack.pop()
                     else:
                         # Mismatched closer or unbalanced, break and try next start_index
-                        balance = -999 
+                        balance = -999
                         break
                 elif char == ']':
                     balance -= 1
@@ -214,12 +220,12 @@ class LLMOutputParser:
                         expected_closers_stack.pop()
                     else:
                         # Mismatched closer or unbalanced, break and try next start_index
-                        balance = -999 
+                        balance = -999
                         break
-                
+
                 if balance == 0 and not expected_closers_stack:
-                    potential_json_str = text_cleaned[start_index:i+1]
-                    
+                    potential_json_str = text_cleaned[start_index:i + 1]
+
                     # Attempt to parse to confirm validity
                     try:
                         json.loads(potential_json_str)
@@ -227,59 +233,59 @@ class LLMOutputParser:
                         return potential_json_str.strip()
                     except json.JSONDecodeError:
                         self.logger.debug("Extracted block is not valid JSON, continuing search.")
-                        continue 
-            
+                        continue
+
         self.logger.debug("Failed to extract a valid JSON block after all attempts.")
         return None
 
     def _repair_json_string(self, json_str: str) -> Tuple[str, List[str]]:
         """Applies common JSON repair heuristics and logs repairs."""
         repair_log = []
-        original_json_str = json_str # Initialize original_json_str here
-        
+        original_json_str = json_str  # Initialize original_json_str here
+
         # 1. FIRST: Handle the specific numbered array element issue (e.g., "0:{")
         # This is the primary issue seen in Devils_Advocate output
         json_str = re.sub(r'\d+\s*:\s*{', '{', json_str)
         json_str = re.sub(r',\s*\d+\s*:\s*{', ', {', json_str)
         if original_json_str != json_str:
             repair_log.append("Fixed numbered array elements (e.g., '0:{' -> '{').")
-            original_json_str = json_str # Update original_json_str for next check
-        
+            original_json_str = json_str  # Update original_json_str for next check
+
         # 2. Handle cases where entire array is wrapped in quotes
         json_str = re.sub(r'"\[\s*{', '[{', json_str)
         json_str = re.sub(r'}\s*\]"', '}]', json_str)
         if original_json_str != json_str:
             repair_log.append("Fixed array incorrectly wrapped in quotes.")
-            original_json_str = json_str # Update original_json_str for next check
-        
+            original_json_str = json_str  # Update original_json_str for next check
+
         # 3. Replace single quotes with double quotes (careful not to break escaped quotes)
         # This is a complex problem for regex. A simpler, less aggressive approach:
         # Only replace single quotes that are likely delimiters, not within values.
         # This regex attempts to target single quotes that are not part of a word.
-        json_str = re.sub(r"(?<!\\)\'", '"', json_str) # Use this more robust regex
+        json_str = re.sub(r"(?<!\\)\'", '"', json_str)  # Use this more robust regex
         if original_json_str != json_str:
             repair_log.append("Replaced single quotes with double quotes.")
-            original_json_str = json_str # Update original_json_str for next check
+            original_json_str = json_str  # Update original_json_str for next check
 
         # 4. Handle unquoted keys (simple heuristic, might fail on complex cases)
         json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
         if original_json_str != json_str:
             repair_log.append("Added quotes to unquoted keys.")
-            original_json_str = json_str # Update original_json_str for next check
+            original_json_str = json_str  # Update original_json_str for next check
 
         # 5. Handle trailing commas in objects/arrays
         json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
         if original_json_str != json_str:
             repair_log.append("Removed trailing commas in objects/arrays.")
-            original_json_str = json_str # Update original_json_str for next check
-        
+            original_json_str = json_str  # Update original_json_str for next check
+
         # 6. Balance braces and brackets (add missing closers at the end)
         open_braces = json_str.count('{')
         close_braces = json_str.count('}')
         if open_braces > close_braces:
             json_str += '}' * (open_braces - close_braces)
             repair_log.append(f"Added {open_braces - close_braces} missing closing braces.")
-        
+
         open_brackets = json_str.count('[')
         close_brackets = json_str.count(']')
         if open_brackets > close_brackets:
@@ -291,7 +297,7 @@ class LLMOutputParser:
     def _parse_with_incremental_repair(self, json_str: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]]]:
         """Attempts to parse JSON with incremental repair strategies."""
         repair_log = []
-        
+
         # Attempt 1: Apply standard repair and try to load
         repaired_text, current_repairs = self._repair_json_string(json_str)
         repair_log.extend([{"action": "initial_repair", "details": r} for r in current_repairs])
@@ -299,10 +305,10 @@ class LLMOutputParser:
             result = json.loads(repaired_text)
             return result, repair_log
         except json.JSONDecodeError:
-            pass # Continue to next attempt
+            pass  # Continue to next attempt
 
         # Attempt 2: Extract largest valid sub-object from the repaired text
-        largest_sub_object_str = self._extract_largest_valid_subobject(repaired_text) 
+        largest_sub_object_str = self._extract_largest_valid_subobject(repaired_text)
         if largest_sub_object_str:
             repair_log.append({"action": "extracted_largest_subobject", "details": "Attempting to parse largest valid JSON fragment."})
             try:
@@ -313,7 +319,7 @@ class LLMOutputParser:
 
         # Attempt 3: Treat as JSON lines (DeepSeek's idea)
         json_lines_str = self._convert_to_json_lines(repaired_text)
-        if json_lines_str != repaired_text: # Only if conversion actually happened
+        if json_lines_str != repaired_text:  # Only if conversion actually happened
             repair_log.append({"action": "converted_to_json_lines", "details": "Attempting to parse as JSON lines."})
             try:
                 result = json.loads(json_lines_str)
@@ -331,9 +337,9 @@ class LLMOutputParser:
         # Use non-greedy matching for the content within the braces/brackets
         # This regex is more robust to find any potential JSON block
         matches = list(re.finditer(r'(\{.*?\}|\[.*?\])', json_str, re.DOTALL))
-        
-        longest_valid_match = "" 
-        
+
+        longest_valid_match = ""
+
         for match in matches:
             potential_json = match.group(0)
             try:
@@ -343,16 +349,16 @@ class LLMOutputParser:
                     longest_valid_match = potential_json
             except json.JSONDecodeError:
                 continue
-        
+
         if longest_valid_match:
             return longest_valid_match
-        return None # Return None if no valid block was found
+        return None  # Return None if no valid block was found
 
     def _convert_to_json_lines(self, json_str: str) -> str:
         """Converts potential JSON lines format to array format."""
         lines = json_str.strip().split('\n')
         json_objects = []
-        
+
         for line in lines:
             line = line.strip()
             if line.startswith('{') and line.endswith('}'):
@@ -361,48 +367,48 @@ class LLMOutputParser:
                     json_objects.append(line)
                 except json.JSONDecodeError:
                     continue
-                    
+
         if json_objects:
             return f'[{",".join(json_objects)}]'
-            
-        return json_str # Return original if no valid JSON lines found
 
-    # NEW: Helper to clean LLM output from markdown fences and conversational filler
+        return json_str  # Return original if no valid JSON lines found
+
     def _clean_llm_output(self, raw_output: str) -> str:
         """Clean common LLM output artifacts like markdown fences and conversational filler."""
         cleaned = raw_output
-        
+
         # Remove Markdown code blocks (```json, ```python, ```, etc.)
         # This regex is more robust, handling optional language specifiers and ensuring it's at start/end
         cleaned = re.sub(r'^\s*```(?:json|python|text)?\s*\n', '', cleaned, flags=re.MULTILINE)
         cleaned = re.sub(r'\n\s*```\s*$', '', cleaned, flags=re.MULTILINE)
-        
+
         # Remove common leading/trailing conversational filler
-        cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-        cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-        
+        cleaned = re.sub(r'^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n', '', cleaned,
+                         flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(r'\n(?:```|```json|```python|```text|```).*?$', '', cleaned,
+                         flags=re.DOTALL | re.IGNORECASE)
+
         # Attempt to find the outermost JSON structure and trim anything outside it
         json_start = -1
         json_end = -1
-        
+
         # Find first '{' or '['
         for i, char in enumerate(cleaned):
             if char == '{' or char == '[':
                 json_start = i
                 break
-        
+
         # Find last '}' or ']'
         for i in range(len(cleaned) - 1, -1, -1):
             if cleaned[i] == '}' or cleaned[i] == ']':
                 json_end = i + 1
                 break
-        
+
         if json_start != -1 and json_end != -1 and json_end > json_start:
             cleaned = cleaned[json_start:json_end]
-        
+
         return cleaned.strip()
 
-    # NEW: Helper to detect if text contains what looks like a suggestion item at top level
     def _detect_potential_suggestion_item(self, text: str) -> Optional[Dict]:
         """
         Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
@@ -413,7 +419,7 @@ class LLMOutputParser:
         area_match = re.search(r'"AREA"\s*:\s*"(Reasoning Quality|Robustness|Efficiency|Maintainability|Security)"', text)
         problem_match = re.search(r'"PROBLEM"\s*:\s*"[^"]+"', text)
         proposed_solution_match = re.search(r'"PROPOSED_SOLUTION"\s*:\s*"[^"]+"', text)
-        
+
         if area_match and problem_match and proposed_solution_match:
             # Try to extract the object that contains these fields
             try:
@@ -427,12 +433,12 @@ class LLMOutputParser:
                         elif text[i] == '}':
                             brace_count -= 1
                             if brace_count == 0:
-                                obj_str = text[start_idx:i+1]
+                                obj_str = text[start_idx:i + 1]
                                 # Attempt to load as JSON to ensure it's a valid object
                                 return json.loads(obj_str)
             except Exception as e:
                 self.logger.debug(f"Error extracting potential suggestion item: {e}")
-        
+
         return None
 
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
@@ -451,7 +457,7 @@ class LLMOutputParser:
 
         # NEW: Clean raw output first to remove markdown fences and conversational filler
         cleaned_raw_output = self._clean_llm_output(raw_output)
-        
+
         # 1. Attempt to extract JSON string using markers from the cleaned output
         marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
         if marker_extraction_result:
@@ -468,7 +474,7 @@ class LLMOutputParser:
             if not extracted_json_str:
                 # No markdown blocks, try robust extraction on the whole cleaned_raw_output
                 extracted_json_str = self._extract_and_sanitize_json_string(cleaned_raw_output, remove_markdown_fences=True)
-        
+
         if not extracted_json_str:
             malformed_blocks_list.append({
                 "type": "JSON_EXTRACTION_FAILED",
@@ -495,14 +501,36 @@ class LLMOutputParser:
             })
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-        # 3. Handle cases where JSON is a list
+        # 3. Handle cases where JSON is a list or a single dict
         if isinstance(parsed_data, list):
             if not parsed_data:
                 malformed_blocks_list.append({"type": "EMPTY_JSON_LIST", "message": "The LLM returned an empty JSON list."})
                 return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
-            data_to_validate = parsed_data[0]
+
+            # If it's a list, and we expect SelfImprovementAnalysisOutput, assume it's an array of suggestions and wrap it
+            if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
+                self.logger.warning("LLM returned an array of suggestions instead of full SelfImprovementAnalysisOutput. Wrapping it.")
+                data_to_validate = {
+                    "ANALYSIS_SUMMARY": "LLM returned an array of suggestions instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section.",
+                    "IMPACTFUL_SUGGESTIONS": parsed_data,  # Use the entire list here
+                    "malformed_blocks": malformed_blocks_list
+                }
+            else:  # For other schemas, if a list is returned, take the first item (existing behavior)
+                data_to_validate = parsed_data[0]
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
+            # If it's a dict, but for SelfImprovementAnalysisOutput, check if it's a single suggestion item
+            if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
+                # _detect_potential_suggestion_item is called on extracted_json_str, which is the raw string.
+                # This is correct for detecting a single object that wasn't wrapped in an array.
+                detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
+                if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in data_to_validate and "ANALYSIS_SUMMARY" not in data_to_validate:
+                    self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
+                    data_to_validate = {
+                        "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section.",
+                        "IMPACTFUL_SUGGESTIONS": [detected_suggestion],
+                        "malformed_blocks": malformed_blocks_list
+                    }
         else:
             malformed_blocks_list.append({"type": "INVALID_JSON_STRUCTURE", "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}."})
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
@@ -523,22 +551,6 @@ class LLMOutputParser:
                 }
                 data_to_validate = wrapped_data
 
-        # --- START FIX: Pre-process for SelfImprovementAnalysisOutput if a single suggestion is detected ---
-        # This block should come *before* general schema validation for SelfImprovementAnalysisOutput.
-        # It ensures that if the LLM returned a single suggestion, it's correctly wrapped *before* Pydantic validation attempts.
-        if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1] and isinstance(data_to_validate, dict):
-            # Use extracted_json_str for detection as data_to_validate might be parsed dict already
-            detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str) 
-            if detected_suggestion:
-                self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
-                # Construct the V1 structure directly from the detected suggestion
-                data_to_validate = {
-                    "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section.",
-                    "IMPACTFUL_SUGGESTIONS": [detected_suggestion],
-                    "malformed_blocks": malformed_blocks_list # Carry forward any parsing malformations
-                }
-        # --- END FIX ---
-
         # 4. Validate against schema
         try:
             # If the schema model is the versioned SelfImprovementAnalysisOutput,
@@ -556,7 +568,7 @@ class LLMOutputParser:
                     )
             else:
                 validated_output = schema_model.model_validate(data_to_validate)
-            
+
             result_dict = validated_output.model_dump(by_alias=True)
             # Ensure malformed_blocks from parsing are added to the final result
             result_dict.setdefault("malformed_blocks", []).extend(malformed_blocks_list)
@@ -579,24 +591,23 @@ class LLMOutputParser:
             # If any other exception occurs, return the fallback output directly.
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]], raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
+    def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]],
+                                raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
-        # Ensure partial_data is always a dictionary for safe .get() calls
-        # If partial_data is a string, it means the LLM returned a raw string instead of JSON.
-        # We should use this string as a general error message.
+
+        error_message_from_partial = "Failed to generate valid structured output."
         if isinstance(partial_data, str):
-            error_message_from_partial = partial_data
-            partial_data = {} # Reset to empty dict for .get() calls
-        elif not isinstance(partial_data, dict): # NEW: Handle if partial_data is a list, int, etc.
+            error_message_from_partial = f"LLM returned raw string: '{partial_data[:100]}...'" if len(
+                partial_data) > 100 else f"LLM returned raw string: '{partial_data}'"
+        elif not isinstance(partial_data, dict) and partial_data is not None:
             error_message_from_partial = f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
-            partial_data = {} # Reset to empty dict for .get() calls
-        else:
-            error_message_from_partial = "Failed to generate valid structured output."
-            # partial_data is already a dict, no need to reset
+        elif partial_data is None:
+            error_message_from_partial = "No valid JSON data could be extracted or parsed."
+        # If partial_data is a dict, error_message_from_partial remains the default or is overridden later.
 
         # Add a general error block if not already present
         if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in malformed_blocks):
-            malformed_blocks.insert(0, { # Insert at beginning to be prominent
+            malformed_blocks.insert(0, {  # Insert at beginning to be prominent
                 "type": "LLM_OUTPUT_MALFORMED",
                 "message": f"LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
                 "raw_string_snippet": raw_output_snippet[:1000] + ("..." if len(raw_output_snippet) > 1000 else "")
@@ -612,19 +623,19 @@ class LLMOutputParser:
             detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
             if detected_suggestion:
                 is_single_suggestion_dict = True
-                partial_data = detected_suggestion # Use the detected suggestion as partial data
+                partial_data = detected_suggestion  # Use the detected suggestion as partial data
 
         # Populate schema-specific fields with defaults or partial data
         if schema_model == LLMOutput:
             fallback_data_for_model["COMMIT_MESSAGE"] = partial_data.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
-            fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", error_message_from_partial) # Use error_message_from_partial
+            fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", error_message_from_partial)
             fallback_data_for_model["CODE_CHANGES"] = partial_data.get("CODE_CHANGES", [])
             fallback_data_for_model["CONFLICT_RESOLUTION"] = partial_data.get("CONFLICT_RESOLUTION")
             fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data.get("UNRESOLVED_CONFLICT")
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
             fallback_data_for_model["malformed_code_change_items"] = partial_data.get("malformed_code_change_items", [])
         elif schema_model == CritiqueOutput:
-            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", error_message_from_partial) # Use error_message_from_partial
+            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", error_message_from_partial)
             fallback_data_for_model["CRITIQUE_POINTS"] = partial_data.get("CRITIQUE_POINTS", [])
             fallback_data_for_model["SUGGESTIONS"] = partial_data.get("SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
@@ -637,27 +648,27 @@ class LLMOutputParser:
             fallback_data_for_model["architecture_summary"] = partial_data.get("architecture_summary", {})
             fallback_data_for_model["devops_summary"] = partial_data.get("devops_summary", {})
             fallback_data_for_model["testing_summary"] = partial_data.get("testing_summary", {})
-            fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial) # Use error_message_from_partial
+            fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial)
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == ConflictReport:
             # FIX: Changed default for conflict_type from "UNKNOWN" to a valid Literal value
             fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
-            fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial) # Use error_message_from_partial
+            fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial)
             fallback_data_for_model["involved_personas"] = partial_data.get("involved_personas", [])
             fallback_data_for_model["conflicting_outputs_snippet"] = partial_data.get("conflicting_outputs_snippet", "")
             fallback_data_for_model["proposed_resolution_paths"] = partial_data.get("proposed_resolution_paths", [])
-            fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True) # Assume conflict if malformed
+            fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True)  # Assume conflict if malformed
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
-        elif schema_model == SelfImprovementAnalysisOutput or schema_model == SelfImprovementAnalysisOutputV1: # Handle both old and new schema
-            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial) # Use error_message_from_partial
+        elif schema_model == SelfImprovementAnalysisOutput or schema_model == SelfImprovementAnalysisOutputV1:  # Handle both old and new schema
+            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial)
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
             # Special handling if the LLM returned a single suggestion dict instead of the full analysis
             if is_single_suggestion_dict:
                 self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
-                fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data] # Wrap the single dict in a list
-        
+                fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data]  # Wrap the single dict in a list
+
         # Now, attempt to validate this constructed fallback_data_for_model against the schema.
         # This ensures that what we return is always a valid Pydantic model instance.
         try:
@@ -669,9 +680,9 @@ class LLMOutputParser:
                     validated_fallback = SelfImprovementAnalysisOutput(
                         version="1.0",
                         data=v1_data.model_dump(by_alias=True),
-                        malformed_blocks=malformed_blocks # Pass malformed blocks to the wrapper
+                        malformed_blocks=malformed_blocks  # Pass malformed blocks to the wrapper
                     )
-                else: # If it's not even V1-like, create a minimal wrapper
+                else:  # If it's not even V1-like, create a minimal wrapper
                     validated_fallback = SelfImprovementAnalysisOutput(
                         version="1.0",
                         data={
@@ -683,12 +694,14 @@ class LLMOutputParser:
                     )
             else:
                 validated_fallback = schema_model.model_validate(fallback_data_for_model)
-            
+
             return validated_fallback.model_dump(by_alias=True)
         except ValidationError as e:
             # If even the fallback construction fails validation, it means our fallback logic
             # for that schema_model is incorrect. Log this critical error.
-            self.logger.critical(f"CRITICAL ERROR: Fallback output for schema {schema_model.__name__} is itself invalid: {e}. Returning raw error dict.", exc_info=True)
+            self.logger.critical(
+                f"CRITICAL ERROR: Fallback output for schema {schema_model.__name__} is itself invalid: {e}. Returning raw error dict.",
+                exc_info=True)
             # As a last resort, return a generic error dict. This should ideally not happen.
             return {
                 "general_output": f"CRITICAL PARSING ERROR: Fallback for {schema_model.__name__} is invalid. {str(e)}",

@@ -222,6 +222,7 @@ personas:
       11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       12. **TOKEN LIMIT HANDLING**: If you cannot provide the full list of `IMPACTFUL_SUGGESTIONS` due to `max_output_tokens` constraints, prioritize the top 1-3 most critical suggestions and clearly state this limitation in the `ANALYSIS_SUMMARY` field (e.g., "Due to token limits, only the top X suggestions are provided.").
       13. When providing DIFF_CONTENT, ensure it is in the standard unified diff format, clearly showing added (+) and removed (-) lines.
+      14. **TOP-LEVEL STRUCTURE**: Your response MUST be a single JSON object with "ANALYSIS_SUMMARY" and "IMPACTFUL_SUGGESTIONS" as its direct top-level keys. DO NOT return just the "IMPACTFUL_SUGGESTIONS" array.
       ---
 
       **JSON Schema for SelfImprovementAnalysisOutput (V1 data structure):**

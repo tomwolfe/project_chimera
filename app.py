@@ -17,7 +17,7 @@ from core import SocraticDebate
 import google.genai as genai
 from google.genai.errors import APIError
 
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
 from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
@@ -31,7 +31,7 @@ import difflib
 
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # <-- THIS LINE WAS MODIFIED
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path # Added for Path in Self-Improvement download button
 
@@ -1540,38 +1540,30 @@ if st.session_state.debate_ran:
 
     elif actual_debate_domain == "Self-Improvement":
         st.subheader("Final Synthesized Answer")
-        raw_output_data = st.session_state.final_answer_output
+        final_analysis_output = st.session_state.final_answer_output # This is already a parsed dict from core.py
         malformed_blocks_from_parser = []
 
-        parsed_self_analysis_output_dict: Dict[str, Any]
+        analysis_summary = "Error: Output not structured for Self-Improvement."
+        impactful_suggestions = []
 
-        if isinstance(raw_output_data, dict):
-            try:
-                parsed_self_analysis_output_dict = LLMOutputParser().parse_and_validate(
-                    json.dumps(raw_output_data),
-                    SelfImprovementAnalysisOutput
-                )
-                if parsed_self_analysis_output_dict.get("version") == "1.0":
-                    v1_data = parsed_self_analysis_output_dict.get("data", {})
-                    analysis_summary = v1_data.get("ANALYSIS_SUMMARY", "N/A")
-                    impactful_suggestions = v1_data.get("IMPACTFUL_SUGGESTIONS", [])
-                    malformed_blocks_from_parser.extend(parsed_self_analysis_output_dict.get("malformed_blocks", []))
-                    malformed_blocks_from_parser.extend(v1_data.get("malformed_blocks", []))
-                else:
-                    analysis_summary = "Error: Unexpected SelfImprovementAnalysisOutput version or structure."
-                    impactful_suggestions = []
-                    malformed_blocks_from_parser.append({"type": "UNEXPECTED_VERSION_OR_STRUCTURE", "message": analysis_summary, "raw_string_snippet": str(raw_output_data)[:500]})
+        if isinstance(final_analysis_output, dict):
+            # Collect malformed_blocks from the top level of the output
+            malformed_blocks_from_parser.extend(final_analysis_output.get("malformed_blocks", []))
 
-            except Exception as e:
-                st.error(f"Failed to parse final Self-Improvement LLM output: {e}")
-                analysis_summary = f"Error parsing Self-Improvement output: {e}"
-                impactful_suggestions = []
-                malformed_blocks_from_parser.append({"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]})
+            # Check for the version and extract data accordingly
+            if final_analysis_output.get("version") == "1.0":
+                v1_data = final_analysis_output.get("data", {})
+                analysis_summary = v1_data.get("ANALYSIS_SUMMARY", "N/A")
+                impactful_suggestions = v1_data.get("IMPACTFUL_SUGGESTIONS", [])
+                # Collect malformed_blocks from the 'data' level if present
+                malformed_blocks_from_parser.extend(v1_data.get("malformed_blocks", []))
+            else:
+                analysis_summary = "Error: Unexpected SelfImprovementAnalysisOutput version or structure."
+                malformed_blocks_from_parser.append({"type": "UNEXPECTED_VERSION_OR_STRUCTURE", "message": analysis_summary, "raw_string_snippet": str(final_analysis_output)[:500]})
         else:
-            st.error(f"Final answer for Self-Improvement is not a structured dictionary. Raw output type: {type(raw_output_data).__name__}")
-            analysis_summary = f"Error: Output not structured for Self-Improvement. Raw output type: {type(raw_output_data).__name__}"
-            impactful_suggestions = []
-            malformed_blocks_from_parser.append({"type": "UI_PARSING_ERROR", "message": analysis_summary, "raw_string_snippet": str(raw_output_data)[:500]})
+            st.error(f"Final answer for Self-Improvement is not a structured dictionary. Raw output type: {type(final_analysis_output).__name__}")
+            analysis_summary = f"Error: Output not structured for Self-Improvement. Raw output type: {type(final_analysis_output).__name__}"
+            malformed_blocks_from_parser.append({"type": "UI_PARSING_ERROR", "message": analysis_summary, "raw_string_snippet": str(final_analysis_output)[:500]})
 
         st.markdown("**Analysis Summary**")
         st.markdown(analysis_summary)
