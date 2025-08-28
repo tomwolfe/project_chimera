@@ -624,3 +624,23 @@ def test_parser_handles_json_with_start_marker_and_no_end_marker_and_malformed_j
     assert_malformed_block_present(result, "MISSING_END_MARKER")
     assert_malformed_block_present(result, "JSON_DECODE_ERROR")
     assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED") # Should be present due to fallback
+
+def test_parser_handles_json_with_unbalanced_braces_and_brackets(parser):
+    raw_output = """
+    {
+      "key": "value",
+      "list": [1, 2, 3
+    """
+    result = parser.parse_and_validate(raw_output, GeneralOutput)
+    assert "general_output" in result
+    assert "LLM output could not be fully parsed or validated" in result["malformed_blocks"][0]["message"]
+    assert_malformed_block_present(result, "JSON_DECODE_ERROR")
+    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")
+    assert any("Added 1 missing closing brace" in d.get("details", "") for block in result["malformed_blocks"] for d in block.get("details", []))
+    assert any("Added 1 missing closing bracket" in d.get("details", "") for block in result["malformed_blocks"] for d in block.get("details", []))
+
+def test_parser_handles_json_with_multiple_root_objects(parser):
+    raw_output = '{"key1": "value1"}{"key2": "value2"}'
+    result = parser.parse_and_validate(raw_output, GeneralOutput)
+    assert result["general_output"] == '{"key1": "value1"}' # Should only parse the first valid object
+    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")

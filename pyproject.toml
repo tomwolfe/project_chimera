@@ -2,3 +2,30 @@
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B", "A", "C4", "DTZ", "ERA", "ISC", "ICN", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TCH", "INT", "ARG", "PERF", "FURB", "RUF"]
+ignore = ["D100", "D104", "D107", "ANN101", "ANN002", "ANN003"] # Ignore missing module docstrings, __init__ docstrings, self/cls type hints
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "core"]
+
+[tool.bandit]
+# Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
+exclude_dirs = ["tests"]
+# Only report issues with severity Medium or High
+severity_level = "MEDIUM"
+# Only report issues with confidence Medium or High
+confidence_level = "MEDIUM"
+# Define specific checks to include or exclude if needed
+# checks = ["B101", "B104"]
+# skip_checks = ["B101"]

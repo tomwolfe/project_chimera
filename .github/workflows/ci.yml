@@ -27,9 +27,14 @@ jobs:
     - name: Run Ruff (Linter & Formatter Check)
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs
+      # Ensure Ruff is configured to fail on issues
       run: |
         ruff check . --output-format=github
         ruff format . --check
+    - name: Run Bandit Security Scan
+      # Configure Bandit to fail on high/medium severity issues
+      run: |
+        bandit -r . -ll -c pyproject.toml --exit-on-error
     - name: Run Pytest
       run: |
         pytest
