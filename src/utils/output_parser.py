@@ -589,7 +589,7 @@ class LLMOutputParser:
                 "raw_string_snippet": extracted_json_str[:1000] + ("..." if len(extracted_json_str) > 1000 else "")
             })
             # If any other exception occurs, return the fallback output directly.
-            return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
+            return self._create_fallback_output(schema_model, raw_output, data_to_validate)
 
     def _create_fallback_output(self, schema_model: Type[BaseModel], malformed_blocks: List[Dict[str, Any]],
                                 raw_output_snippet: str, partial_data: Optional[Any] = None) -> Dict[str, Any]:
@@ -617,13 +617,17 @@ class LLMOutputParser:
         fallback_data_for_model: Dict[str, Any] = {}
 
         # Determine if partial_data is a single suggestion dict (for SelfImprovementAnalysisOutput)
-        # NEW: Use the new _detect_potential_suggestion_item helper
         is_single_suggestion_dict = False
         if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
             detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
             if detected_suggestion:
                 is_single_suggestion_dict = True
                 partial_data = detected_suggestion  # Use the detected suggestion as partial data
+        
+        # --- FIX START: Ensure partial_data is a dictionary for safe .get() calls ---
+        if not isinstance(partial_data, dict):
+            partial_data = {}
+        # --- FIX END ---
 
         # Populate schema-specific fields with defaults or partial data
         if schema_model == LLMOutput:
@@ -651,7 +655,6 @@ class LLMOutputParser:
             fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial)
             fallback_data_for_model["malformed_blocks"] = malformed_blocks
         elif schema_model == ConflictReport:
-            # FIX: Changed default for conflict_type from "UNKNOWN" to a valid Literal value
             fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
             fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial)
             fallback_data_for_model["involved_personas"] = partial_data.get("involved_personas", [])
