@@ -14,6 +14,7 @@ import time # Added for time.time()
 from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
 from src.config.persistence import ConfigPersistence # NEW IMPORT
+from src.utils.prompt_analyzer import PromptAnalyzer # NEW IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,13 @@ DEFAULT_PERSONAS_FILE = "personas.yaml"
 
 @st.cache_resource
 class PersonaManager:
-    def __init__(self):
+    def __init__(self, domain_keywords: Dict[str, List[str]]): # Accept domain_keywords
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
         self.available_domains: List[str] = []
         self.all_custom_frameworks_data: Dict[str, Any] = {} # Stores full config data for custom frameworks
         self.default_persona_set_name: str = "General"
         self._original_personas: Dict[str, PersonaConfig] = {}
-        self.persona_router: Optional[PersonaRouter] = None
 
         # NEW: For Adaptive LLM Parameter Adjustment
         self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
@@ -37,6 +37,9 @@ class PersonaManager:
         self.min_turns_for_adjustment = 5 # Minimum turns before considering adjustment
 
         self.config_persistence = ConfigPersistence() # NEW: Initialize ConfigPersistence
+
+        # NEW: Initialize PromptAnalyzer first
+        self.prompt_analyzer = PromptAnalyzer(domain_keywords)
 
         # Load initial data and custom frameworks, handle errors internally
         load_success, load_msg = self._load_initial_data()
@@ -48,8 +51,11 @@ class PersonaManager:
         self._load_custom_frameworks_on_init() # Call after config_persistence is initialized
         self._load_original_personas()
         
-        # Initialize PersonaRouter with all loaded personas and persona_sets
-        self.persona_router = PersonaRouter(self.all_personas, self.persona_sets)
+        # Initialize PersonaRouter with all loaded personas and persona_sets, and the prompt_analyzer
+        # This ensures the router always has the correct prompt_analyzer instance.
+        self.persona_router: Optional[PersonaRouter] = PersonaRouter(
+            self.all_personas, self.persona_sets, self.prompt_analyzer # Pass prompt_analyzer
+        )
 
         # NEW: Initialize performance metrics after all personas are loaded
         self._initialize_performance_metrics()
@@ -427,28 +433,5 @@ class PersonaManager:
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
-        word_count = len(prompt.split())
-        sentence_count = len(re.findall(r'[.!?]+', prompt))
-        
-        # Domain-specific keywords with weights
-        domain_keywords = {
-            'security': ['vulnerability', 'security', 'exploit', 'attack', 'threat', 'authentication', 'authorization'],
-            'testing': ['test', 'validate', 'verify', 'coverage', 'edge case', 'boundary condition'],
-            'architecture': ['design', 'pattern', 'modular', 'scalability', 'performance', 'bottleneck']
-        }
-        
-        prompt_lower = prompt.lower()
-        domain_scores = {domain: sum(1 for kw in keywords if kw in prompt_lower) 
-                       for domain, keywords in domain_keywords.items()}
-        
-        # Determine primary domain based on highest score
-        primary_domain = max(domain_scores, key=domain_scores.get) if max(domain_scores.values()) > 0 else None
-        
-        # Complexity calculation remains, but now with domain awareness
-        complexity_score = min(1.0, word_count / 500 + sentence_count / 20)
-        
-        return {
-            'complexity_score': complexity_score,
-            'primary_domain': primary_domain,
-            'domain_scores': domain_scores
-        }
+        # Delegate to the PromptAnalyzer instance
+        return self.prompt_analyzer.analyze_complexity(prompt)

@@ -107,7 +107,9 @@ class SocraticDebate:
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning("PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI.")
-            self.persona_manager = PersonaManager() 
+            # This fallback should ideally pass DOMAIN_KEYWORDS, but for core.py, it's not directly available.
+            # Assuming PersonaManager's default init handles this or it's always passed from app.py.
+            self.persona_manager = PersonaManager({}) # Pass empty dict as fallback for domain_keywords
             self.all_personas = self.persona_manager.all_personas 
             self.persona_sets = self.persona_manager.persona_sets 
         else:
@@ -115,7 +117,11 @@ class SocraticDebate:
             self.persona_sets = self.persona_manager.persona_sets
 
         # Initialize PersonaRouter with all loaded personas AND persona_sets
-        self.persona_router = PersonaRouter(self.all_personas, self.persona_sets)
+        # Ensure PersonaRouter gets the PromptAnalyzer from PersonaManager
+        self.persona_router = self.persona_manager.persona_router
+        if not self.persona_router: # Fallback if PersonaManager didn't set it up
+             self.logger.warning("PersonaRouter not found in PersonaManager. Initializing a new one. This might indicate an issue in PersonaManager setup.")
+             self.persona_router = PersonaRouter(self.all_personas, self.persona_sets, self.persona_manager.prompt_analyzer)
         
         # Store the context analyzer instance and ensure it has codebase_context
         self.context_analyzer = context_analyzer
@@ -257,7 +263,8 @@ class SocraticDebate:
             self.phase_budgets = {
                 "context": context_tokens_budget,
                 "debate": debate_tokens_budget,
-                "synthesis": synthesis_tokens_budget
+                "synthesis": synthesis_tokens_budget,
+                "persona_turn_budgets": {} # Initialize empty, will be populated later
             }
             
             self._log_with_context("info", "SocraticDebate token budgets initialized",
@@ -273,7 +280,7 @@ class SocraticDebate:
             self._log_with_context("error", "Token budget calculation failed",
                                    error=str(e), context="token_budget", exc_info=True, original_exception=e)
             # Fallback to hardcoded values if calculation fails
-            self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000}
+            self.phase_budgets = {"context": 500, "debate": 15000, "synthesis": 1000, "persona_turn_budgets": {}}
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.", original_exception=e) from e
     
@@ -407,6 +414,61 @@ class SocraticDebate:
         )
         return sequence
 
+    def _distribute_debate_persona_budgets(self, persona_sequence: List[str]):
+        """
+        Distributes the total debate token budget among the actual personas in the sequence.
+        This is called *after* the final persona sequence is determined.
+        """
+        MIN_PERSONA_TOKENS = 256 # Minimum for each persona turn
+        
+        persona_turn_budgets = {}
+        active_debate_personas = [
+            p for p in persona_sequence
+            if p not in ["Context_Aware_Assistant", "Impartial_Arbitrator", "General_Synthesizer", "Self_Improvement_Analyst"] 
+        ]
+        
+        num_debate_personas = len(active_debate_personas)
+        if num_debate_personas == 0:
+            self.phase_budgets["persona_turn_budgets"] = {}
+            self.phase_budgets["debate"] = 0 # No debate personas, so no debate budget
+            return
+
+        base_allocation_per_persona = self.phase_budgets["debate"] // num_debate_personas
+        remaining_budget = self.phase_budgets["debate"]
+
+        # First pass: allocate minimums and a base share, respecting persona's max_tokens
+        for p_name in active_debate_personas:
+            persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
+            allocated = max(MIN_PERSONA_TOKENS, min(base_allocation_per_persona, persona_config.max_tokens))
+            persona_turn_budgets[p_name] = allocated
+            remaining_budget -= allocated
+        
+        # Second pass: if there's remaining budget (e.g., due to some personas hitting their max_tokens early),
+        # redistribute it proportionally to those not yet at their max.
+        if remaining_budget > 0:
+            redistribution_pool_personas = [
+                p_name for p_name in active_debate_personas 
+                if persona_turn_budgets[p_name] < self.persona_manager.get_adjusted_persona_config(p_name).max_tokens
+            ]
+            if redistribution_pool_personas:
+                share_per_redistribution_persona = remaining_budget // len(redistribution_pool_personas)
+                for p_name in redistribution_pool_personas:
+                    persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
+                    persona_turn_budgets[p_name] = min(persona_config.max_tokens, persona_turn_budgets[p_name] + share_per_redistribution_persona)
+        
+        # Final check: if total allocated still exceeds debate_tokens_budget (e.g., due to minimums),
+        # proportionally reduce, but ensure minimums are still met.
+        current_total_persona_budget = sum(persona_turn_budgets.values())
+        if current_total_persona_budget > self.phase_budgets["debate"]:
+            reduction_factor = self.phase_budgets["debate"] / current_total_persona_budget
+            for p_name in active_debate_personas:
+                persona_turn_budgets[p_name] = max(MIN_PERSONA_TOKENS, int(persona_turn_budgets[p_name] * reduction_factor))
+
+        self.phase_budgets["persona_turn_budgets"] = persona_turn_budgets
+        self._log_with_context("info", "Debate persona turn budgets distributed.",
+                               persona_turn_budgets=self.phase_budgets["persona_turn_budgets"])
+
+
     def _process_context_persona_turn(self, persona_sequence: List[str], context_analysis_results: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
         Executes the Context_Aware_Assistant persona turn if it's in the sequence.
@@ -430,7 +492,9 @@ class SocraticDebate:
         
         prompt = f"Analyze the following codebase context and provide a structured analysis:\n\n{context_prompt_content}"
         
-        estimated_tokens = self.tokenizer.count_tokens(prompt) + persona_config.max_tokens
+        # Use the specific budget for Context_Aware_Assistant if available, otherwise fallback to persona_config.max_tokens
+        max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get("Context_Aware_Assistant", persona_config.max_tokens)
+        estimated_tokens = self.tokenizer.count_tokens(prompt) + max_output_tokens_for_turn
         self.check_budget("debate", estimated_tokens, "Context_Aware_Assistant")
 
         try:
@@ -510,7 +574,9 @@ class SocraticDebate:
                 current_prompt += f"Relevant Code Context:\n{persona_specific_context_str}\n\n"
             current_prompt += f"Previous Debate Output:\n{json.dumps(previous_output, indent=2) if isinstance(previous_output, dict) else previous_output}"
             
-            estimated_tokens = self.tokenizer.count_tokens(current_prompt) + persona_config.max_tokens
+            # Use the dynamically calculated budget for this persona's turn
+            max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(persona_name, persona_config.max_tokens)
+            estimated_tokens = self.tokenizer.count_tokens(current_prompt) + max_output_tokens_for_turn
             self.check_budget("debate", estimated_tokens, persona_name)
 
             try:
@@ -579,13 +645,32 @@ class SocraticDebate:
         """
         self._log_with_context("info", f"Initiating sub-debate for conflict: {conflict_report.summary}")
 
-        # Determine personas for sub-debate: involved personas + a mediator (Constructive_Critic or Impartial_Arbitrator)
-        # Prioritize personas directly involved in the conflict, then add a mediator.
-        sub_debate_personas_raw = list(set(conflict_report.involved_personas + ["Constructive_Critic", "Impartial_Arbitrator"]))
-        sub_debate_personas = [p for p in sub_debate_personas_raw if p in self.all_personas]
+        # Determine personas for sub-debate: involved personas + a dynamically selected mediator
+        sub_debate_personas_set = set(conflict_report.involved_personas)
+        
+        # Dynamically select a mediator based on conflict type
+        if conflict_report.conflict_type in ["LOGICAL_INCONSISTENCY", "DATA_DISCREPANCY", "METHODOLOGY_DISAGREEMENT"]:
+            # For analytical disagreements, a critic might help find common ground
+            if "Constructive_Critic" in self.all_personas:
+                sub_debate_personas_set.add("Constructive_Critic")
+        
+        # For final decision-making, resource constraints, or security vs. performance trade-offs,
+        # an arbitrator is key. Also, ensure the main synthesis persona is involved if different.
+        if conflict_report.conflict_type in ["RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE"] or \
+           "Impartial_Arbitrator" in self.all_personas: # Always include Arbitrator if available for final synthesis
+            sub_debate_personas_set.add("Impartial_Arbitrator")
+
+        # Ensure the synthesis persona for the main debate is also considered if it's not the Arbitrator
+        main_synthesis_persona = "Self_Improvement_Analyst" if self.is_self_analysis else \
+                                 ("Impartial_Arbitrator" if self.domain == "Software Engineering" else "General_Synthesizer")
+        if main_synthesis_persona in self.all_personas and main_synthesis_persona not in sub_debate_personas_set:
+            sub_debate_personas_set.add(main_synthesis_persona)
+
+        # Filter to only include personas that actually exist in all_personas
+        sub_debate_personas = [p for p in list(sub_debate_personas_set) if p in self.all_personas]
 
         if not sub_debate_personas:
-            self._log_with_context("warning", "No relevant personas found for conflict sub-debate.")
+            self._log_with_context("warning", "No relevant personas found for conflict sub-debate. Skipping resolution.")
             return None
 
         # Allocate a small portion of remaining budget for sub-debate
@@ -873,16 +958,21 @@ class SocraticDebate:
                 # Ensure unique areas (in case critical_area_threshold added duplicates)
                 top_areas = list(dict.fromkeys(top_areas))
                 
-                final_synthesis_prompt_content = f"Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.\\n\\n## Objective Metrics:\\n{json.dumps(summarized_metrics, indent=2)}\\n\\n## Debate History:\\n{json.dumps(summarized_debate_history, indent=2)}"
+                final_synthesis_prompt_content = f"""
+                Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
                 
-                # --- START MODIFICATION: Dynamic hint for Self_Improvement_Analyst to use DIFF_CONTENT for large codebases ---
-                if self.codebase_context:
-                    total_code_chars = sum(len(content) for content in self.codebase_context.values())
-                    # Heuristic: If many files or total content is large, suggest diffs
-                    if len(self.codebase_context) > 5 or total_code_chars > 50000: # Example thresholds
-                        prompt_hint = "\\n\\nCRITICAL REMINDER FOR CODE_CHANGES_SUGGESTED: For larger modifications, provide DIFF_CONTENT (unified diff format) instead of FULL_CONTENT to conserve tokens. Provide FULL_CONTENT only for very small additions or modifications (< 50 lines)."
-                        final_synthesis_prompt_content += prompt_hint
-                        self._log_with_context("info", "Added dynamic diff content hint to Self_Improvement_Analyst prompt due to large codebase context.")
+                ## Objective Metrics:
+                {json.dumps(summarized_metrics, indent=2)}
+                
+                ## Debate History:
+                {json.dumps(summarized_debate_history, indent=2)}
+                
+                CRITICAL REMINDER FOR CODE_CHANGES_SUGGESTED:
+                - For 'MODIFY' actions, always provide the `DIFF_CONTENT` field in standard unified diff format (lines starting with `+`, `-`, or ` `). This is crucial for clarity and token efficiency.
+                - Only provide `FULL_CONTENT` for 'ADD' actions, or for very small 'MODIFY' actions (e.g., < 10 lines) where a full content replacement is simpler than a diff.
+                - Ensure all code snippets within `CODE_CHANGES_SUGGESTED` adhere to PEP8 (line length <= 88).
+                - Prioritize minimal, focused changes.
+                """
                 # --- END MODIFICATION ---
 
             except Exception as e:
@@ -905,7 +995,9 @@ class SocraticDebate:
 
         prompt = final_synthesis_prompt_content 
         
-        estimated_tokens = self.tokenizer.count_tokens(prompt) + persona_config.max_tokens
+        # Use the dynamically calculated budget for this persona's turn
+        max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(synthesis_persona_name, persona_config.max_tokens)
+        estimated_tokens = self.tokenizer.count_tokens(prompt) + max_output_tokens_for_turn
         self.check_budget("synthesis", estimated_tokens, synthesis_persona_name)
 
         try:
@@ -937,11 +1029,14 @@ class SocraticDebate:
 
         for retry_attempt in range(max_schema_retries + 1):
             try:
+                # Use the dynamically calculated budget for this persona's turn
+                max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(persona_name, persona_config.max_tokens)
+                
                 raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
                     prompt=prompt,
                     system_prompt=adjusted_persona_config.system_prompt, 
                     temperature=adjusted_persona_config.temperature,     
-                    max_tokens=adjusted_persona_config.max_tokens,       
+                    max_tokens=max_output_tokens_for_turn, # Use the dynamically calculated budget
                     persona_config=adjusted_persona_config, 
                     intermediate_results=self.intermediate_steps,
                     requested_model_name=self.model_name
@@ -955,7 +1050,7 @@ class SocraticDebate:
                 # --- END MODIFICATION ---
 
                 # Check for truncation (heuristic, can be improved with LLM-specific signals)
-                if output_tokens >= adjusted_persona_config.max_tokens * 0.95: 
+                if output_tokens >= max_output_tokens_for_turn * 0.95: # Use max_output_tokens_for_turn
                     is_truncated = True
 
                 if persona_name in self.PERSONA_OUTPUT_SCHEMAS:
@@ -1001,7 +1096,7 @@ class SocraticDebate:
 
             except (CircuitBreakerError, TokenBudgetExceededError, LLMProviderError) as e:
                 # These are not schema validation errors, re-raise immediately
-                if isinstance(e, TokenBudgetExceededError) and "tokens_needed" in e.details and e.details["tokens_needed"] > adjusted_persona_config.max_tokens:
+                if isinstance(e, TokenBudgetExceededError) and "tokens_needed" in e.details and e.details["tokens_needed"] > max_output_tokens_for_turn: # Use max_output_tokens_for_turn
                     is_truncated = True
                 self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
                 raise e
@@ -1064,6 +1159,9 @@ class SocraticDebate:
         # based on the insights gained from the context.
         persona_sequence = self._get_final_persona_sequence(self.initial_prompt, context_analysis_results)
         self.intermediate_steps["Persona_Sequence"] = persona_sequence 
+        
+        # NEW: Distribute debate budget among the *final* persona sequence
+        self._distribute_debate_persona_budgets(persona_sequence)
         
         # Phase 2: Context Persona Turn (if in sequence)
         context_persona_turn_results = None

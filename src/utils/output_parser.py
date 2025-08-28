@@ -236,26 +236,35 @@ class LLMOutputParser:
 
         return None, repair_log
 
-    def _extract_largest_valid_subobject(self, json_str: str) -> Optional[str]:
+    def _extract_largest_valid_subobject(self, text: str) -> Optional[str]:
         """
         Extracts the largest potentially valid JSON object or array from malformed text.
-        Prioritizes the longest valid JSON block found.
+        Leverages _extract_first_outermost_json for robustness.
         """
-        matches = list(re.finditer(r'(\{.*?\}|\[.*?\])', json_str, re.DOTALL))
-
+        self.logger.debug("Attempting to extract largest valid sub-object using robust method.")
+        
         longest_valid_match = ""
-
-        for match in matches:
-            potential_json = match.group(0)
-            try:
-                json.loads(potential_json)
-                if len(potential_json) > len(longest_valid_match):
-                    longest_valid_match = potential_json
-            except json.JSONDecodeError:
-                continue
+        current_search_text = text
+        
+        # Iterate, extracting one outermost JSON block at a time, and removing it from the search text
+        # to find subsequent blocks.
+        while True:
+            extracted_json_str = self._extract_first_outermost_json(current_search_text)
+            if extracted_json_str:
+                if len(extracted_json_str) > len(longest_valid_match):
+                    longest_valid_match = extracted_json_str
+                
+                # Remove the extracted part to find other potential JSON blocks
+                # This is a simple removal; a more complex approach might handle overlapping.
+                current_search_text = current_search_text.replace(extracted_json_str, "", 1)
+            else:
+                break # No more valid JSON blocks found
 
         if longest_valid_match:
+            self.logger.debug(f"Successfully extracted largest valid sub-object: {longest_valid_match[:100]}...")
             return longest_valid_match
+        
+        self.logger.debug("No largest valid sub-object found.")
         return None
 
     def _convert_to_json_lines(self, json_str: str) -> str:
@@ -608,6 +617,15 @@ class LLMOutputParser:
                 "type": "LLM_OUTPUT_MALFORMED",
                 "message": f"LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
                 "raw_string_snippet": raw_output_snippet[:1000] + ("..." if len(raw_output_snippet) > 1000 else "")
+            })
+
+        # NEW: Attempt to find any valid JSON fragment in the raw output for better debugging
+        salvaged_json_fragment = self._extract_largest_valid_subobject(raw_output_snippet)
+        if salvaged_json_fragment:
+            current_malformed_blocks.append({
+                "type": "SALVAGED_JSON_FRAGMENT",
+                "message": "A valid JSON fragment was found in the raw output, but it did not match the expected schema or was not the primary output.",
+                "raw_string_snippet": salvaged_json_fragment
             })
 
         fallback_data_for_model: Dict[str, Any] = {}

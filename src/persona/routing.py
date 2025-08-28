@@ -4,9 +4,9 @@ Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
-import numpy as np # NEW IMPORT
-from sentence_transformers import SentenceTransformer # NEW IMPORT
-from typing import List, Dict, Set, Optional, Any
+import numpy as np 
+from sentence_transformers import SentenceTransformer 
+from typing import List, Dict, Set, Optional, Any, Tuple
 import re
 import json
 from pathlib import Path
@@ -14,77 +14,41 @@ import logging
 from functools import lru_cache
 
 from src.models import PersonaConfig
-from src.constants import SELF_ANALYSIS_KEYWORDS, SELF_ANALYSIS_PERSONA_SEQUENCE
-from src.constants import is_self_analysis_prompt # Import the function for prompt analysis
+# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Re-added specifically for fallback
+# REMOVED: from src.constants import is_self_analysis_prompt 
+from src.utils.prompt_analyzer import PromptAnalyzer # NEW IMPORT
 
 logger = logging.getLogger(__name__)
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
     
-    def __init__(self, all_personas: Dict[str, PersonaConfig], persona_sets: Dict[str, List[str]]):
+    def __init__(self, all_personas: Dict[str, PersonaConfig], persona_sets: Dict[str, List[str]], prompt_analyzer: PromptAnalyzer): # Accept PromptAnalyzer
         self.all_personas = all_personas
-        self.persona_sets = persona_sets # Store persona sets
+        self.persona_sets = persona_sets 
+        self.prompt_analyzer = prompt_analyzer # Store the PromptAnalyzer instance
         
         # Initialize SentenceTransformer for semantic routing
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.persona_embeddings = self._generate_persona_embeddings() # NEW
+        self.persona_embeddings = self._generate_persona_embeddings() 
 
-        self.domain_keywords = {
-            "architecture": {
-                "positive": [
-                    "software architect", "system design", "code structure", "architecture pattern", 
-                    "scalab", "perform", "modular", "refactor", "system", "structure", "database", 
-                    "api", "framework", "codebase", "maintainability", "technical debt", 
-                    "separation of concerns", "microservice", "monolith", "backend", "frontend"
-                ],
-                "negative": [
-                    "building", "house", "construct", "physical", "brick", "concrete", 
-                    "skyscraper", "residential", "commercial", "architecture firm", "civil engineer",
-                    "urban planning", "interior design"
-                ]
-            },
-            "security": {
-                "positive": [
-                    "vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", 
-                    "risk", "malware", "penetration", "compliance", "firewall", "ssl", "tls"
-                ],
-                "negative": []
-            },
-            "testing": {
-                "positive": [
-                    "test", "cover", "unit", "integration", "bug", "error", "quality", 
-                    "qa", "defect", "debug", "validate", "assertion", "failure", "edge case"
-                ],
-                "negative": []
-            },
-            "devops": {
-                "positive": [
-                    "deploy", "ci/cd", "pipeline", "infra", "monitor", "cloud", "docker", 
-                    "k8s", "ops", "server", "automation", "release", "scalability", 
-                    "reliability", "performance", "logging", "alerting"
-                ],
-                "negative": []
-            },
-            "scientific": {
-                "positive": ["scientific", "experiment", "hypothesis", "research", "data"],
-                "negative": []
-            },
-            "business": {
-                "positive": ["market", "business", "financial", "economy", "strategy"],
-                "negative": []
-            },
-            "creative": {
-                "positive": ["creative", "write", "story", "poem", "artistic"],
-                "negative": []
-            }
-        }
+        # REMOVED: self.domain_keywords (now in PromptAnalyzer)
         
         self.trigger_keywords = {
-            "Security_Auditor": ["vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", "risk", "malware", "penetration", "compliance", "attack vector", "data breach"],
-            "Test_Engineer": ["test", "bug", "error", "quality", "coverage", "unit", "integration", "qa", "defect", "debug", "validate", "assertion", "failure", "edge case"],
-            "DevOps_Engineer": ["deploy", "ci/cd", "pipeline", "infra", "monitor", "cloud", "docker", "k8s", "ops", "server", "automation", "release", "scalability", "reliability", "performance", "logging", "alerting"],
-            "Code_Architect": ["architect", "design", "pattern", "scalab", "perform", "modular", "refactor", "system", "structure", "database", "api", "framework", "codebase", "maintainability", "technical debt", "separation of concerns"],
+            "Security_Auditor": ["vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", 
+                                 "risk", "malware", "penetration", "compliance", "firewall", "ssl", "tls",
+                                 "attack vector", "data breach"],
+            "Test_Engineer": ["test", "cover", "unit", "integration", "bug", "error", "quality", 
+                              "qa", "defect", "debug", "validate", "assertion", "failure", "edge case",
+                              "pytest", "unittest"],
+            "DevOps_Engineer": ["deploy", "ci/cd", "pipeline", "infra", "monitor", "cloud", "docker", 
+                                "k8s", "ops", "server", "automation", "release", "scalability", 
+                                "reliability", "performance", "logging", "alerting"],
+            "Code_Architect": ["architect", "design", "pattern", "scalab", "perform", "modular", "refactor", 
+                               "system", "structure", "database", "api", "framework", "codebase", 
+                               "maintainability", "technical debt", "separation of concerns", 
+                               "microservice", "monolith", "backend", "frontend"],
             "Constructive_Critic": ["improve", "refine", "optimize", "recommend", "suggest", "enhanc", "fix", "best practice"],
             "Skeptical_Generator": ["risk", "flaw", "limitation", "vulnerab", "bottleneck", "edge case", "failure point", "concern", "doubt"]
         }
@@ -97,9 +61,7 @@ class PersonaRouter:
                 embeddings[name] = self.model.encode([config.description])[0]
         return embeddings
 
-    def is_self_analysis_prompt(self, prompt: str) -> bool:
-       """Standardized method to detect self-analysis prompts using central constants"""
-       return is_self_analysis_prompt(prompt)
+    # REMOVED: is_self_analysis_prompt method, now delegated to self.prompt_analyzer
 
     def _should_include_test_engineer(self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]]) -> bool:
         """Determine if Test_Engineer persona is needed based on prompt and context."""
@@ -199,7 +161,7 @@ class PersonaRouter:
         
         # --- LLM SUGGESTION 2: Dynamic Persona Sequence for Self-Analysis ---
         # Check if it's a self-analysis prompt and apply specific sequences.
-        if self.is_self_analysis_prompt(prompt):
+        if self.prompt_analyzer.is_self_analysis_prompt(prompt): # DELEGATE to PromptAnalyzer
             logger.info("Detected self-analysis prompt. Applying dynamic persona sequence from 'Self-Improvement' set.")
             
             # Use the defined 'Self-Improvement' persona set, with a fallback to the hardcoded sequence

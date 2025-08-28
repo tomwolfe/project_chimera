@@ -5,7 +5,7 @@ import traceback # Import traceback
 
 class ChimeraError(Exception):
     """Base exception for all Chimera errors with standardized structure."""
-    def __init__(self, message: str, details: Optional[dict] = None, original_exception: Optional[Exception] = None): # ADD original_exception
+    def __init__(self, message: str, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
         super().__init__(message)
         self.details = details or {}
         self.timestamp = datetime.datetime.now()
@@ -15,7 +15,7 @@ class ChimeraError(Exception):
     def to_dict(self) -> Dict[str, Any]:
         """Convert exception to structured dictionary for logging/reporting."""
         return {
-            "exception_message": str(self), # RENAMED THIS KEY FROM "message"
+            "message": str(self), # CHANGED THIS KEY BACK TO "message" for consistency
             "details": self.details,
             "timestamp": self.timestamp.isoformat(),
             "original_exception_type": type(self.original_exception).__name__ if self.original_exception else None,

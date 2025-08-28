@@ -18,7 +18,8 @@ import google.genai as genai
 from google.genai.errors import APIError
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
-from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path, recommend_domain_from_keywords
+from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path
+# MODIFIED: Removed recommend_domain_from_keywords from here, as it's now part of PromptAnalyzer
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -34,6 +35,9 @@ from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path # Added for Path in Self-Improvement download button
+
+# NEW IMPORT: For centralized prompt analysis
+from src.utils.prompt_analyzer import PromptAnalyzer
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -271,7 +275,8 @@ def get_context_analyzer(_pm_instance: PersonaManager):
 
 # FIX START: REMOVED @st.cache_resource from get_persona_manager()
 def get_persona_manager():
-    return PersonaManager()
+    # PersonaManager now requires DOMAIN_KEYWORDS
+    return PersonaManager(DOMAIN_KEYWORDS)
 # FIX END
 
 # --- Helper to update activity timestamp ---
@@ -321,12 +326,14 @@ def _initialize_session_state():
             st.session_state[key] = value
 
     if "persona_manager" not in st.session_state:
-        st.session_state.persona_manager = PersonaManager()
+        # MODIFIED: Pass DOMAIN_KEYWORDS to PersonaManager constructor
+        st.session_state.persona_manager = PersonaManager(DOMAIN_KEYWORDS)
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
         st.session_state.selected_persona_set = st.session_state.persona_manager.available_domains[0] if st.session_state.persona_manager.available_domains else "General"
         initial_framework_personas = st.session_state.persona_manager.get_persona_sequence_for_framework(st.session_state.selected_persona_set)
         st.session_state.personas = {name: st.session_state.persona_manager.all_personas.get(name) for name in initial_framework_personas if name in st.session_state.persona_manager.all_personas}
+        # REMOVED: The redundant PersonaRouter initialization block, as PersonaManager's __init__ now handles it.
 
     if "context_analyzer" not in st.session_state:
         analyzer = ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR, codebase_context=st.session_state.codebase_context)
@@ -641,7 +648,8 @@ with st.sidebar:
         help_text_dynamic = "Percentage of total token budget allocated to context analysis."
         
         if user_prompt_text and not st.session_state.context_ratio_user_modified:
-            recommended_domain = recommend_domain_from_keywords(user_prompt_text, DOMAIN_KEYWORDS)
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
+            recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(user_prompt_text)
             
             if is_self_analysis_prompt(user_prompt_text):
                 smart_default_ratio = 0.35
@@ -761,7 +769,8 @@ for i, tab_name in enumerate(tab_names):
                 - **Example Output:** If possible, provide an.example of the desired output format.
                 """)
             
-            suggested_domain_for_custom = recommend_domain_from_keywords(st.session_state.user_prompt_input, DOMAIN_KEYWORDS)
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
+            suggested_domain_for_custom = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(st.session_state.user_prompt_input)
             
             if suggested_domain_for_custom and suggested_domain_for_custom != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain_for_custom}'** framework might be appropriate.")
@@ -851,7 +860,8 @@ with col1:
     
     if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
         if user_prompt.strip():
-            suggested_domain = recommend_domain_from_keywords(user_prompt, DOMAIN_KEYWORDS)
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
+            suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(user_prompt)
             if suggested_domain and suggested_domain != st.session_state.selected_persona_set:
                 st.info(f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate.")
                 if st.button(f"Apply '{suggested_domain}' Framework (Custom Prompt)", type="secondary", use_container_width=True, key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}", on_click=update_activity_timestamp):
@@ -1235,7 +1245,8 @@ def _run_socratic_debate_process():
                     domain_for_run = st.session_state.active_example_framework_hint
                     logger.debug(f"Using active example framework hint: {domain_for_run}")
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-                    suggested_domain = recommend_domain_from_keywords(current_user_prompt_for_debate, DOMAIN_KEYWORDS)
+                    # MODIFIED: Use PromptAnalyzer for domain recommendation
+                    suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(current_user_prompt_for_debate)
                     if suggested_domain:
                         domain_for_run = suggested_domain
                         logger.debug(f"Using recommended domain for custom prompt: {domain_for_run}")
