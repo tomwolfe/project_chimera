@@ -1,10 +1,13 @@
 # requirements-prod.txt
+# Core application dependencies
 streamlit
 google-genai
 pyyaml
-pydantic>=2.0
-rich<14
-pycodestyle
-bandit
+pydantic
+rich
 sentence-transformers
 python-json-logger
+
+# Code quality and security tools (used in core logic for self-improvement)
+pycodestyle
+bandit

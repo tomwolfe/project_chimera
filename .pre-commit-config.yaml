@@ -44,3 +44,11 @@ repos:
         #   W503: Line break before binary operator (Black/Ruff often prefer W504, so ignoring W503)
         args: [--max-line-length=79, --ignore=E203, E261, E501, W503]
 # --- END ADDED ---
+
+# --- NEW: ADDED FOR SECURITY SCANNING (Bandit) ---
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5 # Use a specific, stable version
+    hooks:
+      - id: bandit
+        args: ["-r", ".", "-ll", "-c", "pyproject.toml"] # -r for recursive, -ll for low severity, -c for config
+# --- END NEW ---

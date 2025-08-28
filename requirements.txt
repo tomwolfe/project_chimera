@@ -1,18 +1,20 @@
 # requirements.txt
+# Core application dependencies
 streamlit
 google-genai
-typer[all]  # Includes Rich for better CLI output
 pyyaml
-pydantic>=2.0  # Ensure Pydantic v2 for model_validator and other features
-rich<14 # Pin to version compatible with flask-limiter
-pycodestyle # Added for code validation
-bandit # Added for security analysis in code_validator.py
- 
-# Add linters and formatters for development/pre-commit
-black
+pydantic
+rich
 sentence-transformers
-ruff
- 
-# Add testing libraries
-pytest
 python-json-logger
+
+# Code quality and security tools (used in core logic and pre-commit)
+pycodestyle
+bandit
+
+# Development, linting, formatting, and testing tools
+typer[all]
+black
+ruff
+flake8
+pytest

@@ -1,11 +1,11 @@
 # src/models.py
 from typing import Dict, Any, Optional, List, Literal
-from pydantic import BaseModel, Field, validator, model_validator, ConfigDict, ValidationError, field_validator # ADDED field_validator
+from pydantic import BaseModel, Field, validator, model_validator, ConfigDict, ValidationError, field_validator
 import logging
 import re
 from pathlib import Path
 
-logger = logging.getLogger(__name__) # Initialize logger
+logger = logging.getLogger(__name__)
 
 # --- Pydantic Models for Schema Validation ---
 class PersonaConfig(BaseModel):
@@ -272,3 +272,19 @@ class SelfImprovementAnalysisOutput(BaseModel):
             return self.data
         # Conversion logic for future versions would go here
         raise NotImplementedError("Conversion to V1 not implemented for this version")
+
+# NEW: LLMResponseModel for general LLM outputs that need validation
+class LLMResponseModel(BaseModel):
+    """
+    A generic Pydantic model for validating LLM responses that are not
+    specifically tied to a persona's structured output schema.
+    This can be used for general LLM calls where a simple, consistent
+    output structure is expected (e.g., a result string and confidence).
+    """
+    result: str = Field(..., description="The main result or answer from the LLM.")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence score of the LLM's response.")
+    # Add other common fields you expect from general LLM responses
+    # For example, if it often returns a rationale:
+    rationale: Optional[str] = Field(None, description="Explanation or reasoning behind the result.")
+    # Or if it returns code snippets:
+    code_snippet: Optional[str] = Field(None, description="A code snippet if the response involves code generation.")
