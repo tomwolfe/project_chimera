@@ -1,6 +1,6 @@
 # src/models.py
-from typing import Dict, Any, Optional, List, Literal # Added Literal for ConflictReport
-from pydantic import BaseModel, Field, validator, model_validator, ConfigDict # ADDED ConfigDict
+from typing import Dict, Any, Optional, List, Literal
+from pydantic import BaseModel, Field, validator, model_validator, ConfigDict, ValidationError # ADDED ValidationError
 import logging
 import re
 from pathlib import Path
@@ -201,25 +201,40 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     """Version 1 of the self-improvement analysis output schema."""
     analysis_summary: str = Field(..., alias="ANALYSIS_SUMMARY", description="Overall summary of the self-improvement analysis.")
     impactful_suggestions: List[Dict[str, Any]] = Field(..., alias="IMPACTFUL_SUGGESTIONS", description="List of structured suggestions for improvement.")
-    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks") # Ensure malformed_blocks is present
     
     model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode='after')
     def validate_suggestion_structure(self) -> 'SelfImprovementAnalysisOutputV1':
+        processed_suggestions = []
         for suggestion in self.impactful_suggestions:
-            if not all(k in suggestion for k in ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT"]):
-                raise ValueError("Each suggestion must contain 'AREA', 'PROBLEM', 'PROPOSED_SOLUTION', 'EXPECTED_IMPACT'.")
+            # Check for fundamental structure of a suggestion item
+            required_fields = ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT"]
+            if not all(k in suggestion for k in required_fields):
+                self.malformed_blocks.append({
+                    "type": "MALFORMED_SUGGESTION_STRUCTURE",
+                    "message": f"A suggestion item is missing required fields: {', '.join(required_fields)}. Skipping this suggestion.",
+                    "raw_string_snippet": str(suggestion)[:500]
+                })
+                continue # Skip this malformed suggestion
+
             if "CODE_CHANGES_SUGGESTED" in suggestion:
-                # Validate each code change using the CodeChange model
                 validated_code_changes = []
                 for cc_data in suggestion["CODE_CHANGES_SUGGESTED"]:
                     try:
                         validated_code_changes.append(CodeChange.model_validate(cc_data).model_dump(by_alias=True))
                     except ValidationError as e:
                         logger.warning(f"Malformed CodeChange in SelfImprovementAnalysisOutputV1: {e}. Skipping this change.")
-                        # Optionally, add to malformed_blocks or a dedicated field
+                        # Capture the inner validation error in malformed_blocks
+                        self.malformed_blocks.append({
+                            "type": "CODE_CHANGE_SCHEMA_VALIDATION_ERROR",
+                            "message": f"A suggested code change item failed validation: {e}",
+                            "raw_string_snippet": str(cc_data)[:500]
+                        })
                 suggestion["CODE_CHANGES_SUGGESTED"] = validated_code_changes
+            processed_suggestions.append(suggestion)
+        self.impactful_suggestions = processed_suggestions # Update the list after processing
         return self
 
 # NEW: Pydantic model for SelfImprovementAnalysisOutput (Versioned wrapper)
@@ -235,7 +250,13 @@ class SelfImprovementAnalysisOutput(BaseModel):
         if self.version == "1.0":
             # Validate against V1 schema
             try:
-                SelfImprovementAnalysisOutputV1.model_validate(self.data)
+                # Pass malformed_blocks from the wrapper to the inner V1 model
+                # This allows the V1 model to collect its own malformed blocks
+                v1_data = SelfImprovementAnalysisOutputV1.model_validate(self.data)
+                # Merge any malformed blocks from the inner V1 model back into the wrapper's malformed_blocks
+                self.malformed_blocks.extend(v1_data.malformed_blocks)
+                # Update data with the validated and potentially modified V1 data
+                self.data = v1_data.model_dump(by_alias=True)
             except ValidationError as e:
                 raise ValueError(f"Data does not match schema version {self.version}: {str(e)}")
         # Future versions would be handled here
