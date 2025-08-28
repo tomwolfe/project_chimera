@@ -9,11 +9,13 @@ from collections import defaultdict
 from pathlib import Path
 
 # Import existing validation functions to reuse their logic
-from src.utils.code_validator import _run_pycodestyle, _run_bandit, _run_ast_security_checks
+# MODIFIED: Import _run_ruff instead of _run_pycodestyle
+from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 
 logger = logging.getLogger(__name__)
 
 # Placeholder for PEP8 descriptions. In a real scenario, this would be a comprehensive mapping.
+# Keeping this for now, but Ruff's messages are often more descriptive directly.
 PEP8_DESCRIPTIONS = {
     "E101": "Indentation contains mixed spaces and tabs",
     "E111": "Indentation is not a multiple of four",
@@ -106,15 +108,15 @@ class ComplexityVisitor(ast.NodeVisitor):
         """Calculates non-blank, non-comment lines of code within a node's body."""
         if not hasattr(node, 'body') or not node.body:
             return 0
-        
+
         # Ensure node has lineno and end_lineno (available in Python 3.8+)
         if not hasattr(node.body[0], 'lineno') or not hasattr(node.body[-1], 'end_lineno'):
             # Fallback for older Python versions or nodes without line info
-            return 0 
-            
+            return 0
+
         start_line = node.body[0].lineno
         end_line = node.body[-1].end_lineno
-        
+
         loc_count = 0
         # Iterate through lines within the function's body
         for i in range(start_line - 1, end_line):
@@ -143,12 +145,12 @@ class ComplexityVisitor(ast.NodeVisitor):
         function_name = node.name
         start_line = node.lineno
         end_line = node.end_lineno # Python 3.8+
-        
+
         complexity = 1 # Start with 1 for the function's entry point (standard for cyclomatic complexity)
         max_nesting_depth = 0
-        
+
         nested_loops_count = 0
-        
+
         # Stack to track block-level nodes for nesting depth and nested loop detection
         stack = []
 
@@ -170,13 +172,13 @@ class ComplexityVisitor(ast.NodeVisitor):
                     stack.append(sub_node)
                     current_nesting_depth = len(stack)
                     max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
-            
+
             # Nested loops detection
             if isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor)):
                 # Check if this loop is inside another loop (i.e., there's another loop in the stack before it)
                 if any(isinstance(s, (ast.For, ast.While, ast.AsyncFor)) for s in stack[:-1]):
                     nested_loops_count += 1
-        
+
         # After walking the function's subtree, clear the stack for this function's context
         stack.clear()
 
@@ -192,7 +194,7 @@ class ComplexityVisitor(ast.NodeVisitor):
             code_smells += 1
         if max_nesting_depth > 3: # Deep nesting
             code_smells += 1
-        
+
         # Potential Bottlenecks (illustrative)
         bottlenecks = 0
         if nested_loops_count > 0: # Any nested loops are a potential bottleneck
@@ -200,7 +202,7 @@ class ComplexityVisitor(ast.NodeVisitor):
         # Further checks could include:
         # - Excessive recursion (requires more complex call graph analysis)
         # - Large list/dict comprehensions that might be inefficient
-        
+
         self.function_metrics.append({
             "name": function_name,
             "start_line": start_line,
@@ -218,7 +220,7 @@ class ComplexityVisitor(ast.NodeVisitor):
 
 class ImprovementMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
-    
+
     @classmethod
     def collect_all_metrics(cls, codebase_path: str, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -226,7 +228,7 @@ class ImprovementMetricsCollector:
         """
         metrics = {
             "code_quality": {
-                "pep8_issues_count": 0,
+                "ruff_issues_count": 0, # MODIFIED: Changed from pep8_issues_count
                 "complexity_metrics": {
                     "avg_cyclomatic_complexity": 0.0,
                     "avg_loc_per_function": 0.0,
@@ -235,7 +237,7 @@ class ImprovementMetricsCollector:
                 },
                 "code_smells_count": 0,
                 "detailed_issues": [], # To store all collected issues for detailed analysis
-                "pep8_violations": [] # NEW: Dedicated list for PEP8 violations
+                "ruff_violations": [] # MODIFIED: Changed from pep8_violations
             },
             "security": {
                 "bandit_issues_count": 0,
@@ -261,7 +263,7 @@ class ImprovementMetricsCollector:
         total_complexity_across_functions = 0
         total_args_across_functions = 0
         total_nesting_depth_across_functions = 0
-        
+
         # Collect code-specific metrics by iterating through Python files
         for root, _, files in os.walk(codebase_path):
             for file in files:
@@ -271,19 +273,20 @@ class ImprovementMetricsCollector:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
                             content_lines = content.splitlines() # Pass lines for LOC calculation
-                        
+
                         # Reuse existing code_validator functions
-                        pep8_issues = _run_pycodestyle(content, file_path)
-                        if pep8_issues:
-                            metrics["code_quality"]["pep8_issues_count"] += len(pep8_issues)
-                            metrics["code_quality"]["detailed_issues"].extend(pep8_issues)
-                            metrics["code_quality"]["pep8_violations"].extend(pep8_issues) # NEW: Add to dedicated list
-                        
+                        # MODIFIED: Call _run_ruff instead of _run_pycodestyle
+                        ruff_issues = _run_ruff(content, file_path)
+                        if ruff_issues:
+                            metrics["code_quality"]["ruff_issues_count"] += len(ruff_issues)
+                            metrics["code_quality"]["detailed_issues"].extend(ruff_issues)
+                            metrics["code_quality"]["ruff_violations"].extend(ruff_issues) # NEW: Add to dedicated list
+
                         bandit_issues = _run_bandit(content, file_path)
                         if bandit_issues:
                             metrics["security"]["bandit_issues_count"] += len(bandit_issues)
                             metrics["code_quality"]["detailed_issues"].extend(bandit_issues) # Add to detailed issues for full context
-                        
+
                         ast_security_issues = _run_ast_security_checks(content, file_path)
                         if ast_security_issues:
                             metrics["security"]["ast_security_issues_count"] += len(ast_security_issues)
@@ -291,7 +294,7 @@ class ImprovementMetricsCollector:
 
                         # Collect complexity and code smell metrics using the new AST visitor
                         file_function_metrics = cls._analyze_python_file_ast(content, content_lines, file_path)
-                        
+
                         for func_metric in file_function_metrics:
                             total_functions_across_codebase += 1
                             total_complexity_across_functions += func_metric["cyclomatic_complexity"]
@@ -303,13 +306,13 @@ class ImprovementMetricsCollector:
 
                     except Exception as e:
                         logger.error(f"Error collecting code metrics for {file_path}: {e}", exc_info=True)
-        
+
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = total_complexity_across_functions / total_functions_across_codebase
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = total_loc_across_functions / total_functions_across_codebase
             metrics["code_quality"]["complexity_metrics"]["avg_num_arguments"] = total_args_across_functions / total_functions_across_codebase
             metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = total_nesting_depth_across_functions / total_functions_across_codebase
-        
+
         return metrics
 
     @classmethod
@@ -319,7 +322,7 @@ class ImprovementMetricsCollector:
         """
         total_tokens = debate_intermediate_steps.get("Total_Tokens_Used", 0)
         total_cost = debate_intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
-        
+
         phase_token_usage = {}
         for key, value in debate_intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith("Total_"):
@@ -344,7 +347,7 @@ class ImprovementMetricsCollector:
             "unresolved_conflict": bool(debate_intermediate_steps.get("Unresolved_Conflict")),
             "average_turn_tokens": 0.0
         }
-        
+
         total_debate_tokens = debate_intermediate_steps.get("debate_Tokens_Used", 0)
         num_turns = efficiency_summary["num_turns"]
         if num_turns > 0:
@@ -383,41 +386,45 @@ class ImprovementMetricsCollector:
             logger.error(f"Unexpected error during AST analysis for {file_path}: {e}", exc_info=True)
             return []
 
-def analyze_pep8_patterns(violations: List[Dict]) -> Dict:
-    """Analyze PEP8 violations to identify the most impactful patterns."""
+# MODIFIED: Renamed to be more generic for linter output (Ruff)
+def analyze_linter_patterns(violations: List[Dict]) -> Dict:
+    """Analyze linter violations to identify the most impactful patterns."""
     # Count frequency of each error code
     error_counts = {}
     file_impact = {}
-    
+
     for violation in violations:
         code = violation['code']
-        file_path = violation['filename'] # Corrected from 'file_path' to 'filename'
-        
+        file_path = violation['file'] # Ruff output uses 'file', not 'filename'
+
         error_counts[code] = error_counts.get(code, 0) + 1
-        
+
         if file_path not in file_impact:
             file_impact[file_path] = set()
         file_impact[file_path].add(code)
-    
+
     # Calculate files impacted per error code
     code_file_counts = {}
     for file_path, codes in file_impact.items():
         for code in codes:
             code_file_counts[code] = code_file_counts.get(code, 0) + 1
-    
+
     # Identify top patterns by both frequency and file impact
     top_patterns = []
     for code, count in sorted(error_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
         files_affected = code_file_counts.get(code, 0)
         severity = count * files_affected
+        # Ruff messages are often self-contained, so we might not need a separate description map
+        # For now, use a generic description if not found in PEP8_DESCRIPTIONS
+        description = next((v['message'] for v in violations if v['code'] == code), 'No specific description available from Ruff output.')
         top_patterns.append({
             'code': code,
             'count': count,
             'files_affected': files_affected,
             'severity': severity,
-            'description': PEP8_DESCRIPTIONS.get(code, 'No description available')
+            'description': description # Use the message directly from Ruff output
         })
-    
+
     return {
         'total_violations': len(violations),
         'top_patterns': top_patterns
@@ -425,16 +432,16 @@ def analyze_pep8_patterns(violations: List[Dict]) -> Dict:
 
 def prioritize_maintenance_tasks(metrics: Dict) -> List[Dict]:
     """Prioritize maintenance tasks using the 80/20 principle."""
-    # Focus on the top PEP8 patterns first
-    # Use the dedicated 'pep8_violations' list from the metrics
-    pep8_analysis = analyze_pep8_patterns(metrics['code_quality']['pep8_violations'])
-    
+    # Focus on the top linter patterns first
+    # Use the dedicated 'ruff_violations' list from the metrics
+    linter_analysis = analyze_linter_patterns(metrics['code_quality']['ruff_violations'])
+
     # Create actionable tasks for the most impactful patterns
     tasks = []
-    for i, pattern in enumerate(pep8_analysis['top_patterns']):
+    for i, pattern in enumerate(linter_analysis['top_patterns']):
         # Calculate impact score (combining frequency and file spread)
         impact_score = pattern['count'] * pattern['files_affected']
-        
+
         # Create specific remediation task
         tasks.append({
             'id': f'MAINT-00{i+1}',
@@ -444,6 +451,6 @@ def prioritize_maintenance_tasks(metrics: Dict) -> List[Dict]:
             'estimated_effort': min(5, pattern['count'] // 100 + 1), # Simple heuristic for effort
             'priority': i + 1
         })
-    
+
     # Sort by priority (lowest number = highest priority)
     return sorted(tasks, key=lambda x: x['priority'])

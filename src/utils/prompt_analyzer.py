@@ -31,17 +31,17 @@ class PromptAnalyzer:
         """
         word_count = len(prompt.split())
         sentence_count = len(re.findall(r'[.!?]+', prompt))
-        
+
         prompt_lower = prompt.lower()
-        domain_scores = {domain: sum(1 for kw in keywords if kw in prompt_lower) 
+        domain_scores = {domain: sum(1 for kw in keywords if kw in prompt_lower)
                        for domain, keywords in self.domain_keywords.items()}
-        
+
         # Determine primary domain based on highest score
         primary_domain = max(domain_scores, key=domain_scores.get) if max(domain_scores.values()) > 0 else None
-        
+
         # Simple complexity score calculation
         complexity_score = min(1.0, word_count / 500 + sentence_count / 20)
-        
+
         return {
             'complexity_score': complexity_score,
             'primary_domain': primary_domain,
@@ -69,34 +69,34 @@ class PromptAnalyzer:
 
         prompt_lower = prompt.lower()
         score = 0.0
-        
+
         for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
             keyword_pos = prompt_lower.find(keyword)
             if keyword_pos != -1:
                 # Boost score if keyword appears early (more likely primary intent).
                 positional_boost = 1.0 + (0.5 * (1.0 - min(keyword_pos / 200, 1.0)))
                 negated_weight_multiplier = 1.0
-                
+
                 # Check for negations *before* the keyword within the specified proximity
                 search_window_start = max(0, keyword_pos - negation_proximity)
                 search_window = prompt_lower[search_window_start:keyword_pos]
-                
+
                 for pattern, penalty in NEGATION_PATTERNS:
                     if re.search(pattern, search_window):
                         negated_weight_multiplier = penalty # Apply the penalty
                         break # Apply only one negation penalty per keyword match
-                
+
                 # Apply both positional boost and negation multiplier
                 score += weight * positional_boost * negated_weight_multiplier
-        
+
         # Additional heuristic boosts
         if ("code" in prompt_lower or "program" in prompt_lower or "script" in prompt_lower) and \
            ("analyze" in prompt_lower or "improve" in prompt_lower or "refactor" in prompt_lower or "evaluate" in prompt_lower):
             score += 0.15
-        
+
         if "project chimera" in prompt_lower and ("analyze" in prompt_lower or "improve" in prompt_lower):
             score += 0.10
-        
+
         # Explicit phrases that strongly indicate self-analysis
         explicit_phrases = [
             "analyze the entire Project Chimera codebase",
@@ -106,7 +106,7 @@ class PromptAnalyzer:
         ]
         if any(phrase in prompt_lower for phrase in explicit_phrases):
             score = max(score, 0.92) # Ensure these phrases trigger self-analysis
-        
+
         # Boost for multiple keyword matches
         found_keywords_count = sum(1 for kw in SELF_ANALYSIS_KEYWORDS if kw in prompt_lower)
         if found_keywords_count > 1:
@@ -120,10 +120,10 @@ class PromptAnalyzer:
         """
         Recommends a domain/framework based on keywords in the user prompt,
         incorporating negation awareness and proximity scoring.
-        
+
         Args:
             user_prompt: The user's input prompt.
-            
+
         Returns:
             The recommended domain name, or None if no strong match is found.
         """
@@ -147,7 +147,7 @@ class PromptAnalyzer:
                 # Find all occurrences of the keyword
                 for match in re.finditer(r'\b' + re.escape(keyword_lower) + r'\b', prompt_lower):
                     keyword_start_pos = match.start()
-                    
+
                     # Check for negations *before* the keyword within proximity
                     negated = False
                     search_window_start = max(0, keyword_start_pos - NEGATION_PROXIMITY)
@@ -158,7 +158,7 @@ class PromptAnalyzer:
                             negated = True
                             score += (DEFAULT_KEYWORD_WEIGHT * (1 - penalty)) # Reduce score by penalty
                             break # Apply only one negation penalty per keyword match
-                    
+
                     if not negated:
                         score += DEFAULT_KEYWORD_WEIGHT # Add full weight if not negated
 
