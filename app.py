@@ -199,7 +199,6 @@ def generate_markdown_report(user_prompt: str, final_answer: Any, intermediate_s
     if isinstance(final_answer, dict):
         md_content += "```json\n"
         md_content += json.dumps(final_answer, indent=2)
-        md_content += "\n```\n\n"
     else:
         md_content += f"{final_answer}\n\n"
     md_content += "---\n\n"
@@ -1680,56 +1679,64 @@ if st.session_state.debate_ran:
         )
     # --- END MODIFICATION ---
 
-    if st.session_state.last_config_params.get("domain") == "Software Engineering":
-        parsed_llm_output: LLMOutput
+    # Determine the domain that was actually used for the debate
+    actual_debate_domain = st.session_state.last_config_params.get("domain")
+
+    if actual_debate_domain == "Software Engineering":
+        st.subheader("Structured Summary")
+        parsed_llm_output_dict: Dict[str, Any] # Use dict to store the parsed output from the parser
         malformed_blocks_from_parser = []
         
         raw_output_data = st.session_state.final_answer_output
 
-        if isinstance(raw_output_data, list):
-            if not raw_output_data:
-                st.session_state.final_answer_output = {
-                    "COMMIT_MESSAGE": "Debate Failed - No Output",
-                    "RATIONALE": "The LLM parser returned an empty list, indicating no valid output was found.",
-                    "CODE_CHANGES": [],
-                    "malformed_blocks": [{"type": "EMPTY_LIST_OUTPUT", "message": "Parser returned an empty list."}]
-                }
-                st.rerun()
-            else:
-                # If it's a list, assume the first element is the primary output
-                raw_output_data = raw_output_data[0]
-        
         if isinstance(raw_output_data, dict):
             try:
-                # Use model_validate to handle potential Pydantic v2 changes
-                parsed_llm_output = LLMOutput.model_validate(raw_output_data)
-                malformed_blocks_from_parser = raw_output_data.get('malformed_blocks', [])
-            except ValidationError as e:
-                st.error(f"Failed to parse final LLM output into LLMOutput model: {e}")
-                parsed_llm_output = LLMOutput(
-                    commit_message="Parsing Error",
-                    rationale=f"Failed to parse final LLM output into expected structure. Error: {e}", # Corrected here
-                    code_changes=[],
-                    malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": str(raw_output_data)[:500]}] # Changed to use raw_output_data
+                # Use LLMOutputParser for robust parsing and validation
+                parsed_llm_output_dict = LLMOutputParser().parse_and_validate(
+                    json.dumps(raw_output_data), # Pass as string for parser to handle
+                    LLMOutput
                 )
-                malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks)
+                malformed_blocks_from_parser.extend(parsed_llm_output_dict.get('malformed_blocks', []))
+            except Exception as e:
+                st.error(f"Failed to parse final LLMOutput for Software Engineering domain: {e}")
+                parsed_llm_output_dict = {
+                    "COMMIT_MESSAGE": "Parsing Error",
+                    "RATIONALE": f"Failed to parse final LLM output into expected structure. Error: {e}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
+                }
+        elif isinstance(raw_output_data, list) and raw_output_data:
+            # If it's a list, assume the first element is the primary output and try to parse it
+            try:
+                parsed_llm_output_dict = LLMOutputParser().parse_and_validate(
+                    json.dumps(raw_output_data[0]),
+                    LLMOutput
+                )
+                malformed_blocks_from_parser.extend(parsed_llm_output_dict.get('malformed_blocks', []))
+            except Exception as e:
+                st.error(f"Failed to parse list-based LLMOutput for Software Engineering domain: {e}")
+                parsed_llm_output_dict = {
+                    "COMMIT_MESSAGE": "Parsing Error",
+                    "RATIONALE": f"Failed to parse list-based LLM output into expected structure. Error: {e}",
+                    "CODE_CHANGES": [],
+                    "malformed_blocks": [{"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]}]
+                }
         else:
-            st.error(f"Final answer is not a structured dictionary or a list of dictionaries. Raw output type: {type(raw_output_data).__name__}")
-            parsed_llm_output = LLMOutput(
-                commit_message="Error: Output not structured.",
-                rationale=f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}", # Corrected here
-                code_changes=[],
-                malformed_blocks=[{"type": "UI_PARSING_ERROR", "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}", "raw_string_snippet": str(raw_output_data)[:500]}]
-            )
-            malformed_blocks_from_parser.extend(parsed_llm_output.malformed_blocks)
-
+            st.error(f"Final answer for Software Engineering is not a structured dictionary or list. Raw output type: {type(raw_output_data).__name__}")
+            parsed_llm_output_dict = {
+                "COMMIT_MESSAGE": "Error: Output not structured.",
+                "RATIONALE": f"Error: Output not structured. Raw output type: {type(raw_output_data).__name__}",
+                "CODE_CHANGES": [],
+                "malformed_blocks": [{"type": "UI_PARSING_ERROR", "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}", "raw_string_snippet": str(raw_output_data)[:500]}]
+            }
+        
+        # Now use parsed_llm_output_dict for display
         validation_results_by_file = validate_code_output_batch(
-            parsed_llm_output.model_dump(by_alias=True) if isinstance(parsed_llm_output, LLMOutput) else raw_output_data,
+            parsed_llm_output_dict, # Pass the dictionary directly
             st.session_state.get('codebase_context', {})
         )
 
         all_issues = []
-        # Ensure validation_results_by_file is a dict before iterating
         if isinstance(validation_results_by_file, dict):
             for file_issues_list in validation_results_by_file.values():
                 if isinstance(file_issues_list, list):
@@ -1739,11 +1746,10 @@ if st.session_state.debate_ran:
         if isinstance(validation_results_by_file, dict) and 'malformed_blocks' in validation_results_by_file:
             all_malformed_blocks.extend(validation_results_by_file['malformed_blocks'])
 
-        st.subheader("Structured Summary")
         summary_col1, summary_col2 = st.columns(2, gap="medium") # ADDED: gap="medium"
         with summary_col1:
             st.markdown("**Commit Message Suggestion**")
-            st.code(parsed_llm_output.commit_message, language='text')
+            st.code(parsed_llm_output_dict.get("COMMIT_MESSAGE", "N/A"), language='text')
         with summary_col2:
             st.markdown("**Token Usage**")
             total_tokens = st.session_state.intermediate_steps_output.get('Total_Tokens_Used', 0)
@@ -1751,13 +1757,13 @@ if st.session_state.debate_ran:
             st.metric("Total Tokens Consumed", f"{total_tokens:,}")
             st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
         st.markdown("**Rationale**")
-        st.markdown(parsed_llm_output.rationale)
-        if parsed_llm_output.conflict_resolution:
+        st.markdown(parsed_llm_output_dict.get("RATIONALE", "N/A"))
+        if parsed_llm_output_dict.get("CONFLICT_RESOLUTION"):
             st.markdown("**Conflict Resolution**")
-            st.info(parsed_llm_output.conflict_resolution)
-        if parsed_llm_output.unresolved_conflict:
+            st.info(parsed_llm_output_dict["CONFLICT_RESOLUTION"])
+        if parsed_llm_output_dict.get("UNRESOLVED_CONFLICT"):
             st.markdown("**Unresolved Conflict**")
-            st.warning(parsed_llm_output.unresolved_conflict)
+            st.warning(parsed_llm_output_dict["UNRESOLVED_CONFLICT"])
 
         # --- MODIFICATION FOR SUGGESTION 3.2: Structured Validation Report ---
         with st.expander("✅ Validation & Quality Report", expanded=True):
@@ -1804,25 +1810,25 @@ if st.session_state.debate_ran:
         # --- END MODIFICATION ---
         
         st.subheader("Proposed Code Changes")
-        if not parsed_llm_output.code_changes and not all_malformed_blocks:
+        if not parsed_llm_output_dict.get("CODE_CHANGES") and not all_malformed_blocks:
             st.info("No code changes were proposed.")
         
         # --- MODIFICATION FOR SUGGESTION 3.1: Diff View and Truncated Content ---
-        for change in parsed_llm_output.code_changes:
-            with st.expander(f"📝 **{change.file_path}** (`{change.action}`)", expanded=False):
-                st.write(f"**Action:** {change.action}")
-                st.write(f"**File Path:** {change.file_path}")
+        for change in parsed_llm_output_dict.get("CODE_CHANGES", []):
+            with st.expander(f"📝 **{change.get('FILE_PATH', 'N/A')}** (`{change.get('ACTION', 'N/A')}`)", expanded=False):
+                st.write(f"**Action:** {change.get('ACTION', 'N/A')}")
+                st.write(f"**File Path:** {change.get('FILE_PATH', 'N/A')}")
                 
-                if change.action in ['ADD', 'MODIFY']:
-                    if change.action == 'MODIFY':
-                        original_content = st.session_state.codebase_context.get(change.file_path, "")
+                if change.get('ACTION') in ['ADD', 'MODIFY']:
+                    if change.get('ACTION') == 'MODIFY':
+                        original_content = st.session_state.codebase_context.get(change.get('FILE_PATH', 'N/A'), "")
                         if original_content:
                             # Generate diff
                             diff_lines = difflib.unified_diff(
                                 original_content.splitlines(keepends=True),
-                                change.full_content.splitlines(keepends=True),
-                                fromfile=f"a/{change.file_path}",
-                                tofile=f"b/{change.file_path}",
+                                change.get('FULL_CONTENT', '').splitlines(keepends=True),
+                                fromfile=f"a/{change.get('FILE_PATH', 'N/A')}",
+                                tofile=f"b/{change.get('FILE_PATH', 'N/A')}",
                                 lineterm=''
                             )
                             diff_output = "\n".join(diff_lines)
@@ -1831,28 +1837,107 @@ if st.session_state.debate_ran:
                         else:
                             # If original content is missing, show full new content
                             st.write("**New Content:**")
-                            st.code(change.full_content, language='python')
+                            st.code(change.get('FULL_CONTENT', ''), language='python')
                     else: # ADD action
                         st.write("**Content:**")
                         # Truncate for display, provide download for full content
-                        display_content = change.full_content[:1500] + "..." if len(change.full_content) > 1500 else change.full_content
+                        display_content = change.get('FULL_CONTENT', '')[:1500] + "..." if len(change.get('FULL_CONTENT', '')) > 1500 else change.get('FULL_CONTENT', '')
                         st.code(display_content, language='python')
                     
                     st.download_button(
-                        label=f"Download {'File' if change.action == 'ADD' else 'New File Content'}",
-                        data=change.full_content,
-                        file_name=change.file_path,
+                        label=f"Download {'File' if change.get('ACTION') == 'ADD' else 'New File Content'}",
+                        data=change.get('FULL_CONTENT', ''),
+                        file_name=change.get('FILE_PATH', 'N/A'),
                         use_container_width=True,
                         type="secondary",
                         on_click=update_activity_timestamp # ADDED update_activity_timestamp
                     )
 
-                elif change.action == 'REMOVE':
+                elif change.get('ACTION') == 'REMOVE':
                     st.write("**Lines to Remove:**")
-                    st.code("\n".join(change.lines), language='text')
+                    st.code("\n".join(change.get('LINES', [])), language='text')
         # --- END MODIFICATION ---
-        
-    else: # Not Software Engineering domain
+
+    elif actual_debate_domain == "Self-Improvement":
+        st.subheader("Final Synthesized Answer")
+        raw_output_data = st.session_state.final_answer_output
+        malformed_blocks_from_parser = []
+
+        # The output_parser already handles wrapping single suggestions into the full schema.
+        # So, we expect a SelfImprovementAnalysisOutput (versioned wrapper) or SelfImprovementAnalysisOutputV1.
+        parsed_self_analysis_output_dict: Dict[str, Any]
+
+        if isinstance(raw_output_data, dict):
+            try:
+                # Use LLMOutputParser for robust parsing and validation
+                parsed_self_analysis_output_dict = LLMOutputParser().parse_and_validate(
+                    json.dumps(raw_output_data), # Pass as string for parser to handle
+                    SelfImprovementAnalysisOutput
+                )
+                # Extract data and malformed blocks from the parsed dictionary
+                if parsed_self_analysis_output_dict.get("version") == "1.0":
+                    v1_data = parsed_self_analysis_output_dict.get("data", {})
+                    analysis_summary = v1_data.get("ANALYSIS_SUMMARY", "N/A")
+                    impactful_suggestions = v1_data.get("IMPACTFUL_SUGGESTIONS", [])
+                    # Collect malformed blocks from both the wrapper and the inner V1 data
+                    malformed_blocks_from_parser.extend(parsed_self_analysis_output_dict.get("malformed_blocks", []))
+                    malformed_blocks_from_parser.extend(v1_data.get("malformed_blocks", []))
+                else:
+                    # Fallback if version is unexpected or data structure is not as expected
+                    analysis_summary = "Error: Unexpected SelfImprovementAnalysisOutput version or structure."
+                    impactful_suggestions = []
+                    malformed_blocks_from_parser.append({"type": "UNEXPECTED_VERSION_OR_STRUCTURE", "message": analysis_summary, "raw_string_snippet": str(raw_output_data)[:500]})
+
+            except Exception as e: # Catch any parsing/validation errors
+                st.error(f"Failed to parse final Self-Improvement LLM output: {e}")
+                analysis_summary = f"Error parsing Self-Improvement output: {e}"
+                impactful_suggestions = []
+                malformed_blocks_from_parser.append({"type": "UI_PARSING_ERROR", "message": str(e), "raw_string_snippet": str(raw_output_data)[:500]})
+        else:
+            st.error(f"Final answer for Self-Improvement is not a structured dictionary. Raw output type: {type(raw_output_data).__name__}")
+            analysis_summary = f"Error: Output not structured for Self-Improvement. Raw output type: {type(raw_output_data).__name__}"
+            impactful_suggestions = []
+            malformed_blocks_from_parser.append({"type": "UI_PARSING_ERROR", "message": analysis_summary, "raw_string_snippet": str(raw_output_data)[:500]})
+
+        # Display the summary and suggestions
+        st.markdown("**Analysis Summary**")
+        st.markdown(analysis_summary)
+
+        # Add the prominent warning for partial output
+        if "LLM returned a single suggestion item instead of the full analysis." in analysis_summary:
+            st.warning("⚠️ The LLM provided only a partial analysis (a single suggestion) due to potential token limits or reasoning constraints. Consider refining your prompt or increasing the token budget for a more comprehensive report.")
+
+        st.markdown("**Impactful Suggestions**")
+        if not impactful_suggestions:
+            st.info("No specific suggestions were provided in the analysis.")
+        else:
+            for suggestion in impactful_suggestions:
+                with st.expander(f"💡 {suggestion.get('AREA', 'N/A')}: {suggestion.get('PROBLEM', 'N/A')[:80]}...", expanded=False):
+                    st.markdown(f"**Area:** {suggestion.get('AREA', 'N/A')}")
+                    st.markdown(f"**Problem:** {suggestion.get('PROBLEM', 'N/A')}")
+                    st.markdown(f"**Proposed Solution:** {suggestion.get('PROPOSED_SOLUTION', 'N/A')}")
+                    st.markdown(f"**Expected Impact:** {suggestion.get('EXPECTED_IMPACT', 'N/A')}")
+                    
+                    code_changes = suggestion.get('CODE_CHANGES_SUGGESTED', [])
+                    if code_changes:
+                        st.markdown("**Suggested Code Changes:**")
+                        for change in code_changes:
+                            with st.expander(f"📝 {change.get('FILE_PATH', 'N/A')} (`{change.get('ACTION', 'N/A')}`)", expanded=False):
+                                st.write(f"**Action:** {change.get('ACTION', 'N/A')}")
+                                st.write(f"**File Path:** {change.get('FILE_PATH', 'N/A')}")
+                                if change.get('ACTION') in ['ADD', 'MODIFY']:
+                                    st.code(change.get('FULL_CONTENT', ''), language='python')
+                                elif change.get('ACTION') == 'REMOVE':
+                                    st.code("\n".join(change.get('LINES', [])), language='text')
+                    else:
+                        st.info("No specific code changes suggested for this item.")
+
+        # Display malformed blocks if any
+        if malformed_blocks_from_parser:
+            with st.expander("Malformed Blocks (Self-Improvement Output)"):
+                st.json(malformed_blocks_from_parser)
+
+    else: # General domain or other non-SE/Self-Improvement domains
         st.subheader("Final Synthesized Answer")
         # Check if the output is a dictionary containing 'general_output' (from General_Synthesizer)
         if isinstance(st.session_state.final_answer_output, dict) and "general_output" in st.session_state.final_answer_output:

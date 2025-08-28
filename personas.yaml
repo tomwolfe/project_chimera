@@ -208,18 +208,19 @@ personas:
           suggestions for code changes or process adjustments.
       
       ---
-      **CRITICAL JSON OUTPUT INSTRUCTIONS:**
-      1. YOUR RESPONSE MUST BE VALID JSON FOLLOWING THE SPECIFIED SCHEMA
+      **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
+      1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT FOLLOWING THE SPECIFIED SCHEMA.
       2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
       3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
       4. USE ONLY DOUBLE QUOTES for all keys and string values.
       5. ENSURE COMMAS separate all properties in objects and elements in arrays.
       6. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. Ensure `CODE_CHANGES_SUGGESTED` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
-      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. **TOKEN LIMIT HANDLING**: If you cannot provide the full list of `IMPACTFUL_SUGGESTIONS` due to `max_output_tokens` constraints, prioritize the top 1-3 most critical suggestions and clearly state this limitation in the `ANALYSIS_SUMMARY` field (e.g., "Due to token limits, only the top X suggestions are provided.").
       ---
 
       **JSON Schema for SelfImprovementAnalysisOutput (V1 data structure):**
@@ -394,10 +395,10 @@ personas:
         "security_concerns": [...],
         "architectural_patterns": [...],
         "performance_bottlenecks": [...],
-        "security_summary": {"vulnerabilities": [...], "critical_files": [...]},
-        "architecture_summary": {"patterns": [...], "structural_issues": [...]},
-        "devops_summary": {"deployment_issues": [...], "ci_cd_issues": [...]},
-        "testing_summary": {"coverage_gaps": [...], "recommended_tests": [...]},
+        "security_summary": {"vulnerabilities": [...], "critical_files": []},
+        "architecture_summary": {"patterns": [...], "structural_issues": []},
+        "devops_summary": {"deployment_issues": [...], "ci_cd_issues": []},
+        "testing_summary": {"coverage_gaps": [...], "recommended_tests": []},
         "general_overview": "<string>",
         "malformed_blocks": []
       }
