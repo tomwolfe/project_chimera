@@ -4,17 +4,18 @@ import json
 import subprocess
 import ast
 import logging
-from typing import Dict, Any, List, Tuple, Union # ADDED Union import
+from typing import Dict, Any, List, Tuple, Union
 from collections import defaultdict
 from pathlib import Path
 
 # Import existing validation functions to reuse their logic
-# MODIFIED: Import _run_ruff instead of _run_pycodestyle
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
-from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig # NEW IMPORTS
+from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig, DeploymentAnalysisOutput # NEW IMPORTS: DeploymentAnalysisOutput
 import yaml # Added for YAML parsing
 import toml # Added for TOML parsing
 from pydantic import ValidationError # Added for Pydantic validation in parsing
+from src.utils.command_executor import execute_command_safely # Re-import for clarity
+from src.utils.path_utils import PROJECT_ROOT # Re-import for clarity
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +335,167 @@ class ImprovementMetricsCollector:
             malformed_blocks=malformed_blocks
         )
 
+    # NEW METHOD: Collect Deployment Robustness Metrics
+    @classmethod
+    def _collect_deployment_robustness_metrics(cls, codebase_path: str) -> DeploymentAnalysisOutput:
+        """
+        Collects metrics related to deployment robustness by analyzing Dockerfile
+        and production requirements.
+        """
+        deployment_metrics_data = {
+            "dockerfile_present": False,
+            "dockerfile_healthcheck_present": False,
+            "dockerfile_non_root_user": False,
+            "dockerfile_exposed_ports": [],
+            "dockerfile_multi_stage_build": False,
+            "prod_requirements_present": False,
+            "prod_dependency_count": 0,
+            "dev_dependency_overlap_count": 0,
+            "malformed_blocks": []
+        }
+        
+        # 1. Analyze Dockerfile
+        dockerfile_path = Path(codebase_path) / "Dockerfile"
+        if dockerfile_path.exists():
+            deployment_metrics_data["dockerfile_present"] = True
+            try:
+                with open(dockerfile_path, 'r', encoding='utf-8') as f:
+                    dockerfile_content = f.read()
+                
+                if "HEALTHCHECK" in dockerfile_content:
+                    deployment_metrics_data["dockerfile_healthcheck_present"] = True
+                if re.search(r"USER\s+(?!root)", dockerfile_content, re.IGNORECASE):
+                    deployment_metrics_data["dockerfile_non_root_user"] = True
+                
+                exposed_ports = re.findall(r"EXPOSE\s+(\d+)", dockerfile_content)
+                deployment_metrics_data["dockerfile_exposed_ports"] = [int(p) for p in exposed_ports]
+
+                if re.search(r"FROM\s+.*?AS\s+.*?\nFROM", dockerfile_content, re.DOTALL | re.IGNORECASE):
+                    deployment_metrics_data["dockerfile_multi_stage_build"] = True
+
+            except OSError as e:
+                logger.error(f"Error reading Dockerfile {dockerfile_path}: {e}")
+                deployment_metrics_data["malformed_blocks"].append({"type": "DOCKERFILE_READ_ERROR", "message": str(e), "file": str(dockerfile_path)})
+        
+        # 2. Analyze requirements-prod.txt and requirements.txt
+        prod_req_path = Path(codebase_path) / "requirements-prod.txt"
+        dev_req_path = Path(codebase_path) / "requirements.txt"
+
+        prod_deps = set()
+        if prod_req_path.exists():
+            deployment_metrics_data["prod_requirements_present"] = True
+            try:
+                with open(prod_req_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            prod_deps.add(line.split('==')[0].split('>=')[0].split('~=')[0].lower())
+                deployment_metrics_data["prod_dependency_count"] = len(prod_deps)
+            except OSError as e:
+                logger.error(f"Error reading requirements-prod.txt {prod_req_path}: {e}")
+                deployment_metrics_data["malformed_blocks"].append({"type": "PROD_REQ_READ_ERROR", "message": str(e), "file": str(prod_req_path)})
+
+        if dev_req_path.exists() and prod_req_path.exists(): # Only check overlap if both exist
+            dev_deps = set()
+            try:
+                with open(dev_req_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            dev_deps.add(line.split('==')[0].split('>=')[0].split('~=')[0].lower())
+                
+                overlap = prod_deps.intersection(dev_deps)
+                deployment_metrics_data["dev_dependency_overlap_count"] = len(overlap)
+            except OSError as e:
+                logger.error(f"Error reading requirements.txt {dev_req_path}: {e}")
+                deployment_metrics_data["malformed_blocks"].append({"type": "DEV_REQ_READ_ERROR", "message": str(e), "file": str(dev_req_path)})
+
+        return DeploymentAnalysisOutput(**deployment_metrics_data)
+
+    # NEW METHOD: Collect Reasoning Quality Metrics
+    @classmethod
+    def _collect_reasoning_quality_metrics(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Collects metrics related to the quality of the Socratic debate process itself.
+        Assumes `core.py` has been enhanced to log more granular data.
+        """
+        reasoning_metrics = {
+            "total_debate_turns": 0,
+            "unique_personas_involved": 0,
+            "schema_validation_failures_count": 0, # From malformed_blocks
+            "content_misalignment_warnings": 0, # From malformed_blocks
+            "debate_turn_errors": 0, # From malformed_blocks
+            "conflict_resolution_attempts": 0,
+            "conflict_resolution_successes": 0,
+            "unresolved_conflict_present": False,
+            "average_persona_output_tokens": 0.0,
+            "persona_specific_performance": defaultdict(lambda: {"success_rate": 0.0, "schema_failures": 0, "truncations": 0, "total_turns": 0}),
+            "prompt_verbosity_score": 0.0, # Placeholder for future analysis
+            "malformed_blocks_summary": defaultdict(int)
+        }
+
+        # Total debate turns (excluding context/synthesis setup)
+        debate_history = debate_intermediate_steps.get("Debate_History", [])
+        reasoning_metrics["total_debate_turns"] = len(debate_history)
+
+        # Unique personas involved
+        unique_personas = set()
+        for turn in debate_history:
+            if "persona" in turn:
+                unique_personas.add(turn["persona"])
+        reasoning_metrics["unique_personas_involved"] = len(unique_personas)
+
+        # Malformed blocks analysis
+        all_malformed_blocks = debate_intermediate_steps.get("malformed_blocks", [])
+        reasoning_metrics["schema_validation_failures_count"] = sum(1 for b in all_malformed_blocks if b.get("type") == "SCHEMA_VALIDATION_ERROR")
+        reasoning_metrics["content_misalignment_warnings"] = sum(1 for b in all_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT")
+        reasoning_metrics["debate_turn_errors"] = sum(1 for b in all_malformed_blocks if b.get("type") == "DEBATE_TURN_ERROR")
+        
+        for block in all_malformed_blocks:
+            reasoning_metrics["malformed_blocks_summary"][block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
+
+        # Conflict resolution
+        if debate_intermediate_steps.get("Conflict_Resolution_Attempt"):
+            reasoning_metrics["conflict_resolution_attempts"] = 1
+            if debate_intermediate_steps["Conflict_Resolution_Attempt"].get("conflict_resolved"):
+                reasoning_metrics["conflict_resolution_successes"] = 1
+        reasoning_metrics["unresolved_conflict_present"] = bool(debate_intermediate_steps.get("Unresolved_Conflict"))
+
+        # Average persona output tokens (sum of all persona outputs / total turns)
+        total_output_tokens = 0
+        for key, value in debate_intermediate_steps.items():
+            if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_")):
+                total_output_tokens += value
+        
+        if reasoning_metrics["total_debate_turns"] > 0:
+            reasoning_metrics["average_persona_output_tokens"] = total_output_tokens / reasoning_metrics["total_debate_turns"]
+
+        # Persona-specific performance (assuming core.py logs this, or using a simplified heuristic)
+        # This would ideally come from `persona_manager.persona_performance_metrics` if passed through
+        # or from detailed logs in `debate_intermediate_steps`.
+        for persona_name in unique_personas:
+            # Placeholder: In a real scenario, `core.py` would log `persona_name_Success`, `persona_name_SchemaFailures`, etc.
+            # For now, we'll just count malformed blocks associated with a persona.
+            persona_malformed_blocks = [b for b in all_malformed_blocks if b.get("persona") == persona_name]
+            schema_failures = sum(1 for b in persona_malformed_blocks if b.get("type") == "SCHEMA_VALIDATION_ERROR")
+            content_misalignments = sum(1 for b in persona_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT")
+            
+            # Assuming each persona in `debate_history` represents a turn
+            persona_turns = sum(1 for turn in debate_history if turn.get("persona") == persona_name)
+            
+            reasoning_metrics["persona_specific_performance"][persona_name]["total_turns"] = persona_turns
+            reasoning_metrics["persona_specific_performance"][persona_name]["schema_failures"] = schema_failures
+            reasoning_metrics["persona_specific_performance"][persona_name]["truncations"] = 0 # Not easily derivable from current intermediate_steps
+            
+            if persona_turns > 0:
+                reasoning_metrics["persona_specific_performance"][persona_name]["success_rate"] = \
+                    (persona_turns - schema_failures - content_misalignments) / persona_turns
+            else:
+                reasoning_metrics["persona_specific_performance"][persona_name]["success_rate"] = 0.0
+
+        return reasoning_metrics
+
+
     @classmethod
     def collect_all_metrics(cls, codebase_path: str, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -341,7 +503,7 @@ class ImprovementMetricsCollector:
         """
         metrics = {
             "code_quality": {
-                "ruff_issues_count": 0, # MODIFIED: Changed from pep8_issues_count
+                "ruff_issues_count": 0,
                 "complexity_metrics": {
                     "avg_cyclomatic_complexity": 0.0,
                     "avg_loc_per_function": 0.0,
@@ -350,7 +512,7 @@ class ImprovementMetricsCollector:
                 },
                 "code_smells_count": 0,
                 "detailed_issues": [], # To store all collected issues for detailed analysis
-                "ruff_violations": [] # MODIFIED: Changed from pep8_violations
+                "ruff_violations": []
             },
             "security": {
                 "bandit_issues_count": 0,
@@ -359,7 +521,7 @@ class ImprovementMetricsCollector:
             "performance_efficiency": {
                 "token_usage_stats": cls._collect_token_usage_stats(debate_intermediate_steps),
                 "debate_efficiency_summary": cls._analyze_debate_efficiency(debate_intermediate_steps),
-                "potential_bottlenecks_count": 0 # Count of detected potential bottlenecks
+                "potential_bottlenecks_count": 0
             },
             "robustness": {
                 "schema_validation_failures_count": len(debate_intermediate_steps.get("malformed_blocks", [])),
@@ -369,7 +531,9 @@ class ImprovementMetricsCollector:
             "maintainability": {
                 "test_coverage_summary": cls._assess_test_coverage(codebase_path)
             },
-            "configuration_analysis": cls._collect_configuration_analysis(codebase_path).model_dump(by_alias=True) # NEW: Add configuration analysis
+            "configuration_analysis": cls._collect_configuration_analysis(codebase_path).model_dump(by_alias=True), # NEW: Add configuration analysis
+            "deployment_robustness": cls._collect_deployment_robustness_metrics(codebase_path).model_dump(by_alias=True), # NEW: Add deployment robustness analysis
+            "reasoning_quality": cls._collect_reasoning_quality_metrics(debate_intermediate_steps) # NEW: Add reasoning quality metrics
         }
 
         total_functions_across_codebase = 0
@@ -389,7 +553,6 @@ class ImprovementMetricsCollector:
                             content_lines = content.splitlines() # Pass lines for LOC calculation
 
                         # Reuse existing code_validator functions
-                        # MODIFIED: Call _run_ruff instead of _run_pycodestyle
                         ruff_issues = _run_ruff(content, file_path)
                         if ruff_issues:
                             metrics["code_quality"]["ruff_issues_count"] += len(ruff_issues)
@@ -459,13 +622,20 @@ class ImprovementMetricsCollector:
             "malformed_blocks_count": len(debate_intermediate_steps.get("malformed_blocks", [])),
             "conflict_resolution_attempts": 1 if debate_intermediate_steps.get("Conflict_Resolution_Attempt") else 0,
             "unresolved_conflict": bool(debate_intermediate_steps.get("Unresolved_Conflict")),
-            "average_turn_tokens": 0.0
+            "average_turn_tokens": 0.0,
+            "persona_token_breakdown": {} # NEW: Per-persona token usage
         }
 
         total_debate_tokens = debate_intermediate_steps.get("debate_Tokens_Used", 0)
         num_turns = efficiency_summary["num_turns"]
         if num_turns > 0:
             efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
+
+        # NEW: Collect per-persona token usage
+        for key, value in debate_intermediate_steps.items():
+            if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_", "debate_")):
+                persona_name = key.replace("_Tokens_Used", "")
+                efficiency_summary["persona_token_breakdown"][persona_name] = value
 
         return efficiency_summary
 

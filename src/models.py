@@ -74,6 +74,19 @@ class ConfigurationAnalysisOutput(BaseModel):
     pyproject_toml: Optional[PyprojectTomlConfig] = None
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
 
+# NEW MODEL: DeploymentAnalysisOutput
+class DeploymentAnalysisOutput(BaseModel):
+    """Structured output for analyzing deployment robustness."""
+    dockerfile_present: bool = False
+    dockerfile_healthcheck_present: bool = False
+    dockerfile_non_root_user: bool = False
+    dockerfile_exposed_ports: List[int] = Field(default_factory=list)
+    dockerfile_multi_stage_build: bool = False
+    prod_requirements_present: bool = False
+    prod_dependency_count: int = 0
+    dev_dependency_overlap_count: int = 0
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+
 
 # NEW: Pydantic model for Context_Aware_Assistant's output
 class ContextAnalysisOutput(BaseModel):
@@ -89,6 +102,7 @@ class ContextAnalysisOutput(BaseModel):
     testing_summary: Optional[Dict[str, Any]] = Field(None, alias="testing_summary", description="Summary tailored for Test_Engineer.")
     general_overview: Optional[str] = Field(None, alias="general_overview", description="A general high-level overview of the codebase context.")
     configuration_summary: Optional[ConfigurationAnalysisOutput] = Field(None, alias="configuration_summary", description="Structured summary of project configuration files.")
+    deployment_summary: Optional[DeploymentAnalysisOutput] = Field(None, alias="deployment_summary", description="Structured summary of deployment robustness.") # NEW FIELD
 
 
     @model_validator(mode='after')

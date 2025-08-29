@@ -6,7 +6,7 @@ import sys
 import re
 import ast
 import pycodestyle
-import difflib # ADDED for diff generation
+import difflib
 import subprocess
 import tempfile
 import os
@@ -22,7 +22,7 @@ from google.genai import types
 from google.genai.errors import APIError
 import traceback
 from rich.console import Console
-from pydantic import ValidationError # Ensure ValidationError is imported
+from pydantic import ValidationError
 from functools import lru_cache
 import uuid
 
@@ -31,14 +31,14 @@ from src.llm_provider import GeminiProvider
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
-# NEW IMPORT: ConfigurationAnalysisOutput
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput, SelfImprovementAnalysisOutputV1 # Ensure SelfImprovementAnalysisOutputV1 is imported
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput, SelfImprovementAnalysisOutputV1
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
 from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
 from src.persona_manager import PersonaManager
+# NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement.metrics_collector import ImprovementMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 
@@ -87,7 +87,7 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id}
 
         self.initial_prompt = initial_prompt
-        self.codebase_context = codebase_context
+        self.codebase_context = codebase_context or {} # Ensure it's a dict
         self.domain = domain
 
         # Initialize the LLM provider.
@@ -109,8 +109,6 @@ class SocraticDebate:
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning("PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI.")
-            # This fallback should ideally pass DOMAIN_KEYWORDS, but for core.py, it's not directly available.
-            # Assuming PersonaManager's default init handles this or it's always passed from app.py.
             self.persona_manager = PersonaManager({}) # Pass empty dict as fallback for domain_keywords
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
@@ -119,7 +117,6 @@ class SocraticDebate:
             self.persona_sets = self.persona_manager.persona_sets
 
         # Initialize PersonaRouter with all loaded personas AND persona_sets
-        # Ensure PersonaRouter gets the PromptAnalyzer from PersonaManager
         self.persona_router = self.persona_manager.persona_router
         if not self.persona_router: # Fallback if PersonaManager didn't set it up
              self.logger.warning("PersonaRouter not found in PersonaManager. Initializing a new one. This might indicate an issue in PersonaManager setup.")
@@ -467,7 +464,6 @@ class SocraticDebate:
         self._log_with_context("info", "Performing context analysis.")
         try:
             # Pass the context budget for dynamic file selection
-            # FIX: Convert persona_sequence to a tuple for lru_cache compatibility
             relevant_files = self.context_analyzer.find_relevant_files(
                 self.initial_prompt,
                 max_context_tokens=self.phase_budgets["context"],
@@ -904,7 +900,7 @@ class SocraticDebate:
         # As a last resort, convert to a very high-level summary string
         if current_tokens > max_tokens:
             self._log_with_context("warning", "Metrics still too large after truncation. Converting to high-level summary string.")
-            summary_str = f"Overall Code Quality: PEP8 issues: {metrics['code_quality']['ruff_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
+            summary_str = f"Overall Code Quality: Ruff issues: {metrics['code_quality']['ruff_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
                           f"Security Issues: Bandit: {metrics['security']['bandit_issues_count']}, AST: {metrics['security']['ast_security_issues_count']}. " \
                           f"Token Usage: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']} tokens, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. " \
                           f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}, Unresolved conflicts: {metrics['robustness']['unresolved_conflict_present']}."
@@ -1006,7 +1002,6 @@ class SocraticDebate:
                 # Calculate token budget for the prompt content (excluding system prompt and max_output_tokens)
                 # Allocate a portion of the synthesis budget for the prompt content
                 # Use a slightly lower ratio for prompt content to leave more room for LLM output
-                # MODIFIED: Changed 0.6 to 0.5 to give more room for LLM output
                 prompt_content_budget = int(self.phase_budgets["synthesis"] * 0.5)
 
                 # Summarize metrics and debate history to fit the budget
@@ -1033,8 +1028,12 @@ class SocraticDebate:
                 normalized_impact_scores['Robustness'] = min(100, ((schema_failures / MAX_SCHEMA_FAILURES_FOR_NORM) * 100) + unresolved_conflict_score)
 
                 # Reasoning Quality: Higher conflict resolution attempts (implies issues) -> higher impact score
+                # Also consider malformed blocks from content alignment
                 conflict_attempts = metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('conflict_resolution_attempts', 0)
-                normalized_impact_scores['Reasoning Quality'] = min(100, (conflict_attempts / MAX_CONFLICT_ATTEMPTS_FOR_NORM) * 100)
+                content_misalignment_blocks = sum(1 for block in self.intermediate_steps.get("malformed_blocks", []) if block.get("type") == "CONTENT_MISALIGNMENT")
+                reasoning_quality_score = (conflict_attempts * 20) + (content_misalignment_blocks * 10) # Heuristic
+                normalized_impact_scores['Reasoning Quality'] = min(100, reasoning_quality_score)
+
 
                 # Maintainability: Higher code smells -> higher impact score
                 code_smells = metrics.get('code_quality', {}).get('code_smells_count', 0)
@@ -1071,6 +1070,8 @@ class SocraticDebate:
                     ".pre-commit-config.yaml",
                     ".dockerignore", # Also useful for understanding build context
                     ".gitignore", # Also useful for understanding ignored files
+                    "requirements.txt", # For dependency analysis
+                    "requirements-prod.txt", # For production dependency analysis
                 ]
                 for cfg_file in critical_config_files:
                     if cfg_file in self.codebase_context:
@@ -1098,19 +1099,21 @@ class SocraticDebate:
                 Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
 
                 ## Objective Metrics:
+                (These metrics provide an objective overview of the codebase's health and the debate process's efficiency.)
                 {json.dumps(summarized_metrics, indent=2)}
 
                 ## Structured Configuration Analysis:
-                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions.)
+                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions. Pay close attention to CI/CD, pre-commit, and pyproject.toml settings.)
                 ```json
                 {structured_config_analysis_str}
                 ```
 
                 ## Debate History:
+                (This is a summary of the Socratic debate turns. Analyze it for patterns in persona performance, logical consistency, and content alignment. Identify where personas might have struggled or drifted.)
                 {json.dumps(summarized_debate_history, indent=2)}
 
                 ## Current Codebase Files for Reference (if applicable):
-                (These are the files that were considered most relevant to the prompt. You MUST only suggest changes to these files or add new files. DO NOT hallucinate file paths.)
+                (These are the files that were considered most relevant to the prompt, including critical configuration files. You MUST only suggest changes to these files or add new files. DO NOT hallucinate file paths.)
                 {relevant_files_content if relevant_files_content else "No specific codebase files were provided as context for direct modification."}
 
                 CRITICAL REMINDER FOR CODE_CHANGES_SUGGESTED:
@@ -1120,7 +1123,8 @@ class SocraticDebate:
                 - You MUST NOT suggest adding a file if a file with that exact path already exists in the "Current Codebase Files for Reference" section.
                 - Ensure all code snippets within `CODE_CHANGES_SUGGESTED` adhere to PEP8 (line length <= 88).
                 - Prioritize minimal, focused changes.
-                - **CRITICAL: When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`), you MUST explicitly reference the 'Structured Configuration Analysis' provided above. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`. Justify any changes to existing flags or parameters.**
+                - **CRITICAL: When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`, `requirements.txt`, `requirements-prod.txt`), you MUST explicitly reference the 'Structured Configuration Analysis' provided above. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`. Justify any changes to existing flags or parameters by referring to the structured analysis.**
+                - **For test coverage suggestions, focus on proposing the ADDITION of actual test files (e.g., `tests/test_module.py`) with example test cases. Do NOT suggest placeholder CI commands like `echo 'Tests executed successfully.'`; assume the existing `pytest` CI step will correctly execute any new tests and fail if they don't pass.**
                 """
                 # --- END MODIFICATION ---
 

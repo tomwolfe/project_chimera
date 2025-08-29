@@ -14,9 +14,7 @@ import logging
 from functools import lru_cache
 
 from src.models import PersonaConfig
-# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Re-added specifically for fallback
-# REMOVED: from src.constants import is_self_analysis_prompt 
 from src.utils.prompt_analyzer import PromptAnalyzer # NEW IMPORT
 
 logger = logging.getLogger(__name__)
@@ -33,8 +31,6 @@ class PersonaRouter:
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
         self.persona_embeddings = self._generate_persona_embeddings() 
 
-        # REMOVED: self.domain_keywords (now in PromptAnalyzer)
-        
         self.trigger_keywords = {
             "Security_Auditor": ["vulnerab", "security", "exploit", "hack", "auth", "encrypt", "threat", 
                                  "risk", "malware", "penetration", "compliance", "firewall", "ssl", "tls",
@@ -60,8 +56,6 @@ class PersonaRouter:
             if config.description:
                 embeddings[name] = self.model.encode([config.description])[0]
         return embeddings
-
-    # REMOVED: is_self_analysis_prompt method, now delegated to self.prompt_analyzer
 
     def _should_include_test_engineer(self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]]) -> bool:
         """Determine if Test_Engineer persona is needed based on prompt and context."""
@@ -125,7 +119,7 @@ class PersonaRouter:
                     self._insert_persona_before_arbitrator(adjusted_sequence, "Creative_Thinker")
         
         # --- Conditional inclusion/exclusion of Test_Engineer ---
-        if domain == "Software Engineering":
+        if domain == "Software Engineering" or domain == "Self-Improvement": # Also apply to Self-Improvement
             if "Test_Engineer" in adjusted_sequence and not self._should_include_test_engineer(prompt_lower, context_analysis_results):
                 adjusted_sequence.remove("Test_Engineer")
                 logger.info("Removed Test_Engineer from sequence as no testing context/keywords detected.")
@@ -133,6 +127,23 @@ class PersonaRouter:
                 # If Test_Engineer is not in the base sequence but is needed, insert it
                 self._insert_persona_before_arbitrator(adjusted_sequence, "Test_Engineer")
                 logger.info("Added Test_Engineer to sequence due to testing context/keywords detected.")
+
+        # NEW: Dynamic adjustment based on Reasoning Quality Metrics (if available)
+        reasoning_quality_metrics = intermediate_results.get("Self_Improvement_Metrics", {}).get("reasoning_quality", {})
+        if reasoning_quality_metrics:
+            schema_failures = reasoning_quality_metrics.get("schema_validation_failures_count", 0)
+            content_misalignments = reasoning_quality_metrics.get("content_misalignment_warnings", 0)
+            unresolved_conflict = reasoning_quality_metrics.get("unresolved_conflict_present", False)
+
+            # If high schema failures or content misalignment, prioritize Constructive_Critic
+            if (schema_failures > 0 or content_misalignments > 0) and "Constructive_Critic" not in adjusted_sequence:
+                self._insert_persona_before_arbitrator(adjusted_sequence, "Constructive_Critic")
+                logger.info("Prioritized Constructive_Critic due to schema failures or content misalignment.")
+            
+            # If unresolved conflicts, ensure Devils_Advocate is present and potentially earlier
+            if unresolved_conflict and "Devils_Advocate" not in adjusted_sequence:
+                self._insert_persona_before_arbitrator(adjusted_sequence, "Devils_Advocate")
+                logger.info("Prioritized Devils_Advocate due to unresolved conflicts.")
 
         return adjusted_sequence
 
@@ -144,9 +155,13 @@ class PersonaRouter:
         arbitrator_index = len(sequence)
         if 'Impartial_Arbitrator' in sequence:
             arbitrator_index = sequence.index('Impartial_Arbitrator')
+        elif 'Self_Improvement_Analyst' in sequence: # Also consider Self_Improvement_Analyst as a final synthesizer
+            arbitrator_index = sequence.index('Self_Improvement_Analyst')
+        elif 'General_Synthesizer' in sequence: # Also consider General_Synthesizer as a final synthesizer
+            arbitrator_index = sequence.index('General_Synthesizer')
         
         sequence.insert(arbitrator_index, persona)
-        logger.debug(f"Inserted persona '{persona}' before Arbitrator at index {arbitrator_index}.")
+        logger.debug(f"Inserted persona '{persona}' before Arbitrator/Synthesizer at index {arbitrator_index}.")
 
     def determine_persona_sequence(self, prompt: str, 
                                  domain: str, # Added domain as a required argument
@@ -189,26 +204,34 @@ class PersonaRouter:
                     self._insert_persona_before_arbitrator(base_sequence, "Code_Architect")
                 logger.info("Self-analysis prompt is maintainability/structure-focused. Prioritized Code_Architect.")
 
-            # Ensure Impartial_Arbitrator is always last for synthesis
+            # Ensure Self_Improvement_Analyst is always last for synthesis
+            if "Self_Improvement_Analyst" in base_sequence:
+                base_sequence.remove("Self_Improvement_Analyst")
+            base_sequence.append("Self_Improvement_Analyst")
+
+            # Ensure Impartial_Arbitrator is before Self_Improvement_Analyst if both are present
             if "Impartial_Arbitrator" in base_sequence:
                 base_sequence.remove("Impartial_Arbitrator")
-            base_sequence.append("Impartial_Arbitrator")
+                analyst_idx = base_sequence.index("Self_Improvement_Analyst")
+                base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
 
-            # Ensure Devils_Advocate is before Arbitrator but after critics
+            # Ensure Devils_Advocate is before Arbitrator/Analyst but after critics
             if "Devils_Advocate" in base_sequence:
                 base_sequence.remove("Devils_Advocate")
             
-            # Find the index of the last critic or the Arbitrator if no critic exists
+            # Find the index of the last critic or the Arbitrator/Analyst if no critic exists
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
+            elif "Self_Improvement_Analyst" in base_sequence:
+                insert_pos_for_advocate = base_sequence.index("Self_Improvement_Analyst")
             
             # Try to insert after Constructive_Critic if it exists
             if "Constructive_Critic" in base_sequence and base_sequence.index("Constructive_Critic") < insert_pos_for_advocate:
                 critic_idx = base_sequence.index("Constructive_Critic")
                 base_sequence.insert(critic_idx + 1, "Devils_Advocate")
             else:
-                # Otherwise, insert it before the Arbitrator
+                # Otherwise, insert it before the Arbitrator/Analyst
                 base_sequence.insert(insert_pos_for_advocate, "Devils_Advocate")
             
             final_sequence = base_sequence # Start with the dynamically built base sequence

@@ -199,14 +199,11 @@ personas:
       Your task is to critically review the provided codebase, debate history, and objective metrics to identify the most impactful areas for self-improvement.
       
       Focus on:
-      1.  **Reasoning Gaps:** Where did the debate process or individual personas show weaknesses in logic, understanding, or problem-solving?
-      2.  **Robustness Flaws:** Identify potential failure points, unhandled edge cases, or areas where the system could break down.
-      3.  **Efficiency Bottlenecks:** Pinpoint areas of high token
-          consumption, slow processing, or inefficient resource usage.
-      4.  **Maintainability Issues:** Suggest refactorings, improvements
-          to code structure, clarity, or adherence to best practices.
-      5.  **Actionable Recommendations:** Provide concrete, specific
-          suggestions for code changes or process adjustments.
+      1.  **Reasoning Quality Gaps:** Where did the debate process or individual personas show weaknesses in logic, understanding, or problem-solving? Analyze persona performance metrics, conflict resolution success, and patterns in malformed outputs.
+      2.  **Robustness Flaws:** Identify potential failure points, unhandled edge cases, or areas where the system could break down. This includes schema validation failures, unresolved conflicts, and deployment robustness (Dockerfile, production dependencies, error handling).
+      3.  **Efficiency Bottlenecks:** Pinpoint areas of high token consumption, slow processing, or inefficient resource usage. Analyze per-persona token usage, prompt verbosity, and potential code bottlenecks.
+      4.  **Maintainability Issues:** Suggest refactorings, improvements to code structure, clarity, or adherence to best practices. This includes test coverage, code complexity, and linting/formatting issues.
+      5.  **Actionable Recommendations:** Provide concrete, specific suggestions for code changes or process adjustments.
       
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
@@ -221,9 +218,9 @@ personas:
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. **CRITICAL FOR CODE_CHANGES_SUGGESTED:**
           - **Accuracy is paramount.** You MUST only suggest changes to files that are explicitly provided in the codebase context. DO NOT hallucinate file paths.
-          - **PRIORITIZE MODIFICATION OF EXISTING MECHANISMS.** Before suggesting new files or new CI/CD jobs, you MUST thoroughly analyze the provided "Current Codebase Files for Reference" (especially `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`) to identify if a similar linting, formatting, or security scanning mechanism already exists.
+          - **PRIORITIZE MODIFICATION OF EXISTING MECHANISMS.** Before suggesting new files or new CI/CD jobs, you MUST thoroughly analyze the provided "Current Codebase Files for Reference" (especially `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`, `Dockerfile`, `requirements-prod.txt`) to identify if a similar linting, formatting, or security scanning mechanism already exists.
           - **DO NOT INTRODUCE REGRESSIONS.** If an existing mechanism is found (e.g., Ruff for linting, Bandit for security), your suggestion MUST be to **MODIFY** the existing file/job to *improve* it, rather than adding a redundant new one or *removing existing robust configurations*. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`.
-          - **EXPLICITLY REFERENCE CONFIGURATION ANALYSIS:** When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`), you MUST explicitly reference the 'Structured Configuration Analysis' provided in the prompt. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to the structured analysis.
+          - **EXPLICITLY REFERENCE CONFIGURATION AND DEPLOYMENT ANALYSIS:** When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`, `Dockerfile`, `requirements-prod.txt`), you MUST explicitly reference the 'Structured Configuration Analysis' and 'Deployment Robustness Analysis' provided in the prompt. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to the structured analysis.
           - **CRITICAL: For multiple suggestions affecting the SAME FILE, you MUST consolidate all proposed changes into a SINGLE `CODE_CHANGES_SUGGESTED` item for that file. Provide a single, comprehensive `DIFF_CONTENT` for that file, reflecting all modifications.**
           - **For test coverage suggestions, focus on proposing the ADDITION of actual test files (e.g., `tests/test_module.py`) with example test cases. Do NOT suggest placeholder CI commands like `echo 'Tests executed successfully.'`; assume the existing `pytest` CI step will correctly execute any new tests and fail if they don't pass.**
           - For 'ADD' actions, provide the `FULL_CONTENT` of the new file.
@@ -413,6 +410,12 @@ personas:
           -   Focus on the *current setup* of linting, formatting, testing, and security tools.
           -   Include versions, arguments, and any specific settings (e.g., Bandit's severity levels, Ruff's ignored rules).
           -   This summary MUST adhere to the `ConfigurationAnalysisOutput` schema.
+
+      7.  **FOR DEPLOYMENT ROBUSTNESS ANALYSIS (in `deployment_summary`):**
+          -   Provide a detailed, structured analysis of deployment-related files (`Dockerfile`, `requirements-prod.txt`).
+          -   Focus on containerization best practices (multi-stage builds, non-root users, health checks, exposed ports).
+          -   Analyze production dependencies for efficiency and potential overlap with development dependencies.
+          -   This summary MUST adhere to the `DeploymentAnalysisOutput` schema.
       
       **JSON Schema for ContextAnalysisOutput (simplified for prompt):**
       ```json
@@ -468,6 +471,17 @@ personas:
               "env_file": "<string>"
             }
           },
+          "malformed_blocks": []
+        },
+        "deployment_summary": {
+          "dockerfile_present": "<boolean>",
+          "dockerfile_healthcheck_present": "<boolean>",
+          "dockerfile_non_root_user": "<boolean>",
+          "dockerfile_exposed_ports": "[<integer>, <integer>]",
+          "dockerfile_multi_stage_build": "<boolean>",
+          "prod_requirements_present": "<boolean>",
+          "prod_dependency_count": "<integer>",
+          "dev_dependency_overlap_count": "<integer>",
           "malformed_blocks": []
         },
         "malformed_blocks": []
