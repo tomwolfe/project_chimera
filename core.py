@@ -53,6 +53,7 @@ class SocraticDebate:
         "General_Synthesizer": GeneralOutput,
         "Devils_Advocate": ConflictReport,
         "Self_Improvement_Analyst": SelfImprovementAnalysisOutput,
+        # Add other persona-specific schemas here as needed
     }
 
     def __init__(self, initial_prompt: str, api_key: str,
@@ -345,6 +346,108 @@ class SocraticDebate:
             current_progress = max(current_progress, 0.99)
 
         return min(max(0.0, current_progress), 1.0)
+
+    def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig,
+                          prompt_for_llm: str, phase: str,
+                          requested_model_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Executes a single LLM turn for a given persona, handles API calls,
+        parsing, validation, and token tracking.
+        """
+        self._log_with_context("debug", f"Executing LLM turn for {persona_name} in {phase} phase.",
+                               persona=persona_name, phase=phase)
+
+        # Get the appropriate schema model for the persona's output
+        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        self._log_with_context("debug", f"Using schema {output_schema.__name__} for {persona_name}.")
+
+        raw_llm_output = ""
+        input_tokens = 0
+        output_tokens = 0
+        has_schema_error = False
+        is_truncated = False # Assume not truncated initially
+
+        try:
+            # Update status callback to indicate which persona is currently making an LLM call
+            if self.status_callback:
+                self.status_callback(
+                    f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response...",
+                    "running",
+                    self.tokens_used,
+                    self.get_total_estimated_cost(),
+                    progress_pct=self.get_progress_pct(phase),
+                    current_persona_name=persona_name
+                )
+
+            # Call the LLM provider's generate method
+            raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
+                prompt=prompt_for_llm,
+                system_prompt=persona_config.system_prompt,
+                temperature=persona_config.temperature,
+                max_tokens=persona_config.max_tokens,
+                persona_config=persona_config, # Pass full config for potential internal use
+                requested_model_name=requested_model_name or self.model_name
+            )
+
+            # Track token usage immediately after the call
+            self.track_token_usage(phase, input_tokens + output_tokens)
+
+            # Store actual parameters used for this turn in intermediate steps
+            self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = persona_config.temperature
+            self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = persona_config.max_tokens
+
+            # Check for truncation (simple heuristic: if output tokens are close to max_tokens)
+            if output_tokens >= persona_config.max_tokens * 0.95: # 95% of max_tokens
+                is_truncated = True
+                self._log_with_context("warning", f"Output for {persona_name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({persona_config.max_tokens}).")
+
+            # Parse and validate the LLM's raw output
+            parser = LLMOutputParser()
+            parsed_output = parser.parse_and_validate(raw_llm_output, output_schema)
+
+            # Check if any malformed blocks were reported by the parser
+            if parsed_output.get("malformed_blocks"):
+                has_schema_error = True
+                self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
+                self._log_with_context("warning", f"Parser reported malformed blocks for {persona_name}.",
+                                       persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
+
+            # Store the output in intermediate steps
+            self.intermediate_steps[f"{persona_name}_Output"] = parsed_output
+            self.intermediate_steps[f"{persona_name}_Tokens_Used"] = input_tokens + output_tokens
+            self.intermediate_steps[f"{persona_name}_Estimated_Cost_USD"] = self.llm_provider.calculate_usd_cost(input_tokens, output_tokens)
+
+            self._log_with_context("info", f"LLM turn for {persona_name} completed successfully.",
+                                   persona=persona_name, phase=phase,
+                                   input_tokens=input_tokens, output_tokens=output_tokens,
+                                   total_tokens_for_turn=input_tokens + output_tokens)
+            
+            # Record persona performance for adaptive adjustments
+            if self.persona_manager:
+                self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
+
+            return parsed_output
+
+        except (TokenBudgetExceededError, SchemaValidationError, ChimeraError, CircuitBreakerError, LLMProviderError) as e:
+            self._log_with_context("error", f"Error during LLM turn for {persona_name}: {e}",
+                                   persona=persona_name, phase=phase, exc_info=True, original_exception=e)
+            
+            # Record persona performance for adaptive adjustments (failure)
+            if self.persona_manager:
+                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Assume schema error on any exception here
+
+            # Re-raise specific exceptions that should halt the debate or be handled upstream
+            raise e
+        except Exception as e:
+            self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
+                                   persona=persona_name, phase=phase, exc_info=True, original_exception=e)
+            
+            # Record persona performance for adaptive adjustments (failure)
+            if self.persona_manager:
+                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Assume schema error on any exception here
+
+            # Wrap and re-raise as a generic ChimeraError
+            raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
 
     def _initialize_debate_state(self):
         """Initializes or resets the debate's internal state variables."""
@@ -660,11 +763,6 @@ class SocraticDebate:
 
         # For final decision-making, resource constraints, or security vs. performance trade-offs,
         # an arbitrator is key. Also, ensure the main synthesis persona is involved if different.
-        if conflict_report.conflict_type in ["RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE"] or \
-           "Impartial_Arbitrator" in self.all_personas: # Always include Arbitrator if available for final synthesis
-            sub_debate_personas_set.add(main_synthesis_persona)
-
-        # Ensure the synthesis persona for the main debate is also considered if it's not the Arbitrator
         main_synthesis_persona = "Self_Improvement_Analyst" if self.is_self_analysis else \
                                  ("Impartial_Arbitrator" if self.domain == "Software Engineering" else "General_Synthesizer")
         if main_synthesis_persona in self.all_personas and main_synthesis_persona not in sub_debate_personas_set:

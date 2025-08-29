@@ -64,6 +64,8 @@ except (FileNotFoundError, ValueError, IOError) as e:
 
 DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
 CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25)
+# NEW: Max tokens limit from config
+MAX_TOKENS_LIMIT = app_config.get("max_tokens_limit", 64000) # Default to 64000 if not in config
 
 # --- NEW: API Key Validation and Test Functions ---
 def validate_gemini_api_key_format(api_key: str) -> bool:
@@ -90,6 +92,15 @@ def test_gemini_api_key_functional(api_key: str) -> bool:
 # --- NEW: Callback for API Key Input ---
 def on_api_key_change():
     """Callback to validate API key format and update activity timestamp."""
+    # Initialize session state variables if they don't exist (defensive programming)
+    # While _initialize_session_state() should handle this, callbacks can sometimes
+    # run in contexts where session_state might not be fully populated yet,
+    # especially before the widget itself has fully registered its key.
+    if "api_key_input" not in st.session_state:
+        st.session_state.api_key_input = ""
+    if "api_key_valid_format" not in st.session_state:
+        st.session_state.api_key_valid_format = False
+    
     # Access the current value directly from the widget's key in session_state
     api_key_value = st.session_state.api_key_input
     st.session_state.api_key_valid_format = validate_gemini_api_key_format(api_key_value)
@@ -350,6 +361,7 @@ def _initialize_session_state():
 
     if st.session_state.api_key_input:
         st.session_state.api_key_valid_format = validate_gemini_api_key_format(st.session_state.api_key_input)
+
 
     if "user_prompt_input" not in st.session_state or not st.session_state.user_prompt_input:
         default_example_category = list(EXAMPLE_PROMPTS.keys())[0]
@@ -1122,7 +1134,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
             new_max_tokens = st.number_input(
                 "Max Output Tokens",
                 min_value=1,
-                max_value=8192,
+                max_value=MAX_TOKENS_LIMIT, # UPDATED: Using configurable MAX_TOKENS_LIMIT
                 value=persona.max_tokens,
                 step=128,
                 key=f"max_tokens_{p_name}",
