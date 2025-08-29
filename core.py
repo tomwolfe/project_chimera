@@ -801,7 +801,7 @@ class SocraticDebate:
         # As a last resort, convert to a very high-level summary string
         if current_tokens > max_tokens:
             self._log_with_context("warning", "Metrics still too large after truncation. Converting to high-level summary string.")
-            summary_str = f"Overall Code Quality: PEP8 issues: {metrics['code_quality']['pep8_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
+            summary_str = f"Overall Code Quality: PEP8 issues: {metrics['code_quality']['ruff_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
                           f"Security Issues: Bandit: {metrics['security']['bandit_issues_count']}, AST: {metrics['security']['ast_security_issues_count']}. " \
                           f"Token Usage: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']} tokens, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. " \
                           f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}, Unresolved conflicts: {metrics['robustness']['unresolved_conflict_present']}."
@@ -957,16 +957,28 @@ class SocraticDebate:
                 # Ensure unique areas (in case critical_area_threshold added duplicates)
                 top_areas = list(dict.fromkeys(top_areas))
 
-                # --- MODIFICATION: Inject full content of relevant files ---
+                # --- START MODIFICATION: Inject full content of relevant files, ensuring ci.yml is present ---
                 relevant_files_content = ""
+                files_to_include_in_prompt = set()
+
+                # Always include ci.yml for self-improvement tasks
+                ci_yml_path = ".github/workflows/ci.yml"
+                if ci_yml_path in self.codebase_context:
+                    files_to_include_in_prompt.add(ci_yml_path)
+
                 if self.context_analyzer and self.context_analyzer.last_relevant_files:
-                    # Sort relevant files by relevance score (descending) and then by path for consistency
-                    sorted_relevant_files = sorted(self.context_analyzer.last_relevant_files, key=lambda x: (-x[1], x[0]))
-                    for file_path, relevance_score in sorted_relevant_files:
-                        content = self.codebase_context.get(file_path, "")
-                        if content:
-                            # Use Path(file_path).name for display, but full file_path for context
-                            relevant_files_content += f"### Current Content of {file_path} (Relevance: {relevance_score:.2f}):\n```\n{content}\n```\n\n"
+                    # Add other dynamically relevant files
+                    for file_path, _ in self.context_analyzer.last_relevant_files:
+                        files_to_include_in_prompt.add(file_path)
+
+                # Sort for consistent output
+                sorted_files_to_include = sorted(list(files_to_include_in_prompt))
+
+                for file_path in sorted_files_to_include:
+                    content = self.codebase_context.get(file_path, "")
+                    if content:
+                        # Use Path(file_path).name for display, but full file_path for context
+                        relevant_files_content += f"### Current Content of {file_path}:\n```\n{content}\n```\n\n"
                 # --- END MODIFICATION ---
 
                 final_synthesis_prompt_content = f"""
