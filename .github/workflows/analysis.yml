@@ -1,0 +1,49 @@
+# .github/workflows/analysis.yml
+name: Self-Improvement Analysis
+
+on:
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  run_self_analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Cache pip dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install jsonschema # Required for JSON schema validation
+      - name: Run Analysis
+        id: run_analysis
+        run: |
+          # Execute analysis script and capture output
+          python scripts/run_analysis.py > analysis_output.json
+          # Validate the output against a schema
+          python -c "import json; import jsonschema; 
+                     with open('analysis_output.json', 'r') as f: data = json.load(f);
+                     with open('schemas/analysis_schema.json', 'r') as f: schema = json.load(f);
+                     try: jsonschema.validate(instance=data, schema=schema)
+                     except jsonschema.exceptions.ValidationError as e: print(f'JSON Validation Error: {e}'); exit(1)"
+          # If validation passes, upload as artifact
+          echo "::set-output name=analysis_result::analysis_output.json"
+
+      - name: Upload Analysis Artifact
+        uses: actions/upload-artifact@v3
+        if: steps.run_analysis.outputs.analysis_result != ''
+        with:
+          name: analysis-results
+          path: ${{ steps.run_analysis.outputs.analysis_result }}
+
+      - name: Fail build on validation error
+        if: steps.run_analysis.outcome == 'failure'
+        run: exit 1

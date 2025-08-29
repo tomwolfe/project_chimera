@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SelfImprovementAnalysis",
+  "description": "Schema for self-improvement analysis output.",
+  "type": "object",
+  "properties": {
+    "ANALYSIS_SUMMARY": {
+      "description": "Overall assessment of codebase health.",
+      "type": "string"
+    },
+    "IMPACTFUL_SUGGESTIONS": {
+      "description": "List of prioritized self-improvement suggestions.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "AREA": {
+            "description": "Category of the suggestion (Reasoning Quality, Robustness, Efficiency, Maintainability, Security).",
+            "type": "string",
+            "enum": ["Reasoning Quality", "Robustness", "Efficiency", "Maintainability", "Security"]
+          },
+          "PROBLEM": {
+            "description": "Specific issue identified.",
+            "type": "string"
+          },
+          "PROPOSED_SOLUTION": {
+            "description": "Concrete solution to the identified problem.",
+            "type": "string"
+          },
+          "EXPECTED_IMPACT": {
+            "description": "Expected benefits of implementing the solution.",
+            "type": "string"
+          },
+          "CODE_CHANGES_SUGGESTED": {
+            "description": "Details of suggested code modifications.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "FILE_PATH": {"type": "string"},
+                "ACTION": {"type": "string", "enum": ["ADD", "MODIFY", "REMOVE"]},
+                "FULL_CONTENT": {"type": "string"},
+                "DIFF_CONTENT": {"type": "string"},
+                "LINES": {"type": "array", "items": {"type": "string"}}
+              },
+              "required": ["FILE_PATH", "ACTION"]
+            }
+          }
+        },
+        "required": ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT", "CODE_CHANGES_SUGGESTED"]
+      }
+    }
+  },
+  "required": ["ANALYSIS_SUMMARY", "IMPACTFUL_SUGGESTIONS"]
+}
