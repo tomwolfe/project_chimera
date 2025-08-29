@@ -6,7 +6,7 @@ import sys
 import re
 import ast
 import pycodestyle
-import difflib
+import difflib # ADDED for diff generation
 import subprocess
 import tempfile
 import os
@@ -22,7 +22,7 @@ from google.genai import types
 from google.genai.errors import APIError
 import traceback
 from rich.console import Console
-from pydantic import ValidationError
+from pydantic import ValidationError # Ensure ValidationError is imported
 from functools import lru_cache
 import uuid
 
@@ -32,7 +32,7 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
 # NEW IMPORT: ConfigurationAnalysisOutput
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput, SelfImprovementAnalysisOutputV1 # Ensure SelfImprovementAnalysisOutputV1 is imported
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -1160,6 +1160,125 @@ class SocraticDebate:
                 raise e
             return {"error": f"Synthesis turn failed: {e}", "malformed_blocks": [{"type": "SYNTHESIS_ERROR", "message": str(e)}]}
 
+    def _consolidate_self_improvement_code_changes(self, analysis_output: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
+        SelfImprovementAnalysisOutput.
+        """
+        if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
+            return analysis_output
+
+        consolidated_suggestions = []
+        for suggestion in analysis_output["IMPACTFUL_SUGGESTIONS"]:
+            if "CODE_CHANGES_SUGGESTED" not in suggestion or not suggestion["CODE_CHANGES_SUGGESTED"]:
+                consolidated_suggestions.append(suggestion)
+                continue
+
+            file_changes_map = defaultdict(list)
+            for change_data in suggestion["CODE_CHANGES_SUGGESTED"]:
+                try:
+                    # Validate and convert to CodeChange model for easier manipulation
+                    code_change = CodeChange.model_validate(change_data)
+                    file_changes_map[code_change.file_path].append(code_change)
+                except ValidationError as e:
+                    self._log_with_context("warning", f"Malformed CodeChange item during consolidation: {e}. Skipping.",
+                                           raw_change_data=change_data)
+                    # Add to malformed_blocks if not already there
+                    analysis_output.setdefault("malformed_blocks", []).append({
+                        "type": "CODE_CHANGE_CONSOLIDATION_ERROR",
+                        "message": f"Malformed CodeChange item skipped during consolidation: {e}",
+                        "raw_string_snippet": str(change_data)[:500]
+                    })
+                    continue
+
+            new_code_changes_for_suggestion = []
+            for file_path, changes_for_file in file_changes_map.items():
+                if len(changes_for_file) == 1:
+                    new_code_changes_for_suggestion.append(changes_for_file[0].model_dump(by_alias=True))
+                    continue
+
+                # Handle multiple changes for the same file
+                # Prioritize REMOVE, then ADD, then consolidate MODIFY
+                remove_actions = [c for c in changes_for_file if c.action == "REMOVE"]
+                add_actions = [c for c in changes_for_file if c.action == "ADD"]
+                modify_actions = [c for c in changes_for_file if c.action == "MODIFY"]
+
+                if remove_actions:
+                    # If any REMOVE action, assume the file is to be removed.
+                    # Combine all lines to remove if multiple REMOVE actions exist.
+                    all_lines_to_remove = []
+                    for ra in remove_actions:
+                        all_lines_to_remove.extend(ra.lines)
+                    new_code_changes_for_suggestion.append(CodeChange(
+                        FILE_PATH=file_path,
+                        ACTION="REMOVE",
+                        LINES=list(set(all_lines_to_remove)) # Ensure unique lines
+                    ).model_dump(by_alias=True))
+                    self._log_with_context("info", f"Consolidated multiple changes for {file_path} into a single REMOVE action.")
+                elif add_actions:
+                    # If any ADD action, assume the file is to be added.
+                    # Take the content from the last ADD action (or first, depending on preference).
+                    # For simplicity, take the first ADD action's content.
+                    new_code_changes_for_suggestion.append(add_actions[0].model_dump(by_alias=True))
+                    self._log_with_context("info", f"Consolidated multiple changes for {file_path} into a single ADD action.")
+                elif modify_actions:
+                    # Consolidate multiple MODIFY actions into a single diff
+                    original_content = self.codebase_context.get(file_path, "")
+                    
+                    # Determine the final content after all modifications
+                    final_content_for_diff = original_content
+                    last_full_content_provided = None
+                    
+                    # Iterate through modify actions to find the most recent full_content
+                    # or to apply changes if a patch utility were available.
+                    # For this pragmatic approach, we'll take the last full_content if provided.
+                    for mod_change in modify_actions:
+                        if mod_change.full_content is not None:
+                            last_full_content_provided = mod_change.full_content
+                        # If only diff_content is provided, we can't easily combine them without a patch utility.
+                        # We'll rely on the LLM to provide a comprehensive full_content or diff.
+                        # If it provides multiple diffs without full_content, this consolidation will be limited.
+
+                    if last_full_content_provided is not None:
+                        final_content_for_diff = last_full_content_provided
+                    else:
+                        # If no full_content was provided in any MODIFY action,
+                        # and only diffs were given, we cannot reliably generate a new unified diff
+                        # without a patch application utility.
+                        # In this case, we'll log a warning and skip consolidation for this file's MODIFY actions,
+                        # or just take the last diff if available.
+                        self._log_with_context("warning", f"Multiple MODIFY actions for {file_path} without a consolidated FULL_CONTENT. Cannot generate unified diff reliably. Keeping original changes for this file.")
+                        # Re-add original modify actions if we can't consolidate them
+                        new_code_changes_for_suggestion.extend([c.model_dump(by_alias=True) for c in modify_actions])
+                        continue # Skip to next file in file_changes_map
+
+                    # Generate unified diff
+                    diff_lines = difflib.unified_diff(
+                        original_content.splitlines(keepends=True),
+                        final_content_for_diff.splitlines(keepends=True),
+                        fromfile=f"a/{file_path}",
+                        tofile=f"b/{file_path}",
+                        lineterm=''
+                    )
+                    unified_diff_output = "".join(diff_lines)
+
+                    if unified_diff_output.strip():
+                        new_code_changes_for_suggestion.append(CodeChange(
+                            FILE_PATH=file_path,
+                            ACTION="MODIFY",
+                            DIFF_CONTENT=unified_diff_output
+                        ).model_dump(by_alias=True))
+                        self._log_with_context("info", f"Consolidated multiple MODIFY actions for {file_path} into a single DIFF_CONTENT.")
+                    else:
+                        self._log_with_context("info", f"Multiple MODIFY actions for {file_path} resulted in no effective change after consolidation.")
+
+            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
+            consolidated_suggestions.append(suggestion)
+
+        analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
+        return analysis_output
+
+
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
         """Synthesizes the final answer and prepares the intermediate steps for display."""
         final_answer = synthesis_persona_results
@@ -1168,6 +1287,18 @@ class SocraticDebate:
             final_answer = {"general_output": str(final_answer), "malformed_blocks": []}
         if "malformed_blocks" not in final_answer:
             final_answer["malformed_blocks"] = []
+
+        # NEW: Consolidate code changes for SelfImprovementAnalysisOutput
+        # Check if it's a SelfImprovementAnalysisOutput (versioned or V1 direct)
+        if isinstance(final_answer, dict):
+            if final_answer.get("version") == "1.0" and "data" in final_answer:
+                final_answer["data"] = self._consolidate_self_improvement_code_changes(final_answer["data"])
+                self._log_with_context("info", "Self-improvement code changes consolidated (versioned output).")
+            elif "ANALYSIS_SUMMARY" in final_answer and "IMPACTFUL_SUGGESTIONS" in final_answer:
+                # Handle direct V1 output that wasn't wrapped by the parser
+                final_answer = self._consolidate_self_improvement_code_changes(final_answer)
+                self._log_with_context("info", "Self-improvement code changes consolidated (direct V1 output).")
+
 
         self._update_intermediate_steps_with_totals()
         if "malformed_blocks" not in self.intermediate_steps:

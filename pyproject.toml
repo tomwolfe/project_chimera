@@ -8,7 +8,8 @@ line-length = 88
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B", "A", "C4", "DTZ", "ERA", "ISC", "ICN", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TCH", "INT", "ARG", "PERF", "FURB", "RUF"]
+# Added "COM" for trailing commas
+select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B", "A", "C4", "DTZ", "ERA", "ISC", "ICN", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TCH", "INT", "ARG", "PERF", "FURB", "RUF", "COM"]
 ignore = ["D100", "D104", "D107", "ANN101", "ANN002", "ANN003"] # Ignore missing module docstrings, __init__ docstrings, self/cls type hints
 
 [tool.ruff.format]

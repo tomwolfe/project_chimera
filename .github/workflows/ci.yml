@@ -24,13 +24,13 @@ jobs:
         # Install ruff and black explicitly if not in requirements.txt, or ensure they are.
         # For this example, assuming they are in requirements.txt or installed by pre-commit setup.
         # If not, add: pip install ruff black
-    - name: Run Ruff (Linter & Formatter Check)
+    - name: Run Ruff (Linter & Formatter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs
       # Ensure Ruff is configured to fail on issues
       run: |
-        ruff check . --output-format=github
-        ruff format . --check
+        ruff check . --output-format=github --exit-non-zero-on-fix
+        ruff format . --check --exit-non-zero-on-fix
     - name: Run Bandit Security Scan
       # Configure Bandit to fail on high/medium severity issues
       run: |
