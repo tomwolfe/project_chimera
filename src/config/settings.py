@@ -17,8 +17,8 @@ class ChimeraSettings(BaseModel):
     
     # Specific ratios for self-analysis prompts, also normalized.
     # MODIFIED: Adjusted defaults to give more to context and synthesis
-    self_analysis_context_ratio: float = Field(default=0.35, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
-    self_analysis_debate_ratio: float = Field(default=0.50, ge=0.4, le=0.9, description="Proportion of total budget for debate turns during self-analysis.")
+    self_analysis_context_ratio: float = Field(default=0.45, ge=0.1, le=0.6, description="Proportion of total budget for context analysis during self-analysis.")
+    self_analysis_debate_ratio: float = Field(default=0.40, ge=0.4, le=0.9, description="Proportion of total budget for debate turns during self-analysis.")
     self_analysis_synthesis_ratio: float = Field(default=0.15, ge=0.05, le=0.3, description="Proportion of total budget for synthesis during self-analysis.")
     
     # Total token budget for a single Socratic debate run.
@@ -67,8 +67,8 @@ class ChimeraSettings(BaseModel):
         else:
             # Fallback for self-analysis ratios (ensure they sum to 1.0)
             # MODIFIED: Fallback values to match new defaults
-            self.self_analysis_context_ratio = 0.35
-            self.self_analysis_debate_ratio = 0.50
+            self.self_analysis_context_ratio = 0.45
+            self.self_analysis_debate_ratio = 0.40
             self.self_analysis_synthesis_ratio = 0.15
         
         return self

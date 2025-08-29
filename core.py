@@ -13,7 +13,7 @@ import os
 import json
 import logging
 import random
-from pathlib import Path # ADDED: Import Path
+from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
 import numpy as np
@@ -31,7 +31,8 @@ from src.llm_provider import GeminiProvider
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput
+# NEW IMPORT: ConfigurationAnalysisOutput
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -567,6 +568,10 @@ class SocraticDebate:
                     persona_specific_context_str = f"Testing Context Summary:\n{json.dumps(full_context_analysis_output['testing_summary'], indent=2)}"
                 elif full_context_analysis_output.get("general_overview"):
                     persona_specific_context_str = f"General Codebase Overview:\n{full_context_analysis_output['general_overview']}"
+                # NEW: Add structured configuration summary if available
+                if full_context_analysis_output.get("configuration_summary"):
+                    persona_specific_context_str += f"\n\nStructured Configuration Summary:\n{json.dumps(full_context_analysis_output['configuration_summary'], indent=2)}"
+
 
             # Construct the current prompt with the persona-specific context
             current_prompt = f"Initial Problem: {self.initial_prompt}\n\n"
@@ -657,7 +662,7 @@ class SocraticDebate:
         # an arbitrator is key. Also, ensure the main synthesis persona is involved if different.
         if conflict_report.conflict_type in ["RESOURCE_CONSTRAINT", "SECURITY_VS_PERFORMANCE"] or \
            "Impartial_Arbitrator" in self.all_personas: # Always include Arbitrator if available for final synthesis
-            sub_debate_personas_set.add("Impartial_Arbitrator")
+            sub_debate_personas_set.add(main_synthesis_persona)
 
         # Ensure the synthesis persona for the main debate is also considered if it's not the Arbitrator
         main_synthesis_persona = "Self_Improvement_Analyst" if self.is_self_analysis else \
@@ -957,17 +962,24 @@ class SocraticDebate:
                 # Ensure unique areas (in case critical_area_threshold added duplicates)
                 top_areas = list(dict.fromkeys(top_areas))
 
-                # --- START MODIFICATION: Inject full content of relevant files, ensuring ci.yml is present ---
+                # --- START MODIFICATION: Inject full content of relevant files, ensuring ci.yml, pyproject.toml, pre-commit-config.yaml are present ---
                 relevant_files_content = ""
                 files_to_include_in_prompt = set()
 
-                # Always include ci.yml for self-improvement tasks
-                ci_yml_path = ".github/workflows/ci.yml"
-                if ci_yml_path in self.codebase_context:
-                    files_to_include_in_prompt.add(ci_yml_path)
+                # Always include critical config files for self-improvement tasks
+                critical_config_files = [
+                    ".github/workflows/ci.yml",
+                    "pyproject.toml",
+                    ".pre-commit-config.yaml",
+                    ".dockerignore", # Also useful for understanding build context
+                    ".gitignore", # Also useful for understanding ignored files
+                ]
+                for cfg_file in critical_config_files:
+                    if cfg_file in self.codebase_context:
+                        files_to_include_in_prompt.add(cfg_file)
 
                 if self.context_analyzer and self.context_analyzer.last_relevant_files:
-                    # Add other dynamically relevant files
+                    # Add other dynamically relevant files, ensuring no duplicates
                     for file_path, _ in self.context_analyzer.last_relevant_files:
                         files_to_include_in_prompt.add(file_path)
 
@@ -979,13 +991,22 @@ class SocraticDebate:
                     if content:
                         # Use Path(file_path).name for display, but full file_path for context
                         relevant_files_content += f"### Current Content of {file_path}:\n```\n{content}\n```\n\n"
-                # --- END MODIFICATION ---
+                
+                # NEW: Inject structured configuration analysis directly into the prompt
+                structured_config_analysis = self.intermediate_steps.get("Self_Improvement_Metrics", {}).get("configuration_analysis", {})
+                structured_config_analysis_str = json.dumps(structured_config_analysis, indent=2)
 
                 final_synthesis_prompt_content = f"""
                 Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
 
                 ## Objective Metrics:
                 {json.dumps(summarized_metrics, indent=2)}
+
+                ## Structured Configuration Analysis:
+                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions.)
+                ```json
+                {structured_config_analysis_str}
+                ```
 
                 ## Debate History:
                 {json.dumps(summarized_debate_history, indent=2)}
@@ -1001,6 +1022,7 @@ class SocraticDebate:
                 - You MUST NOT suggest adding a file if a file with that exact path already exists in the "Current Codebase Files for Reference" section.
                 - Ensure all code snippets within `CODE_CHANGES_SUGGESTED` adhere to PEP8 (line length <= 88).
                 - Prioritize minimal, focused changes.
+                - **CRITICAL: When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`), you MUST explicitly reference the 'Structured Configuration Analysis' provided above. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`. Justify any changes to existing flags or parameters.**
                 """
                 # --- END MODIFICATION ---
 
@@ -1039,103 +1061,6 @@ class SocraticDebate:
             if isinstance(e, (TokenBudgetExceededError, ChimeraError, CircuitBreakerError, LLMProviderError, SchemaValidationError)):
                 raise e
             return {"error": f"Synthesis turn failed: {e}", "malformed_blocks": [{"type": "SYNTHESIS_ERROR", "message": str(e)}]}
-
-    def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig, prompt: str, phase: str) -> Any:
-        """
-        Executes a single LLM turn for a given persona, handling parsing and validation.
-        Includes specific error handling for SchemaValidationError to trigger circuit breaker.
-        """
-        is_truncated = False
-        has_schema_error = False
-
-        # Use the persona_config passed to this method, which is already adjusted by PersonaManager
-        adjusted_persona_config = persona_config
-
-        # --- START MODIFICATION: Add retry loop for SchemaValidationError ---
-        max_schema_retries = 2
-        original_system_prompt = adjusted_persona_config.system_prompt
-        original_max_tokens = adjusted_persona_config.max_tokens
-
-        for retry_attempt in range(max_schema_retries + 1):
-            try:
-                # Use the dynamically calculated budget for this persona's turn
-                max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(persona_name, persona_config.max_tokens)
-
-                raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
-                    prompt=prompt,
-                    system_prompt=adjusted_persona_config.system_prompt,
-                    temperature=adjusted_persona_config.temperature,
-                    max_tokens=max_output_tokens_for_turn, # Use the dynamically calculated budget
-                    persona_config=adjusted_persona_config,
-                    intermediate_results=self.intermediate_steps,
-                    requested_model_name=self.model_name
-                )
-                self.track_token_usage(phase, input_tokens + output_tokens)
-                self.check_budget(phase, input_tokens + output_tokens, persona_name)
-
-                # NEW: Store actual parameters used for this turn
-                self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = adjusted_persona_config.temperature
-                self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = adjusted_persona_config.max_tokens
-                # --- END MODIFICATION ---
-
-                # Check for truncation (heuristic, can be improved with LLM-specific signals)
-                if output_tokens >= max_output_tokens_for_turn * 0.95: # Use max_output_tokens_for_turn
-                    is_truncated = True
-
-                if persona_name in self.PERSONA_OUTPUT_SCHEMAS:
-                    schema_model = self.PERSONA_OUTPUT_SCHEMAS[persona_name]
-                    parser = LLMOutputParser()
-                    parsed_output = parser.parse_and_validate(raw_llm_output, schema_model)
-
-                    if parsed_output.get("malformed_blocks"):
-                        self._log_with_context("warning", f"LLM output for {persona_name} contained malformed blocks.",
-                                               persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
-                        self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
-
-                    # Check for specific error types from the parser indicating schema adherence issues
-                    if parsed_output.get("error_type") == "LLM_OUTPUT_MALFORMED" or \
-                       any(block.get("type") in ["JSON_EXTRACTION_FAILED", "JSON_DECODE_ERROR", "INVALID_JSON_STRUCTURE", "SCHEMA_VALIDATION_ERROR"] for block in parsed_output.get("malformed_blocks", [])):
-                        has_schema_error = True
-                        # If this is a retry, and it still fails, re-raise. Otherwise, try again.
-                        if retry_attempt < max_schema_retries:
-                            self._log_with_context("warning", f"Schema validation failed for {persona_name} (attempt {retry_attempt+1}/{max_schema_retries+1}). Retrying with stricter JSON prompt.",
-                                                   persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
-                            # Modify system_prompt for retry to emphasize strict JSON adherence
-                            adjusted_persona_config.system_prompt = original_system_prompt + "\n\nCRITICAL: Your output MUST be a single, valid JSON object. DO NOT include any conversational text or markdown fences outside the JSON. STRICTLY adhere to the schema."
-                            # Also, reduce max_tokens to force conciseness, which might help with truncation
-                            adjusted_persona_config.max_tokens = max(512, int(original_max_tokens * 0.75))
-                            continue
-                        else:
-                            # Max retries reached, re-raise the SchemaValidationError
-                            raise SchemaValidationError(
-                                error_type="LLM_OUTPUT_MALFORMED",
-                                field_path="N/A",
-                                invalid_value=raw_llm_output[:500],
-                                details={"persona": persona_name, "raw_output_snippet": raw_llm_output[:500], "malformed_blocks": parsed_output.get("malformed_blocks", [])}
-                            )
-
-                    # If we reach here, parsing and validation were successful for this attempt
-                    self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
-                    return parsed_output
-                else:
-                    self._log_with_context("info", f"Persona {persona_name} is not configured for structured JSON output. Returning raw text.", persona=persona_name)
-                    # Record success for persona performance (even if raw text)
-                    self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
-                    return raw_llm_output
-
-            except (CircuitBreakerError, TokenBudgetExceededError, LLMProviderError) as e:
-                # These are not schema validation errors, re-raise immediately
-                if isinstance(e, TokenBudgetExceededError) and "tokens_needed" in e.details and e.details["tokens_needed"] > max_output_tokens_for_turn: # Use max_output_tokens_for_turn
-                    is_truncated = True
-                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
-                raise e
-            except Exception as e:
-                # Catch all other unexpected errors, record failure, and re-raise as ChimeraError
-                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, has_schema_error)
-                raise ChimeraError(f"An unexpected error occurred during {persona_name}'s turn: {e}",
-                                   details={"persona": persona_name, "traceback": traceback.format_exc()}, original_exception=e) from e
-        raise ChimeraError(f"Exited schema validation retry loop for {persona_name} without a valid output or re-raising an error.")
-        # --- END MODIFICATION ---
 
     def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
         """Synthesizes the final answer and prepares the intermediate steps for display."""

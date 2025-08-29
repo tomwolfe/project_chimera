@@ -26,6 +26,55 @@ class ReasoningFrameworkConfig(BaseModel):
         # This validation is more relevant in core.py where all_personas are known
         return self
 
+# NEW: Pydantic models for detailed configuration analysis
+class CiWorkflowStep(BaseModel):
+    name: str
+    uses: Optional[str] = None
+    runs_commands: Optional[List[str]] = None # List of detected commands/tools
+
+class CiWorkflowJob(BaseModel):
+    steps_summary: List[CiWorkflowStep]
+
+class CiWorkflowConfig(BaseModel):
+    name: Optional[str] = None
+    on_triggers: Optional[Dict[str, Any]] = None
+    jobs: Dict[str, CiWorkflowJob] = Field(default_factory=dict)
+
+class PreCommitHook(BaseModel):
+    repo: str
+    rev: str
+    id: str
+    args: List[str] = Field(default_factory=list)
+
+class RuffConfig(BaseModel):
+    line_length: Optional[int] = None
+    target_version: Optional[str] = None
+    lint_select: Optional[List[str]] = None
+    lint_ignore: Optional[List[str]] = None
+    format_settings: Optional[Dict[str, Any]] = None
+
+class BanditConfig(BaseModel):
+    exclude_dirs: Optional[List[str]] = None
+    severity_level: Optional[str] = None
+    confidence_level: Optional[str] = None
+    skip_checks: Optional[List[str]] = None
+
+class PydanticSettingsConfig(BaseModel):
+    env_file: Optional[str] = None # Example field
+
+class PyprojectTomlConfig(BaseModel):
+    ruff: Optional[RuffConfig] = None
+    bandit: Optional[BanditConfig] = None
+    pydantic_settings: Optional[PydanticSettingsConfig] = None
+
+class ConfigurationAnalysisOutput(BaseModel):
+    """Structured output for analyzing project configuration files."""
+    ci_workflow: Optional[CiWorkflowConfig] = None
+    pre_commit_hooks: List[PreCommitHook] = Field(default_factory=list)
+    pyproject_toml: Optional[PyprojectTomlConfig] = None
+    malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
+
+
 # NEW: Pydantic model for Context_Aware_Assistant's output
 class ContextAnalysisOutput(BaseModel):
     key_modules: List[Dict[str, Any]] = Field(..., alias="key_modules", description="List of important modules/files and their purpose.")
@@ -39,6 +88,7 @@ class ContextAnalysisOutput(BaseModel):
     devops_summary: Optional[Dict[str, Any]] = Field(None, alias="devops_summary", description="Summary tailored for DevOps_Engineer.")
     testing_summary: Optional[Dict[str, Any]] = Field(None, alias="testing_summary", description="Summary tailored for Test_Engineer.")
     general_overview: Optional[str] = Field(None, alias="general_overview", description="A general high-level overview of the codebase context.")
+    configuration_summary: Optional[ConfigurationAnalysisOutput] = Field(None, alias="configuration_summary", description="Structured summary of project configuration files.")
 
 
     @model_validator(mode='after')

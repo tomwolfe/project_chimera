@@ -11,6 +11,10 @@ from pathlib import Path
 # Import existing validation functions to reuse their logic
 # MODIFIED: Import _run_ruff instead of _run_pycodestyle
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
+from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig # NEW IMPORTS
+import yaml # Added for YAML parsing
+import toml # Added for TOML parsing
+from pydantic import ValidationError # Added for Pydantic validation in parsing
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +226,115 @@ class ImprovementMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
 
     @classmethod
+    def _collect_configuration_analysis(cls, codebase_path: str) -> ConfigurationAnalysisOutput: # Return type is now the Pydantic model
+        """
+        Collects structured information about existing tool configurations from
+        critical project configuration files.
+        """
+        config_analysis_data = {
+            "ci_workflow": {},
+            "pre_commit_hooks": [],
+            "pyproject_toml": {}
+        }
+        malformed_blocks = []
+
+        # 1. Analyze .github/workflows/ci.yml
+        ci_yml_path = Path(codebase_path) / ".github/workflows/ci.yml"
+        if ci_yml_path.exists():
+            try:
+                with open(ci_yml_path, 'r', encoding='utf-8') as f:
+                    ci_config_raw = yaml.safe_load(f)
+                    ci_workflow_jobs = {}
+                    for job_name, job_details in ci_config_raw.get("jobs", {}).items():
+                        steps_summary = []
+                        for step in job_details.get("steps", []):
+                            step_name = step.get("name", "Unnamed Step")
+                            step_run = step.get("run")
+                            step_uses = step.get("uses")
+                            
+                            summary_item_data = {"name": step_name}
+                            if step_uses:
+                                summary_item_data["uses"] = step_uses
+                            if step_run:
+                                commands = [cmd.strip() for cmd in step_run.split('\n') if cmd.strip()]
+                                summary_item_data["runs_commands"] = commands
+                            steps_summary.append(CiWorkflowStep(**summary_item_data))
+                        ci_workflow_jobs[job_name] = CiWorkflowJob(steps_summary=steps_summary)
+                    
+                    config_analysis_data["ci_workflow"] = CiWorkflowConfig(
+                        name=ci_config_raw.get("name"),
+                        on_triggers=ci_config_raw.get("on"),
+                        jobs=ci_workflow_jobs
+                    )
+            except (yaml.YAMLError, OSError, ValidationError) as e:
+                logger.error(f"Error parsing CI workflow file {ci_yml_path}: {e}")
+                malformed_blocks.append({"type": "CI_CONFIG_PARSE_ERROR", "message": str(e), "file": str(ci_yml_path)})
+
+        # 2. Analyze .pre-commit-config.yaml
+        pre_commit_path = Path(codebase_path) / ".pre-commit-config.yaml"
+        if pre_commit_path.exists():
+            try:
+                with open(pre_commit_path, 'r', encoding='utf-8') as f:
+                    pre_commit_config_raw = yaml.safe_load(f)
+                    for repo_config in pre_commit_config_raw.get("repos", []):
+                        repo_url = repo_config.get("repo")
+                        repo_rev = repo_config.get("rev")
+                        for hook in repo_config.get("hooks", []):
+                            hook_id = hook.get("id")
+                            hook_args = hook.get("args", [])
+                            config_analysis_data["pre_commit_hooks"].append(
+                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args)
+                            )
+            except (yaml.YAMLError, OSError, ValidationError) as e:
+                logger.error(f"Error parsing pre-commit config file {pre_commit_path}: {e}")
+                malformed_blocks.append({"type": "PRE_COMMIT_CONFIG_PARSE_ERROR", "message": str(e), "file": str(pre_commit_path)})
+
+        # 3. Analyze pyproject.toml
+        pyproject_path = Path(codebase_path) / "pyproject.toml"
+        if pyproject_path.exists():
+            try:
+                with open(pyproject_path, 'r', encoding='utf-8') as f:
+                    pyproject_config_raw = toml.load(f)
+                    pyproject_toml_data = {}
+
+                    # Extract Ruff settings
+                    ruff_tool_config = pyproject_config_raw.get("tool", {}).get("ruff", {})
+                    if ruff_tool_config:
+                        pyproject_toml_data["ruff"] = RuffConfig(
+                            line_length=ruff_tool_config.get("line-length"),
+                            target_version=ruff_tool_config.get("target-version"),
+                            lint_select=ruff_tool_config.get("lint", {}).get("select"),
+                            lint_ignore=ruff_tool_config.get("lint", {}).get("ignore"),
+                            format_settings=ruff_tool_config.get("format")
+                        )
+                    # Extract Bandit settings
+                    bandit_tool_config = pyproject_config_raw.get("tool", {}).get("bandit", {})
+                    if bandit_tool_config:
+                        pyproject_toml_data["bandit"] = BanditConfig(
+                            exclude_dirs=bandit_tool_config.get("exclude_dirs"),
+                            severity_level=bandit_tool_config.get("severity_level"),
+                            confidence_level=bandit_tool_config.get("confidence_level"),
+                            skip_checks=bandit_tool_config.get("skip_checks")
+                        )
+                    # Extract Pydantic settings if present
+                    pydantic_settings_config = pyproject_config_raw.get("tool", {}).get("pydantic-settings", {})
+                    if pydantic_settings_config:
+                        pyproject_toml_data["pydantic_settings"] = PydanticSettingsConfig(**pydantic_settings_config)
+                    
+                    config_analysis_data["pyproject_toml"] = PyprojectTomlConfig(**pyproject_toml_data)
+
+            except (toml.TomlDecodeError, OSError, ValidationError) as e:
+                logger.error(f"Error parsing pyproject.toml file {pyproject_path}: {e}")
+                malformed_blocks.append({"type": "PYPROJECT_CONFIG_PARSE_ERROR", "message": str(e), "file": str(pyproject_path)})
+
+        return ConfigurationAnalysisOutput(
+            ci_workflow=config_analysis_data["ci_workflow"],
+            pre_commit_hooks=config_analysis_data["pre_commit_hooks"],
+            pyproject_toml=config_analysis_data["pyproject_toml"],
+            malformed_blocks=malformed_blocks
+        )
+
+    @classmethod
     def collect_all_metrics(cls, codebase_path: str, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
         """
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
@@ -255,7 +368,8 @@ class ImprovementMetricsCollector:
             },
             "maintainability": {
                 "test_coverage_summary": cls._assess_test_coverage(codebase_path)
-            }
+            },
+            "configuration_analysis": cls._collect_configuration_analysis(codebase_path).model_dump(by_alias=True) # NEW: Add configuration analysis
         }
 
         total_functions_across_codebase = 0
