@@ -31,7 +31,8 @@ from src.llm_provider import GeminiProvider
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput, SelfImprovementAnalysisOutputV1
+# Ensure DeploymentAnalysisOutput is imported
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, ConfigurationAnalysisOutput, SelfImprovementAnalysisOutputV1, DeploymentAnalysisOutput
 from src.config.settings import ChimeraSettings
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -670,6 +671,9 @@ class SocraticDebate:
                 # NEW: Add structured configuration summary if available
                 if full_context_analysis_output.get("configuration_summary"):
                     persona_specific_context_str += f"\n\nStructured Configuration Summary:\n{json.dumps(full_context_analysis_output['configuration_summary'], indent=2)}"
+                # NEW: Add structured deployment summary if available
+                if full_context_analysis_output.get("deployment_summary"):
+                    persona_specific_context_str += f"\n\nStructured Deployment Robustness Analysis:\n{json.dumps(full_context_analysis_output['deployment_summary'], indent=2)}"
 
 
             # Construct the current prompt with the persona-specific context
@@ -687,7 +691,7 @@ class SocraticDebate:
                 output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate")
 
                 # NEW: Content Alignment Validation
-                is_aligned, validation_message = self.content_validator.validate(persona_name, output)
+                is_aligned, validation_message, _ = self.content_validator.validate(persona_name, output) # Get nuanced feedback
                 if not is_aligned:
                     self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
                                            persona=persona_name, validation_message=validation_message)
@@ -851,8 +855,9 @@ class SocraticDebate:
         """
         Intelligently summarizes the metrics dictionary to fit within a token budget.
         Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
+        Ensures critical configuration and deployment analysis are preserved.
         """
-        summarized_metrics = json.loads(json.dumps(metrics))
+        summarized_metrics = json.loads(json.dumps(metrics)) # Deep copy
 
         # Estimate current token count
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
@@ -863,33 +868,97 @@ class SocraticDebate:
 
         self._log_with_context("debug", f"Summarizing metrics for LLM. Current tokens: {current_tokens}, Max: {max_tokens}")
 
-        # Strategy: Aggressively truncate 'detailed_issues' first
+        # --- Prioritize critical sections: configuration_analysis and deployment_robustness ---
+        # Allocate a fixed, generous portion of the budget to these, or ensure they are minimally summarized.
+        CRITICAL_SECTION_TOKEN_BUDGET = int(max_tokens * 0.4) # 40% of the budget for critical sections
+
+        critical_sections_content = {}
+        if 'configuration_analysis' in summarized_metrics:
+            critical_sections_content['configuration_analysis'] = summarized_metrics['configuration_analysis']
+            del summarized_metrics['configuration_analysis'] # Remove temporarily
+        if 'deployment_robustness' in summarized_metrics:
+            critical_sections_content['deployment_robustness'] = summarized_metrics['deployment_robustness']
+            del summarized_metrics['deployment_robustness'] # Remove temporarily
+
+        # Summarize critical sections if they exceed their dedicated budget
+        summarized_critical_sections = {}
+        critical_sections_tokens = self.tokenizer.count_tokens(json.dumps(critical_sections_content))
+
+        if critical_sections_tokens > CRITICAL_SECTION_TOKEN_BUDGET:
+            self._log_with_context("debug", f"Critical sections (config/deployment) exceed dedicated budget. Summarizing.")
+            # This is a simplified summarization. A more advanced one would be persona-aware.
+            for key, content in critical_sections_content.items():
+                if key == 'configuration_analysis' and content:
+                    # Keep high-level info, truncate lists of hooks/steps
+                    summarized_config = {
+                        "ci_workflow": {"name": content.get("ci_workflow", {}).get("name"), "jobs_count": len(content.get("ci_workflow", {}).get("jobs", {}))},
+                        "pre_commit_hooks_count": len(content.get("pre_commit_hooks", [])),
+                        "pyproject_toml_tools": {k: True for k, v in content.get("pyproject_toml", {}).items() if v},
+                    }
+                    summarized_critical_sections[key] = summarized_config
+                elif key == 'deployment_robustness' and content:
+                    summarized_deployment = {
+                        "dockerfile_present": content.get("dockerfile_present"),
+                        "dockerfile_healthcheck_present": content.get("dockerfile_healthcheck_present"),
+                        "dockerfile_non_root_user": content.get("dockerfile_non_root_user"),
+                        "prod_dependency_count": content.get("prod_dependency_count"),
+                        "unpinned_prod_dependencies_count": len(content.get("unpinned_prod_dependencies", [])),
+                    }
+                    summarized_critical_sections[key] = summarized_deployment
+                else:
+                    summarized_critical_sections[key] = f"Summary of {key} (truncated due to token limits)."
+        else:
+            summarized_critical_sections = critical_sections_content # Use full content if it fits
+
+        # Re-insert summarized critical sections
+        summarized_metrics.update(summarized_critical_sections)
+        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+
+        # --- Aggressively truncate 'detailed_issues' first ---
         if 'code_quality' in summarized_metrics and 'detailed_issues' in summarized_metrics['code_quality']:
             original_issue_count = len(summarized_metrics['code_quality']['detailed_issues'])
-            if original_issue_count > 10:
-                summarized_metrics['code_quality']['detailed_issues'] = summarized_metrics['code_quality']['detailed_issues'][:10]
-                self._log_with_context("debug", f"Truncated detailed_issues from {original_issue_count} to 10.")
+            if original_issue_count > 5: # Keep top 5 detailed issues
+                summarized_metrics['code_quality']['detailed_issues'] = summarized_metrics['code_quality']['detailed_issues'][:5]
+                self._log_with_context("debug", f"Truncated detailed_issues from {original_issue_count} to 5.")
                 current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
                 if current_tokens <= max_tokens:
                     return summarized_metrics
+            elif original_issue_count > 0: # If few issues, keep them
+                pass
+            else: # No issues
+                del summarized_metrics['code_quality']['detailed_issues']
+
 
         # Further truncation: Remove less critical detailed metrics if still over budget
-        if 'code_quality' in summarized_metrics and 'complexity_metrics' in summarized_metrics['code_quality']:
-            pass
+        if current_tokens > max_tokens:
+            if 'code_quality' in summarized_metrics and 'ruff_violations' in summarized_metrics['code_quality']:
+                original_ruff_count = len(summarized_metrics['code_quality']['ruff_violations'])
+                if original_ruff_count > 5:
+                    summarized_metrics['code_quality']['ruff_violations'] = summarized_metrics['code_quality']['ruff_violations'][:5]
+                    self._log_with_context("debug", f"Truncated ruff_violations from {original_ruff_count} to 5.")
+                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                    if current_tokens <= max_tokens:
+                        return summarized_metrics
+                elif original_ruff_count == 0:
+                    del summarized_metrics['code_quality']['ruff_violations']
 
         # If still over budget, consider removing entire verbose sections
         if current_tokens > max_tokens:
             if 'code_quality' in summarized_metrics:
-                # Remove detailed_issues entirely if still too large
                 if 'detailed_issues' in summarized_metrics['code_quality']:
                     del summarized_metrics['code_quality']['detailed_issues']
                     self._log_with_context("debug", "Removed detailed_issues entirely.")
                     current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
                     if current_tokens <= max_tokens:
                         return summarized_metrics
+                if 'ruff_violations' in summarized_metrics['code_quality']:
+                    del summarized_metrics['code_quality']['ruff_violations']
+                    self._log_with_context("debug", "Removed ruff_violations entirely.")
+                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                    if current_tokens <= max_tokens:
+                        return summarized_metrics
 
             if 'maintainability' in summarized_metrics and 'test_coverage_summary' in summarized_metrics['maintainability']:
-                # Keep only overall_coverage_percentage if present
                 if 'coverage_details' in summarized_metrics['maintainability']['test_coverage_summary']:
                     del summarized_metrics['maintainability']['test_coverage_summary']['coverage_details']
                     self._log_with_context("debug", "Removed coverage_details.")
@@ -1092,39 +1161,45 @@ class SocraticDebate:
                         relevant_files_content += f"### Current Content of {file_path}:\n```\n{content}\n```\n\n"
                 
                 # NEW: Inject structured configuration analysis directly into the prompt
-                structured_config_analysis = self.intermediate_steps.get("Self_Improvement_Metrics", {}).get("configuration_analysis", {})
+                structured_config_analysis = summarized_metrics.get("configuration_analysis", {}) # Use summarized metrics
                 structured_config_analysis_str = json.dumps(structured_config_analysis, indent=2)
+
+                # NEW: Inject structured deployment robustness analysis directly into the prompt
+                structured_deployment_analysis = summarized_metrics.get("deployment_robustness", {}) # Use summarized metrics
+                structured_deployment_analysis_str = json.dumps(structured_deployment_analysis, indent=2)
+
 
                 final_synthesis_prompt_content = f"""
                 Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
 
                 ## Objective Metrics:
                 (These metrics provide an objective overview of the codebase's health and the debate process's efficiency.)
+                ```json
                 {json.dumps(summarized_metrics, indent=2)}
+                ```
 
                 ## Structured Configuration Analysis:
-                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions. Pay close attention to CI/CD, pre-commit, and pyproject.toml settings.)
+                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions. Pay close attention to CI/CD, pre-commit, and pyproject.toml settings. CRITICAL: Your proposed changes MUST enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to this structured analysis.)
                 ```json
                 {structured_config_analysis_str}
                 ```
 
+                ## Structured Deployment Robustness Analysis:
+                (This is a parsed, structured view of the project's deployment-related files like Dockerfile and requirements-prod.txt. Use this to understand existing deployment practices and dependencies. CRITICAL: Your proposed changes MUST enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to this structured analysis.)
+                ```json
+                {structured_deployment_analysis_str}
+                ```
+
                 ## Debate History:
                 (This is a summary of the Socratic debate turns. Analyze it for patterns in persona performance, logical consistency, and content alignment. Identify where personas might have struggled or drifted.)
+                ```json
                 {json.dumps(summarized_debate_history, indent=2)}
+                ```
 
                 ## Current Codebase Files for Reference (if applicable):
                 (These are the files that were considered most relevant to the prompt, including critical configuration files. You MUST only suggest changes to these files or add new files. DO NOT hallucinate file paths.)
                 {relevant_files_content if relevant_files_content else "No specific codebase files were provided as context for direct modification."}
 
-                CRITICAL REMINDER FOR CODE_CHANGES_SUGGESTED:
-                - For 'MODIFY' actions, you MUST provide the `DIFF_CONTENT` field in standard unified diff format (lines starting with `+`, `-`, or ` `). This diff MUST be generated by comparing your proposed `FULL_CONTENT` against the *actual content of the file provided above*.
-                - Only provide `FULL_CONTENT` for 'ADD' actions, or for very small 'MODIFY' actions (e.g., < 10 lines) where a full content replacement is simpler than a diff.
-                - You MUST NOT suggest modifying a file that was not provided in the "Current Codebase Files for Reference" section.
-                - You MUST NOT suggest adding a file if a file with that exact path already exists in the "Current Codebase Files for Reference" section.
-                - Ensure all code snippets within `CODE_CHANGES_SUGGESTED` adhere to PEP8 (line length <= 88).
-                - Prioritize minimal, focused changes.
-                - **CRITICAL: When proposing changes to existing configuration files (e.g., `.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`, `requirements.txt`, `requirements-prod.txt`), you MUST explicitly reference the 'Structured Configuration Analysis' provided above. Your proposed changes MUST either enhance existing robust configurations or introduce new ones without regressing existing functionality. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`. Justify any changes to existing flags or parameters by referring to the structured analysis.**
-                - **For test coverage suggestions, focus on proposing the ADDITION of actual test files (e.g., `tests/test_module.py`) with example test cases. Do NOT suggest placeholder CI commands like `echo 'Tests executed successfully.'`; assume the existing `pytest` CI step will correctly execute any new tests and fail if they don't pass.**
                 """
                 # --- END MODIFICATION ---
 

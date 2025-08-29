@@ -85,6 +85,7 @@ class DeploymentAnalysisOutput(BaseModel):
     prod_requirements_present: bool = False
     prod_dependency_count: int = 0
     dev_dependency_overlap_count: int = 0
+    unpinned_prod_dependencies: List[str] = Field(default_factory=list) # ADD THIS LINE
     malformed_blocks: List[Dict[str, Any]] = Field(default_factory=list, alias="malformed_blocks")
 
 
