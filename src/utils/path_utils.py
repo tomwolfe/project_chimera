@@ -56,7 +56,7 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
     if not raw_path:
         raise ValueError("File path cannot be empty.")
 
-    sanitized_path_str = re.sub(r'[<>:"|?*\x00-\x1f\x7f]', '', raw_path)
+    sanitized_path_str = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '', raw_path)
     sanitized_path_str = re.sub(r'\.\./', '', sanitized_path_str)
     sanitized_path_str = re.sub(r'//+', '/', sanitized_path_str)
 

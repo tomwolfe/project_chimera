@@ -10,8 +10,8 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError # Ensure ValidationError is imported
 
 # Ensure all relevant models are imported
-from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, \
-    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
+from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, \
+    ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
 
 logger = logging.getLogger(__name__)
 
@@ -374,7 +374,7 @@ class LLMOutputParser:
                 ConflictReport,
                 ConfigurationAnalysisOutput,
                 DeploymentAnalysisOutput,
-                SelfImprovementAnalysisOutput # Added this one
+                SelfImprovementAnalysisOutput
             )
             
             model_map = {
@@ -385,7 +385,7 @@ class LLMOutputParser:
                 "ConflictReport": ConflictReport,
                 "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
                 "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
-                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput # Added this one
+                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput
             }
             
             if schema_model in model_map:
@@ -411,7 +411,7 @@ class LLMOutputParser:
                 parsed_data = json.loads(cleaned_raw_output)
                 extracted_json_str = cleaned_raw_output
             except json.JSONDecodeError:
-                # No start marker found, try markdown blocks on the full cleaned_raw_output
+                # No markers found, try markdown blocks on the full cleaned_raw_output
                 extracted_json_str = self._extract_json_from_markdown(cleaned_raw_output)
                 if not extracted_json_str:
                     # No markdown blocks, try robust extraction on the whole cleaned_raw_output
@@ -457,7 +457,7 @@ class LLMOutputParser:
                 malformed_blocks_list.append({"type": "EMPTY_JSON_LIST", "message": "The LLM returned an empty JSON list."})
                 return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-            # --- NEW LOGIC FOR HANDLING TOP-LEVEL LISTS ---
+            # --- NEW: Handle specific schema types that might return lists ---
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
                 self.logger.warning("LLM returned an array of suggestions instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 data_to_validate = {
@@ -523,7 +523,7 @@ class LLMOutputParser:
                         "conflict_found": True,
                         "malformed_blocks": malformed_blocks_list
                     }
-            elif schema_model == GeneralOutput: # MODIFIED: This block was previously incorrect
+            elif schema_model == GeneralOutput: # MODIFIED: Explicit handling for GeneralOutput
                 transformation_needed = True
                 malformed_blocks_list.append({"type": "TOP_LEVEL_LIST_WRAPPING", "message": f"LLM returned a top-level JSON array, which was wrapped into an object for schema {schema_model.__name__}."})
                 if not parsed_data: # Handle empty list specifically
@@ -566,39 +566,13 @@ class LLMOutputParser:
             malformed_blocks_list.append({"type": "INVALID_JSON_STRUCTURE", "message": f"Expected JSON object or array, but got {type(parsed_data).__name__}."})
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
-        # Handle raw CodeChange output when LLMOutput is expected (and it's not already a full LLMOutput)
-        if schema_model == LLMOutput and isinstance(data_to_validate, dict):
-            is_code_change_like = all(k in data_to_validate for k in ["FILE_PATH", "ACTION"]) and \
-                                  ("FULL_CONTENT" in data_to_validate or "LINES" in data_to_validate)
-            if is_code_change_like and "COMMIT_MESSAGE" not in data_to_validate: # Only wrap if it's a raw CodeChange, not already a full LLMOutput
-                self.logger.warning("LLM output was a raw CodeChange object, but LLMOutput schema was expected. Wrapping it.")
-                file_name = Path(data_to_validate.get("FILE_PATH", "unknown_file")).name
-                action = data_to_validate.get("ACTION", "change").lower()
-                wrapped_data = {
-                    "COMMIT_MESSAGE": f"Feat: {action.capitalize()} {file_name}",
-                    "RATIONALE": f"The LLM generated a direct code change for {file_name} as part of the solution. This was wrapped into the expected LLMOutput format.",
-                    "CODE_CHANGES": [data_to_validate],
-                    "malformed_blocks": malformed_blocks_list
-                }
-                data_to_validate = wrapped_data
-                transformation_needed = True # Mark as transformed
-
         # 4. Validate against schema
         try:
-            if schema_model == SelfImprovementAnalysisOutput:
-                try:
-                    # For Pydantic v2 compatibility (Additional Fix)
-                    validated_output = schema_model.model_validate(data_to_validate)
-                except AttributeError:
-                    # Fall back to v1 if needed
-                    validated_output = schema_model.parse_obj(data_to_validate)
+            # Use model_validate for Pydantic v2, fallback to parse_obj for v1
+            if hasattr(schema_model, 'model_validate'):
+                validated_output = schema_model.model_validate(data_to_validate)
             else:
-                # For Pydantic v2 compatibility (Additional Fix)
-                try:
-                    validated_output = schema_model.model_validate(data_to_validate)
-                except AttributeError:
-                    # Fall back to v1 if needed
-                    validated_output = schema_model.parse_obj(data_to_validate)
+                validated_output = schema_model.parse_obj(data_to_validate)
 
             result_dict = validated_output.model_dump(by_alias=True)
             # Ensure malformed_blocks from parsing are added to the final result
@@ -664,7 +638,7 @@ class LLMOutputParser:
 
         is_single_suggestion_dict = False
         if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-            detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
+            detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
             if detected_suggestion:
                 is_single_suggestion_dict = True
                 partial_data = detected_suggestion
@@ -736,7 +710,11 @@ class LLMOutputParser:
                         malformed_blocks=current_malformed_blocks
                     )
             else:
-                validated_fallback = schema_model.model_validate(fallback_data_for_model)
+                # Use model_validate for Pydantic v2, fallback to parse_obj for v1
+                if hasattr(schema_model, 'model_validate'):
+                    validated_fallback = schema_model.model_validate(fallback_data_for_model)
+                else:
+                    validated_fallback = schema_model.parse_obj(fallback_data_for_model)
 
             return validated_fallback.model_dump(by_alias=True)
         except ValidationError as e:

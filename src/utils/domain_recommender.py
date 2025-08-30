@@ -62,11 +62,6 @@ def recommend_domain_from_keywords(user_prompt: str, domain_keywords: Dict[str, 
             highest_score = score
             best_match = domain
 
-    # Special case: if prompt contains code block indicators but low score, boost SE (from LLM's suggestion)
-    # This acts as a strong fallback for clear coding prompts that might otherwise be misclassified.
-    if highest_score < 1.0 and ("```python" in prompt_lower or ".py" in prompt_lower or "function" in prompt_lower):
-        return "Software Engineering"
-
     # A higher threshold might be needed for more confident recommendations
     # Adjust this based on desired strictness. 1.0 means at least one non-negated keyword match.
     if highest_score >= 1.0:

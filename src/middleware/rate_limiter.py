@@ -17,9 +17,7 @@ class RateLimiter:
     Limits the number of calls within a specified time period.
     """
     
-    # --- FIX START: Corrected argument order ---
     def __init__(self, key_func: Callable, calls: int = 10, period: float = 60.0):
-    # --- FIX END ---
         """
         Args:
             key_func: A function that returns a unique identifier for the caller (e.g., session ID, IP).

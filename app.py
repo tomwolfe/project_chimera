@@ -18,8 +18,7 @@ import google.genai as genai
 from google.genai.errors import APIError
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
-from src.utils import LLMOutputParser, validate_code_output_batch, sanitize_and_validate_file_path
-# MODIFIED: Removed recommend_domain_from_keywords from here, as it's now part of PromptAnalyzer
+from src.utils.output_parser import LLMOutputParser, validate_code_output_batch
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -354,9 +353,9 @@ def _initialize_session_state():
 
     if "session_rate_limiter_instance" not in st.session_state:
         st.session_state.session_rate_limiter_instance = RateLimiter(
+            key_func=lambda: st.session_state._session_id, # FIX: Corrected argument order
             calls=10,
-            period=60.0,
-            key_func=lambda: st.session_state._session_id
+            period=60.0
         )
 
     if st.session_state.api_key_input:
@@ -395,7 +394,7 @@ def sanitize_user_input(prompt: str) -> str:
     
     injection_patterns = [
         (r'(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b', 'INSTRUCTION_OVERRIDE'),
-        (r'(?i)\b(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b', 'DIRECTIVE_PROBING'),
+        (r'(?i)(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b', 'DIRECTIVE_PROBING'),
         (r'(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous', 'IGNORE_PREVIOUS'),
         (r'(?i)(?:act as|pretend to be|roleplay as|you are now|your new role is)\s*[:]?\s*([\w\s]+)', 'ROLE_MANIPULATION'),
         (r'(?i)\b(execute|run|system|shell|bash|cmd|powershell|eval|exec|import\s+os|from\s+subprocess)\b', 'CODE_EXECUTION_ATTEMPT'),
@@ -1575,7 +1574,7 @@ if st.session_state.debate_ran:
             malformed_blocks_from_parser.extend(final_analysis_output.get("malformed_blocks", []))
 
             # Check for the version and extract data accordingly
-            if final_analysis_output.get("version") == "1.0":
+            if final_analysis_output.get("version") == "1.0" and "data" in final_analysis_output:
                 v1_data = final_analysis_output.get("data", {})
                 analysis_summary = v1_data.get("ANALYSIS_SUMMARY", "N/A")
                 impactful_suggestions = v1_data.get("IMPACTFUL_SUGGESTIONS", [])

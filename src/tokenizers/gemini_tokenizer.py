@@ -17,7 +17,6 @@ class GeminiTokenizer(Tokenizer):
     # Values are based on common Gemini model specifications and the provided code's usage.
     # Note: Official Gemini API docs might not always list exact max output tokens for every variant.
     # These are generally accepted values.
-    # --- MODIFIED: Updated max_output_tokens for Gemini 2.5 models to 65536 ---
     MODEL_MAX_OUTPUT_TOKENS = {
         # Gemini 2.5 models (explicitly listed as per app's selectbox)
         "gemini-2.5-flash-lite": 65536,
@@ -27,7 +26,6 @@ class GeminiTokenizer(Tokenizer):
         # Default fallback for any other models or versions
         "default": 65536
     }
-    # --- END MODIFIED ---
     
     def __init__(self, model_name: str = "gemini-2.5-flash-lite", genai_client: Any = None):
         """Initializes the GeminiTokenizer.

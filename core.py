@@ -122,7 +122,7 @@ class SocraticDebate:
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
 
-        # Initialize PersonaRouter with all loaded personas AND persona_sets
+        # Initialize PersonaRouter with all loaded personas and persona_sets
         self.persona_router = self.persona_manager.persona_router
         if not self.persona_router: # Fallback if PersonaManager didn't set it up
              self.logger.warning("PersonaRouter not found in PersonaManager. Initializing a new one. This might indicate an issue in PersonaManager setup.")
