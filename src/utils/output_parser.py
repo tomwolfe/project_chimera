@@ -7,11 +7,11 @@ import sys
 import traceback
 from typing import Dict, Any, List, Optional, Type, Tuple
 from pathlib import Path
-from pydantic import BaseModel, ValidationError # Ensure ValidationError is imported
+from pydantic import BaseModel, ValidationError, field_validator, model_validator, ConfigDict # Ensure BaseModel, ValidationError, field_validator, model_validator, ConfigDict are imported
 
 # Ensure all relevant models are imported
 from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, \
-    ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
+    ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,6 @@ class LLMOutputParser:
 
                 # Now, apply the robust JSON extraction on this block content
                 # This will find the first balanced and valid JSON object/array within the block
-                # IMPORTANT: remove_markdown_fences=False here because the content is already from inside a block
                 extracted_json = self._extract_first_outermost_json(block_content) # Use the robust extractor
                 if extracted_json:
                     self.logger.debug("Successfully extracted and validated JSON from markdown block content.")
@@ -348,6 +347,45 @@ class LLMOutputParser:
 
         return None
 
+    def _parse_with_incremental_repair(self, json_str: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]]]:
+        """Attempts to parse JSON with incremental repair strategies."""
+        repair_log = []
+        current_json_str = json_str
+
+        # Attempt 1: Apply all standard repairs and try to load
+        repaired_text, current_repairs = self._repair_json_string(current_json_str)
+        repair_log.extend([{"action": "initial_repair", "details": r} for r in current_repairs])
+        try:
+            result = json.loads(repaired_text)
+            return result, repair_log
+        except json.JSONDecodeError:
+            self.logger.debug(f"Initial repair failed to parse. Trying further heuristics. Snippet: {repaired_text[:100]}")
+            current_json_str = repaired_text # Update for next steps
+
+        # Attempt 2: Extract largest valid sub-object from the (already repaired) text
+        largest_sub_object_str = self._extract_largest_valid_subobject(current_json_str)
+        if largest_sub_object_str:
+            repair_log.append({"action": "extracted_largest_subobject", "details": "Attempting to parse largest valid JSON fragment."})
+            try:
+                result = json.loads(largest_sub_object_str)
+                return result, repair_log
+            except json.JSONDecodeError:
+                self.logger.debug(f"Largest sub-object extraction failed to parse. Snippet: {largest_sub_object_str[:100]}")
+                pass # Continue to next attempt
+
+        # Attempt 3: Treat as JSON lines (DeepSeek's idea)
+        json_lines_str = self._convert_to_json_lines(current_json_str)
+        if json_lines_str != current_json_str:  # Only if conversion actually happened
+            repair_log.append({"action": "converted_to_json_lines", "details": "Attempting to parse as JSON lines."})
+            try:
+                result = json.loads(json_lines_str)
+                return result, repair_log
+            except json.JSONDecodeError:
+                self.logger.debug(f"JSON lines conversion failed to parse. Snippet: {json_lines_str[:100]}")
+                pass
+
+        return None, repair_log
+
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
@@ -360,23 +398,11 @@ class LLMOutputParser:
         malformed_blocks_list = []
         extracted_json_str = None
         parsed_data = None
-        data_to_validate = None
-        
         transformation_needed = False
 
-        # FIX (Issue 1): Handle case where schema_model is a string (model name) instead of the model class
+        # FIX: Handle case where schema_model is a string (model name) instead of the model class
         if isinstance(schema_model, str):
-            from src.models import (
-                SelfImprovementAnalysisOutputV1,
-                ContextAnalysisOutput,
-                CritiqueOutput,
-                GeneralOutput,
-                ConflictReport,
-                ConfigurationAnalysisOutput,
-                DeploymentAnalysisOutput,
-                SelfImprovementAnalysisOutput
-            )
-            
+            # Dynamically import the model class if it's provided as a string name
             model_map = {
                 "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
                 "ContextAnalysisOutput": ContextAnalysisOutput,
@@ -385,19 +411,19 @@ class LLMOutputParser:
                 "ConflictReport": ConflictReport,
                 "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
                 "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
-                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput
+                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput,
+                "LLMOutput": LLMOutput # Ensure LLMOutput is also mapped
             }
             
             if schema_model in model_map:
                 schema_model = model_map[schema_model]
             else:
                 raise ValueError(f"Unknown schema model: {schema_model}")
-        # End FIX (Issue 1)
-
-        # NEW: Clean raw output first to remove markdown fences and conversational filler
-        cleaned_raw_output = self._clean_llm_output(raw_output)
+        # End FIX
 
         # 1. Attempt to extract JSON string using markers from the cleaned output
+        cleaned_raw_output = self._clean_llm_output(raw_output)
+
         marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
         if marker_extraction_result:
             extracted_json_str, end_marker_found = marker_extraction_result
@@ -450,10 +476,10 @@ class LLMOutputParser:
             return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
         # 3. Handle cases where JSON is a list or a single dict
-        if isinstance(parsed_data, list) and schema_model not in [GeneralOutput]: # GeneralOutput can accept lists directly
+        if isinstance(parsed_data, list):
             transformation_needed = True # A list was returned when a dict was likely expected
             malformed_blocks_list.append({"type": "TOP_LEVEL_LIST_WRAPPING", "message": f"LLM returned a top-level JSON array, which was wrapped into an object for schema {schema_model.__name__}."})
-            if not parsed_data:
+            if not parsed_data: # Handle empty list specifically
                 malformed_blocks_list.append({"type": "EMPTY_JSON_LIST", "message": "The LLM returned an empty JSON list."})
                 return self._create_fallback_output(schema_model, malformed_blocks_list, raw_output)
 
@@ -524,8 +550,6 @@ class LLMOutputParser:
                         "malformed_blocks": malformed_blocks_list
                     }
             elif schema_model == GeneralOutput: # MODIFIED: Explicit handling for GeneralOutput
-                transformation_needed = True
-                malformed_blocks_list.append({"type": "TOP_LEVEL_LIST_WRAPPING", "message": f"LLM returned a top-level JSON array, which was wrapped into an object for schema {schema_model.__name__}."})
                 if not parsed_data: # Handle empty list specifically
                     data_to_validate = {
                         "general_output": "[]", # Represent empty list as string
@@ -551,6 +575,12 @@ class LLMOutputParser:
                         "general_output": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:100]}...",
                         "malformed_blocks": malformed_blocks_list
                     }
+            else:
+                # For other schemas, if it's a list, wrap it in a generic dict structure
+                data_to_validate = {
+                    "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(parsed_data)[:500]}...",
+                    "malformed_blocks": malformed_blocks_list
+                }
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
@@ -639,7 +669,7 @@ class LLMOutputParser:
         is_single_suggestion_dict = False
         if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
             detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
-            if detected_suggestion:
+            if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in partial_data and "ANALYSIS_SUMMARY" not in partial_data:
                 is_single_suggestion_dict = True
                 partial_data = detected_suggestion
 
@@ -686,14 +716,25 @@ class LLMOutputParser:
                 self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
                 fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data]
-        elif schema_model == GeneralOutput: # ADDED: Explicit handling for GeneralOutput
+        elif schema_model == GeneralOutput: # MODIFIED: Explicit handling for GeneralOutput
             fallback_data_for_model["general_output"] = partial_data.get("general_output", error_message_from_partial)
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
+        else:
+            # For other schemas, if it's a list, wrap it in a generic dict structure
+            fallback_data_for_model = {
+                "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(partial_data)[:500]}...",
+                "malformed_blocks": current_malformed_blocks
+            }
 
         try:
             if schema_model == SelfImprovementAnalysisOutput:
                 if "ANALYSIS_SUMMARY" in fallback_data_for_model and "IMPACTFUL_SUGGESTIONS" in fallback_data_for_model:
-                    v1_data = SelfImprovementAnalysisOutputV1.model_validate(fallback_data_for_model)
+                    # Use model_validate for Pydantic v2, fallback to parse_obj for v1
+                    if hasattr(SelfImprovementAnalysisOutputV1, 'model_validate'):
+                        v1_data = SelfImprovementAnalysisOutputV1.model_validate(fallback_data_for_model)
+                    else:
+                        v1_data = SelfImprovementAnalysisOutputV1.parse_obj(fallback_data_for_model)
+                    
                     validated_fallback = SelfImprovementAnalysisOutput(
                         version="1.0",
                         data=v1_data.model_dump(by_alias=True),
