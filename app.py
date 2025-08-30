@@ -18,7 +18,8 @@ import google.genai as genai
 from google.genai.errors import APIError
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
-from src.utils.output_parser import LLMOutputParser, validate_code_output_batch
+from src.utils.output_parser import LLMOutputParser
+from src.utils.code_validator import validate_code_output_batch # CORRECTED IMPORT
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -1269,7 +1270,7 @@ def _run_socratic_debate_process():
                 logger.debug(f"DEBUG - Prompt at start of debate function: {current_user_prompt_for_debate[:100]}...")
                 logger.debug(f"DEBUG - Domain selection logic - Initial domain_for_run: {st.session_state.selected_persona_set}")
                 logger.debug(f"DEBUG - Domain selection logic - Selected example name: {st.session_state.selected_example_name}")
-                logger.debug(f"DEBUG - Domain selection logic - Active example framework hint: {st.session_state.active_example_framework_hint}")
+                logger(f"DEBUG - Domain selection logic - Active example framework hint: {st.session_state.active_example_framework_hint}")
                 logger.debug(f"DEBUG - Domain selection logic - Sidebar selected persona set: {st.session_state.selected_persona_set}")
                 logger.debug(f"DEBUG - Domain selection logic - Final domain_for_run: {domain_for_run}")
 
