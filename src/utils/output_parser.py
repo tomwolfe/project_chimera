@@ -545,8 +545,8 @@ class LLMOutputParser:
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-                # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output_snippet`
-                detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
+                # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output`
+                detected_suggestion = self._detect_potential_suggestion_item(raw_output)
                 if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in data_to_validate and "ANALYSIS_SUMMARY" not in data_to_validate:
                     self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
                     data_to_validate = {
