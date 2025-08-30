@@ -425,7 +425,8 @@ class SocraticDebate:
                 self._log_with_context("error", f"Non-retryable error during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
+                    # FIX: Update record_persona_performance call to match persona_manager.py signature
+                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Non-retryable error: {type(e).__name__}")
                 raise e # Re-raise the specific error
 
             except SchemaValidationError as e: # Catching SchemaValidationError as it's more likely from parse_and_validate
@@ -460,7 +461,8 @@ class SocraticDebate:
                     # If it's the last attempt and it failed, return the fallback JSON
                     self._log_with_context("error", f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.", persona=persona_name)
                     if self.persona_manager:
-                        self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
+                        # FIX: Update record_persona_performance call to match persona_manager.py signature
+                        self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, "Schema validation failed after multiple attempts")
                     return {
                         "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
                         "IMPACTFUL_SUGGESTIONS": [{
@@ -476,7 +478,8 @@ class SocraticDebate:
                 self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
+                    # FIX: Update record_persona_performance call to match persona_manager.py signature
+                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Unexpected error: {type(e).__name__}")
                 raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
 
         # --- End of retry loop ---
@@ -494,16 +497,28 @@ class SocraticDebate:
         
         # Record persona performance for adaptive adjustments
         if self.persona_manager:
-            # is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, output) # This line was causing the error
-            # The `validate` method returns 3 arguments, but `record_persona_performance` expects 5.
-            # The fix for Issue 2 was to remove `nuanced_feedback` from the call in `app.py`.
-            # Here, we need to ensure the call matches the definition in `persona_manager.py`.
-            # The `has_content_misalignment` flag should be passed.
             is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, parsed_output)
-            self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error) # Removed has_content_misalignment
-            # The `has_content_misalignment` flag is determined *after* this call, so it can't be passed here.
-            # The `record_persona_performance` method in `persona_manager.py` needs to be updated to reflect this.
-            # For now, I'll remove `has_content_misalignment` from this call to match the `persona_manager.py` definition.
+            # FIX: Update record_persona_performance call to match persona_manager.py signature
+            # is_valid should be true if both schema validation passed AND content is aligned
+            self.persona_manager.record_persona_performance(persona_name, attempt + 1, parsed_output, is_aligned and not has_schema_error, validation_message)
+            
+            if not is_aligned:
+                has_content_misalignment = True # Set flag
+                self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
+                                       persona=persona_name, validation_message=validation_message)
+                # Add a malformed block to indicate content drift
+                self.intermediate_steps.setdefault("malformed_blocks", []).extend([{
+                    "type": "CONTENT_MISALIGNMENT",
+                    "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
+                    "persona": persona_name,
+                    "raw_string_snippet": str(parsed_output)[:500]
+                }] + nuanced_feedback.get("malformed_blocks", [])) # Include any malformed blocks from content validator
+                
+                # If the output is a dict, we can add a specific field.
+                if isinstance(parsed_output, dict):
+                    parsed_output["content_misalignment_warning"] = validation_message
+                else:
+                    parsed_output = f"WARNING: Content misalignment detected: {validation_message}\n\n{parsed_output}"
 
         return parsed_output
     # --- END MODIFIED METHOD ---
@@ -791,26 +806,6 @@ class SocraticDebate:
             try:
                 output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate", max_output_tokens_for_turn)
 
-                # NEW: Content Alignment Validation
-                is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, output) # Get nuanced feedback
-                if not is_aligned:
-                    has_content_misalignment = True # Set flag
-                    self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
-                                           persona=persona_name, validation_message=validation_message)
-                    # Add a malformed block to indicate content drift
-                    self.intermediate_steps.setdefault("malformed_blocks", []).extend([{
-                        "type": "CONTENT_MISALIGNMENT",
-                        "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
-                        "persona": persona_name,
-                        "raw_string_snippet": str(output)[:500]
-                    }] + nuanced_feedback.get("malformed_blocks", [])) # Include any malformed blocks from content validator
-                    
-                    # If the output is a dict, we can add a specific field.
-                    if isinstance(output, dict):
-                        output["content_misalignment_warning"] = validation_message
-                    else:
-                        output = f"WARNING: Content misalignment detected: {validation_message}\n\n{output}"
-                    
                 # NEW: Check for ConflictReport from Devils_Advocate
                 if persona_name == "Devils_Advocate" and isinstance(output, dict):
                     try:
@@ -1198,14 +1193,19 @@ class SocraticDebate:
         # Special handling for Self_Improvement_Analyst
         if synthesis_persona_name == "Self_Improvement_Analyst":
             # Collect metrics
+            # FIX: Update ImprovementMetricsCollector instantiation to match its __init__ signature
             metrics_collector = ImprovementMetricsCollector(
-                codebase_path=Path(os.getcwd()), # Assuming current working directory is the codebase root
-                debate_intermediate_steps=debate_persona_results # Pass debate_intermediate_steps
+                initial_prompt=self.initial_prompt,
+                debate_history=debate_persona_results,
+                intermediate_steps=self.intermediate_steps,
+                codebase_context=self.codebase_context,
+                tokenizer=self.tokenizer,
+                llm_provider=self.llm_provider,
+                persona_manager=self.persona_manager,
+                content_validator=self.content_validator
             )
-            collected_metrics = metrics_collector.collect_all_metrics(
-                codebase_path=Path(os.getcwd()), # Assuming current working directory is the codebase root
-                debate_intermediate_steps=self.intermediate_steps # Pass the full intermediate steps
-            )
+            # FIX: Call collect_all_metrics without arguments as it uses instance attributes
+            collected_metrics = metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
             # Summarize metrics to fit into the prompt

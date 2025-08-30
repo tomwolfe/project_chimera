@@ -40,7 +40,12 @@ def handle_errors(default_return: Any = None, log_level: str = "ERROR"):
                     original_exception=e
                 )
                 log_method = getattr(logger, log_level.lower())
-                log_method(f"Unstructured error wrapped: {chimera_error.message}", extra=chimera_error.to_dict())
+                # Change this:
+                # log_method(f"Unstructured error wrapped: {chimera_error.message}", extra=chimera_error.to_dict())
+                # To this:
+                error_dict = chimera_error.to_dict()
+                error_dict.pop('message', None)  # Remove 'message' to avoid conflict
+                log_method(f"Unstructured error wrapped: {chimera_error.message}", extra=error_dict)
                 raise chimera_error # Re-raise the wrapped error
         return wrapper
     return decorator

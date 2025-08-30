@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError # Ensure ValidationError is impo
 
 # Ensure all relevant models are imported
 from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, \
-    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput
+    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
 
 logger = logging.getLogger(__name__)
 

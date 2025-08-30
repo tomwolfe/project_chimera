@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any, List, Tuple, Union
 from collections import defaultdict
 from pathlib import Path
+import re
 
 # Import existing validation functions to reuse their logic
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
