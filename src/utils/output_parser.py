@@ -347,45 +347,6 @@ class LLMOutputParser:
 
         return None
 
-    def _parse_with_incremental_repair(self, json_str: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]]]:
-        """Attempts to parse JSON with incremental repair strategies."""
-        repair_log = []
-        current_json_str = json_str
-
-        # Attempt 1: Apply all standard repairs and try to load
-        repaired_text, current_repairs = self._repair_json_string(current_json_str)
-        repair_log.extend([{"action": "initial_repair", "details": r} for r in current_repairs])
-        try:
-            result = json.loads(repaired_text)
-            return result, repair_log
-        except json.JSONDecodeError:
-            self.logger.debug(f"Initial repair failed to parse. Trying further heuristics. Snippet: {repaired_text[:100]}")
-            current_json_str = repaired_text # Update for next steps
-
-        # Attempt 2: Extract largest valid sub-object from the (already repaired) text
-        largest_sub_object_str = self._extract_largest_valid_subobject(current_json_str)
-        if largest_sub_object_str:
-            repair_log.append({"action": "extracted_largest_subobject", "details": "Attempting to parse largest valid JSON fragment."})
-            try:
-                result = json.loads(largest_sub_object_str)
-                return result, repair_log
-            except json.JSONDecodeError:
-                self.logger.debug(f"Largest sub-object extraction failed to parse. Snippet: {largest_sub_object_str[:100]}")
-                pass # Continue to next attempt
-
-        # Attempt 3: Treat as JSON lines (DeepSeek's idea)
-        json_lines_str = self._convert_to_json_lines(current_json_str)
-        if json_lines_str != current_json_str:  # Only if conversion actually happened
-            repair_log.append({"action": "converted_to_json_lines", "details": "Attempting to parse as JSON lines."})
-            try:
-                result = json.loads(json_lines_str)
-                return result, repair_log
-            except json.JSONDecodeError:
-                self.logger.debug(f"JSON lines conversion failed to parse. Snippet: {json_lines_str[:100]}")
-                pass
-
-        return None, repair_log
-
     def parse_and_validate(self, raw_output: str, schema_model: Type[BaseModel]) -> Dict[str, Any]:
         """
         Parse and validate the raw LLM output against a given Pydantic schema.
@@ -584,7 +545,8 @@ class LLMOutputParser:
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-                detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
+                # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output_snippet`
+                detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
                 if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in data_to_validate and "ANALYSIS_SUMMARY" not in data_to_validate:
                     self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
                     data_to_validate = {
@@ -668,7 +630,8 @@ class LLMOutputParser:
 
         is_single_suggestion_dict = False
         if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-            detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
+            # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output_snippet`
+            detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
             if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in partial_data and "ANALYSIS_SUMMARY" not in partial_data:
                 is_single_suggestion_dict = True
                 partial_data = detected_suggestion
