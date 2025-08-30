@@ -398,10 +398,9 @@ class LLMOutputParser:
                 parsed_data = json.loads(cleaned_raw_output)
                 extracted_json_str = cleaned_raw_output
             except json.JSONDecodeError:
-                # No markers found, try markdown blocks on the full cleaned_raw_output
+                # No markdown blocks, try robust extraction on the whole cleaned_raw_output
                 extracted_json_str = self._extract_json_from_markdown(cleaned_raw_output)
                 if not extracted_json_str:
-                    # No markdown blocks, try robust extraction on the whole cleaned_raw_output
                     extracted_json_str = self._extract_first_outermost_json(cleaned_raw_output)
                     if extracted_json_str:
                         transformation_needed = True # If this succeeded, it means initial direct parsing failed
@@ -545,8 +544,8 @@ class LLMOutputParser:
         elif isinstance(parsed_data, dict):
             data_to_validate = parsed_data
             if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-                # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output`
-                detected_suggestion = self._detect_potential_suggestion_item(raw_output)
+                # Use the extracted_json_str for detecting potential single suggestion items
+                detected_suggestion = self._detect_potential_suggestion_item(extracted_json_str)
                 if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in data_to_validate and "ANALYSIS_SUMMARY" not in data_to_validate:
                     self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
                     data_to_validate = {
@@ -601,13 +600,22 @@ class LLMOutputParser:
         current_malformed_blocks = malformed_blocks.copy()
 
         error_message_from_partial = "Failed to generate valid structured output."
-        if isinstance(partial_data, str):
+        
+        # Ensure partial_data is a dictionary for consistent access
+        partial_data_as_dict: Dict[str, Any]
+        if partial_data is None:
+            partial_data_as_dict = {}
+            error_message_from_partial = "No valid JSON data could be extracted or parsed."
+        elif isinstance(partial_data, str):
+            partial_data_as_dict = {} # Cannot reliably convert string to dict for key checks
             error_message_from_partial = f"LLM returned raw string: '{partial_data[:100]}...'" if len(
                 partial_data) > 100 else f"LLM returned raw string: '{partial_data}'"
-        elif not isinstance(partial_data, dict) and partial_data is not None:
+        elif not isinstance(partial_data, dict):
+            partial_data_as_dict = {}
             error_message_from_partial = f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
-        elif partial_data is None:
-            error_message_from_partial = "No valid JSON data could be extracted or parsed."
+        else: # partial_data is already a dict
+            partial_data_as_dict = partial_data
+            error_message_from_partial = "Failed to generate valid structured output." # Default message if no specific error from partial_data
 
         # Add a general error block if not already present
         if not any(block.get("type") == "LLM_OUTPUT_MALFORMED" for block in current_malformed_blocks):
@@ -630,62 +638,58 @@ class LLMOutputParser:
 
         is_single_suggestion_dict = False
         if schema_model in [SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1]:
-            # FIX APPLIED HERE: Changed `extracted_json_str` to `raw_output_snippet`
             detected_suggestion = self._detect_potential_suggestion_item(raw_output_snippet)
-            if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in partial_data and "ANALYSIS_SUMMARY" not in partial_data:
+            if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in partial_data_as_dict and "ANALYSIS_SUMMARY" not in partial_data_as_dict:
                 is_single_suggestion_dict = True
-                partial_data = detected_suggestion
-
-        if not isinstance(partial_data, dict):
-            partial_data = {}
+                partial_data_as_dict = detected_suggestion if detected_suggestion is not None else {}
 
         if schema_model == LLMOutput:
-            fallback_data_for_model["COMMIT_MESSAGE"] = partial_data.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
-            fallback_data_for_model["RATIONALE"] = partial_data.get("RATIONALE", error_message_from_partial)
-            fallback_data_for_model["CODE_CHANGES"] = partial_data.get("CODE_CHANGES", [])
-            fallback_data_for_model["CONFLICT_RESOLUTION"] = partial_data.get("CONFLICT_RESOLUTION")
-            fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data.get("UNRESOLVED_CONFLICT") # Use the copied list
+            fallback_data_for_model["COMMIT_MESSAGE"] = partial_data_as_dict.get("COMMIT_MESSAGE", "LLM_OUTPUT_ERROR")
+            fallback_data_for_model["RATIONALE"] = partial_data_as_dict.get("RATIONALE", error_message_from_partial)
+            fallback_data_for_model["CODE_CHANGES"] = partial_data_as_dict.get("CODE_CHANGES", [])
+            fallback_data_for_model["CONFLICT_RESOLUTION"] = partial_data_as_dict.get("CONFLICT_RESOLUTION")
+            fallback_data_for_model["UNRESOLVED_CONFLICT"] = partial_data_as_dict.get("UNRESOLVED_CONFLICT")
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
-            fallback_data_for_model["malformed_code_change_items"] = partial_data.get("malformed_code_change_items", [])
+            fallback_data_for_model["malformed_code_change_items"] = partial_data_as_dict.get("malformed_code_change_items", [])
         elif schema_model == CritiqueOutput:
-            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data.get("CRITIQUE_SUMMARY", error_message_from_partial)
-            fallback_data_for_model["CRITIQUE_POINTS"] = partial_data.get("CRITIQUE_POINTS", [])
-            fallback_data_for_model["SUGGESTIONS"] = partial_data.get("SUGGESTIONS", [])
+            fallback_data_for_model["CRITIQUE_SUMMARY"] = partial_data_as_dict.get("CRITIQUE_SUMMARY", error_message_from_partial)
+            fallback_data_for_model["CRITIQUE_POINTS"] = partial_data_as_dict.get("CRITIQUE_POINTS", [])
+            fallback_data_for_model["SUGGESTIONS"] = partial_data_as_dict.get("SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == ContextAnalysisOutput:
-            fallback_data_for_model["key_modules"] = partial_data.get("key_modules", [])
-            fallback_data_for_model["security_concerns"] = partial_data.get("security_concerns", [])
-            fallback_data_for_model["architectural_patterns"] = partial_data.get("architectural_patterns", [])
-            fallback_data_for_model["performance_bottlenecks"] = partial_data.get("performance_bottlenecks", [])
-            fallback_data_for_model["security_summary"] = partial_data.get("security_summary", {})
-            fallback_data_for_model["architecture_summary"] = partial_data.get("architecture_summary", {})
-            fallback_data_for_model["devops_summary"] = partial_data.get("devops_summary", {})
-            fallback_data_for_model["testing_summary"] = partial_data.get("testing_summary", {})
-            fallback_data_for_model["general_overview"] = partial_data.get("general_overview", error_message_from_partial)
+            fallback_data_for_model["key_modules"] = partial_data_as_dict.get("key_modules", [])
+            fallback_data_for_model["security_concerns"] = partial_data_as_dict.get("security_concerns", [])
+            fallback_data_for_model["architectural_patterns"] = partial_data_as_dict.get("architectural_patterns", [])
+            fallback_data_for_model["performance_bottlenecks"] = partial_data_as_dict.get("performance_bottlenecks", [])
+            fallback_data_for_model["security_summary"] = partial_data_as_dict.get("security_summary", {})
+            fallback_data_for_model["architecture_summary"] = partial_data_as_dict.get("architecture_summary", {})
+            fallback_data_for_model["devops_summary"] = partial_data_as_dict.get("devops_summary", {})
+            fallback_data_for_model["testing_summary"] = partial_data_as_dict.get("testing_summary", {})
+            fallback_data_for_model["general_overview"] = partial_data_as_dict.get("general_overview", error_message_from_partial)
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == ConflictReport:
-            fallback_data_for_model["conflict_type"] = partial_data.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
-            fallback_data_for_model["summary"] = partial_data.get("summary", error_message_from_partial)
-            fallback_data_for_model["involved_personas"] = partial_data.get("involved_personas", [])
-            fallback_data_for_model["conflicting_outputs_snippet"] = partial_data.get("conflicting_outputs_snippet", "")
-            fallback_data_for_model["proposed_resolution_paths"] = partial_data.get("proposed_resolution_paths", [])
-            fallback_data_for_model["conflict_found"] = partial_data.get("conflict_found", True)
+            fallback_data_for_model["conflict_type"] = partial_data_as_dict.get("conflict_type", "METHODOLOGY_DISAGREEMENT")
+            fallback_data_for_model["summary"] = partial_data_as_dict.get("summary", error_message_from_partial)
+            fallback_data_for_model["involved_personas"] = partial_data_as_dict.get("involved_personas", [])
+            fallback_data_for_model["conflicting_outputs_snippet"] = partial_data_as_dict.get("conflicting_outputs_snippet", "")
+            fallback_data_for_model["proposed_resolution_paths"] = partial_data_as_dict.get("proposed_resolution_paths", [])
+            fallback_data_for_model["conflict_found"] = partial_data_as_dict.get("conflict_found", True)
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == SelfImprovementAnalysisOutput or schema_model == SelfImprovementAnalysisOutputV1:
-            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data.get("ANALYSIS_SUMMARY", error_message_from_partial)
-            fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data.get("IMPACTFUL_SUGGESTIONS", [])
+            fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data_as_dict.get("ANALYSIS_SUMMARY", error_message_from_partial)
+            fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = partial_data_as_dict.get("IMPACTFUL_SUGGESTIONS", [])
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
             if is_single_suggestion_dict:
                 self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Wrapping it.")
                 fallback_data_for_model["ANALYSIS_SUMMARY"] = f"LLM returned a single suggestion item instead of the full analysis. Original error: {error_message_from_partial}"
-                fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data]
-        elif schema_model == GeneralOutput: # MODIFIED: Explicit handling for GeneralOutput
-            fallback_data_for_model["general_output"] = partial_data.get("general_output", error_message_from_partial)
+                fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = [partial_data_as_dict]
+        elif schema_model == GeneralOutput:
+            fallback_data_for_model["general_output"] = partial_data_as_dict.get("general_output", error_message_from_partial)
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         else:
             # For other schemas, if it's a list, wrap it in a generic dict structure
             fallback_data_for_model = {
-                "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(partial_data)[:500]}...",
+                "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(partial_data_as_dict)[:500]}...",
                 "malformed_blocks": current_malformed_blocks
             }
 
