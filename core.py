@@ -24,7 +24,7 @@ import traceback
 from rich.console import Console
 from pydantic import ValidationError
 from functools import lru_cache
-import uuid
+import uuid # <--- ADDED THIS LINE
 
 # --- IMPORT MODIFICATIONS ---
 from src.llm_provider import GeminiProvider
@@ -53,8 +53,12 @@ class SocraticDebate:
         "Constructive_Critic": CritiqueOutput,
         "General_Synthesizer": GeneralOutput,
         "Devils_Advocate": ConflictReport,
-        "Self_Improvement_Analyst": SelfImprovementAnalysisOutput,
-        # Add other persona-specific schemas here as needed
+        "Self_Improvement_Analyst": SelfImprovementAnalysisOutputV1, # Changed to V1 as per app.py output
+        # ADDED/MODIFIED: Map engineering personas to CritiqueOutput
+        "Code_Architect": CritiqueOutput,
+        "Security_Auditor": CritiqueOutput,
+        "DevOps_Engineer": CritiqueOutput,
+        "Test_Engineer": CritiqueOutput,
     }
 
     def __init__(self, initial_prompt: str, api_key: str,
@@ -74,7 +78,7 @@ class SocraticDebate:
         Initialize a Socratic debate session.
         """
         setup_structured_logging(log_level=logging.INFO)
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(__name__)
 
         self.settings = settings or ChimeraSettings()
         self.max_total_tokens_budget = self.settings.total_budget
@@ -85,7 +89,7 @@ class SocraticDebate:
         self.is_self_analysis = is_self_analysis
 
         self.request_id = str(uuid.uuid4())[:8]
-        self._log_extra = {"request_id": self.request_id}
+        self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
         self.codebase_context = codebase_context or {} # Ensure it's a dict
@@ -95,10 +99,10 @@ class SocraticDebate:
         try:
             self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name, rich_console=self.rich_console, request_id=self.request_id)
         except LLMProviderError as e:
-            self._log_with_context("error", f"Failed to initialize LLM provider: {e.message}", exc_info=True, details=e.details, original_exception=e)
+            self._log_with_context("error", f"Failed to initialize LLM provider: {e.message}", exc_info=True)
             raise ChimeraError(f"LLM provider initialization failed: {e.message}", original_exception=e) from e
         except Exception as e:
-            self._log_with_context("error", f"An unexpected error occurred during LLM provider initialization: {e}", exc_info=True, original_exception=e)
+            self._log_with_context("error", f"An unexpected error occurred during LLM provider initialization: {e}", exc_info=True)
             raise ChimeraError(f"LLM provider initialization failed unexpectedly: {e}", original_exception=e) from e
 
         try:
@@ -144,7 +148,7 @@ class SocraticDebate:
                     if not self.context_analyzer.file_embeddings:
                         self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 except Exception as e:
-                    self.logger.error(f"Failed to compute embeddings for codebase context: {e}", exc_info=True)
+                    self._log_with_context("error", f"Failed to compute embeddings for codebase context: {e}", exc_info=True)
                     if self.status_callback:
                         self.status_callback(message=f"[red]Error computing context embeddings: {e}[/red]")
             else:
@@ -329,7 +333,7 @@ class SocraticDebate:
             current_progress = 0.05
         elif phase == "debate":
             total_debate_personas = len(self.intermediate_steps.get("Persona_Sequence", [])) - 1
-            completed_debate_personas = sum(1 for k in self.intermediate_steps if k.endswith("_Output") and k != "Final_Synthesis_Output")
+            completed_debate_personas = sum(1 for k in self.intermediate_steps if k.endswith("_Output") and not k.startswith(("Final_", "Context_Analysis_Output")) and k != "Self_Improvement_Metrics" and k != "Debate_History" and k != "Conflict_Resolution_Attempt" and k != "Unresolved_Conflict")
 
             if total_debate_personas > 0:
                 current_progress = phase_weights["context"] + (completed_debate_personas / total_debate_personas) * phase_weights["debate"]
@@ -345,12 +349,15 @@ class SocraticDebate:
 
         return min(max(0.0, current_progress), 1.0)
 
+    # --- MODIFIED METHOD: _execute_llm_turn with retry logic ---
     def _execute_llm_turn(self, persona_name: str, persona_config: PersonaConfig,
                           prompt_for_llm: str, phase: str,
-                          requested_model_name: Optional[str] = None) -> Dict[str, Any]:
+                          max_output_tokens_for_turn: int, # NEW ARGUMENT
+                          requested_model_name: Optional[str] = None,
+                          max_retries: int = 2) -> Dict[str, Any]: # Added max_retries parameter
         """
         Executes a single LLM turn for a given persona, handles API calls,
-        parsing, validation, and token tracking.
+        parsing, validation, and token tracking, with retry logic for validation failures.
         """
         self._log_with_context("debug", f"Executing LLM turn for {persona_name} in {phase} phase.",
                                persona=persona_name, phase=phase)
@@ -364,88 +371,135 @@ class SocraticDebate:
         output_tokens = 0
         has_schema_error = False
         is_truncated = False # Assume not truncated initially
+        has_content_misalignment = False # NEW: Initialize content misalignment flag
 
-        try:
-            # Update status callback to indicate which persona is currently making an LLM call
-            if self.status_callback:
-                self.status_callback(
-                    f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response...",
-                    "running",
-                    self.tokens_used,
-                    self.get_total_estimated_cost(),
-                    progress_pct=self.get_progress_pct(phase),
-                    current_persona_name=persona_name
+        current_prompt = prompt_for_llm # Use a mutable variable for prompt modification
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Update status callback for attempt
+                if self.status_callback:
+                    self.status_callback(message=f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...",
+                                         state="running",
+                                         current_total_tokens=self.tokens_used,
+                                         current_total_cost=self.get_total_estimated_cost(),
+                                         progress_pct=self.get_progress_pct(phase),
+                                         current_persona_name=persona_name)
+
+                # Token capping logic
+                actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
+                effective_max_output_tokens = min(max_output_tokens_for_turn, actual_model_max_output_tokens)
+                self._log_with_context("debug", f"Adjusting max_output_tokens for {persona_name}. Requested: {max_output_tokens_for_turn}, Model Max: {actual_model_max_output_tokens}, Effective: {effective_max_output_tokens}")
+
+                # Call the LLM provider's generate method
+                raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
+                    prompt=current_prompt, # Use the potentially modified prompt
+                    system_prompt=persona_config.system_prompt,
+                    temperature=persona_config.temperature,
+                    max_tokens=effective_max_output_tokens,
+                    persona_config=persona_config,
+                    requested_model_name=requested_model_name or self.model_name
                 )
 
-            # Call the LLM provider's generate method
-            raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
-                prompt=prompt_for_llm,
-                system_prompt=persona_config.system_prompt,
-                temperature=persona_config.temperature,
-                max_tokens=persona_config.max_tokens,
-                persona_config=persona_config, # Pass full config for potential internal use
-                requested_model_name=requested_model_name or self.model_name
-            )
+                # Track token usage
+                self.track_token_usage(phase, input_tokens + output_tokens)
 
-            # Track token usage immediately after the call
-            self.track_token_usage(phase, input_tokens + output_tokens)
+                # Store actual parameters used for this turn
+                self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = persona_config.temperature
+                self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = effective_max_output_tokens
 
-            # Store actual parameters used for this turn in intermediate steps
-            self.intermediate_steps[f"{persona_name}_Actual_Temperature"] = persona_config.temperature
-            self.intermediate_steps[f"{persona_name}_Actual_Max_Tokens"] = persona_config.max_tokens
+                # Check for truncation
+                if output_tokens >= effective_max_output_tokens * 0.95:
+                    is_truncated = True
+                    self._log_with_context("warning", f"Output for {persona_name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({effective_max_output_tokens}).")
 
-            # Check for truncation (simple heuristic: if output tokens are close to max_tokens)
-            if output_tokens >= persona_config.max_tokens * 0.95: # 95% of max_tokens
-                is_truncated = True
-                self._log_with_context("warning", f"Output for {persona_name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({persona_config.max_tokens}).")
+                # Parse and validate the LLM's raw output
+                parser = LLMOutputParser()
+                parsed_output = parser.parse_and_validate(raw_llm_output, persona_name) # Use persona_name here
 
-            # Parse and validate the LLM's raw output
-            parser = LLMOutputParser()
-            parsed_output = parser.parse_and_validate(raw_llm_output, output_schema)
+                # Check for malformed blocks reported by the parser itself (e.g., invalid JSON structure before validation)
+                if parsed_output.get("malformed_blocks"):
+                    has_schema_error = True # Treat parser malformed blocks as schema errors for reporting
+                    self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
+                    self._log_with_context("warning", f"Parser reported malformed blocks for {persona_name}.",
+                                           persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
 
-            # Check if any malformed blocks were reported by the parser
-            if parsed_output.get("malformed_blocks"):
-                has_schema_error = True
-                self.intermediate_steps.setdefault("malformed_blocks", []).extend(parsed_output["malformed_blocks"])
-                self._log_with_context("warning", f"Parser reported malformed blocks for {persona_name}.",
-                                       persona=persona_name, malformed_blocks=parsed_output["malformed_blocks"])
+                # If we reach here, parsing and validation succeeded. Break the retry loop.
+                break
 
-            # Store the output in intermediate steps
-            self.intermediate_steps[f"{persona_name}_Output"] = parsed_output
-            self.intermediate_steps[f"{persona_name}_Tokens_Used"] = input_tokens + output_tokens
-            self.intermediate_steps[f"{persona_name}_Estimated_Cost_USD"] = self.llm_provider.calculate_usd_cost(input_tokens, output_tokens)
+            except (LLMProviderError, TokenBudgetExceededError, CircuitBreakerError, ChimeraError) as e:
+                # These are non-retryable errors or errors that should halt the process.
+                self._log_with_context("error", f"Non-retryable error during LLM turn for {persona_name}: {e}",
+                                       persona=persona_name, phase=phase, exc_info=True, original_exception=e)
+                if self.persona_manager:
+                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                raise e # Re-raise the specific error
 
-            self._log_with_context("info", f"LLM turn for {persona_name} completed successfully.",
-                                   persona=persona_name, phase=phase,
-                                   input_tokens=input_tokens, output_tokens=output_tokens,
-                                   total_tokens_for_turn=input_tokens + output_tokens)
+            except SchemaValidationError as e: # Catching SchemaValidationError as it's more likely from parse_and_validate
+                # This is a retryable validation error.
+                if attempt < max_retries:
+                    self._log_with_context("warning", f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Error: {e}",
+                                           persona=persona_name, phase=phase, exc_info=True, original_exception=e)
+                    
+                    # Modify prompt for the next attempt
+                    current_prompt = (
+                        f"PREVIOUS OUTPUT INVALID: {str(e)}\n\n"
+                        "REMEMBER: OUTPUT MUST BE RAW JSON ONLY WITH NO MARKDOWN.\n\n"
+                        f"Original prompt: {prompt_for_llm}" # Use the original prompt for context
+                    )
+                    
+                    # Add the error to intermediate steps for debugging
+                    self.intermediate_steps.setdefault("malformed_blocks", []).append({
+                        "type": "RETRYABLE_VALIDATION_ERROR",
+                        "message": str(e),
+                        "attempt": attempt + 1,
+                        "persona": persona_name
+                    })
+                    
+                    # Continue to the next iteration of the loop
+                    continue
+                else:
+                    # If it's the last attempt and it failed, return the fallback JSON
+                    self._log_with_context("error", f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.", persona=persona_name)
+                    if self.persona_manager:
+                        self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                    return {
+                        "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
+                        "IMPACTFUL_SUGGESTIONS": [{
+                            "AREA": "Robustness",
+                            "PROBLEM": f"Failed to produce valid JSON after {max_retries} attempts",
+                            "PROPOSED_SOLUTION": "Review system prompts and validation logic",
+                            "IMPACT": "Critical failure in self-improvement process"
+                        }]
+                    }
             
-            # Record persona performance for adaptive adjustments
-            if self.persona_manager:
-                self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error)
+            except Exception as e: # Catch any other unexpected errors during the turn
+                # If it's not a retryable error, log and re-raise.
+                self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
+                                       persona=persona_name, phase=phase, exc_info=True, original_exception=e)
+                if self.persona_manager:
+                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
 
-            return parsed_output
+        # --- End of retry loop ---
+        # This part is reached if the loop broke successfully (i.e., no exception or retryable exception occurred)
+        
+        # Store the final parsed output
+        self.intermediate_steps[f"{persona_name}_Output"] = parsed_output
+        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = input_tokens + output_tokens
+        self.intermediate_steps[f"{persona_name}_Estimated_Cost_USD"] = self.llm_provider.calculate_usd_cost(input_tokens, output_tokens)
 
-        except (TokenBudgetExceededError, SchemaValidationError, ChimeraError, CircuitBreakerError, LLMProviderError) as e:
-            self._log_with_context("error", f"Error during LLM turn for {persona_name}: {e}",
-                                   persona=persona_name, phase=phase, exc_info=True, original_exception=e)
-            
-            # Record persona performance for adaptive adjustments (failure)
-            if self.persona_manager:
-                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Assume schema error on any exception here
+        self._log_with_context("info", f"LLM turn for {persona_name} completed successfully.",
+                               persona=persona_name, phase=phase,
+                               input_tokens=input_tokens, output_tokens=output_tokens,
+                               total_tokens_for_turn=input_tokens + output_tokens)
+        
+        # Record persona performance for adaptive adjustments
+        if self.persona_manager:
+            self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error, has_content_misalignment)
 
-            # Re-raise specific exceptions that should halt the debate or be handled upstream
-            raise e
-        except Exception as e:
-            self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
-                                   persona=persona_name, phase=phase, exc_info=True, original_exception=e)
-            
-            # Record persona performance for adaptive adjustments (failure)
-            if self.persona_manager:
-                self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Assume schema error on any exception here
-
-            # Wrap and re-raise as a generic ChimeraError
-            raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
+        return parsed_output
+    # --- END MODIFIED METHOD ---
 
     def _initialize_debate_state(self):
         """Initializes or resets the debate's internal state variables."""
@@ -522,7 +576,6 @@ class SocraticDebate:
         """
         MIN_PERSONA_TOKENS = 256 # Minimum for each persona turn
 
-        persona_turn_budgets = {}
         active_debate_personas = [
             p for p in persona_sequence
             if p not in ["Context_Aware_Assistant", "Impartial_Arbitrator", "General_Synthesizer", "Self_Improvement_Analyst"]
@@ -536,6 +589,9 @@ class SocraticDebate:
 
         base_allocation_per_persona = self.phase_budgets["debate"] // num_debate_personas
         remaining_budget = self.phase_budgets["debate"]
+
+        # FIX: Initialize persona_turn_budgets before its first use
+        persona_turn_budgets: Dict[str, int] = {}
 
         # First pass: allocate minimums and a base share, respecting persona's max_tokens
         for p_name in active_debate_personas:
@@ -599,7 +655,7 @@ class SocraticDebate:
         self.check_budget("debate", estimated_tokens, "Context_Aware_Assistant")
 
         try:
-            output = self._execute_llm_turn("Context_Aware_Assistant", persona_config, prompt, "debate")
+            output = self._execute_llm_turn("Context_Aware_Assistant", persona_config, prompt, "debate", max_output_tokens_for_turn)
             self._log_with_context("info", "Context_Aware_Assistant turn completed.")
             return output
         except Exception as e:
@@ -612,13 +668,14 @@ class SocraticDebate:
         Executes the main debate turns for each persona in the sequence.
         """
         debate_history = []
-        previous_output = self.initial_prompt
-
-        # Store the full context analysis output for later persona-specific extraction
-        full_context_analysis_output = self.intermediate_steps.get("Context_Aware_Assistant_Output")
-
+        
+        # MODIFIED: Initial previous_output handling
+        previous_output_for_llm: Union[str, Dict[str, Any]]
         if context_persona_turn_results:
-            previous_output = f"Initial Prompt: {self.initial_prompt}\n\nContext Analysis:\n{json.dumps(context_persona_turn_results, indent=2)}"
+            previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}\n\nStructured Context Analysis:\n{json.dumps(context_persona_turn_results, indent=2)}"
+        else:
+            previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}"
+
 
         personas_for_debate = [
             p for p in persona_sequence
@@ -638,10 +695,10 @@ class SocraticDebate:
         for i, persona_name in enumerate(personas_for_debate):
             self._log_with_context("info", f"Executing debate turn for persona: {persona_name}", persona=persona_name)
             self.status_callback(
-                f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...",
-                "running",
-                self.tokens_used,
-                self.get_total_estimated_cost(),
+                message=f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...",
+                state="running",
+                current_total_tokens=self.tokens_used,
+                current_total_cost=self.get_total_estimated_cost(),
                 progress_pct=self.get_progress_pct("debate"),
                 current_persona_name=persona_name
             )
@@ -657,30 +714,67 @@ class SocraticDebate:
 
             # NEW: Prepare persona-specific context
             persona_specific_context_str = ""
-            if full_context_analysis_output:
-                if persona_name == "Security_Auditor" and full_context_analysis_output.get("security_summary"):
-                    persona_specific_context_str = f"Security Context Summary:\n{json.dumps(full_context_analysis_output['security_summary'], indent=2)}"
-                elif persona_name == "Code_Architect" and full_context_analysis_output.get("architecture_summary"):
-                    persona_specific_context_str = f"Architecture Context Summary:\n{json.dumps(full_context_analysis_output['architecture_summary'], indent=2)}"
-                elif persona_name == "DevOps_Engineer" and full_context_analysis_output.get("devops_summary"):
-                    persona_specific_context_str = f"DevOps Context Summary:\n{json.dumps(full_context_analysis_output['devops_summary'], indent=2)}"
-                elif persona_name == "Test_Engineer" and full_context_analysis_output.get("testing_summary"):
-                    persona_specific_context_str = f"Testing Context Summary:\n{json.dumps(full_context_analysis_output['testing_summary'], indent=2)}"
-                elif full_context_analysis_output.get("general_overview"):
-                    persona_specific_context_str = f"General Codebase Overview:\n{full_context_analysis_output['general_overview']}"
+            if context_persona_turn_results: # This was the undefined variable
+                if persona_name == "Security_Auditor" and context_persona_turn_results.get("security_summary"):
+                    persona_specific_context_str = f"Security Context Summary:\n{json.dumps(context_persona_turn_results['security_summary'], indent=2)}"
+                elif persona_name == "Code_Architect" and context_persona_turn_results.get("architecture_summary"):
+                    persona_specific_context_str = f"Architecture Context Summary:\n{json.dumps(context_persona_turn_results['architecture_summary'], indent=2)}"
+                elif persona_name == "DevOps_Engineer" and context_persona_turn_results.get("devops_summary"):
+                    persona_specific_context_str = f"DevOps Context Summary:\n{json.dumps(context_persona_turn_results['devops_summary'], indent=2)}"
+                elif persona_name == "Test_Engineer" and context_persona_turn_results.get("testing_summary"):
+                    persona_specific_context_str = f"Testing Context Summary:\n{json.dumps(context_persona_turn_results['testing_summary'], indent=2)}"
+                elif context_persona_turn_results.get("general_overview"):
+                    persona_specific_context_str = f"General Codebase Overview:\n{context_persona_turn_results['general_overview']}"
                 # NEW: Add structured configuration summary if available
-                if full_context_analysis_output.get("configuration_summary"):
-                    persona_specific_context_str += f"\n\nStructured Configuration Summary:\n{json.dumps(full_context_analysis_output['configuration_summary'], indent=2)}"
+                if context_persona_turn_results.get("configuration_summary"):
+                    persona_specific_context_str += f"\n\nStructured Configuration Analysis:\n{json.dumps(context_persona_turn_results['configuration_summary'], indent=2)}"
                 # NEW: Add structured deployment summary if available
-                if full_context_analysis_output.get("deployment_summary"):
-                    persona_specific_context_str += f"\n\nStructured Deployment Robustness Analysis:\n{json.dumps(full_context_analysis_output['deployment_summary'], indent=2)}"
+                if context_persona_turn_results.get("deployment_summary"):
+                    persona_specific_context_str += f"\n\nStructured Deployment Robustness Analysis:\n{json.dumps(context_persona_turn_results['deployment_summary'], indent=2)}"
 
 
-            # Construct the current prompt with the persona-specific context
-            current_prompt = f"Initial Problem: {self.initial_prompt}\n\n"
+            # MODIFIED: Construct the current prompt with a summary of previous_output if it was problematic
+            current_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
             if persona_specific_context_str:
-                current_prompt += f"Relevant Code Context:\n{persona_specific_context_str}\n\n"
-            current_prompt += f"Previous Debate Output:\n{json.dumps(previous_output, indent=2) if isinstance(previous_output, dict) else previous_output}"
+                current_prompt_parts.append(f"Relevant Code Context:\n{persona_specific_context_str}\n\n")
+
+            # Check if previous_output_for_llm was problematic (malformed or misaligned)
+            is_previous_output_problematic = False
+            if isinstance(previous_output_for_llm, dict):
+                if previous_output_for_llm.get("malformed_blocks") or previous_output_for_llm.get("content_misalignment_warning"):
+                    is_previous_output_problematic = True
+            elif isinstance(previous_output_for_llm, str) and ("malformed" in previous_output_for_llm.lower() or "error" in previous_output_for_llm.lower()):
+                is_previous_output_problematic = True
+
+            if is_previous_output_problematic:
+                summary_of_previous = "Previous persona's output had issues (malformed JSON or content misalignment). "
+                if isinstance(previous_output_for_llm, dict):
+                    if previous_output_for_llm.get("CRITIQUE_SUMMARY"):
+                        summary_of_previous += f"Summary of previous critique: {previous_output_for_llm['CRITIQUE_SUMMARY']}"
+                    elif previous_output_for_llm.get("ANALYSIS_SUMMARY"):
+                        summary_of_previous += f"Summary of previous analysis: {previous_output_for_llm['ANALYSIS_SUMMARY']}"
+                    elif previous_output_for_llm.get("general_output"):
+                        summary_of_previous += f"Summary of previous general output: {previous_output_for_llm['general_output'][:200]}..."
+                    else:
+                        summary_of_previous += "Details in malformed_blocks."
+                else: # It's a string error message
+                    summary_of_previous += f"Raw error snippet: {str(previous_output_for_llm)[:200]}..."
+                current_prompt_parts.append(f"Previous Debate Output Summary (with issues):\n{summary_of_previous}\n\n")
+            else:
+                # If previous output was good, pass its main summary/content
+                if isinstance(previous_output_for_llm, dict):
+                    if previous_output_for_llm.get("CRITIQUE_SUMMARY"):
+                        current_prompt_parts.append(f"Previous Debate Output:\n{json.dumps({'CRITIQUE_SUMMARY': previous_output_for_llm['CRITIQUE_SUMMARY'], 'SUGGESTIONS': previous_output_for_llm.get('SUGGESTIONS', [])}, indent=2)}\n\n")
+                    elif previous_output_for_llm.get("ANALYSIS_SUMMARY"):
+                        current_prompt_parts.append(f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2)}\n\n")
+                    elif previous_output_for_llm.get("general_output"):
+                        current_prompt_parts.append(f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2)}\n\n")
+                    else:
+                        current_prompt_parts.append(f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2)}\n\n")
+                else:
+                    current_prompt_parts.append(f"Previous Debate Output:\n{previous_output_for_llm}\n\n")
+
+            current_prompt = "".join(current_prompt_parts)
 
             # Use the dynamically calculated budget for this persona's turn
             max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(persona_name, persona_config.max_tokens)
@@ -688,28 +782,28 @@ class SocraticDebate:
             self.check_budget("debate", estimated_tokens, persona_name)
 
             try:
-                output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate")
+                output = self._execute_llm_turn(persona_name, persona_config, current_prompt, "debate", max_output_tokens_for_turn)
 
                 # NEW: Content Alignment Validation
-                is_aligned, validation_message, _ = self.content_validator.validate(persona_name, output) # Get nuanced feedback
+                is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, output) # Get nuanced feedback
                 if not is_aligned:
+                    has_content_misalignment = True # Set flag
                     self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
                                            persona=persona_name, validation_message=validation_message)
                     # Add a malformed block to indicate content drift
-                    self.intermediate_steps.setdefault("malformed_blocks", []).append({
+                    self.intermediate_steps.setdefault("malformed_blocks", []).extend([{
                         "type": "CONTENT_MISALIGNMENT",
                         "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
                         "persona": persona_name,
                         "raw_string_snippet": str(output)[:500]
-                    })
-                    # Optionally, modify the output to reflect the issue, or even trigger a re-prompt
-                    # For now, we'll just log and add a malformed block.
+                    }] + nuanced_feedback.get("malformed_blocks", [])) # Include any malformed blocks from content validator
+                    
                     # If the output is a dict, we can add a specific field.
                     if isinstance(output, dict):
                         output["content_misalignment_warning"] = validation_message
                     else:
                         output = f"WARNING: Content misalignment detected: {validation_message}\n\n{output}"
-
+                    
                 # NEW: Check for ConflictReport from Devils_Advocate
                 if persona_name == "Devils_Advocate" and isinstance(output, dict):
                     try:
@@ -719,27 +813,32 @@ class SocraticDebate:
                             resolution_result = self._trigger_conflict_sub_debate(conflict_report, debate_history)
                             if resolution_result and resolution_result.get("conflict_resolved"):
                                 # Update previous_output to reflect resolution, clear unresolved conflict
-                                previous_output = {"status": "conflict_resolved", "resolution": resolution_result["resolution_summary"]}
+                                previous_output_for_llm = {"status": "conflict_resolved", "resolution": resolution_result["resolution_summary"]}
                                 self.intermediate_steps["Conflict_Resolution_Attempt"] = resolution_result
                                 self.intermediate_steps["Unresolved_Conflict"] = None
                             else:
                                 # If not resolved, keep the conflict in intermediate steps
                                 self.intermediate_steps["Unresolved_Conflict"] = conflict_report.model_dump()
-                                previous_output = {"status": "conflict_unresolved", "conflict_report": conflict_report.model_dump()}
+                                previous_output_for_llm = {"status": "conflict_unresolved", "conflict_report": conflict_report.model_dump()}
                         else:
                             # No conflict found, proceed normally
                             self._log_with_context("info", f"Devils_Advocate reported no conflict: {conflict_report.summary}")
                             self.intermediate_steps["Unresolved_Conflict"] = None
                             self.intermediate_steps["Conflict_Resolution_Attempt"] = None
-                            previous_output = {"status": "no_conflict_reported", "summary": conflict_report.summary}
+                            previous_output_for_llm = {"status": "no_conflict_reported", "summary": conflict_report.summary}
                     except ValidationError:
-                        pass
+                        # If the output is not a valid ConflictReport, treat it as a general output
+                        self._log_with_context("warning", f"Devils_Advocate output was not a valid ConflictReport. Treating as general output.")
+                        previous_output_for_llm = output # Use the raw output as previous output
+                    except Exception as e:
+                        self._log_with_context("error", f"Error processing Devils_Advocate output: {e}", exc_info=True)
+                        previous_output_for_llm = {"error": f"Error processing Devils_Advocate output: {e}"}
                 debate_history.append({"persona": persona_name, "output": output})
-                previous_output = output
+                previous_output_for_llm = output # Update for the next turn
             except Exception as e:
                 self._log_with_context("error", f"Error during {persona_name} turn: {e}", persona=persona_name, exc_info=True, original_exception=e)
                 self.rich_console.print(f"[red]Error during {persona_name} turn: {e}[/red]")
-                previous_output = {"error": f"Turn failed for {persona_name}: {str(e)}", "malformed_blocks": [{"type": "DEBATE_TURN_ERROR", "message": str(e)}]}
+                previous_output_for_llm = {"error": f"Turn failed for {persona_name}: {str(e)}", "malformed_blocks": [{"type": "DEBATE_TURN_ERROR", "message": str(e)}]}
                 continue
 
         self._log_with_context("info", "All debate turns completed.")
@@ -805,50 +904,66 @@ class SocraticDebate:
 
         resolution_attempts = []
         for persona_name in sub_debate_personas:
-            self.status_callback(f"Sub-Debate: [bold]{persona_name.replace('_', ' ')}[/bold] resolving conflict...",
-                                 "running", self.tokens_used, self.get_total_estimated_cost(),
-                                 progress_pct=self.get_progress_pct("debate"), current_persona_name=persona_name)
+            self.status_callback(
+                message=f"Sub-Debate: [bold]{persona_name.replace('_', ' ')}[/bold] resolving conflict...",
+                state="running",
+                current_total_tokens=self.tokens_used,
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=self.get_progress_pct("debate"),
+                current_persona_name=persona_name
+            )
 
             # Get potentially adjusted persona config from PersonaManager
             persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
 
-            # Temporarily adjust max_tokens for sub-debate to fit budget
-            original_max_tokens = persona_config.max_tokens
-            persona_config.max_tokens = min(original_max_tokens, sub_debate_budget // len(sub_debate_personas))
-
+            # Calculate max_output_tokens for this specific sub-debate turn
+            # Distribute sub_debate_budget among sub_debate_personas
+            max_output_tokens_for_sub_debate_turn = sub_debate_budget // len(sub_debate_personas)
+            max_output_tokens_for_sub_debate_turn = max(250, min(max_output_tokens_for_sub_debate_turn, persona_config.max_tokens)) # Respect persona's own max_tokens, ensure minimum
+            
             try:
                 # Pass the full debate history as context for the sub-debate
                 turn_output = self._execute_llm_turn(
-                    persona_name, persona_config, sub_debate_prompt, "sub_debate_phase"
+                    persona_name, persona_config, sub_debate_prompt, "sub_debate_phase", max_output_tokens_for_sub_debate_turn
                 )
                 resolution_attempts.append({"persona": persona_name, "output": turn_output})
             except Exception as e:
-                self._log_with_context("error", f"Sub-debate turn for {persona_name} failed: {e}")
+                self._log_with_context("error", f"Sub-debate turn for {persona_name} failed: {e}", exc_info=True)
+                self.rich_console.print(f"[red]Error during sub-debate turn for {persona_name}: {e}[/red]")
             finally:
-                persona_config.max_tokens = original_max_tokens
+                pass # No need to reset persona_config.max_tokens as it's not mutated.
 
         # Synthesize sub-debate results into a final resolution
         if resolution_attempts:
-            final_resolution_prompt = f"""
+            final_resolution_prompt_base = f"""
             Synthesize the following sub-debate attempts to resolve a conflict into a single, clear resolution.
             Conflict: {conflict_report.summary}
             Sub-debate results: {json.dumps(resolution_attempts, indent=2)}
 
             Provide a final resolution and its rationale.
             """
+            # Allocate a portion of the sub_debate_budget for the synthesis of the resolution
+            sub_debate_synthesis_budget = max(500, int(sub_debate_budget * 0.3)) # e.g., 30% for synthesis
+            final_resolution_prompt = self.tokenizer.trim_text_to_tokens(final_resolution_prompt_base, sub_debate_synthesis_budget)
+
             synthesizer_persona = self.all_personas.get("Impartial_Arbitrator") or self.all_personas.get("General_Synthesizer")
             if synthesizer_persona:
                 try:
                     final_resolution = self._execute_llm_turn(
-                        synthesizer_persona.name, synthesizer_persona, final_resolution_prompt, "sub_debate_synthesis"
+                        synthesizer_persona.name, synthesizer_persona, final_resolution_prompt, "sub_debate_synthesis", synthesizer_persona.max_tokens # Use persona's max_tokens for synthesis
                     )
-                    self._log_with_context("info", "Conflict successfully resolved.")
+                    self._log_with_context("info", "Conflict successfully resolved.", resolution_summary=final_resolution)
                     return {"conflict_resolved": True, "resolution_summary": final_resolution}
                 except Exception as e:
-                    self._log_with_context("error", f"Failed to synthesize conflict resolution: {e}")
+                    self._log_with_context("error", f"Failed to synthesize conflict resolution: {e}", exc_info=True)
+                    self.rich_console.print(f"[red]Failed to synthesize conflict resolution: {e}[/red]")
 
         self._log_with_context("warning", "Conflict could not be resolved in sub-debate.")
         return None
+
+    # NEW: Add a helper to summarize debate history for sub-debate synthesis
+    def _summarize_sub_debate_history_for_llm(self, resolution_attempts: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
+        return self._summarize_debate_history_for_llm(resolution_attempts, max_tokens)
 
     # --- NEW HELPER FUNCTIONS FOR SELF_IMPROVEMENT_ANALYST PROMPT TRUNCATION ---
     def _summarize_metrics_for_llm(self, metrics: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
@@ -901,6 +1016,7 @@ class SocraticDebate:
                         "dockerfile_present": content.get("dockerfile_present"),
                         "dockerfile_healthcheck_present": content.get("dockerfile_healthcheck_present"),
                         "dockerfile_non_root_user": content.get("dockerfile_non_root_user"),
+                        "dockerfile_exposed_ports": content.get("dockerfile_exposed_ports"),
                         "prod_dependency_count": content.get("prod_dependency_count"),
                         "unpinned_prod_dependencies_count": len(content.get("unpinned_prod_dependencies", [])),
                     }
@@ -913,35 +1029,40 @@ class SocraticDebate:
         # Re-insert summarized critical sections
         summarized_metrics.update(summarized_critical_sections)
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+        remaining_budget_for_issues = max_tokens - current_tokens
 
-        # --- Aggressively truncate 'detailed_issues' first ---
-        if 'code_quality' in summarized_metrics and 'detailed_issues' in summarized_metrics['code_quality']:
-            original_issue_count = len(summarized_metrics['code_quality']['detailed_issues'])
-            if original_issue_count > 5: # Keep top 5 detailed issues
-                summarized_metrics['code_quality']['detailed_issues'] = summarized_metrics['code_quality']['detailed_issues'][:5]
-                self._log_with_context("debug", f"Truncated detailed_issues from {original_issue_count} to 5.")
-                current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                if current_tokens <= max_tokens:
-                    return summarized_metrics
-            elif original_issue_count > 0: # If few issues, keep them
-                pass
-            else: # No issues
-                del summarized_metrics['code_quality']['detailed_issues']
+        # --- Dynamically truncate 'detailed_issues' and 'ruff_violations' ---
+        # Prioritize 'detailed_issues' as they are more comprehensive
+        for issue_list_key in ['detailed_issues', 'ruff_violations']:
+            if 'code_quality' in summarized_metrics and issue_list_key in summarized_metrics['code_quality'] and summarized_metrics['code_quality'][issue_list_key]:
+                original_issues = summarized_metrics['code_quality'][issue_list_key]
+                
+                # Estimate tokens per issue (average)
+                # Use a small sample to estimate average token count per issue
+                sample_size = min(5, len(original_issues))
+                if sample_size > 0:
+                    sample_tokens = self.tokenizer.count_tokens(json.dumps(original_issues[:sample_size]))
+                    avg_tokens_per_issue = max(1, sample_tokens // sample_size) # Ensure at least 1 token per issue
+                else:
+                    avg_tokens_per_issue = 10 # Default estimate if no issues
+                
+                # Calculate how many issues can fit
+                num_issues_to_keep = int(remaining_budget_for_issues / avg_tokens_per_issue)
+                num_issues_to_keep = max(0, min(len(original_issues), num_issues_to_keep)) # Ensure non-negative and not exceeding original count
 
-
-        # Further truncation: Remove less critical detailed metrics if still over budget
-        if current_tokens > max_tokens:
-            if 'code_quality' in summarized_metrics and 'ruff_violations' in summarized_metrics['code_quality']:
-                original_ruff_count = len(summarized_metrics['code_quality']['ruff_violations'])
-                if original_ruff_count > 5:
-                    summarized_metrics['code_quality']['ruff_violations'] = summarized_metrics['code_quality']['ruff_violations'][:5]
-                    self._log_with_context("debug", f"Truncated ruff_violations from {original_ruff_count} to 5.")
+                if num_issues_to_keep < len(original_issues):
+                    summarized_metrics['code_quality'][issue_list_key] = original_issues[:num_issues_to_keep]
+                    self._log_with_context("debug", f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.")
                     current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    if current_tokens <= max_tokens:
-                        return summarized_metrics
-                elif original_ruff_count == 0:
-                    del summarized_metrics['code_quality']['ruff_violations']
-
+                    remaining_budget_for_issues = max_tokens - current_tokens
+                elif num_issues_to_keep == 0 and len(original_issues) > 0:
+                    del summarized_metrics['code_quality'][issue_list_key]
+                    self._log_with_context("debug", f"Removed {issue_list_key} entirely due to lack of budget.")
+                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+                    remaining_budget_for_issues = max_tokens - current_tokens
+            elif 'code_quality' in summarized_metrics and issue_list_key in summarized_metrics['code_quality'] and not summarized_metrics['code_quality'][issue_list_key]:
+                del summarized_metrics['code_quality'][issue_list_key] # Remove empty lists
+        
         # If still over budget, consider removing entire verbose sections
         if current_tokens > max_tokens:
             if 'code_quality' in summarized_metrics:
@@ -997,8 +1118,8 @@ class SocraticDebate:
                     turn_copy['output'] = {'summary': turn_copy['output']['summary']}
                 elif 'general_output' in turn_copy['output']:
                     turn_copy['output'] = {'general_output': turn_copy['output']['general_output'][:200] + "..." if len(turn_copy['output']['general_output']) > 200 else turn_copy['output']['general_output']}
-                elif 'architecturalAnalysis' in turn_copy['output']:
-                    turn_copy['output'] = {'overallAssessment': turn_copy['output']['architecturalAnalysis']['overallAssessment']}
+                elif 'architectural_analysis' in turn_copy['output']: # Corrected key from architecturalAnalysis
+                    turn_copy['output'] = {'overall_assessment': turn_copy['output']['architectural_analysis']['overall_assessment']}
                 elif 'operational_analysis' in turn_copy['output']:
                     turn_copy['output'] = {'operational_analysis_summary': "Operational analysis performed."}
                 elif 'CRITIQUE_POINTS' in turn_copy['output']:
@@ -1025,224 +1146,244 @@ class SocraticDebate:
         return summarized_history
     # --- END NEW HELPER FUNCTIONS ---
 
-    def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    # --- NEW METHOD: _perform_synthesis_persona_turn ---
+    def _perform_synthesis_persona_turn(self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Executes the final synthesis persona turn (Impartial_Arbitrator or General_Synthesizer or Self_Improvement_Analyst).
+        Executes the final synthesis persona turn based on the debate history.
         """
-        synthesis_persona_name = None
+        self._log_with_context("info", "Executing final synthesis persona turn.")
+
+        # Determine the appropriate synthesis persona
+        synthesis_persona_name = ""
         if self.is_self_analysis:
             synthesis_persona_name = "Self_Improvement_Analyst"
-        elif "Impartial_Arbitrator" in persona_sequence:
+        elif self.domain == "Software Engineering":
             synthesis_persona_name = "Impartial_Arbitrator"
-        elif "General_Synthesizer" in persona_sequence:
+        else:
             synthesis_persona_name = "General_Synthesizer"
 
-        if not synthesis_persona_name:
-            self._log_with_context("error", "No synthesis persona (Impartial_Arbitrator, General_Synthesizer, or Self_Improvement_Analyst) found in sequence.")
-            return {"error": "No synthesis persona found."}
+        synthesis_persona_config = self.all_personas.get(synthesis_persona_name)
+        if not synthesis_persona_config:
+            self._log_with_context("error", f"Synthesis persona '{synthesis_persona_name}' configuration not found. Falling back to General_Synthesizer.")
+            synthesis_persona_name = "General_Synthesizer"
+            synthesis_persona_config = self.all_personas.get(synthesis_persona_name)
+            if not synthesis_persona_config:
+                raise ChimeraError("No synthesis persona configuration found.")
 
-        self._log_with_context("info", f"Executing final synthesis turn for persona: {synthesis_persona_name}")
-        persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
-        if not persona_config:
-            persona_config = self.all_personas.get(synthesis_persona_name)
-            if not persona_config:
-                self._log_with_context("error", f"Synthesis persona configuration not found for {synthesis_persona_name}.")
-                return {"error": f"{synthesis_persona_name} config missing."}
+        # Prepare the prompt for the synthesis persona
+        synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
-        final_synthesis_prompt_content = ""
+        # Summarize debate history to fit within token limits
+        # Allocate a portion of the synthesis budget for the debate history summary
+        debate_history_summary_budget = int(self.phase_budgets["synthesis"] * 0.4) # e.g., 40% for history
+        summarized_debate_history = self._summarize_debate_history_for_llm(debate_persona_results, debate_history_summary_budget)
+        synthesis_prompt_parts.append(f"Debate History:\n{json.dumps(summarized_debate_history, indent=2)}\n\n")
+
+        # Include conflict resolution if it happened
+        if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
+            synthesis_prompt_parts.append(f"Conflict Resolution Summary: {json.dumps(self.intermediate_steps['Conflict_Resolution_Attempt']['resolution_summary'], indent=2)}\n\n")
+        elif self.intermediate_steps.get("Unresolved_Conflict"):
+            synthesis_prompt_parts.append(f"Unresolved Conflict: {json.dumps(self.intermediate_steps['Unresolved_Conflict'], indent=2)}\n\n")
+
+        # Special handling for Self_Improvement_Analyst
         if synthesis_persona_name == "Self_Improvement_Analyst":
-            try:
-                from src.utils.path_utils import PROJECT_ROOT
-                project_root_path = str(PROJECT_ROOT)
-            except ImportError:
-                self.logger.warning("Could not import PROJECT_ROOT for self-improvement metrics. Using current working directory.")
-                project_root_path = os.getcwd()
+            # Collect metrics
+            metrics_collector = ImprovementMetricsCollector(
+                initial_prompt=self.initial_prompt,
+                debate_history=debate_persona_results,
+                intermediate_steps=self.intermediate_steps,
+                codebase_context=self.codebase_context,
+                tokenizer=self.tokenizer,
+                llm_provider=self.llm_provider,
+                persona_manager=self.persona_manager,
+                content_validator=self.content_validator # Pass the content validator
+            )
+            collected_metrics = metrics_collector.collect_all_metrics()
+            self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
-            try:
-                self_improvement_metrics = ImprovementMetricsCollector.collect_all_metrics(
-                    project_root_path, self.intermediate_steps
-                )
-                self.intermediate_steps["Self_Improvement_Metrics"] = self_improvement_metrics
+            # Summarize metrics to fit into the prompt
+            metrics_summary_budget = int(self.phase_budgets["synthesis"] * 0.3) # e.g., 30% for metrics
+            summarized_metrics = self._summarize_metrics_for_llm(collected_metrics, metrics_summary_budget)
+            synthesis_prompt_parts.append(f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2)}\n\n")
 
-                # --- START MODIFICATION FOR SELF_IMPROVEMENT_ANALYST PROMPT GENERATION ---
-                metrics = self_improvement_metrics
-                debate_history_full = debate_persona_results
+            # Add specific instructions for Self_Improvement_Analyst
+            synthesis_prompt_parts.append(
+                "Based on the debate history, conflict resolution (if any), and objective metrics, "
+                "critically analyze Project Chimera's codebase for self-improvement. "
+                "Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. "
+                "Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. "
+                "For each suggestion, provide a clear rationale and a specific, actionable code modification. "
+                "Your output MUST strictly adhere to the SelfImprovementAnalysisOutputV1 JSON schema."
+            )
+            # Ensure the schema for Self_Improvement_Analyst is correctly set to V1
+            self.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = SelfImprovementAnalysisOutputV1
 
-                # Calculate token budget for the prompt content (excluding system prompt and max_output_tokens)
-                # Allocate a portion of the synthesis budget for the prompt content
-                # Use a slightly lower ratio for prompt content to leave more room for LLM output
-                prompt_content_budget = int(self.phase_budgets["synthesis"] * 0.5)
-
-                # Summarize metrics and debate history to fit the budget
-                # Allocate 60% of prompt_content_budget to metrics, 40% to debate history
-                summarized_metrics = self._summarize_metrics_for_llm(metrics, int(prompt_content_budget * 0.6))
-                summarized_debate_history = self._summarize_debate_history_for_llm(debate_history_full, int(prompt_content_budget * 0.4))
-
-                normalized_impact_scores = {}
-
-                # Define reasonable maximums for normalization (illustrative, can be refined)
-                MAX_TOKENS_FOR_NORM = 100000
-                MAX_SCHEMA_FAILURES_FOR_NORM = 10
-                MAX_CONFLICT_ATTEMPTS_FOR_NORM = 3
-                MAX_CODE_SMELLS_FOR_NORM = 50
-                MAX_SECURITY_ISSUES_FOR_NORM = 20
-                CRITICAL_AREA_THRESHOLD = 30
-
-                # Efficiency: Higher token usage -> higher impact score
-                normalized_impact_scores['Efficiency'] = min(100, (metrics.get('performance_efficiency', {}).get('token_usage_stats', {}).get('total_tokens', 0) / MAX_TOKENS_FOR_NORM) * 100)
-
-                # Robustness: Higher schema failures/unresolved conflicts -> higher impact score
-                schema_failures = metrics.get('robustness', {}).get('schema_validation_failures_count', 0)
-                unresolved_conflict_score = 50 if metrics.get('robustness', {}).get('unresolved_conflict_present', False) else 0
-                normalized_impact_scores['Robustness'] = min(100, ((schema_failures / MAX_SCHEMA_FAILURES_FOR_NORM) * 100) + unresolved_conflict_score)
-
-                # Reasoning Quality: Higher conflict resolution attempts (implies issues) -> higher impact score
-                # Also consider malformed blocks from content alignment
-                conflict_attempts = metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('conflict_resolution_attempts', 0)
-                content_misalignment_blocks = sum(1 for block in self.intermediate_steps.get("malformed_blocks", []) if block.get("type") == "CONTENT_MISALIGNMENT")
-                reasoning_quality_score = (conflict_attempts * 20) + (content_misalignment_blocks * 10) # Heuristic
-                normalized_impact_scores['Reasoning Quality'] = min(100, reasoning_quality_score)
-
-
-                # Maintainability: Higher code smells -> higher impact score
-                code_smells = metrics.get('code_quality', {}).get('code_smells_count', 0)
-                normalized_impact_scores['Maintainability'] = min(100, (code_smells / MAX_CODE_SMELLS_FOR_NORM) * 100)
-
-                # Security: Higher bandit/AST issues -> higher impact score
-                bandit_issues = metrics.get('security', {}).get('bandit_issues_count', 0)
-                ast_issues = metrics.get('security', {}).get('ast_security_issues_count', 0)
-                normalized_impact_scores['Security'] = min(100, ((bandit_issues + ast_issues) / MAX_SECURITY_ISSUES_FOR_NORM) * 100)
-
-                # Sort by impact (higher = more critical)
-                sorted_impact = sorted(normalized_impact_scores.items(), key=lambda x: x[1], reverse=True)[:5]
-
-                # Select top N areas, but always include critical ones if their score is above a minimum threshold
-                top_areas = []
-                for area, score in sorted_impact:
-                    if len(top_areas) < 2 or score >= CRITICAL_AREA_THRESHOLD:
-                        top_areas.append(area)
-                    # Limit to a reasonable number of areas to avoid overwhelming the LLM
-                    if len(top_areas) >= 4:
-                        break
-
-                # Ensure unique areas (in case critical_area_threshold added duplicates)
-                top_areas = list(dict.fromkeys(top_areas))
-
-                # --- START MODIFICATION: Inject full content of relevant files, ensuring ci.yml, pyproject.toml, pre-commit-config.yaml are present ---
-                relevant_files_content = ""
-                files_to_include_in_prompt = set()
-
-                # Always include critical config files for self-improvement tasks
-                critical_config_files = [
-                    ".github/workflows/ci.yml",
-                    "pyproject.toml",
-                    ".pre-commit-config.yaml",
-                    ".dockerignore", # Also useful for understanding build context
-                    ".gitignore", # Also useful for understanding ignored files
-                    "requirements.txt", # For dependency analysis
-                    "requirements-prod.txt", # For production dependency analysis
-                ]
-                for cfg_file in critical_config_files:
-                    if cfg_file in self.codebase_context:
-                        files_to_include_in_prompt.add(cfg_file)
-
-                if self.context_analyzer and self.context_analyzer.last_relevant_files:
-                    # Add other dynamically relevant files, ensuring no duplicates
-                    for file_path, _ in self.context_analyzer.last_relevant_files:
-                        files_to_include_in_prompt.add(file_path)
-
-                # Sort for consistent output
-                sorted_files_to_include = sorted(list(files_to_include_in_prompt))
-
-                for file_path in sorted_files_to_include:
-                    content = self.codebase_context.get(file_path, "")
-                    if content:
-                        # Use Path(file_path).name for display, but full file_path for context
-                        relevant_files_content += f"### Current Content of {file_path}:\n```\n{content}\n```\n\n"
-                
-                # NEW: Inject structured configuration analysis directly into the prompt
-                structured_config_analysis = summarized_metrics.get("configuration_analysis", {}) # Use summarized metrics
-                structured_config_analysis_str = json.dumps(structured_config_analysis, indent=2)
-
-                # NEW: Inject structured deployment robustness analysis directly into the prompt
-                structured_deployment_analysis = summarized_metrics.get("deployment_robustness", {}) # Use summarized metrics
-                structured_deployment_analysis_str = json.dumps(structured_deployment_analysis, indent=2)
-
-
-                final_synthesis_prompt_content = f"""
-                Analyze the Project Chimera codebase focusing PRIMARILY on these areas: {', '.join(top_areas)}. Provide concrete, specific suggestions for code changes or process adjustments, backed by the provided metrics.
-
-                ## Objective Metrics:
-                (These metrics provide an objective overview of the codebase's health and the debate process's efficiency.)
-                ```json
-                {json.dumps(summarized_metrics, indent=2)}
-                ```
-
-                ## Structured Configuration Analysis:
-                (This is a parsed, structured view of the project's current configuration files. Use this to understand existing tool setups and avoid regressions. Pay close attention to CI/CD, pre-commit, and pyproject.toml settings. CRITICAL: Your proposed changes MUST enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to this structured analysis.)
-                ```json
-                {structured_config_analysis_str}
-                ```
-
-                ## Structured Deployment Robustness Analysis:
-                (This is a parsed, structured view of the project's deployment-related files like Dockerfile and requirements-prod.txt. Use this to understand existing deployment practices and dependencies. CRITICAL: Your proposed changes MUST enhance existing robust configurations or introduce new ones without regressing existing functionality. Justify any changes to existing flags or parameters by referring to this structured analysis.)
-                ```json
-                {structured_deployment_analysis_str}
-                ```
-
-                ## Debate History:
-                (This is a summary of the Socratic debate turns. Analyze it for patterns in persona performance, logical consistency, and content alignment. Identify where personas might have struggled or drifted.)
-                ```json
-                {json.dumps(summarized_debate_history, indent=2)}
-                ```
-
-                ## Current Codebase Files for Reference (if applicable):
-                (These are the files that were considered most relevant to the prompt, including critical configuration files. You MUST only suggest changes to these files or add new files. DO NOT hallucinate file paths.)
-                {relevant_files_content if relevant_files_content else "No specific codebase files were provided as context for direct modification."}
-
-                """
-                # --- END MODIFICATION ---
-
-            except Exception as e:
-                self._log_with_context("error", f"Failed to collect self-improvement metrics: {e}")
-                final_synthesis_prompt_content = f"""
-                Analyze the Project Chimera codebase and the recent debate process.
-                (Note: Failed to collect automated metrics: {e})
-
-                ## Debate History:
-                {json.dumps(debate_persona_results, indent=2)}
-
-                Your task is to identify the most impactful areas for self-improvement across reasoning quality, robustness, efficiency, and developer maintainability. Provide concrete, specific suggestions for code changes or process adjustments.
-                """
         else:
-            full_debate_context = {
-                "initial_prompt": self.initial_prompt,
-                "debate_history": debate_persona_results
-            }
-            final_synthesis_prompt_content = f"Synthesize the following debate results into a coherent final answer, adhering strictly to your JSON schema:\\n\\n{json.dumps(full_debate_context, indent=2)}"
+            # General synthesis instructions
+            synthesis_prompt_parts.append(
+                "Based on the initial problem and the debate history, synthesize a final, comprehensive answer. "
+                "Address all aspects of the initial problem and integrate insights from all personas. "
+                "Your output MUST strictly adhere to the LLMOutput JSON schema."
+            )
+            self.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = LLMOutput
+            self.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = GeneralOutput
 
-        prompt = final_synthesis_prompt_content
 
-        # Use the dynamically calculated budget for this persona's turn
-        max_output_tokens_for_turn = self.phase_budgets.get("persona_turn_budgets", {}).get(synthesis_persona_name, persona_config.max_tokens)
-        estimated_tokens = self.tokenizer.count_tokens(prompt) + max_output_tokens_for_turn
-        self.check_budget("synthesis", estimated_tokens, synthesis_persona_name)
+        final_synthesis_prompt_raw = "\n".join(synthesis_prompt_parts)
+        
+        # NEW: Trim the final synthesis prompt to ensure it fits within the input token budget
+        # The max_output_tokens_for_turn is the budget for the *output*.
+        # We need to consider the *input* budget for the prompt itself.
+        # The total budget for synthesis phase is self.phase_budgets["synthesis"].
+        # We need to ensure that the input prompt + expected output tokens does not exceed this.
+        # Let's reserve a portion of the synthesis budget for the input prompt.
+        input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.7) # e.g., 70% for input, 30% for output
+        
+        final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
+            final_synthesis_prompt_raw,
+            input_budget_for_synthesis_prompt,
+            truncation_indicator="\n... (truncated for token limits) ..."
+        )
 
-        try:
-            output = self._execute_llm_turn(synthesis_persona_name, persona_config, prompt, "synthesis")
-            self._log_with_context("info", f"Final synthesis turn completed by {synthesis_persona_name}.")
-            return output
-        except Exception as e:
-            self._log_with_context("error", f"Error during final synthesis turn by {synthesis_persona_name}: {e}", exc_info=True, original_exception=e)
-            self.rich_console.print(f"[red]Error during final synthesis turn: {e}[/red]")
-            if isinstance(e, (TokenBudgetExceededError, ChimeraError, CircuitBreakerError, LLMProviderError, SchemaValidationError)):
-                raise e
-            return {"error": f"Synthesis turn failed: {e}", "malformed_blocks": [{"type": "SYNTHESIS_ERROR", "message": str(e)}]}
+        # Estimate tokens for the synthesis turn (this is for the *output* tokens)
+        max_output_tokens_for_turn = self.phase_budgets["synthesis"] - self.tokenizer.count_tokens(final_synthesis_prompt)
+        max_output_tokens_for_turn = max(500, max_output_tokens_for_turn) # Ensure a minimum output budget
+        
+        estimated_tokens_for_turn = self.tokenizer.count_tokens(final_synthesis_prompt) + max_output_tokens_for_turn
+        self.check_budget("synthesis", estimated_tokens_for_turn, synthesis_persona_name)
+
+        # Execute the LLM turn for synthesis
+        synthesis_output = self._execute_llm_turn(
+            synthesis_persona_name,
+            synthesis_persona_config,
+            final_synthesis_prompt,
+            "synthesis",
+            max_output_tokens_for_turn # Pass the correct max_output_tokens
+        )
+        self._log_with_context("info", "Final synthesis persona turn completed.")
+        return synthesis_output
+    # --- END NEW METHOD ---
+
+    def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
+        """Synthesizes the final answer and prepares the intermediate steps for display."""
+        final_answer = synthesis_persona_results
+
+        if not isinstance(final_answer, dict):
+            final_answer = {"general_output": str(final_answer), "malformed_blocks": []}
+        if "malformed_blocks" not in final_answer:
+            final_answer["malformed_blocks"] = []
+
+        # NEW: Consolidate code changes for SelfImprovementAnalysisOutput
+        # Check if it's a SelfImprovementAnalysisOutput (versioned or V1 direct)
+        if isinstance(final_answer, dict):
+            # Check if it's already the versioned wrapper
+            if final_answer.get("version") == "1.0" and "data" in final_answer:
+                final_answer["data"] = self._consolidate_self_improvement_code_changes(final_answer["data"])
+                self._log_with_context("info", "Self-improvement code changes consolidated (versioned output).")
+            # Check if it's a direct V1 output that needs wrapping
+            elif "ANALYSIS_SUMMARY" in final_answer and "IMPACTFUL_SUGGESTIONS" in final_answer:
+                # It's a V1 direct output, consolidate and then wrap it
+                v1_data_consolidated = self._consolidate_self_improvement_code_changes(final_answer)
+                final_answer = SelfImprovementAnalysisOutput(
+                    version="1.0",
+                    data=v1_data_consolidated,
+                    malformed_blocks=final_answer.get("malformed_blocks", []) # Preserve existing malformed blocks
+                ).model_dump(by_alias=True)
+                self._log_with_context("info", "Self-improvement code changes consolidated and wrapped (direct V1 output).")
+
+
+        self._update_intermediate_steps_with_totals()
+        if "malformed_blocks" not in self.intermediate_steps:
+            self.intermediate_steps["malformed_blocks"] = []
+
+        # Ensure final_answer reflects resolution or unresolved conflict
+        if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
+            # The resolution_summary from _trigger_conflict_sub_debate is already a dict,
+            # so we should merge it or assign it appropriately.
+            # Assuming final_answer is the main output, we can add a dedicated field.
+            final_answer["CONFLICT_RESOLUTION"] = self.intermediate_steps["Conflict_Resolution_Attempt"]["resolution_summary"]
+            final_answer["UNRESOLVED_CONFLICT"] = None
+        elif self.intermediate_steps.get("Unresolved_Conflict"):
+            final_answer["UNRESOLVED_CONFLICT"] = self.intermediate_steps["Unresolved_Conflict"]["summary"]
+            final_answer["CONFLICT_RESOLUTION"] = None
+
+        return final_answer, self.intermediate_steps
+
+    def _update_intermediate_steps_with_totals(self):
+        """Updates the intermediate steps dictionary with total token usage and estimated cost."""
+        self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
+        self.intermediate_steps["Total_Estimated_Cost_USD"] = self.get_total_estimated_cost()
+
+    @handle_errors(default_return=None, log_level="ERROR") # Apply the decorator here
+    def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
+        """
+        Orchestrates the full Socratic debate process.
+        Returns the final synthesized answer and a dictionary of intermediate steps.
+        """
+        self._initialize_debate_state()
+
+        # Determine initial persona sequence (before context analysis)
+        initial_persona_sequence = self._get_final_persona_sequence(self.initial_prompt, None)
+        self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
+
+        # Phase 1: Context Analysis (if applicable)
+        self.status_callback(message="Phase 1: Analyzing Context...", state="running",
+                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             progress_pct=self.get_progress_pct("context"))
+        context_analysis_results = self._perform_context_analysis(tuple(initial_persona_sequence))
+        self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
+
+        # Re-determine persona sequence after context analysis to allow for dynamic adjustments
+        # based on the insights gained from the context.
+        persona_sequence = self._get_final_persona_sequence(self.initial_prompt, context_analysis_results)
+        self.intermediate_steps["Persona_Sequence"] = persona_sequence
+
+        # NEW: Distribute debate budget among the *final* persona sequence
+        self._distribute_debate_persona_budgets(persona_sequence)
+
+        # Phase 2: Context Persona Turn (if in sequence)
+        context_persona_turn_results = None
+        if "Context_Aware_Assistant" in persona_sequence:
+            self.status_callback(message="Phase 2: Context-Aware Assistant Turn...", state="running",
+                                 current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                                 progress_pct=self.get_progress_pct("debate"), current_persona_name="Context_Aware_Assistant")
+            context_persona_turn_results = self._process_context_persona_turn(persona_sequence, context_analysis_results)
+            self.intermediate_steps["Context_Aware_Assistant_Output"] = context_persona_turn_results
+
+        # Phase 3: Main Debate Persona Turns
+        self.status_callback(message="Phase 3: Executing Debate Turns...", state="running",
+                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             progress_pct=self.get_progress_pct("debate"))
+        debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results)
+        self.intermediate_steps["Debate_History"] = debate_persona_results
+
+        # Phase 4: Final Synthesis Persona Turn
+        self.status_callback(message="Phase 4: Synthesizing Final Answer...", state="running",
+                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             progress_pct=self.get_progress_pct("synthesis"))
+
+        # THIS IS THE MISSING CALL:
+        synthesis_persona_results = self._perform_synthesis_persona_turn(persona_sequence, debate_persona_results)
+        self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
+
+        # Finalize results and update totals
+        self.status_callback(message="Finalizing Results...", state="running",
+                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             progress_pct=0.95)
+        final_answer, intermediate_steps = self._finalize_debate_results(context_persona_turn_results, debate_persona_results, synthesis_persona_results)
+
+        self.status_callback(message="Socratic Debate Complete!", state="complete",
+                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             progress_pct=1.0)
+        self._log_with_context("info", "Socratic Debate process completed successfully.",
+                               total_tokens=self.tokens_used, total_cost=self.get_total_estimated_cost())
+
+        return final_answer, intermediate_steps
 
     def _consolidate_self_improvement_code_changes(self, analysis_output: Dict[str, Any]) -> Dict[str, Any]:
         """
         Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
-        SelfImprovementAnalysisOutput.
+        SelfImprovementAnalysisOutput. Also filters out no-op changes.
         """
         if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
             return analysis_output
@@ -1272,10 +1413,6 @@ class SocraticDebate:
 
             new_code_changes_for_suggestion = []
             for file_path, changes_for_file in file_changes_map.items():
-                if len(changes_for_file) == 1:
-                    new_code_changes_for_suggestion.append(changes_for_file[0].model_dump(by_alias=True))
-                    continue
-
                 # Handle multiple changes for the same file
                 # Prioritize REMOVE, then ADD, then consolidate MODIFY
                 remove_actions = [c for c in changes_for_file if c.action == "REMOVE"]
@@ -1296,7 +1433,6 @@ class SocraticDebate:
                     self._log_with_context("info", f"Consolidated multiple changes for {file_path} into a single REMOVE action.")
                 elif add_actions:
                     # If any ADD action, assume the file is to be added.
-                    # Take the content from the last ADD action (or first, depending on preference).
                     # For simplicity, take the first ADD action's content.
                     new_code_changes_for_suggestion.append(add_actions[0].model_dump(by_alias=True))
                     self._log_with_context("info", f"Consolidated multiple changes for {file_path} into a single ADD action.")
@@ -1309,144 +1445,66 @@ class SocraticDebate:
                     last_full_content_provided = None
                     
                     # Iterate through modify actions to find the most recent full_content
-                    # or to apply changes if a patch utility were available.
-                    # For this pragmatic approach, we'll take the last full_content if provided.
                     for mod_change in modify_actions:
                         if mod_change.full_content is not None:
                             last_full_content_provided = mod_change.full_content
-                        # If only diff_content is provided, we can't easily combine them without a patch utility.
-                        # We'll rely on the LLM to provide a comprehensive full_content or diff.
-                        # If it provides multiple diffs without full_content, this consolidation will be limited.
+                    
+                    consolidated_diff_content = None
 
                     if last_full_content_provided is not None:
                         final_content_for_diff = last_full_content_provided
+                        # Generate unified diff
+                        diff_lines = difflib.unified_diff(
+                            original_content.splitlines(keepends=True),
+                            final_content_for_diff.splitlines(keepends=True),
+                            fromfile=f"a/{file_path}",
+                            tofile=f"b/{file_path}",
+                            lineterm=''
+                        )
+                        consolidated_diff_content = "".join(diff_lines)
+                        self._log_with_context("debug", f"Generated diff from FULL_CONTENT for {file_path}.")
                     else:
-                        # If no full_content was provided in any MODIFY action,
-                        # and only diffs were given, we cannot reliably generate a new unified diff
-                        # without a patch application utility.
-                        # In this case, we'll log a warning and skip consolidation for this file's MODIFY actions,
-                        # or just take the last diff if available.
-                        self._log_with_context("warning", f"Multiple MODIFY actions for {file_path} without a consolidated FULL_CONTENT. Cannot generate unified diff reliably. Keeping original changes for this file.")
-                        # Re-add original modify actions if we can't consolidate them
-                        new_code_changes_for_suggestion.extend([c.model_dump(by_alias=True) for c in modify_actions])
-                        continue # Skip to next file in file_changes_map
-
-                    # Generate unified diff
-                    diff_lines = difflib.unified_diff(
-                        original_content.splitlines(keepends=True),
-                        final_content_for_diff.splitlines(keepends=True),
-                        fromfile=f"a/{file_path}",
-                        tofile=f"b/{file_path}",
-                        lineterm=''
-                    )
-                    unified_diff_output = "".join(diff_lines)
-
-                    if unified_diff_output.strip():
+                        # If no FULL_CONTENT was provided, check if any DIFF_CONTENT was provided.
+                        # If multiple DIFF_CONTENTs, take the last one.
+                        last_diff_from_llm = None
+                        for mod_change in modify_actions:
+                            if mod_change.diff_content is not None:
+                                last_diff_from_llm = mod_change.diff_content
+                        
+                        if last_diff_from_llm is not None:
+                            # If LLM provided a diff, use it directly.
+                            consolidated_diff_content = last_diff_from_llm
+                            self._log_with_context("debug", f"Using LLM-provided DIFF_CONTENT for {file_path}.")
+                        else:
+                            # If no FULL_CONTENT and no DIFF_CONTENT, then it's a no-op or malformed.
+                            self._log_with_context("info", f"Consolidated MODIFY for {file_path} resulted in no effective change (no FULL_CONTENT or DIFF_CONTENT provided). Removing from suggestions.")
+                            analysis_output.setdefault("malformed_blocks", []).append({
+                                "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
+                                "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
+                                "file_path": file_path,
+                                "suggestion_area": suggestion.get("AREA")
+                            })
+                            continue # Skip adding this no-op change
+                    
+                    if consolidated_diff_content and consolidated_diff_content.strip():
                         new_code_changes_for_suggestion.append(CodeChange(
                             FILE_PATH=file_path,
                             ACTION="MODIFY",
-                            DIFF_CONTENT=unified_diff_output
+                            DIFF_CONTENT=consolidated_diff_content
                         ).model_dump(by_alias=True))
                         self._log_with_context("info", f"Consolidated multiple MODIFY actions for {file_path} into a single DIFF_CONTENT.")
                     else:
-                        self._log_with_context("info", f"Multiple MODIFY actions for {file_path} resulted in no effective change after consolidation.")
+                        # NEW: Check if consolidated diff is a no-op
+                        self._log_with_context("info", f"Consolidated MODIFY for {file_path} resulted in no effective change. Removing from suggestions.")
+                        analysis_output.setdefault("malformed_blocks", []).append({
+                            "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
+                            "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
+                            "file_path": file_path,
+                            "suggestion_area": suggestion.get("AREA")
+                        })
 
             suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
             consolidated_suggestions.append(suggestion)
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
-
-
-    def _finalize_debate_results(self, context_persona_turn_results: Optional[Dict[str, Any]], debate_persona_results: List[Dict[str, Any]], synthesis_persona_results: Optional[Dict[str, Any]]) -> Tuple[Any, Dict[str, Any]]:
-        """Synthesizes the final answer and prepares the intermediate steps for display."""
-        final_answer = synthesis_persona_results
-
-        if not isinstance(final_answer, dict):
-            final_answer = {"general_output": str(final_answer), "malformed_blocks": []}
-        if "malformed_blocks" not in final_answer:
-            final_answer["malformed_blocks"] = []
-
-        # NEW: Consolidate code changes for SelfImprovementAnalysisOutput
-        # Check if it's a SelfImprovementAnalysisOutput (versioned or V1 direct)
-        if isinstance(final_answer, dict):
-            if final_answer.get("version") == "1.0" and "data" in final_answer:
-                final_answer["data"] = self._consolidate_self_improvement_code_changes(final_answer["data"])
-                self._log_with_context("info", "Self-improvement code changes consolidated (versioned output).")
-            elif "ANALYSIS_SUMMARY" in final_answer and "IMPACTFUL_SUGGESTIONS" in final_answer:
-                # Handle direct V1 output that wasn't wrapped by the parser
-                final_answer = self._consolidate_self_improvement_code_changes(final_answer)
-                self._log_with_context("info", "Self-improvement code changes consolidated (direct V1 output).")
-
-
-        self._update_intermediate_steps_with_totals()
-        if "malformed_blocks" not in self.intermediate_steps:
-            self.intermediate_steps["malformed_blocks"] = []
-
-        # Ensure final_answer reflects resolution or unresolved conflict
-        if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
-            final_answer["CONFLICT_RESOLUTION"] = self.intermediate_steps["Conflict_Resolution_Attempt"]["resolution_summary"]
-            final_answer["UNRESOLVED_CONFLICT"] = None
-        elif self.intermediate_steps.get("Unresolved_Conflict"):
-            final_answer["UNRESOLVED_CONFLICT"] = self.intermediate_steps["Unresolved_Conflict"]["summary"]
-            final_answer["CONFLICT_RESOLUTION"] = None
-
-        return final_answer, self.intermediate_steps
-
-    def _update_intermediate_steps_with_totals(self):
-        """Updates the intermediate steps dictionary with total token usage and estimated cost."""
-        self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
-        self.intermediate_steps["Total_Estimated_Cost_USD"] = self.get_total_estimated_cost()
-
-    @handle_errors(log_level="ERROR")
-    def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
-        """
-        Orchestrates the full Socratic debate process.
-        Returns the final synthesized answer and a dictionary of intermediate steps.
-        """
-        self._initialize_debate_state()
-
-        # Determine initial persona sequence (before context analysis)
-        initial_persona_sequence = self._get_final_persona_sequence(self.initial_prompt, None)
-        self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
-
-        # Phase 1: Context Analysis (if applicable)
-        self.status_callback("Phase 1: Analyzing Context...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("context"))
-        context_analysis_results = self._perform_context_analysis(tuple(initial_persona_sequence))
-        self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
-
-        # Re-determine persona sequence after context analysis to allow for dynamic adjustments
-        # based on the insights gained from the context.
-        persona_sequence = self._get_final_persona_sequence(self.initial_prompt, context_analysis_results)
-        self.intermediate_steps["Persona_Sequence"] = persona_sequence
-
-        # NEW: Distribute debate budget among the *final* persona sequence
-        self._distribute_debate_persona_budgets(persona_sequence)
-
-        # Phase 2: Context Persona Turn (if in sequence)
-        context_persona_turn_results = None
-        if "Context_Aware_Assistant" in persona_sequence:
-            self.status_callback("Phase 2: Context-Aware Assistant Turn...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("debate"), current_persona_name="Context_Aware_Assistant")
-            context_persona_turn_results = self._process_context_persona_turn(persona_sequence, context_analysis_results)
-            self.intermediate_steps["Context_Aware_Assistant_Output"] = context_persona_turn_results
-
-        # Phase 3: Main Debate Persona Turns
-        self.status_callback("Phase 3: Executing Debate Turns...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("debate"))
-        debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results)
-        self.intermediate_steps["Debate_History"] = debate_persona_results
-
-        # Phase 4: Final Synthesis Persona Turn
-        self.status_callback("Phase 4: Synthesizing Final Answer...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=self.get_progress_pct("synthesis"))
-
-        synthesis_persona_results = self._perform_synthesis_persona_turn(persona_sequence, debate_persona_results)
-        self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
-
-        # Finalize results and update totals
-        self.status_callback("Finalizing Results...", "running", self.tokens_used, self.get_total_estimated_cost(), progress_pct=0.95)
-        final_answer, intermediate_steps = self._finalize_debate_results(context_persona_turn_results, debate_persona_results, synthesis_persona_results)
-
-        self.status_callback("Socratic Debate Complete!", "complete", self.tokens_used, self.get_total_estimated_cost(), progress_pct=1.0)
-        self._log_with_context("info", "Socratic Debate process completed successfully.",
-                               total_tokens=self.tokens_used, total_cost=self.get_total_estimated_cost())
-
-        return final_answer, intermediate_steps

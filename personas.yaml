@@ -353,13 +353,13 @@ personas:
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
-      4. USE ONLY DOUBLE QUOTES for all keys and string values.
-      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
-      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+      3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      5. USE ONLY DOUBLE QUOTES for all keys and string values.
+      6. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      7. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
       ---
@@ -461,18 +461,18 @@ personas:
               "env_file": "<string>"
             }
           },
-          "malformed_blocks": []
-        },
-        "deployment_summary": {
-          "dockerfile_present": "<boolean>",
-          "dockerfile_healthcheck_present": "<boolean>",
-          "dockerfile_non_root_user": "<boolean>",
-          "dockerfile_exposed_ports": "[<integer>, <integer>]",
-          "dockerfile_multi_stage_build": "<boolean>",
-          "prod_requirements_present": "<boolean>",
-          "prod_dependency_count": "<integer>",
-          "dev_dependency_overlap_count": "<integer>",
-          "unpinned_prod_dependencies": ["<string>", "<string>"], # NEW FIELD
+          "deployment_summary": {
+            "dockerfile_present": "<boolean>",
+            "dockerfile_healthcheck_present": "<boolean>",
+            "dockerfile_non_root_user": "<boolean>",
+            "dockerfile_exposed_ports": "[<integer>, <integer>]",
+            "dockerfile_multi_stage_build": "<boolean>",
+            "prod_requirements_present": "<boolean>",
+            "prod_dependency_count": "<integer>",
+            "dev_dependency_overlap_count": "<integer>",
+            "unpinned_prod_dependencies": ["<string>", "<string>"],
+            "malformed_blocks": []
+          },
           "malformed_blocks": []
         },
         "malformed_blocks": []
@@ -483,6 +483,12 @@ personas:
     temperature: 0.1
     max_tokens: 3072 # INCREASED from 2048 to accommodate more detailed config summary
     description: "Provides structured analysis of codebase architecture and organization, including quality metrics and persona-specific summaries."
+ 
+  - name: "Skeptical_Generator" # Duplicate name, this should be unique. Assuming it's a typo and should be different or removed.
+    system_prompt: "You are a rigorous analyst who identifies potential flaws, risks, and limitations in proposed solutions. You excel at stress-testing ideas, identifying edge cases, and ensuring robustness. When reviewing code, you focus on potential security vulnerabilities, performance bottlenecks, and maintainability issues."
+    temperature: 0.3
+    max_tokens: 1024
+    description: "Identifies flaws, risks, and limitations in proposed solutions."
  
 persona_sets:
   General:
