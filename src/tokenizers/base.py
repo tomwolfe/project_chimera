@@ -33,3 +33,18 @@ class Tokenizer(ABC):
             The estimated total number of tokens.
         """
         pass
+
+    @abstractmethod
+    def trim_text_to_tokens(self, text: str, max_tokens: int, truncation_indicator: str = "") -> str:
+        """
+        Trims the given text to fit within the specified token limit.
+        
+        Args:
+            text: The input string to trim.
+            max_tokens: The maximum number of tokens allowed.
+            truncation_indicator: An optional string to append if truncation occurs.
+        
+        Returns:
+            The trimmed string.
+        """
+        pass

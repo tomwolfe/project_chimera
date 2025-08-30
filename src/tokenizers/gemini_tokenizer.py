@@ -5,8 +5,8 @@ from typing import Optional, Dict, Any
 from .base import Tokenizer
 import hashlib
 import re
-import sys # Import sys for sys.stderr
-from functools import lru_cache # ADD THIS IMPORT
+import sys
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ class GeminiTokenizer(Tokenizer):
         
         self.genai_client = genai_client
         self.model_name = model_name
-        # Removed manual cache: self._cache = {}
 
     @property
     def max_output_tokens(self) -> int:
@@ -62,7 +61,7 @@ class GeminiTokenizer(Tokenizer):
         logger.warning(f"Unknown model '{self.model_name}', using default max output tokens ({self.MODEL_MAX_OUTPUT_TOKENS['default']})")
         return self.MODEL_MAX_OUTPUT_TOKENS["default"]
     
-    @lru_cache(maxsize=512) # ADD THIS DECORATOR for caching token counts
+    @lru_cache(maxsize=512)
     def count_tokens(self, text: str) -> int:
         """Counts tokens in the given text using the Gemini API, with caching."""
         if not text:
@@ -104,3 +103,49 @@ class GeminiTokenizer(Tokenizer):
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"
         return self.count_tokens(combined_text)
+
+    def trim_text_to_tokens(self, text: str, max_tokens: int, truncation_indicator: str = "") -> str:
+        """
+        Trim text to fit within the specified token limit.
+        Uses a binary search approach for efficiency.
+        """
+        if max_tokens < 1:
+            return ""
+        
+        # If the text already fits, return it as is
+        current_tokens = self.count_tokens(text)
+        if current_tokens <= max_tokens:
+            return text
+        
+        # Adjust max_tokens for the truncation indicator if it's used
+        effective_max_tokens = max_tokens
+        if truncation_indicator:
+            indicator_tokens = self.count_tokens(truncation_indicator)
+            effective_max_tokens = max(1, max_tokens - indicator_tokens) # Ensure at least 1 token for content
+            
+        # Use binary search to find the longest prefix that fits within effective_max_tokens
+        low = 0
+        high = len(text)
+        best_char_limit = 0
+
+        while low <= high:
+            mid = (low + high) // 2
+            if mid == 0:
+                current_tokens_at_mid = 0
+            else:
+                current_tokens_at_mid = self.count_tokens(text[:mid])
+
+            if current_tokens_at_mid <= effective_max_tokens:
+                best_char_limit = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        
+        trimmed_text = text[:best_char_limit]
+        
+        # Append truncation indicator if truncation actually occurred
+        # Check if the trimmed text is actually shorter than the original text
+        if truncation_indicator and self.count_tokens(trimmed_text) < current_tokens:
+            return trimmed_text + truncation_indicator
+        
+        return trimmed_text
