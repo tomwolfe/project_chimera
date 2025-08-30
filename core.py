@@ -127,14 +127,6 @@ class SocraticDebate:
              self.logger.warning("PersonaRouter not found in PersonaManager. Initializing a new one. This might indicate an issue in PersonaManager setup.")
              self.persona_router = PersonaRouter(self.all_personas, self.persona_sets, self.persona_manager.prompt_analyzer)
 
-        # Store the context analyzer instance and ensure it has codebase_context
-        self.context_analyzer = context_analyzer
-        if self.context_analyzer and self.codebase_context and not self.context_analyzer.codebase_context:
-            self.context_analyzer.codebase_context = self.codebase_context
-        # Ensure context analyzer has the persona router if it wasn't set during its init
-        if self.context_analyzer and not self.context_analyzer.persona_router:
-            self.context_analyzer.set_persona_router(self.persona_router)
-
         # NEW: Initialize ContentAlignmentValidator
         self.content_validator = ContentAlignmentValidator(
             original_prompt=self.initial_prompt,
@@ -415,7 +407,7 @@ class SocraticDebate:
 
                 # Parse and validate the LLM's raw output
                 parser = LLMOutputParser()
-                parsed_output = parser.parse_and_validate(raw_llm_output, persona_name) # Use persona_name here
+                parsed_output = parser.parse_and_validate(raw_llm_output, output_schema) # Use output_schema here
 
                 # Check for malformed blocks reported by the parser itself (e.g., invalid JSON structure before validation)
                 if parsed_output.get("malformed_blocks"):
@@ -441,13 +433,18 @@ class SocraticDebate:
                     self._log_with_context("warning", f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Error: {e}",
                                            persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                     
-                    # Modify prompt for the next attempt
-                    current_prompt = (
-                        f"PREVIOUS OUTPUT INVALID: {str(e)}\n\n"
-                        "REMEMBER: OUTPUT MUST BE RAW JSON ONLY WITH NO MARKDOWN.\n\n"
-                        f"Original prompt: {prompt_for_llm}" # Use the original prompt for context
-                    )
+                    # Extract specific details from SchemaValidationError for more actionable feedback
+                    error_details = e.details if hasattr(e, 'details') and isinstance(e.details, dict) else {}
+                    error_type = error_details.get('error_type', 'Unknown validation error')
+                    field_path = error_details.get('field_path', 'N/A')
+                    invalid_value_snippet = str(error_details.get('invalid_value', 'N/A'))[:200]
+
+                    retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
+                    retry_feedback += "CRITICAL: Your output failed schema validation. You MUST correct this.\n"
+                    retry_feedback += "REMEMBER: OUTPUT MUST BE RAW JSON ONLY WITH NO MARKDOWN. STRICTLY ADHERE TO THE SCHEMA.\n\n"
                     
+                    current_prompt = f"{retry_feedback}Original prompt: {prompt_for_llm}"
+          
                     # Add the error to intermediate steps for debugging
                     self.intermediate_steps.setdefault("malformed_blocks", []).append({
                         "type": "RETRYABLE_VALIDATION_ERROR",
@@ -967,6 +964,10 @@ class SocraticDebate:
 
     # --- NEW HELPER FUNCTIONS FOR SELF_IMPROVEMENT_ANALYST PROMPT TRUNCATION ---
     def _summarize_metrics_for_llm(self, metrics: Dict[str, Any], max_tokens: int) -> Dict[str, Any]:
+        # Ensure a minimum number of tokens are reserved for the *summary string* if all else fails
+        MIN_SUMMARY_STRING_TOKENS = 150
+        effective_max_tokens = max(MIN_SUMMARY_STRING_TOKENS, max_tokens)
+
         """
         Intelligently summarizes the metrics dictionary to fit within a token budget.
         Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
@@ -976,17 +977,18 @@ class SocraticDebate:
 
         # Estimate current token count
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-
+        
         # If already within budget, return as is
-        if current_tokens <= max_tokens:
+        if current_tokens <= effective_max_tokens:
             return summarized_metrics
-
+        
         self._log_with_context("debug", f"Summarizing metrics for LLM. Current tokens: {current_tokens}, Max: {max_tokens}")
 
         # --- Prioritize critical sections: configuration_analysis and deployment_robustness ---
         # Allocate a fixed, generous portion of the budget to these, or ensure they are minimally summarized.
         CRITICAL_SECTION_TOKEN_BUDGET = int(max_tokens * 0.4) # 40% of the budget for critical sections
-
+        CRITICAL_SECTION_TOKEN_BUDGET = max(100, min(CRITICAL_SECTION_TOKEN_BUDGET, effective_max_tokens * 0.5)) # Cap at 50% of effective_max_tokens
+        
         critical_sections_content = {}
         if 'configuration_analysis' in summarized_metrics:
             critical_sections_content['configuration_analysis'] = summarized_metrics['configuration_analysis']
@@ -998,7 +1000,7 @@ class SocraticDebate:
         # Summarize critical sections if they exceed their dedicated budget
         summarized_critical_sections = {}
         critical_sections_tokens = self.tokenizer.count_tokens(json.dumps(critical_sections_content))
-
+        
         if critical_sections_tokens > CRITICAL_SECTION_TOKEN_BUDGET:
             self._log_with_context("debug", f"Critical sections (config/deployment) exceed dedicated budget. Summarizing.")
             # This is a simplified summarization. A more advanced one would be persona-aware.
@@ -1029,8 +1031,8 @@ class SocraticDebate:
         # Re-insert summarized critical sections
         summarized_metrics.update(summarized_critical_sections)
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-        remaining_budget_for_issues = max_tokens - current_tokens
-
+        remaining_budget_for_issues = effective_max_tokens - current_tokens
+        
         # --- Dynamically truncate 'detailed_issues' and 'ruff_violations' ---
         # Prioritize 'detailed_issues' as they are more comprehensive
         for issue_list_key in ['detailed_issues', 'ruff_violations']:
@@ -1054,48 +1056,46 @@ class SocraticDebate:
                     summarized_metrics['code_quality'][issue_list_key] = original_issues[:num_issues_to_keep]
                     self._log_with_context("debug", f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.")
                     current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    remaining_budget_for_issues = max_tokens - current_tokens
+                    remaining_budget_for_issues = effective_max_tokens - current_tokens
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
                     del summarized_metrics['code_quality'][issue_list_key]
                     self._log_with_context("debug", f"Removed {issue_list_key} entirely due to lack of budget.")
                     current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    remaining_budget_for_issues = max_tokens - current_tokens
+                    remaining_budget_for_issues = effective_max_tokens - current_tokens
             elif 'code_quality' in summarized_metrics and issue_list_key in summarized_metrics['code_quality'] and not summarized_metrics['code_quality'][issue_list_key]:
                 del summarized_metrics['code_quality'][issue_list_key] # Remove empty lists
         
         # If still over budget, consider removing entire verbose sections
-        if current_tokens > max_tokens:
+        if current_tokens > effective_max_tokens:
             if 'code_quality' in summarized_metrics:
                 if 'detailed_issues' in summarized_metrics['code_quality']:
                     del summarized_metrics['code_quality']['detailed_issues']
                     self._log_with_context("debug", "Removed detailed_issues entirely.")
-                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    if current_tokens <= max_tokens:
+                    if current_tokens <= effective_max_tokens:
                         return summarized_metrics
                 if 'ruff_violations' in summarized_metrics['code_quality']:
                     del summarized_metrics['code_quality']['ruff_violations']
                     self._log_with_context("debug", "Removed ruff_violations entirely.")
-                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    if current_tokens <= max_tokens:
+                    if current_tokens <= effective_max_tokens:
                         return summarized_metrics
 
             if 'maintainability' in summarized_metrics and 'test_coverage_summary' in summarized_metrics['maintainability']:
                 if 'coverage_details' in summarized_metrics['maintainability']['test_coverage_summary']:
                     del summarized_metrics['maintainability']['test_coverage_summary']['coverage_details']
                     self._log_with_context("debug", "Removed coverage_details.")
-                    current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
-                    if current_tokens <= max_tokens:
+                    if current_tokens <= effective_max_tokens:
                         return summarized_metrics
 
-        # As a last resort, convert to a very high-level summary string
-        if current_tokens > max_tokens:
+        if current_tokens > effective_max_tokens:
             self._log_with_context("warning", "Metrics still too large after truncation. Converting to high-level summary string.")
             summary_str = f"Overall Code Quality: Ruff issues: {metrics['code_quality']['ruff_issues_count']}, Code Smells: {metrics['code_quality']['code_smells_count']}. " \
                           f"Security Issues: Bandit: {metrics['security']['bandit_issues_count']}, AST: {metrics['security']['ast_security_issues_count']}. " \
                           f"Token Usage: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']} tokens, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. " \
                           f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}, Unresolved conflicts: {metrics['robustness']['unresolved_conflict_present']}."
-            return {"summary_string": summary_str}
-
+            # Ensure the summary string itself fits within the minimum tokens
+            trimmed_summary_str = self.tokenizer.trim_text_to_tokens(summary_str, MIN_SUMMARY_STRING_TOKENS)
+            return {"summary_string": trimmed_summary_str}
+          
         return summarized_metrics
 
     def _summarize_debate_history_for_llm(self, debate_history: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
