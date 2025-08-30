@@ -1270,7 +1270,8 @@ def _run_socratic_debate_process():
                 logger.debug(f"DEBUG - Prompt at start of debate function: {current_user_prompt_for_debate[:100]}...")
                 logger.debug(f"DEBUG - Domain selection logic - Initial domain_for_run: {st.session_state.selected_persona_set}")
                 logger.debug(f"DEBUG - Domain selection logic - Selected example name: {st.session_state.selected_example_name}")
-                logger(f"DEBUG - Domain selection logic - Active example framework hint: {st.session_state.active_example_framework_hint}")
+                # FIX APPLIED HERE: Changed logger(...) to logger.debug(...) and removed redundant "DEBUG - " prefix
+                logger.debug(f"Domain selection logic - Active example framework hint: {st.session_state.active_example_framework_hint}")
                 logger.debug(f"DEBUG - Domain selection logic - Sidebar selected persona set: {st.session_state.selected_persona_set}")
                 logger.debug(f"DEBUG - Domain selection logic - Final domain_for_run: {domain_for_run}")
 
