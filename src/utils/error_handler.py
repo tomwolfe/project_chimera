@@ -19,12 +19,21 @@ def handle_errors(default_return: Any = None, log_level: str = "ERROR"):
             except ChimeraError as e:
                 # If it's already a ChimeraError, just log it with its structured info
                 log_method = getattr(logger, log_level.lower())
-                # FIX: Use str(e) to access the exception message robustly
+                # Use str(e) to access the exception message robustly
                 error_msg = str(e)
-                log_method(f"Structured error in {func.__name__}: {error_msg}", extra=e.to_dict())
+                
+                # --- START MODIFICATION ---
+                # The ChimeraError.to_dict() method includes a "message" key.
+                # When passing this dictionary as 'extra', it conflicts with the LogRecord's
+                # built-in 'message' attribute. We must remove it from the 'extra' dict.
+                error_dict = e.to_dict()
+                error_dict.pop('message', None)  # Remove 'message' to avoid conflict
+                log_method(f"Structured error in {func.__name__}: {error_msg}", extra=error_dict)
+                # --- END MODIFICATION ---
+                
                 raise e # Re-raise the structured error for upstream handling
             except Exception as e:
-                # FIX: Use str(e) for general exceptions too, and ensure ChimeraError
+                # Use str(e) for general exceptions too, and ensure ChimeraError
                 # is instantiated with the correct parameters (message, details, original_exception)
                 error_msg = str(e)
                 chimera_error = ChimeraError(
@@ -40,9 +49,6 @@ def handle_errors(default_return: Any = None, log_level: str = "ERROR"):
                     original_exception=e
                 )
                 log_method = getattr(logger, log_level.lower())
-                # Change this:
-                # log_method(f"Unstructured error wrapped: {chimera_error.message}", extra=chimera_error.to_dict())
-                # To this:
                 error_dict = chimera_error.to_dict()
                 error_dict.pop('message', None)  # Remove 'message' to avoid conflict
                 log_method(f"Unstructured error wrapped: {chimera_error.message}", extra=error_dict)
