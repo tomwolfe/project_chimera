@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError # Ensure ValidationError is impo
 
 # Ensure all relevant models are imported
 from src.models import CodeChange, LLMOutput, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, \
-    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
+    SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1, ConfigurationAnalysisOutput, DeploymentAnalysisOutput # Added ConfigurationAnalysisOutput, DeploymentAnalysisOutput
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +364,36 @@ class LLMOutputParser:
         
         transformation_needed = False
 
+        # FIX (Issue 1): Handle case where schema_model is a string (model name) instead of the model class
+        if isinstance(schema_model, str):
+            from src.models import (
+                SelfImprovementAnalysisOutputV1,
+                ContextAnalysisOutput,
+                CritiqueOutput,
+                GeneralOutput,
+                ConflictReport,
+                ConfigurationAnalysisOutput,
+                DeploymentAnalysisOutput,
+                SelfImprovementAnalysisOutput # Added this one
+            )
+            
+            model_map = {
+                "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
+                "ContextAnalysisOutput": ContextAnalysisOutput,
+                "CritiqueOutput": CritiqueOutput,
+                "GeneralOutput": GeneralOutput,
+                "ConflictReport": ConflictReport,
+                "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
+                "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
+                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput # Added this one
+            }
+            
+            if schema_model in model_map:
+                schema_model = model_map[schema_model]
+            else:
+                raise ValueError(f"Unknown schema model: {schema_model}")
+        # End FIX (Issue 1)
+
         # NEW: Clean raw output first to remove markdown fences and conversational filler
         cleaned_raw_output = self._clean_llm_output(raw_output)
 
@@ -557,16 +587,18 @@ class LLMOutputParser:
         try:
             if schema_model == SelfImprovementAnalysisOutput:
                 try:
+                    # For Pydantic v2 compatibility (Additional Fix)
                     validated_output = schema_model.model_validate(data_to_validate)
-                except ValidationError:
-                    v1_data = SelfImprovementAnalysisOutputV1.model_validate(data_to_validate)
-                    validated_output = SelfImprovementAnalysisOutput(
-                        version="1.0",
-                        data=v1_data.model_dump(by_alias=True),
-                        malformed_blocks=malformed_blocks_list # Pass malformed blocks to the wrapper
-                    )
+                except AttributeError:
+                    # Fall back to v1 if needed
+                    validated_output = schema_model.parse_obj(data_to_validate)
             else:
-                validated_output = schema_model.model_validate(data_to_validate)
+                # For Pydantic v2 compatibility (Additional Fix)
+                try:
+                    validated_output = schema_model.model_validate(data_to_validate)
+                except AttributeError:
+                    # Fall back to v1 if needed
+                    validated_output = schema_model.parse_obj(data_to_validate)
 
             result_dict = validated_output.model_dump(by_alias=True)
             # Ensure malformed_blocks from parsing are added to the final result

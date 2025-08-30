@@ -5,31 +5,46 @@ import traceback # Import traceback
 
 class ChimeraError(Exception):
     """Base exception for all Chimera errors with standardized structure."""
-    def __init__(self, message: str, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
+    # FIX: Added error_code parameter and explicitly stored message for __str__
+    def __init__(self, message: str, error_code: str = "CHIMERA_ERROR",
+                 details: Optional[dict] = None, original_exception: Optional[Exception] = None):
         super().__init__(message)
+        self.message = message # Store message explicitly for __str__ and to_dict
+        self.error_code = error_code
         self.details = details or {}
         self.timestamp = datetime.datetime.now()
-        self.original_exception = original_exception # Store original exception
-        self.stack_trace = traceback.format_exc() if original_exception else None # Capture stack trace if original exception exists
+        self.original_exception = original_exception
+        # Capture stack trace only if an original_exception is provided, otherwise it's the current frame.
+        # traceback.format_exc() captures the traceback of the *current* exception being handled.
+        # If original_exception is None, it means this ChimeraError is the primary error,
+        # so we capture its own creation stack.
+        self.stack_trace = traceback.format_exc() if original_exception else traceback.format_stack() # Use format_stack for current frame
 
+    # FIX: Modified to_dict to include error_code and use self.message
     def to_dict(self) -> Dict[str, Any]:
         """Convert exception to structured dictionary for logging/reporting."""
         return {
-            "message": str(self), # CHANGED THIS KEY BACK TO "message" for consistency
+            "error_type": self.__class__.__name__,
+            "error_code": self.error_code,
+            "message": self.message, # Use self.message as per fix
             "details": self.details,
             "timestamp": self.timestamp.isoformat(),
             "original_exception_type": type(self.original_exception).__name__ if self.original_exception else None,
             "original_exception_message": str(self.original_exception) if self.original_exception else None,
             "stack_trace": self.stack_trace,
-            "type": self.__class__.__name__
         }
+
+    # FIX: Added __str__ method for robust string representation
+    def __str__(self):
+        """String representation of the error."""
+        return f"{self.error_code}: {self.message}"
 
 class LLMProviderError(ChimeraError):
     """Base exception for LLM provider errors."""
     def __init__(self, message: str, provider_error_code: Any = None, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
         full_details = (details or {}).copy()
         full_details["provider_error_code"] = provider_error_code
-        super().__init__(message, details=full_details, original_exception=original_exception)
+        super().__init__(message, error_code="LLM_PROVIDER_ERROR", details=full_details, original_exception=original_exception)
 
 class GeminiAPIError(LLMProviderError):
     """Specific exception for Gemini API errors."""
@@ -38,7 +53,8 @@ class GeminiAPIError(LLMProviderError):
 
 class LLMUnexpectedError(LLMProviderError):
     """Specific exception for unexpected LLM errors."""
-    pass
+    def __init__(self, message: str, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
+        super().__init__(message, error_code="LLM_UNEXPECTED_ERROR", details=details, original_exception=original_exception)
 
 class ValidationPhaseError(ChimeraError):
     """Base for errors occurring during response validation."""
@@ -49,7 +65,7 @@ class ValidationPhaseError(ChimeraError):
             "invalid_response": invalid_response,
             "expected_schema": expected_schema
         })
-        super().__init__(message, full_details, original_exception=original_exception)
+        super().__init__(message, error_code="VALIDATION_PHASE_ERROR", details=full_details, original_exception=original_exception)
 
 class SchemaValidationError(ValidationPhaseError):
     """Specific error when response fails schema validation."""
@@ -62,7 +78,7 @@ class SchemaValidationError(ValidationPhaseError):
             "field_path": field_path,
             "invalid_value": invalid_value
         })
-        super().__init__(message, details=full_details, original_exception=original_exception)
+        super().__init__(message, error_code="SCHEMA_VALIDATION_ERROR", details=full_details, original_exception=original_exception)
 
 class TokenBudgetExceededError(ChimeraError):
     """Raised when token usage exceeds budget"""
@@ -76,13 +92,15 @@ class TokenBudgetExceededError(ChimeraError):
             **(details or {})
         }
         message = f"Token budget exceeded: {current_tokens}/{budget} tokens used. Phase: {error_details['phase']}, Step: {error_details['step_name']}"
-        super().__init__(message, details=error_details, original_exception=original_exception)
+        super().__init__(message, error_code="TOKEN_BUDGET_EXCEEDED", details=error_details, original_exception=original_exception)
 
 class CircuitBreakerError(ChimeraError):
     """Exception raised when the circuit breaker is open and prevents execution."""
     def __init__(self, message: str, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
-        super().__init__(message, details, original_exception=original_exception)
+        super().__init__(message, error_code="CIRCUIT_BREAKER_OPEN", details=details, original_exception=original_exception)
 
 class LLMResponseValidationError(ValidationPhaseError):
     """Raised when LLM response fails validation, with code-specific guidance."""
-    pass
+    def __init__(self, message: str, invalid_response: Any = None, 
+                 expected_schema: str = None, details: Optional[dict] = None, original_exception: Optional[Exception] = None):
+        super().__init__(message, invalid_response=invalid_response, expected_schema=expected_schema, error_code="LLM_RESPONSE_VALIDATION_ERROR", details=details, original_exception=original_exception)

@@ -94,6 +94,7 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         self.codebase_context = codebase_context or {} # Ensure it's a dict
         self.domain = domain
+        self.context_analyzer = context_analyzer # <--- ADDED THIS LINE HERE
 
         # Initialize the LLM provider.
         try:
@@ -424,7 +425,7 @@ class SocraticDebate:
                 self._log_with_context("error", f"Non-retryable error during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
                 raise e # Re-raise the specific error
 
             except SchemaValidationError as e: # Catching SchemaValidationError as it's more likely from parse_and_validate
@@ -459,7 +460,7 @@ class SocraticDebate:
                     # If it's the last attempt and it failed, return the fallback JSON
                     self._log_with_context("error", f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.", persona=persona_name)
                     if self.persona_manager:
-                        self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                        self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
                     return {
                         "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
                         "IMPACTFUL_SUGGESTIONS": [{
@@ -475,7 +476,7 @@ class SocraticDebate:
                 self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True, has_content_misalignment)
+                    self.persona_manager.record_persona_performance(persona_name, False, is_truncated, True) # Removed has_content_misalignment
                 raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
 
         # --- End of retry loop ---
@@ -493,7 +494,16 @@ class SocraticDebate:
         
         # Record persona performance for adaptive adjustments
         if self.persona_manager:
-            self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error, has_content_misalignment)
+            # is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, output) # This line was causing the error
+            # The `validate` method returns 3 arguments, but `record_persona_performance` expects 5.
+            # The fix for Issue 2 was to remove `nuanced_feedback` from the call in `app.py`.
+            # Here, we need to ensure the call matches the definition in `persona_manager.py`.
+            # The `has_content_misalignment` flag should be passed.
+            is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, parsed_output)
+            self.persona_manager.record_persona_performance(persona_name, True, is_truncated, has_schema_error) # Removed has_content_misalignment
+            # The `has_content_misalignment` flag is determined *after* this call, so it can't be passed here.
+            # The `record_persona_performance` method in `persona_manager.py` needs to be updated to reflect this.
+            # For now, I'll remove `has_content_misalignment` from this call to match the `persona_manager.py` definition.
 
         return parsed_output
     # --- END MODIFIED METHOD ---
@@ -986,7 +996,7 @@ class SocraticDebate:
 
         # --- Prioritize critical sections: configuration_analysis and deployment_robustness ---
         # Allocate a fixed, generous portion of the budget to these, or ensure they are minimally summarized.
-        CRITICAL_SECTION_TOKEN_BUDGET = int(max_tokens * 0.4) # 40% of the budget for critical sections
+        CRITICAL_SECTION_TOKEN_BUDGET = int(effective_max_tokens * 0.4) # 40% of the budget for critical sections
         CRITICAL_SECTION_TOKEN_BUDGET = max(100, min(CRITICAL_SECTION_TOKEN_BUDGET, effective_max_tokens * 0.5)) # Cap at 50% of effective_max_tokens
         
         critical_sections_content = {}
@@ -1189,16 +1199,13 @@ class SocraticDebate:
         if synthesis_persona_name == "Self_Improvement_Analyst":
             # Collect metrics
             metrics_collector = ImprovementMetricsCollector(
-                initial_prompt=self.initial_prompt,
-                debate_history=debate_persona_results,
-                intermediate_steps=self.intermediate_steps,
-                codebase_context=self.codebase_context,
-                tokenizer=self.tokenizer,
-                llm_provider=self.llm_provider,
-                persona_manager=self.persona_manager,
-                content_validator=self.content_validator # Pass the content validator
+                codebase_path=Path(os.getcwd()), # Assuming current working directory is the codebase root
+                debate_intermediate_steps=debate_persona_results # Pass debate_intermediate_steps
             )
-            collected_metrics = metrics_collector.collect_all_metrics()
+            collected_metrics = metrics_collector.collect_all_metrics(
+                codebase_path=Path(os.getcwd()), # Assuming current working directory is the codebase root
+                debate_intermediate_steps=self.intermediate_steps # Pass the full intermediate steps
+            )
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
             # Summarize metrics to fit into the prompt

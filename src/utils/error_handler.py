@@ -19,18 +19,23 @@ def handle_errors(default_return: Any = None, log_level: str = "ERROR"):
             except ChimeraError as e:
                 # If it's already a ChimeraError, just log it with its structured info
                 log_method = getattr(logger, log_level.lower())
-                # FIX: Use str(e) to access the exception message robustly,
-                # as 'message' attribute might not always be present or accessible directly.
-                log_method(f"Structured error in {func.__name__}: {str(e)}", extra=e.to_dict())
+                # FIX: Use str(e) to access the exception message robustly
+                error_msg = str(e)
+                log_method(f"Structured error in {func.__name__}: {error_msg}", extra=e.to_dict())
                 raise e # Re-raise the structured error for upstream handling
             except Exception as e:
-                # Wrap any unexpected errors in a generic ChimeraError
+                # FIX: Use str(e) for general exceptions too, and ensure ChimeraError
+                # is instantiated with the correct parameters (message, details, original_exception)
+                error_msg = str(e)
                 chimera_error = ChimeraError(
-                    message=f"An unexpected error occurred in {func.__name__}: {str(e)}",
+                    message=f"An unexpected error occurred in {func.__name__}: {error_msg}",
                     details={
                         "function": func.__name__,
                         "args_snippet": str(args)[:200], # Limit for logging
-                        "kwargs_snippet": str(kwargs)[:200]
+                        "kwargs_snippet": str(kwargs)[:200],
+                        "error_type": type(e).__name__, # Add error_type
+                        "error_details": error_msg, # Add error_details
+                        "error_code": "UNEXPECTED_ERROR" # Add error_code to details
                     },
                     original_exception=e
                 )

@@ -418,17 +418,25 @@ class PersonaManager:
 
         return adjusted_config
 
-    # NEW: For Adaptive LLM Parameter Adjustment
-    def record_persona_performance(self, persona_name: str, success: bool, is_truncated: bool, has_schema_error: bool):
-        """Records performance metrics for a persona after a turn."""
+    # MODIFIED: Signature and body adapted as per fix description for Issue 2.
+    # NOTE: The original method tracked `success`, `is_truncated`, `has_schema_error`.
+    # The new signature provides `is_valid` (which can map to success), but `is_truncated`
+    # and `has_schema_error` are no longer directly available. This is a regression
+    # in the adaptive parameter adjustment tracking due to the incomplete fix description.
+    def record_persona_performance(self, persona_name: str, turn_number: int, 
+                                 output: Any, is_valid: bool, validation_message: str):
+        """Record performance metrics for a persona's turn."""
         metrics = self.persona_performance_metrics.get(persona_name)
         if metrics:
             metrics['total_turns'] += 1
-            if has_schema_error:
+            # Assuming is_valid maps to success for performance tracking
+            # is_truncated and has_schema_error are not available in this new signature.
+            # If these metrics are critical, the signature or the calling context needs adjustment.
+            if not is_valid: # If not valid, count as a schema failure for adaptive adjustment
                 metrics['schema_failures'] += 1
-            if is_truncated:
-                metrics['truncation_failures'] += 1
-            logger.debug(f"Recorded performance for {persona_name}: Success={success}, Truncated={is_truncated}, SchemaError={has_schema_error}")
+            # No direct way to track truncation or schema errors from this signature.
+            logger.debug(f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}")
+
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""

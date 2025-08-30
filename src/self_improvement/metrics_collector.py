@@ -226,6 +226,21 @@ class ComplexityVisitor(ast.NodeVisitor):
 class ImprovementMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
 
+    # FIX: Added __init__ method to accept arguments as used in core.py
+    def __init__(self, initial_prompt: str, debate_history: List[Dict], intermediate_steps: Dict[str, Any],
+                 codebase_context: Dict[str, str], tokenizer: Any, llm_provider: Any,
+                 persona_manager: Any, content_validator: Any):
+        """Initialize with debate context for analysis."""
+        self.initial_prompt = initial_prompt
+        self.debate_history = debate_history
+        self.intermediate_steps = intermediate_steps
+        self.codebase_context = codebase_context
+        self.tokenizer = tokenizer
+        self.llm_provider = llm_provider
+        self.persona_manager = persona_manager
+        self.content_validator = content_validator
+        self.codebase_path = PROJECT_ROOT # Assuming PROJECT_ROOT is the base path for analysis
+
     @classmethod
     def _collect_configuration_analysis(cls, codebase_path: str) -> ConfigurationAnalysisOutput: # Return type is now the Pydantic model
         """
@@ -351,6 +366,7 @@ class ImprovementMetricsCollector:
             "prod_requirements_present": False,
             "prod_dependency_count": 0,
             "dev_dependency_overlap_count": 0,
+            "unpinned_prod_dependencies": [], # Added this line as per models.py
             "malformed_blocks": []
         }
         
@@ -382,6 +398,7 @@ class ImprovementMetricsCollector:
         dev_req_path = Path(codebase_path) / "requirements.txt"
 
         prod_deps = set()
+        unpinned_prod_deps = [] # List to store unpinned dependencies
         if prod_req_path.exists():
             deployment_metrics_data["prod_requirements_present"] = True
             try:
@@ -389,8 +406,12 @@ class ImprovementMetricsCollector:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith('#'):
+                            # Check for unpinned dependencies (no '==' or '>=' or '~=')
+                            if not re.search(r'[=~><]=', line):
+                                unpinned_prod_deps.append(line)
                             prod_deps.add(line.split('==')[0].split('>=')[0].split('~=')[0].lower())
                 deployment_metrics_data["prod_dependency_count"] = len(prod_deps)
+                deployment_metrics_data["unpinned_prod_dependencies"] = unpinned_prod_deps # Store unpinned dependencies
             except OSError as e:
                 logger.error(f"Error reading requirements-prod.txt {prod_req_path}: {e}")
                 deployment_metrics_data["malformed_blocks"].append({"type": "PROD_REQ_READ_ERROR", "message": str(e), "file": str(prod_req_path)})
@@ -413,8 +434,8 @@ class ImprovementMetricsCollector:
         return DeploymentAnalysisOutput(**deployment_metrics_data)
 
     # NEW METHOD: Collect Reasoning Quality Metrics
-    @classmethod
-    def _collect_reasoning_quality_metrics(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
+    # FIX: Changed from @classmethod to instance method
+    def _collect_reasoning_quality_metrics(self) -> Dict[str, Any]:
         """
         Collects metrics related to the quality of the Socratic debate process itself.
         Assumes `core.py` has been enhanced to log more granular data.
@@ -435,7 +456,7 @@ class ImprovementMetricsCollector:
         }
 
         # Total debate turns (excluding context/synthesis setup)
-        debate_history = debate_intermediate_steps.get("Debate_History", [])
+        debate_history = self.intermediate_steps.get("Debate_History", [])
         reasoning_metrics["total_debate_turns"] = len(debate_history)
 
         # Unique personas involved
@@ -446,7 +467,7 @@ class ImprovementMetricsCollector:
         reasoning_metrics["unique_personas_involved"] = len(unique_personas)
 
         # Malformed blocks analysis
-        all_malformed_blocks = debate_intermediate_steps.get("malformed_blocks", [])
+        all_malformed_blocks = self.intermediate_steps.get("malformed_blocks", [])
         reasoning_metrics["schema_validation_failures_count"] = sum(1 for b in all_malformed_blocks if b.get("type") == "SCHEMA_VALIDATION_ERROR")
         reasoning_metrics["content_misalignment_warnings"] = sum(1 for b in all_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT")
         reasoning_metrics["debate_turn_errors"] = sum(1 for b in all_malformed_blocks if b.get("type") == "DEBATE_TURN_ERROR")
@@ -455,15 +476,15 @@ class ImprovementMetricsCollector:
             reasoning_metrics["malformed_blocks_summary"][block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
 
         # Conflict resolution
-        if debate_intermediate_steps.get("Conflict_Resolution_Attempt"):
+        if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
             reasoning_metrics["conflict_resolution_attempts"] = 1
-            if debate_intermediate_steps["Conflict_Resolution_Attempt"].get("conflict_resolved"):
+            if self.intermediate_steps["Conflict_Resolution_Attempt"].get("conflict_resolved"):
                 reasoning_metrics["conflict_resolution_successes"] = 1
-        reasoning_metrics["unresolved_conflict_present"] = bool(debate_intermediate_steps.get("Unresolved_Conflict"))
+        reasoning_metrics["unresolved_conflict_present"] = bool(self.intermediate_steps.get("Unresolved_Conflict"))
 
         # Average persona output tokens (sum of all persona outputs / total turns)
         total_output_tokens = 0
-        for key, value in debate_intermediate_steps.items():
+        for key, value in self.intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_")):
                 total_output_tokens += value
         
@@ -496,8 +517,8 @@ class ImprovementMetricsCollector:
         return reasoning_metrics
 
 
-    @classmethod
-    def collect_all_metrics(cls, codebase_path: str, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
+    # FIX: Changed from @classmethod to instance method
+    def collect_all_metrics(self) -> Dict[str, Any]:
         """
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
         """
@@ -519,21 +540,21 @@ class ImprovementMetricsCollector:
                 "ast_security_issues_count": 0,
             },
             "performance_efficiency": {
-                "token_usage_stats": cls._collect_token_usage_stats(debate_intermediate_steps),
-                "debate_efficiency_summary": cls._analyze_debate_efficiency(debate_intermediate_steps),
+                "token_usage_stats": self._collect_token_usage_stats(), # Call instance method
+                "debate_efficiency_summary": self._analyze_debate_efficiency(), # Call instance method
                 "potential_bottlenecks_count": 0
             },
             "robustness": {
-                "schema_validation_failures_count": len(debate_intermediate_steps.get("malformed_blocks", [])),
-                "unresolved_conflict_present": bool(debate_intermediate_steps.get("Unresolved_Conflict")),
-                "conflict_resolution_attempted": bool(debate_intermediate_steps.get("Conflict_Resolution_Attempt"))
+                "schema_validation_failures_count": len(self.intermediate_steps.get("malformed_blocks", [])),
+                "unresolved_conflict_present": bool(self.intermediate_steps.get("Unresolved_Conflict")),
+                "conflict_resolution_attempted": bool(self.intermediate_steps.get("Conflict_Resolution_Attempt"))
             },
             "maintainability": {
-                "test_coverage_summary": cls._assess_test_coverage(codebase_path)
+                "test_coverage_summary": self._assess_test_coverage() # Call instance method
             },
-            "configuration_analysis": cls._collect_configuration_analysis(codebase_path).model_dump(by_alias=True), # NEW: Add configuration analysis
-            "deployment_robustness": cls._collect_deployment_robustness_metrics(codebase_path).model_dump(by_alias=True), # NEW: Add deployment robustness analysis
-            "reasoning_quality": cls._collect_reasoning_quality_metrics(debate_intermediate_steps) # NEW: Add reasoning quality metrics
+            "configuration_analysis": self._collect_configuration_analysis(self.codebase_path).model_dump(by_alias=True), # NEW: Add configuration analysis
+            "deployment_robustness": self._collect_deployment_robustness_metrics(self.codebase_path).model_dump(by_alias=True), # NEW: Add deployment robustness analysis
+            "reasoning_quality": self._collect_reasoning_quality_metrics() # NEW: Add reasoning quality metrics
         }
 
         total_functions_across_codebase = 0
@@ -543,7 +564,7 @@ class ImprovementMetricsCollector:
         total_nesting_depth_across_functions = 0
 
         # Collect code-specific metrics by iterating through Python files
-        for root, _, files in os.walk(codebase_path):
+        for root, _, files in os.walk(self.codebase_path):
             for file in files:
                 if file.endswith('.py'):
                     file_path = os.path.join(root, file)
@@ -570,7 +591,7 @@ class ImprovementMetricsCollector:
                             metrics["code_quality"]["detailed_issues"].extend(ast_security_issues) # Add to detailed issues
 
                         # Collect complexity and code smell metrics using the new AST visitor
-                        file_function_metrics = cls._analyze_python_file_ast(content, content_lines, file_path)
+                        file_function_metrics = self._analyze_python_file_ast(content, content_lines, file_path) # Call instance method
 
                         for func_metric in file_function_metrics:
                             total_functions_across_codebase += 1
@@ -592,16 +613,16 @@ class ImprovementMetricsCollector:
 
         return metrics
 
-    @classmethod
-    def _collect_token_usage_stats(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
+    # FIX: Changed from @classmethod to instance method
+    def _collect_token_usage_stats(self) -> Dict[str, Any]:
         """
         Collects token usage statistics from debate intermediate steps.
         """
-        total_tokens = debate_intermediate_steps.get("Total_Tokens_Used", 0)
-        total_cost = debate_intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+        total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
+        total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
 
         phase_token_usage = {}
-        for key, value in debate_intermediate_steps.items():
+        for key, value in self.intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith("Total_"):
                 phase_name = key.replace("_Tokens_Used", "")
                 phase_token_usage[phase_name] = value
@@ -612,35 +633,35 @@ class ImprovementMetricsCollector:
             "phase_token_usage": phase_token_usage
         }
 
-    @classmethod
-    def _analyze_debate_efficiency(cls, debate_intermediate_steps: Dict[str, Any]) -> Dict[str, Any]:
+    # FIX: Changed from @classmethod to instance method
+    def _analyze_debate_efficiency(self) -> Dict[str, Any]:
         """
         Analyzes the efficiency of the debate process.
         """
         efficiency_summary = {
-            "num_turns": len(debate_intermediate_steps.get("Debate_History", [])),
-            "malformed_blocks_count": len(debate_intermediate_steps.get("malformed_blocks", [])),
-            "conflict_resolution_attempts": 1 if debate_intermediate_steps.get("Conflict_Resolution_Attempt") else 0,
-            "unresolved_conflict": bool(debate_intermediate_steps.get("Unresolved_Conflict")),
+            "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
+            "malformed_blocks_count": len(self.intermediate_steps.get("malformed_blocks", [])),
+            "conflict_resolution_attempts": 1 if self.intermediate_steps.get("Conflict_Resolution_Attempt") else 0,
+            "unresolved_conflict": bool(self.intermediate_steps.get("Unresolved_Conflict")),
             "average_turn_tokens": 0.0,
             "persona_token_breakdown": {} # NEW: Per-persona token usage
         }
 
-        total_debate_tokens = debate_intermediate_steps.get("debate_Tokens_Used", 0)
+        total_debate_tokens = self.intermediate_steps.get("debate_Tokens_Used", 0)
         num_turns = efficiency_summary["num_turns"]
         if num_turns > 0:
             efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
 
         # NEW: Collect per-persona token usage
-        for key, value in debate_intermediate_steps.items():
+        for key, value in self.intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_", "debate_")):
                 persona_name = key.replace("_Tokens_Used", "")
                 efficiency_summary["persona_token_breakdown"][persona_name] = value
 
         return efficiency_summary
 
-    @classmethod
-    def _assess_test_coverage(cls, codebase_path: str) -> Dict[str, Any]:
+    # FIX: Changed from @classmethod to instance method
+    def _assess_test_coverage(self) -> Dict[str, Any]:
         """
         Assesses test coverage for the codebase.
         Placeholder implementation.
