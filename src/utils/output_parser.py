@@ -196,6 +196,37 @@ class LLMOutputParser:
 
         return json_str, repair_log
 
+    def _force_close_truncated_json(self, json_str: str) -> str:
+        """
+        Attempts to heuristically force-close a JSON string that appears to be truncated.
+        This is a last-ditch effort and might not always produce perfectly valid JSON,
+        but aims to salvage a parseable fragment.
+        """
+        cleaned_str = json_str.strip()
+        if not cleaned_str:
+            return ""
+
+        # Check if it starts like a JSON object or array
+        if not (cleaned_str.startswith('{') or cleaned_str.startswith('[')):
+            return cleaned_str # Not a JSON string or already malformed at start
+
+        # Count open/close braces/brackets
+        open_braces = cleaned_str.count('{')
+        close_braces = cleaned_str.count('}')
+        open_brackets = cleaned_str.count('[')
+        close_brackets = cleaned_str.count(']')
+
+        # If it's clearly unbalanced and truncated at the end, try to add closers
+        # Only add if the string doesn't already end with the correct closer
+        if open_braces > close_braces and not cleaned_str.endswith('}'):
+            self.logger.debug(f"Force-closing with {open_braces - close_braces} braces.")
+            cleaned_str += '}' * (open_braces - close_braces)
+        if open_brackets > close_brackets and not cleaned_str.endswith(']'):
+            self.logger.debug(f"Force-closing with {open_brackets - close_brackets} brackets.")
+            cleaned_str += ']' * (open_brackets - close_brackets)
+            
+        return cleaned_str
+
     def _parse_with_incremental_repair(self, json_str: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]]]:
         """Attempts to parse JSON with incremental repair strategies."""
         repair_log = []
@@ -231,6 +262,17 @@ class LLMOutputParser:
                 return result, repair_log
             except json.JSONDecodeError:
                 self.logger.debug(f"JSON lines conversion failed to parse. Snippet: {json_lines_str[:100]}")
+                pass
+
+        # NEW Attempt 4: Force-close truncated JSON as a last resort
+        force_closed_json_str = self._force_close_truncated_json(current_json_str)
+        if force_closed_json_str != current_json_str: # Only if actual changes were made
+            repair_log.append({"action": "force_closed_truncated_json", "details": "Attempting to force-close truncated JSON."})
+            try:
+                result = json.loads(force_closed_json_str)
+                return result, repair_log
+            except json.JSONDecodeError:
+                self.logger.debug(f"Force-closed JSON failed to parse. Snippet: {force_closed_json_str[:100]}")
                 pass
 
         return None, repair_log
