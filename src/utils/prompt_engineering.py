@@ -11,11 +11,53 @@ from src.models import LLMResponseModel
 
 logger = logging.getLogger(__name__)
 
-def generate_structured_prompt(user_input: str, context: dict) -> str:
-    """Generates a structured prompt for the LLM based on user input and context."""
-    # Applying the LLM's suggested line-length fix
-    prompt = (f"User Input: {user_input}\nContext: {context}\n\nProvide a concise and accurate response "
-              f"based on the provided information.")
+def create_self_improvement_prompt(metrics, previous_analyses=None):
+    """Enhanced prompt that guides more targeted, actionable self-analysis."""
+    security_prioritization = (
+        "When identifying security issues:\n"
+        "1. Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)\n"
+        "2. Group similar issues together rather than listing individually\n"
+        "3. Provide specific examples of the MOST critical 3-5 vulnerabilities"
+    )
+    
+    token_optimization = (
+        "For token efficiency:\n"
+        "1. Analyze which personas consume disproportionate tokens\n"
+        "2. Identify repetitive or redundant analysis patterns\n"
+        "3. Suggest specific prompt truncation strategies for high-token personas"
+    )
+    
+    testing_prioritization = (
+        "For test coverage:\n"
+        "1. Prioritize testing core logic (SocraticDebate, LLM interaction) before UI components\n"
+        "2. Focus on areas with highest bug density per historical data\n"
+        "3. Implement targeted smoke tests for critical paths first"
+    )
+    
+    self_reflection = (
+        "CRITICAL: Analyze your OWN self-improvement process:\n"
+        "1. What aspects of previous self-improvement analyses were most/least effective?\n"
+        "2. How can the self-analysis framework be enhanced to produce better recommendations?\n"
+        "3. What metrics would best measure the effectiveness of self-improvement changes?"
+    )
+    
+    prompt = f"""You are conducting a self-improvement analysis of Project Chimera itself.
+    
+Key focus areas with specific guidance:
+{security_prioritization}
+{token_optimization}
+{testing_prioritization}
+{self_reflection}
+
+Current metrics: {metrics}
+{'Previous analyses: ' + str(previous_analyses) if previous_analyses else ''}
+
+Provide analysis with:
+1. Specific, prioritized recommendations (top 3-5)
+2. Concrete code examples with complete implementation details
+3. Expected impact metrics for each change
+4. How this improves the self-improvement process itself
+"""
     return prompt
 
 def parse_llm_response(response: str) -> Dict[str, Any]:
