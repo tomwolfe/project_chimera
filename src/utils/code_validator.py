@@ -10,13 +10,16 @@ import re
 import contextlib
 import logging
 from pathlib import Path
-import pycodestyle # Kept for potential fallback or specific checks if needed, but _run_ruff will be primary
+import pycodestyle
 import ast
-import json # Added for Bandit output parsing
-import yaml # Added for YAML security checks
-from collections import defaultdict # Added for metrics aggregation
-from src.utils.command_executor import execute_command_safely # NEW IMPORT
-from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path, PROJECT_ROOT # Import PROJECT_ROOT
+import json
+import yaml
+from collections import defaultdict
+
+# Import necessary utilities and models
+from src.utils.command_executor import execute_command_safely
+from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path, PROJECT_ROOT
+from src.models import CodeChange # Assuming CodeChange model is defined here or imported
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ class CodeValidationError(Exception):
 
 # Helper to get a snippet around a line number
 def _get_code_snippet(content_lines: List[str], line_number: Optional[int], context_lines: int = 2) -> Optional[str]:
+    """Retrieves a snippet of code around a specific line number."""
     if line_number is None or not content_lines:
         return None
     
@@ -45,7 +49,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Ruff (linter and formatter check) on the given content via subprocess."""
     issues = []
     tmp_file_path = None
-    content_lines = content.splitlines() # Split content into lines for snippet extraction
+    content_lines = content.splitlines()
     try:
         with tempfile.NamedTemporaryFile(
             mode='w+', suffix='.py', encoding='utf-8', delete=False
@@ -55,10 +59,6 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             tmp_file_path = Path(temp_file.name)
 
             # 1. Run Ruff Linter
-            # --isolated: Ignores project-level configuration files.
-            # --force-exclude: Excludes files even if they are explicitly passed as arguments.
-            # We use these to ensure the temporary file is treated in isolation.
-            # --output-format=json: Get structured output.
             lint_command = [
                 sys.executable,
                 "-m", "ruff", "check",
@@ -68,35 +68,37 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path)
             ]
             
-            stdout_lint, stderr_lint = execute_command_safely(
+            return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
                 lint_command,
                 timeout=30,
-                check=False # Ruff returns non-zero for linting issues, so check=False
+                check=False # Ruff returns non-zero for linting issues
             )
 
-            if stdout_lint:
-                try:
-                    lint_results = json.loads(stdout_lint)
-                    for issue in lint_results:
-                        line_num = issue.get('location', {}).get('row')
-                        issues.append({
-                            'type': 'Ruff Linting Issue',
-                            'file': filename,
-                            'line': line_num,
-                            'column': issue.get('location', {}).get('column'),
-                            'code': issue.get('code'),
-                            'message': issue.get('message'),
-                            'source': 'ruff_lint',
-                            'code_snippet': _get_code_snippet(content_lines, line_num) # ADDED
-                        })
-                except json.JSONDecodeError as jde:
-                    logger.error(f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}", exc_info=True)
-                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Ruff lint output: {jde}'})
+            if return_code_lint != 0:
+                logger.error(f"Ruff lint command failed with exit code {return_code_lint}. Stderr: {stderr_lint}")
+                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Ruff lint command failed with exit code {return_code_lint}.'})
+            else:
+                if stdout_lint:
+                    try:
+                        lint_results = json.loads(stdout_lint)
+                        for issue in lint_results:
+                            line_num = issue.get('location', {}).get('row')
+                            issues.append({
+                                'type': 'Ruff Linting Issue',
+                                'file': filename,
+                                'line': line_num,
+                                'column': issue.get('location', {}).get('column'),
+                                'code': issue.get('code'),
+                                'message': issue.get('message'),
+                                'source': 'ruff_lint',
+                                'code_snippet': _get_code_snippet(content_lines, line_num)
+                            })
+                    except json.JSONDecodeError as jde:
+                        logger.error(f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}", exc_info=True)
+                        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Ruff lint output: {jde}'})
             
             if stderr_lint:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
-                # Optionally add stderr as an issue if it indicates a problem
-                # issues.append({'type': 'Validation Tool Warning', 'file': filename, 'message': f'Ruff lint stderr: {stderr_lint}'})
 
             # 2. Run Ruff Formatter Check
             format_command = [
@@ -108,15 +110,13 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path)
             ]
 
-            # Ruff format --check returns non-zero if formatting issues are found
-            stdout_format, stderr_format = execute_command_safely(
+            return_code_format, stdout_format, stderr_format = execute_command_safely(
                 format_command,
                 timeout=30,
-                check=False # We handle the return code manually
+                check=False # Ruff format --check returns non-zero for issues
             )
             
-            # If stdout_format is not empty, it means there are formatting differences
-            if stdout_format.strip():
+            if return_code_format != 0: # If formatting issues were found
                 issues.append({
                     'type': 'Ruff Formatting Issue',
                     'file': filename,
@@ -125,12 +125,11 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                     'code': 'FMT',
                     'message': 'Code is not formatted according to Ruff standards. Run `ruff format` to fix.',
                     'source': 'ruff_format',
-                    'code_snippet': None # No specific line for formatting issues
+                    'code_snippet': None
                 })
             
             if stderr_format:
                 logger.warning(f"Ruff format stderr for {filename}: {stderr_format}")
-                # issues.append({'type': 'Validation Tool Warning', 'file': filename, 'message': f'Ruff format stderr: {stderr_format}'})
 
     except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
         logger.error(f"Ruff execution failed for {filename}: {e}", exc_info=True)
@@ -146,23 +145,19 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 logger.warning(f"Failed to delete temporary Ruff file {tmp_file_path}: {e}")
     return issues
 
-
 def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
-    tmp_file_path = None # Initialize to None
-    content_lines = content.splitlines() # Split content into lines for snippet extraction
+    tmp_file_path = None
+    content_lines = content.splitlines()
     try:
-        # FIX: Set delete=False for NamedTemporaryFile and add explicit cleanup
         with tempfile.NamedTemporaryFile(
             mode='w+', suffix='.py', encoding='utf-8', delete=False
         ) as temp_file:
             temp_file.write(content)
             temp_file.flush()
-            tmp_file_path = Path(temp_file.name) # Store path for explicit unlink
+            tmp_file_path = Path(temp_file.name)
 
-            # MODIFICATION: Pass the project's pyproject.toml as the config file
-            # Ensure PROJECT_ROOT is imported from src.utils.path_utils
             bandit_config_path = PROJECT_ROOT / "pyproject.toml"
             if not bandit_config_path.exists():
                 logger.warning(f"Bandit config file not found at {bandit_config_path}. Running Bandit without explicit config.")
@@ -175,80 +170,76 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 "-m", "bandit",
                 "-q",
                 "-f", "json",
-                str(tmp_file_path) # Use str(Path)
-            ] + config_args # Add config arguments
+                str(tmp_file_path)
+            ] + config_args
 
-            # Use the new execute_command_safely function
-            stdout, stderr = execute_command_safely(
+            return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=False # Bandit returns 1 for issues, 0 for no issues, so check=True would fail.
-                            # We handle return code manually below.
+                check=False # Bandit returns 1 for issues, 0 for no issues. Other codes are errors.
             )
 
-            # The original subprocess.run call's 'process' object is not directly available here.
-            # We need to infer success/failure from stdout/stderr and potential exceptions.
-            # Bandit's JSON output is in stdout.
-            try:
-                bandit_results = stdout.strip()
-                if bandit_results:
-                    data = json.loads(bandit_results)
-                    for issue in data.get('results', []):
-                        line_num = issue.get('line_number')
-                        # FIX: Removed the problematic 'if issue['level'] != 'info':'.
-                        # Bandit's JSON output uses 'severity' and 'description', not 'level'.
-                        issues.append({
-                            'type': 'Bandit Security Issue',
-                            'file': filename,
-                            'line': line_num,
-                            'code': issue.get('test_id'),
-                            'message': f"[{issue.get('severity')}] {issue.get('description')}",
-                            'code_snippet': _get_code_snippet(content_lines, line_num) # ADDED
-                        })
-                # If Bandit itself had an error (e.g., parsing its own config), it might print to stderr
-                # and not produce valid JSON. We should check stderr for errors if stdout was empty or malformed.
-                if not bandit_results and stderr:
-                    logger.error(f"Bandit produced no JSON output but had stderr: {stderr}")
-                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit produced no output but had stderr: {stderr}'})
-            except json.JSONDecodeError as jde:
-                logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {stdout}", exc_info=True)
-                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
-            except Exception as e:
-                logger.error(f"Unexpected error processing Bandit output for {filename}: {e}", exc_info=True)
-                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
+            if return_code not in (0, 1):
+                logger.error(f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}")
+                issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed with exit code {return_code}: {stderr}'})
+            else:
+                try:
+                    bandit_results = stdout.strip()
+                    if bandit_results:
+                        data = json.loads(bandit_results)
+                        for issue in data.get('results', []):
+                            if issue['level'] != 'info': # Filter out 'info' level issues if not desired
+                                line_num = issue.get('line_number')
+                                issues.append({
+                                    'type': 'Bandit Security Issue',
+                                    'file': filename,
+                                    'line': line_num,
+                                    'code': issue.get('test_id'),
+                                    'message': f"[{issue.get('severity')}] {issue.get('description')}",
+                                    'source': 'bandit',
+                                    'code_snippet': _get_code_snippet(content_lines, line_num)
+                                })
+                    if not bandit_results and stderr: # Handle cases where Bandit might output errors to stderr
+                        logger.error(f"Bandit produced no JSON output but had stderr: {stderr}")
+                        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit produced no output but had stderr: {stderr}'})
+                except json.JSONDecodeError as jde:
+                    logger.error(f"Failed to parse Bandit JSON output for {filename}: {jde}. Output: {stdout}", exc_info=True)
+                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to parse Bandit output: {jde}'})
+                except Exception as e:
+                    logger.error(f"Unexpected error processing Bandit output for {filename}: {e}", exc_info=True)
+                    issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Error processing Bandit output: {e}'})
 
-    except FileNotFoundError as e: # execute_command_safely can raise this
-        logger.error("Bandit command not found. Ensure Bandit is installed and in the PATH.")
+    except FileNotFoundError as e:
+        logger.error(f"Bandit command not found. Ensure Bandit is installed and in the PATH: {e}")
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit executable not found: {e}. Please install Bandit.'})
-    except subprocess.TimeoutExpired as e: # execute_command_safely can raise this
+    except subprocess.TimeoutExpired as e:
         logger.error(f"Bandit execution timed out for {filename}.")
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit execution timed out: {e}.'})
-    except subprocess.CalledProcessError as e: # execute_command_safely can raise this if check=True
-        logger.error(f"Bandit execution failed for {filename} with exit code {e.returncode}. Stderr: {e.stderr.strip()}")
-        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit failed: {e.stderr.strip()}'})
-    except Exception as e: # Catch any other unexpected errors during the try block
+    except subprocess.CalledProcessError as e: # execute_command_safely might raise this if check=True
+        logger.error(f"Bandit execution failed with non-zero exit code: {e.returncode}. Stderr: {e.stderr.strip()}")
+        issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Bandit execution failed: {e.stderr.strip()}'})
+    except Exception as e:
         logger.error(f"Unexpected error running Bandit on {filename}: {e}", exc_info=True)
         issues.append({'type': 'Validation Tool Error', 'file': filename, 'message': f'Failed to run Bandit: {e}'})
-    finally: # Ensure cleanup of the temporary file
+    finally:
         if tmp_file_path and tmp_file_path.exists():
             try:
                 os.unlink(tmp_file_path)
             except OSError as e:
                 logger.warning(f"Failed to delete temporary Bandit file {tmp_file_path}: {e}")
-
     return issues
 
 def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs AST-based security checks on Python code."""
     issues = []
-    content_lines = content.splitlines() # Split content into lines for snippet extraction
+    content_lines = content.splitlines()
     try:
         tree = ast.parse(content)
 
         class EnhancedSecurityPatternVisitor(ast.NodeVisitor):
-            def __init__(self, filename, content_lines): # Pass content_lines
+            def __init__(self, filename, content_lines):
                 self.filename = filename
-                self.content_lines = content_lines # Store content_lines
+                self.content_lines = content_lines
                 self.issues = []
                 self.imports = set()
 
@@ -263,9 +254,9 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 self.generic_visit(node)
 
             def visit_Call(self, node):
-                # Check for eval() and exec()
-                snippet = _get_code_snippet(self.content_lines, node.lineno) # Get snippet once per node
+                snippet = _get_code_snippet(self.content_lines, node.lineno)
 
+                # Check for eval() and exec()
                 if isinstance(node.func, ast.Name):
                     if node.func.id == 'eval':
                         self.issues.append({
@@ -273,15 +264,15 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'file': self.filename,
                             'line': node.lineno,
                             'message': "Use of eval() is discouraged due to security risks.",
-                            'code_snippet': snippet # ADDED
-                        }) 
+                            'code_snippet': snippet
+                        })
                     elif node.func.id == 'exec':
                         self.issues.append({
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
                             'message': "Use of exec() is discouraged due to security risks.",
-                            'code_snippet': snippet # ADDED
+                            'code_snippet': snippet
                         })
 
                 # Check for subprocess.run with shell=True
@@ -293,7 +284,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                 'file': self.filename,
                                 'line': node.lineno,
                                 'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list.",
-                                'code_snippet': snippet # ADDED
+                                'code_snippet': snippet
                             })
                 
                 # Check for pickle.load
@@ -303,7 +294,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                         'file': self.filename,
                         'line': node.lineno,
                         'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code.",
-                        'code_snippet': snippet # ADDED
+                        'code_snippet': snippet
                     })
                 
                 # Check for os.system
@@ -313,7 +304,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                         'file': self.filename,
                         'line': node.lineno,
                         'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False.",
-                        'code_snippet': snippet # ADDED
+                        'code_snippet': snippet
                     })
                 
                 # Check for XML External Entity (XXE) vulnerability in ElementTree
@@ -329,10 +320,10 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                              'file': self.filename,
                              'line': node.lineno, 
                              'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs.",
-                             'code_snippet': snippet # ADDED
+                             'code_snippet': snippet
                          })
-                
-                    # Enhanced deserialization vulnerability detection
+
+                # Enhanced deserialization vulnerability detection
                 if (isinstance(node.func, ast.Attribute) and
                     isinstance(node.func.value, ast.Name)):
 
@@ -344,7 +335,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'file': self.filename,
                             'line': node.lineno,
                             'message': "pickle.loads() with potentially untrusted data can execute arbitrary code. Use a safe serialization format like JSON.",
-                            'code_snippet': snippet # ADDED
+                            'code_snippet': snippet
                         })
 
                     # Check for yaml.load with Loader parameter missing
@@ -355,7 +346,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'file': self.filename,
                             'line': node.lineno,
                             'message': "yaml.load() without Loader parameter is unsafe. Use yaml.safe_load() or specify Loader=yaml.SafeLoader.",
-                            'code_snippet': snippet # ADDED
+                            'code_snippet': snippet
                         })
 
                 # Check for shell injection patterns in subprocess calls
@@ -376,7 +367,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'file': self.filename,
                             'line': node.lineno,
                             'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list.",
-                            'code_snippet': snippet # ADDED
+                            'code_snippet': snippet
                         })
                     else: # Check for shell metacharacters in string arguments if shell=True is not explicit
                         for arg in node.args:
@@ -387,12 +378,12 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                         'file': self.filename,
                                         'line': node.lineno, 
                                         'message': f"Potential shell injection in subprocess.{node.func.attr} with string argument containing shell metacharacters. Consider passing arguments as a list.",
-                                        'code_snippet': snippet # ADDED
+                                        'code_snippet': snippet
                                     })
 
                 self.generic_visit(node)
 
-            def _is_potentially_untrusted_input(self, node) -> bool: # No change needed here
+            def _is_potentially_untrusted_input(self, node) -> bool:
                 """Heuristic to check if function argument might be untrusted input."""
                 if node.args and isinstance(node.args[0], ast.Name):
                     arg_name = node.args[0].id
@@ -400,7 +391,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                     return any(keyword in arg_name.lower() for keyword in untrusted_keywords)
                 return True # Assume untrusted if we can't determine
 
-            def _has_safe_loader_parameter(self, node) -> bool: # No change needed here
+            def _has_safe_loader_parameter(self, node) -> bool:
                 """Check if yaml.load call has a safe Loader parameter."""
                 for keyword in node.keywords:
                     if keyword.arg == 'Loader':
@@ -412,7 +403,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             return True
                 return False
 
-        visitor = EnhancedSecurityPatternVisitor(filename, content_lines) # Pass content_lines
+        visitor = EnhancedSecurityPatternVisitor(filename, content_lines)
         visitor.visit(tree)
         issues.extend(visitor.issues)
     except SyntaxError as se:
@@ -422,7 +413,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
             'line': se.lineno, 
             'column': se.offset,
             'message': f"Invalid Python syntax: {se.msg}",
-            'code_snippet': _get_code_snippet(content_lines, se.lineno) # ADDED
+            'code_snippet': _get_code_snippet(content_lines, se.lineno)
         })
     except Exception as e:
         logger.error(f"Error during AST analysis for {filename}: {e}", exc_info=True)
@@ -447,7 +438,7 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
         checksum = hashlib.sha256(content_to_check.encode('utf-8')).hexdigest()
         issues.append({'type': 'Content Integrity', 'file': file_path_str, 'message': f"New file SHA256: {checksum}"})
         if is_python:
-            issues.extend(_run_ruff(content_to_check, file_path_str)) # Use Ruff
+            issues.extend(_run_ruff(content_to_check, file_path_str))
             issues.extend(_run_bandit(content_to_check, file_path_str))
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
@@ -461,12 +452,12 @@ def validate_code_output(parsed_change: Dict[str, Any], original_content: str = 
             if checksum_new == original_checksum:
                 issues.append({'type': 'No Change Detected', 'file': file_path_str, 'message': 'New content is identical to original.'})
             if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str)) # Use Ruff
+                issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
         else:
             if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str)) # Use Ruff
+                issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
@@ -502,7 +493,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             malformed_blocks_content.append(f"Raw output that failed type check: {parsed_data[:500]}...")
         elif parsed_data is not None:
             malformed_blocks_content.append(f"Unexpected type for parsed_data: {type(parsed_data).__name__}")
-
+        
         return {'issues': [{'type': 'Internal Error', 'file': 'N/A', 'message': f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}"}], 'malformed_blocks': parsed_data.get('malformed_blocks', [])}
 
     code_changes_list = parsed_data.get('CODE_CHANGES', [])
@@ -514,12 +505,7 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         if not isinstance(change_entry, dict):
             issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
             logger.error(issue_message)
-            all_validation_results.setdefault('N/A', []).append({
-                'type': 'Malformed Change Entry',
-                'file': 'N/A',
-                'message': issue_message
-            })
-            # Explicitly populate malformed_code_change_items for better reporting
+            all_validation_results.setdefault('N/A', []).append({'type': 'Malformed Change Entry', 'file': 'N/A', 'message': issue_message})
             parsed_data.setdefault('malformed_code_change_items', []).append({
                 'index': i,
                 'original_value': str(change_entry)[:500],
@@ -532,11 +518,11 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
             try:
                 original_content = original_contents.get(file_path)
                 validation_result = validate_code_output(change_entry, original_content)
-
+                
                 all_validation_results[file_path] = validation_result.get('issues', [])
                 logger.debug(f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues.")
             except Exception as e:
-                logger.exception(f"Error during validation of change entry {i} for file {file_path}: {e}") # Use logger.exception for full traceback
+                logger.exception(f"Error during validation of change entry {i} for file {file_path}: {e}")
                 if file_path not in all_validation_results:
                     all_validation_results[file_path] = []
                 all_validation_results[file_path].append({'type': 'Validation Tool Error', 'file': file_path, 'message': f'Failed to validate: {e}'})
@@ -558,36 +544,6 @@ def validate_code_output_batch(parsed_data: Dict, original_contents: Dict[str, s
         expected_test_file_prefix = f"tests/test_{Path(py_file).stem}"
         if not any(test_file.startswith(expected_test_file_prefix) for test_file in test_files_added):
             all_validation_results.setdefault(py_file, []).append({'type': 'Missing Unit Test', 'file': py_file, 'message': f"No corresponding unit test file found for this Python change. Expected a file like '{expected_test_file_prefix}.py' in 'tests/'."})
-
+            
     logger.info(f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files.")
-
-    # NEW: Aggregate metrics for Data-Driven Self-Improvement
-    metrics = {
-        "total_code_issues": 0,
-        "issue_types_summary": defaultdict(int),
-        "security_issues_count": 0,
-        "style_issues_count": 0,
-        "syntax_issues_count": 0,
-        "files_with_issues_count": 0,
-        "malformed_code_change_items_count": len(parsed_data.get('malformed_code_change_items', []))
-    }
-
-    for file_path, file_issues in all_validation_results.items():
-        if file_path == '_aggregated_metrics': # Skip the metrics entry itself if it somehow gets here
-            continue
-        if file_issues:
-            metrics["files_with_issues_count"] += 1
-            metrics["total_code_issues"] += len(file_issues)
-            for issue in file_issues:
-                issue_type = issue.get("type", "Unknown")
-                metrics["issue_types_summary"][issue_type] += 1
-                if "security" in issue_type.lower() or "bandit" in issue_type.lower() or "vulnerability" in issue_type.lower():
-                    metrics["security_issues_count"] += 1
-                if "ruff" in issue_type.lower() or "style" in issue_type.lower() or "pep8" in issue_type.lower(): # Include pep8 for compatibility
-                    metrics["style_issues_count"] += 1
-                if "syntax" in issue_type.lower():
-                    metrics["syntax_issues_count"] += 1
-
-    # Add the aggregated metrics to the return dictionary
-    all_validation_results["_aggregated_metrics"] = metrics
     return all_validation_results

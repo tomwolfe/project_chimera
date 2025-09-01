@@ -27,7 +27,7 @@ exclude_dirs = [
         "venv",
         ".venv"
     ]
-severity_level = "B", # Enforce at least B level findings
+severity_level = "B" # Enforce at least B level findings
 confidence_level = "B", # Enforce at least B level confidence
 skip_checks = null
 
