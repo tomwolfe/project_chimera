@@ -1,83 +1,51 @@
 # src/utils/command_executor.py
-import subprocess
-import shlex
 import logging
-from typing import Union, List, Tuple, Optional
+import subprocess
+import shlex # Import shlex for safe command splitting
 
 logger = logging.getLogger(__name__)
 
-def execute_command_safely(
-    command: Union[str, List[str]],
-    timeout: int = 60,
-    cwd: Optional[str] = None,
-    check: bool = True, # Added 'check' parameter
-    **kwargs
-) -> Tuple[str, str]:
+def execute_command_safely(command_string: str) -> str:
     """
-    Executes an external command safely using subprocess.run.
-
-    - If `command` is a string, it uses `shlex.split` to properly tokenize it,
-      preventing shell injection. `shell=False` is enforced.
-    - If `command` is a list, it's passed directly. `shell=False` is enforced.
-    - Captures stdout and stderr.
-    - Raises subprocess.CalledProcessError if the command returns a non-zero exit code
-      and `check` is True.
-    - Raises subprocess.TimeoutExpired if the command exceeds the timeout.
-
+    Executes a system command safely, avoiding shell injection.
+    
     Args:
-        command: The command to execute, either as a string or a list of arguments.
-        timeout: Maximum time in seconds to wait for the command to complete.
-        cwd: The current working directory for the command.
-        check: If True, raise CalledProcessError on non-zero exit codes.
-               If False, the stdout/stderr will still be returned, and the caller
-               is responsible for checking the return code (if needed).
-        **kwargs: Additional keyword arguments to pass to `subprocess.run`.
-
+        command_string: The command to execute as a single string.
+        
     Returns:
-        A tuple (stdout, stderr) of the command's output.
-
+        The standard output of the command.
+        
     Raises:
-        subprocess.CalledProcessError: If the command returns a non-zero exit code and `check` is True.
-        subprocess.TimeoutExpired: If the command times out.
-        ValueError: If the command is empty or invalid.
+        subprocess.CalledProcessError: If the command returns a non-zero exit code.
         FileNotFoundError: If the command executable is not found.
+        Exception: For other unexpected errors during execution.
     """
-    if not command:
-        raise ValueError("Command cannot be empty.")
-
-    if isinstance(command, str):
-        # Use shlex.split to safely tokenize the command string
-        # This prevents shell injection vulnerabilities
-        processed_command = shlex.split(command)
-        logger.debug(f"Safely split command string: '{command}' into {processed_command}")
-    elif isinstance(command, list):
-        processed_command = command
-        logger.debug(f"Using command as list: {processed_command}")
-    else:
-        raise ValueError("Command must be a string or a list of strings.")
-
     try:
-        result = subprocess.run(
-            processed_command,
-            capture_output=True,
-            text=True,
-            check=check,  # Use the 'check' parameter
-            shell=False, # Explicitly disable shell for security
-            timeout=timeout,
-            cwd=cwd,
-            **kwargs
-        )
-        logger.info(f"Command '{' '.join(processed_command)}' executed successfully (check={check}).")
-        return result.stdout.strip(), result.stderr.strip()
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Command '{' '.join(processed_command)}' failed with exit code {e.returncode}. Stderr: {e.stderr.strip()}")
-        raise e
-    except subprocess.TimeoutExpired as e:
-        logger.error(f"Command '{' '.join(processed_command)}' timed out after {timeout} seconds.")
-        raise e
+        # WARNING: Using shell=True can be a security risk if command_string is not properly sanitized.
+        # The LLM's suggestion was to avoid shell=True and split the command.
+        # We will implement that suggestion here.
+        
+        # Split the command string into a list of arguments safely
+        # This is crucial to prevent shell injection vulnerabilities.
+        command_parts = shlex.split(command_string) 
+        
+        # Execute the command using subprocess.run with shell=False
+        # capture_output=True captures stdout and stderr
+        # text=True decodes stdout and stderr as text
+        # check=True raises CalledProcessError if the command returns a non-zero exit code
+        result = subprocess.run(command_parts, capture_output=True, text=True, check=True, shell=False)
+        
+        logger.info(f"Successfully executed command: {' '.join(command_parts)}")
+        return result.stdout
+        
     except FileNotFoundError:
-        logger.error(f"Command '{processed_command[0]}' not found. Ensure it's in PATH.")
-        raise FileNotFoundError(f"Command '{processed_command[0]}' not found.")
+        logger.error(f"Command not found: {command_parts[0]}")
+        raise FileNotFoundError(f"The command '{command_parts[0]}' was not found. Ensure it is installed and in your system's PATH.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command execution failed: {e}. Stderr: {e.stderr.strip()}")
+        # Re-raise the exception to be handled by the caller
+        raise e
     except Exception as e:
-        logger.error(f"An unexpected error occurred while executing command '{' '.join(processed_command)}': {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred during command execution: {e}", exc_info=True)
+        # Re-raise any other unexpected exceptions
         raise e

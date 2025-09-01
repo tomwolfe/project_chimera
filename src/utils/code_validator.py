@@ -15,7 +15,7 @@ import ast
 import json # Added for Bandit output parsing
 import yaml # Added for YAML security checks
 from collections import defaultdict # Added for metrics aggregation
-from src.utils.command_executor import execute_command_safely # NEW IMPORT
+from src.utils.command_executor import execute_system_command # NEW IMPORT
 from src.utils.path_utils import is_within_base_dir, sanitize_and_validate_file_path, PROJECT_ROOT # Import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
