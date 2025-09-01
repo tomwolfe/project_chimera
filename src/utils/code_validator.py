@@ -24,14 +24,28 @@ class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
     pass
 
-# REMOVED: _run_pycodestyle as _run_ruff will be the primary linter for Python files.
-# If you need to keep pycodestyle for non-Python files or specific legacy checks,
-# you would re-add it and adjust validate_code_output accordingly.
+# Helper to get a snippet around a line number
+def _get_code_snippet(content_lines: List[str], line_number: Optional[int], context_lines: int = 2) -> Optional[str]:
+    if line_number is None or not content_lines:
+        return None
+    
+    # Adjust line_number to be 0-indexed for list access
+    actual_line_idx = line_number - 1
+    
+    start_idx = max(0, actual_line_idx - context_lines)
+    end_idx = min(len(content_lines), actual_line_idx + context_lines + 1) # +1 to include the end line
+
+    snippet_lines = []
+    for i in range(start_idx, end_idx):
+        # Add 1 to i to display 1-indexed line numbers
+        snippet_lines.append(f"{i + 1}: {content_lines[i].rstrip()}") # rstrip to remove trailing newlines
+    return "\n".join(snippet_lines)
 
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Ruff (linter and formatter check) on the given content via subprocess."""
     issues = []
     tmp_file_path = None
+    content_lines = content.splitlines() # Split content into lines for snippet extraction
     try:
         with tempfile.NamedTemporaryFile(
             mode='w+', suffix='.py', encoding='utf-8', delete=False
@@ -64,14 +78,16 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 try:
                     lint_results = json.loads(stdout_lint)
                     for issue in lint_results:
+                        line_num = issue.get('location', {}).get('row')
                         issues.append({
                             'type': 'Ruff Linting Issue',
                             'file': filename,
-                            'line': issue.get('location', {}).get('row'),
+                            'line': line_num,
                             'column': issue.get('location', {}).get('column'),
                             'code': issue.get('code'),
                             'message': issue.get('message'),
-                            'source': 'ruff_lint'
+                            'source': 'ruff_lint',
+                            'code_snippet': _get_code_snippet(content_lines, line_num) # ADDED
                         })
                 except json.JSONDecodeError as jde:
                     logger.error(f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}", exc_info=True)
@@ -108,7 +124,8 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                     'column': None,
                     'code': 'FMT',
                     'message': 'Code is not formatted according to Ruff standards. Run `ruff format` to fix.',
-                    'source': 'ruff_format'
+                    'source': 'ruff_format',
+                    'code_snippet': None # No specific line for formatting issues
                 })
             
             if stderr_format:
@@ -134,6 +151,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     tmp_file_path = None # Initialize to None
+    content_lines = content.splitlines() # Split content into lines for snippet extraction
     try:
         # FIX: Set delete=False for NamedTemporaryFile and add explicit cleanup
         with tempfile.NamedTemporaryFile(
@@ -176,14 +194,16 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 if bandit_results:
                     data = json.loads(bandit_results)
                     for issue in data.get('results', []):
+                        line_num = issue.get('line_number')
                         # FIX: Removed the problematic 'if issue['level'] != 'info':'.
                         # Bandit's JSON output uses 'severity' and 'description', not 'level'.
                         issues.append({
                             'type': 'Bandit Security Issue',
                             'file': filename,
-                            'line': issue.get('line_number'),
+                            'line': line_num,
                             'code': issue.get('test_id'),
-                            'message': f"[{issue.get('severity')}] {issue.get('description')}"
+                            'message': f"[{issue.get('severity')}] {issue.get('description')}",
+                            'code_snippet': _get_code_snippet(content_lines, line_num) # ADDED
                         })
                 # If Bandit itself had an error (e.g., parsing its own config), it might print to stderr
                 # and not produce valid JSON. We should check stderr for errors if stdout was empty or malformed.
@@ -221,12 +241,14 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
 def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs AST-based security checks on Python code."""
     issues = []
+    content_lines = content.splitlines() # Split content into lines for snippet extraction
     try:
         tree = ast.parse(content)
 
         class EnhancedSecurityPatternVisitor(ast.NodeVisitor):
-            def __init__(self, filename):
+            def __init__(self, filename, content_lines): # Pass content_lines
                 self.filename = filename
+                self.content_lines = content_lines # Store content_lines
                 self.issues = []
                 self.imports = set()
 
@@ -242,20 +264,24 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 
             def visit_Call(self, node):
                 # Check for eval() and exec()
+                snippet = _get_code_snippet(self.content_lines, node.lineno) # Get snippet once per node
+
                 if isinstance(node.func, ast.Name):
                     if node.func.id == 'eval':
                         self.issues.append({
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
-                            'message': "Use of eval() is discouraged due to security risks."
-                        })
+                            'message': "Use of eval() is discouraged due to security risks.",
+                            'code_snippet': snippet # ADDED
+                        }) 
                     elif node.func.id == 'exec':
                         self.issues.append({
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
-                            'message': "Use of exec() is discouraged due to security risks."
+                            'message': "Use of exec() is discouraged due to security risks.",
+                            'code_snippet': snippet # ADDED
                         })
 
                 # Check for subprocess.run with shell=True
@@ -266,27 +292,30 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                 'type': 'Security Vulnerability (AST)',
                                 'file': self.filename,
                                 'line': node.lineno,
-                                'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."
+                                'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list.",
+                                'code_snippet': snippet # ADDED
                             })
-
+                
                 # Check for pickle.load
                 if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'pickle' and node.func.attr == 'load':
                     self.issues.append({
                         'type': 'Security Vulnerability (AST)',
                         'file': self.filename,
                         'line': node.lineno,
-                        'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code."
+                        'message': "Use of pickle.load() with untrusted data is dangerous; it can execute arbitrary code.",
+                        'code_snippet': snippet # ADDED
                     })
-
+                
                 # Check for os.system
                 if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'os' and node.func.attr == 'system':
                     self.issues.append({
                         'type': 'Security Vulnerability (AST)',
                         'file': self.filename,
                         'line': node.lineno,
-                        'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False."
+                        'message': "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False.",
+                        'code_snippet': snippet # ADDED
                     })
-
+                
                 # Check for XML External Entity (XXE) vulnerability in ElementTree
                 if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == 'ET' and node.func.attr == 'fromstring':
                      has_parser_none = False
@@ -298,10 +327,11 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                          self.issues.append({
                              'type': 'Security Vulnerability (AST)',
                              'file': self.filename,
-                             'line': node.lineno,
-                             'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs."
+                             'line': node.lineno, 
+                             'message': "xml.etree.ElementTree.fromstring() with parser=None is vulnerable to XML External Entity (XXE) attacks. Use a safe parser or disable DTDs.",
+                             'code_snippet': snippet # ADDED
                          })
-
+                
                     # Enhanced deserialization vulnerability detection
                 if (isinstance(node.func, ast.Attribute) and
                     isinstance(node.func.value, ast.Name)):
@@ -313,17 +343,19 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
-                            'message': "pickle.loads() with potentially untrusted data can execute arbitrary code. Use a safe serialization format like JSON."
+                            'message': "pickle.loads() with potentially untrusted data can execute arbitrary code. Use a safe serialization format like JSON.",
+                            'code_snippet': snippet # ADDED
                         })
 
                     # Check for yaml.load with Loader parameter missing
                     if (node.func.value.id == 'yaml' and node.func.attr == 'load' and
-                        not self._has_safe_loader_parameter(node)):
+                        self._has_safe_loader_parameter(node)):
                         self.issues.append({
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
-                            'message': "yaml.load() without Loader parameter is unsafe. Use yaml.safe_load() or specify Loader=yaml.SafeLoader."
+                            'message': "yaml.load() without Loader parameter is unsafe. Use yaml.safe_load() or specify Loader=yaml.SafeLoader.",
+                            'code_snippet': snippet # ADDED
                         })
 
                 # Check for shell injection patterns in subprocess calls
@@ -343,7 +375,8 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             'type': 'Security Vulnerability (AST)',
                             'file': self.filename,
                             'line': node.lineno,
-                            'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list."
+                            'message': "subprocess.run() with shell=True is dangerous; consider shell=False and passing arguments as a list.",
+                            'code_snippet': snippet # ADDED
                         })
                     else: # Check for shell metacharacters in string arguments if shell=True is not explicit
                         for arg in node.args:
@@ -352,13 +385,14 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                     self.issues.append({
                                         'type': 'Security Vulnerability (AST)',
                                         'file': self.filename,
-                                        'line': node.lineno,
-                                        'message': f"Potential shell injection in subprocess.{node.func.attr} with string argument containing shell metacharacters. Consider passing arguments as a list."
+                                        'line': node.lineno, 
+                                        'message': f"Potential shell injection in subprocess.{node.func.attr} with string argument containing shell metacharacters. Consider passing arguments as a list.",
+                                        'code_snippet': snippet # ADDED
                                     })
 
                 self.generic_visit(node)
 
-            def _is_potentially_untrusted_input(self, node) -> bool:
+            def _is_potentially_untrusted_input(self, node) -> bool: # No change needed here
                 """Heuristic to check if function argument might be untrusted input."""
                 if node.args and isinstance(node.args[0], ast.Name):
                     arg_name = node.args[0].id
@@ -366,7 +400,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                     return any(keyword in arg_name.lower() for keyword in untrusted_keywords)
                 return True # Assume untrusted if we can't determine
 
-            def _has_safe_loader_parameter(self, node) -> bool:
+            def _has_safe_loader_parameter(self, node) -> bool: # No change needed here
                 """Check if yaml.load call has a safe Loader parameter."""
                 for keyword in node.keywords:
                     if keyword.arg == 'Loader':
@@ -378,16 +412,17 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             return True
                 return False
 
-        visitor = EnhancedSecurityPatternVisitor(filename)
+        visitor = EnhancedSecurityPatternVisitor(filename, content_lines) # Pass content_lines
         visitor.visit(tree)
         issues.extend(visitor.issues)
     except SyntaxError as se:
         issues.append({
             'type': 'Syntax Error',
             'file': filename,
-            'line': se.lineno,
+            'line': se.lineno, 
             'column': se.offset,
-            'message': f"Invalid Python syntax: {se.msg}"
+            'message': f"Invalid Python syntax: {se.msg}",
+            'code_snippet': _get_code_snippet(content_lines, se.lineno) # ADDED
         })
     except Exception as e:
         logger.error(f"Error during AST analysis for {filename}: {e}", exc_info=True)

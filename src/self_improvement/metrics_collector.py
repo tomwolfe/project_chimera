@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 
 # Import existing validation functions to reuse their logic
-from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
+from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks, _get_code_snippet # NEW: Import the snippet helper
 from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig, DeploymentAnalysisOutput # NEW IMPORTS: DeploymentAnalysisOutput
 import yaml # Added for YAML parsing
 import toml # Added for TOML parsing
@@ -261,6 +261,7 @@ class ImprovementMetricsCollector:
             try:
                 with open(ci_yml_path, 'r', encoding='utf-8') as f:
                     ci_config_raw = yaml.safe_load(f)
+                    ci_content_lines = f.readlines() # Read lines for snippets
                     ci_workflow_jobs = {}
                     for job_name, job_details in ci_config_raw.get("jobs", {}).items():
                         steps_summary = []
@@ -272,10 +273,23 @@ class ImprovementMetricsCollector:
                             summary_item_data = {"name": step_name}
                             if step_uses:
                                 summary_item_data["uses"] = step_uses
-                            if step_run:
+                            if step_run: # If 'run' command is present
                                 commands = [cmd.strip() for cmd in step_run.split('\n') if cmd.strip()]
                                 summary_item_data["runs_commands"] = commands
-                            steps_summary.append(CiWorkflowStep(**summary_item_data))
+                                # Attempt to get snippet for the 'run' block
+                                # This is heuristic, as YAML line numbers are tricky.
+                                # For 80/20, we'll just grab a few lines around the 'run' key.
+                                run_block_start_line = None
+                                for i, line in enumerate(ci_content_lines):
+                                    if f"name: {step_name}" in line and i < len(ci_content_lines) - 1:
+                                        for j in range(i + 1, len(ci_content_lines)):
+                                            if "run:" in ci_content_lines[j]:
+                                                run_block_start_line = j + 1 # 1-indexed
+                                                break
+                                    if run_block_start_line: break
+                                if run_block_start_line:
+                                    summary_item_data["code_snippet"] = _get_code_snippet(ci_content_lines, run_block_start_line, context_lines=3) # ADDED
+                            steps_summary.append(CiWorkflowStep(**summary_item_data)) # Ensure CiWorkflowStep is created with snippet
                         ci_workflow_jobs[job_name] = CiWorkflowJob(steps_summary=steps_summary)
                     
                     config_analysis_data["ci_workflow"] = CiWorkflowConfig(
@@ -293,14 +307,22 @@ class ImprovementMetricsCollector:
             try:
                 with open(pre_commit_path, 'r', encoding='utf-8') as f:
                     pre_commit_config_raw = yaml.safe_load(f)
+                    pre_commit_content_lines = f.readlines() # Read lines for snippets
                     for repo_config in pre_commit_config_raw.get("repos", []):
                         repo_url = repo_config.get("repo")
                         repo_rev = repo_config.get("rev")
                         for hook in repo_config.get("hooks", []):
                             hook_id = hook.get("id")
                             hook_args = hook.get("args", [])
+                            
+                            # Attempt to get snippet for the hook definition
+                            hook_start_line = None
+                            for i, line in enumerate(pre_commit_content_lines):
+                                if f"id: {hook_id}" in line:
+                                    hook_start_line = i + 1
+                                    break
                             config_analysis_data["pre_commit_hooks"].append(
-                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args)
+                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args, code_snippet=_get_code_snippet(pre_commit_content_lines, hook_start_line, context_lines=3)) # ADDED
                             )
             except (yaml.YAMLError, OSError, ValidationError) as e:
                 logger.error(f"Error parsing pre-commit config file {pre_commit_path}: {e}")
@@ -312,26 +334,39 @@ class ImprovementMetricsCollector:
             try:
                 with open(pyproject_path, 'r', encoding='utf-8') as f:
                     pyproject_config_raw = toml.load(f)
+                    pyproject_content_lines = f.readlines() # Read lines for snippets
                     pyproject_toml_data = {}
 
                     # Extract Ruff settings
                     ruff_tool_config = pyproject_config_raw.get("tool", {}).get("ruff", {})
                     if ruff_tool_config:
+                        ruff_config_snippet = None
+                        for i, line in enumerate(pyproject_content_lines):
+                            if "[tool.ruff]" in line:
+                                ruff_config_snippet = _get_code_snippet(pyproject_content_lines, i + 1, context_lines=5)
+                                break
                         pyproject_toml_data["ruff"] = RuffConfig(
                             line_length=ruff_tool_config.get("line-length"),
                             target_version=ruff_tool_config.get("target-version"),
                             lint_select=ruff_tool_config.get("lint", {}).get("select"),
                             lint_ignore=ruff_tool_config.get("lint", {}).get("ignore"),
-                            format_settings=ruff_tool_config.get("format")
+                            format_settings=ruff_tool_config.get("format"),
+                            config_snippet=ruff_config_snippet # ADDED
                         )
                     # Extract Bandit settings
                     bandit_tool_config = pyproject_config_raw.get("tool", {}).get("bandit", {})
                     if bandit_tool_config:
+                        bandit_config_snippet = None
+                        for i, line in enumerate(pyproject_content_lines):
+                            if "[tool.bandit]" in line:
+                                bandit_config_snippet = _get_code_snippet(pyproject_content_lines, i + 1, context_lines=5)
+                                break
                         pyproject_toml_data["bandit"] = BanditConfig(
                             exclude_dirs=bandit_tool_config.get("exclude_dirs"),
                             severity_level=bandit_tool_config.get("severity_level"),
                             confidence_level=bandit_tool_config.get("confidence_level"),
-                            skip_checks=bandit_tool_config.get("skip_checks")
+                            skip_checks=bandit_tool_config.get("skip_checks"),
+                            config_snippet=bandit_config_snippet # ADDED
                         )
                     # Extract Pydantic settings if present
                     pydantic_settings_config = pyproject_config_raw.get("tool", {}).get("pydantic-settings", {})
@@ -364,6 +399,7 @@ class ImprovementMetricsCollector:
             "dockerfile_non_root_user": False,
             "dockerfile_exposed_ports": [],
             "dockerfile_multi_stage_build": False,
+            "dockerfile_problem_snippets": [], # ADDED
             "prod_requirements_present": False,
             "prod_dependency_count": 0,
             "dev_dependency_overlap_count": 0,
@@ -378,16 +414,30 @@ class ImprovementMetricsCollector:
             try:
                 with open(dockerfile_path, 'r', encoding='utf-8') as f:
                     dockerfile_content = f.read()
+                    dockerfile_lines = dockerfile_content.splitlines() # Read lines for snippets
                 
-                if "HEALTHCHECK" in dockerfile_content:
+                if "HEALTHCHECK" not in dockerfile_content: # Check for absence
+                    deployment_metrics_data["dockerfile_problem_snippets"].append(
+                        "Missing HEALTHCHECK instruction. Example: `HEALTHCHECK --interval=30s --timeout=5s CMD curl -f http://localhost:8080/health || exit 1`"
+                    )
+                else:
                     deployment_metrics_data["dockerfile_healthcheck_present"] = True
-                if re.search(r"USER\s+(?!root)", dockerfile_content, re.IGNORECASE):
+
+                if not re.search(r"USER\s+(?!root)", dockerfile_content, re.IGNORECASE): # Check for absence of non-root user
+                    deployment_metrics_data["dockerfile_problem_snippets"].append(
+                        "Missing non-root USER instruction. Example: `RUN useradd -m appuser && USER appuser`"
+                    )
+                else:
                     deployment_metrics_data["dockerfile_non_root_user"] = True
                 
                 exposed_ports = re.findall(r"EXPOSE\s+(\d+)", dockerfile_content)
                 deployment_metrics_data["dockerfile_exposed_ports"] = [int(p) for p in exposed_ports]
 
-                if re.search(r"FROM\s+.*?AS\s+.*?\nFROM", dockerfile_content, re.DOTALL | re.IGNORECASE):
+                if not re.search(r"FROM\s+.*?AS\s+.*?\nFROM", dockerfile_content, re.DOTALL | re.IGNORECASE): # Check for absence of multi-stage
+                    deployment_metrics_data["dockerfile_problem_snippets"].append(
+                        "Missing multi-stage build. Consider using multiple FROM statements for smaller images."
+                    )
+                else:
                     deployment_metrics_data["dockerfile_multi_stage_build"] = True
 
             except OSError as e:
