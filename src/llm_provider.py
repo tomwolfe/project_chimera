@@ -139,7 +139,7 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    # --- CIRCUIT BREAKER APPLIED HERE ---
+    # ---CIRCUIT BREAKER APPLIED HERE---
     @handle_errors(log_level="ERROR") # Apply the decorator here
     @CircuitBreaker(
         failure_threshold=3,

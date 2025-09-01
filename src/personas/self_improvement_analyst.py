@@ -76,6 +76,35 @@ class SelfImprovementAnalyst:
         self.content_validator = content_validator
         self.codebase_path = Path.cwd() # Assuming the analyst operates from the project root
 
+    def get_prompt(self, context: dict) -> str:
+        """
+        Generates the prompt for the Self-Improvement Analyst persona.
+        This prompt is designed to elicit specific, actionable self-improvement suggestions
+        based on the provided metrics and adhering to the 80/20 principle.
+        """
+        # --- MODIFIED PROMPT FOR CONCISENESS AND FOCUS ---
+        # The prompt is refined to be more directive about the 80/20 principle,
+        # actionable code changes, and specific focus areas.
+        # It also includes a directive to summarize findings concisely.
+        
+        # Ensure context is properly formatted, handling potential missing keys gracefully.
+        metrics_context = context.get('metrics', 'No metrics provided.')
+        reasoning_quality_context = context.get('reasoning_quality', 'N/A')
+        
+        # Construct the prompt using f-string for clarity
+        prompt = f"""Critically analyze the following metrics and provide the MOST impactful self-improvement suggestions based on the 80/20 principle. Focus on actionable code changes and prioritize reasoning quality, robustness, efficiency, and maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification. 
+
+Metrics:
+{metrics_context}
+
+Reasoning Quality Analysis:
+{reasoning_quality_context}
+
+Summarize findings concisely.
+"""
+        return prompt
+        # --- END MODIFIED PROMPT ---
+
     def analyze(self) -> List[Dict[str, Any]]:
         """
         Performs the self-analysis and generates improvement suggestions.
