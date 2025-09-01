@@ -140,7 +140,6 @@ Join our community to discuss features, report bugs, and collaborate:
 
 - **GitHub Discussions**: [Project Chimera Discussions](https://github.com/tomwolfe/project_chimera/discussions)
 - **Twitter**: Follow [@Proj_Chimera](https://x.com/Proj_Chimera) for updates
-- **Discord**: [Join our Discord server](https://discord.gg/projectchimera) (coming soon)
 
 ## 🙏 Acknowledgments
 
