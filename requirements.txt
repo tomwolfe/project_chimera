@@ -3,7 +3,7 @@
 streamlit
 google-genai
 pyyaml
-pydantic
+pydantic# Pin to a specific version
 rich
 sentence-transformers
 python-json-logger

@@ -60,6 +60,30 @@ Provide analysis with:
 """
     return prompt
 
+def generate_socratic_question(topic):
+    """Generates a Socratic question about a given topic."""
+    if not topic:
+        return "Could you please provide a topic to discuss?"
+    prompt = f"""You are an expert Socratic questioner. Your goal is to stimulate critical thinking.
+    Ask a single, open-ended, probing question about the topic: '{topic}'.
+    The question should encourage detailed explanation and exploration, not a simple factual recall or a yes/no answer.
+    Begin the question with 'Can you elaborate on'. Ensure the question is concise and directly relevant to the core concepts of '{topic}'."""
+    return prompt
+
+def refine_prompt(original_prompt, refinement):
+    """Refines an original prompt with additional instructions."""
+    if not refinement:
+        return original_prompt
+    return f"""{original_prompt}
+
+Refinement instruction: {refinement}
+
+Ensure the final prompt is clear, unambiguous, and guides the LLM effectively towards the desired output."""
+
+# Example of a system prompt for a persona (e.g., Security Auditor)
+SYSTEM_PROMPT_SECURITY_AUDITOR = """You are a meticulous Security Auditor. Analyze the provided code for potential security vulnerabilities, focusing on OWASP Top 10 risks. Provide specific examples and actionable remediation steps. Format your findings clearly, categorizing them by severity (High, Medium, Low). Ensure your output strictly adheres to the JSON schema provided."""
+
+
 def parse_llm_response(response: str) -> Dict[str, Any]:
     """
     Parses and validates the LLM's raw response using Pydantic.

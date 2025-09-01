@@ -482,16 +482,16 @@ class SocraticDebate:
             estimated_context_tokens = self.tokenizer.count_tokens(context_summary_str)
 
             self.check_budget("context", estimated_context_tokens, "Context Analysis Summary")
-            self.track_token_usage("context", estimated_context_tokens)
+            self.track_token_usage("context", estimated_tokens)
 
             context_analysis_output = {
                 "relevant_files": relevant_files,
                 "context_summary": context_summary_str,
-                "estimated_tokens": estimated_context_tokens
+                "estimated_tokens": estimated_tokens
             }
             self._log_with_context("info", "Context analysis completed.",
                                    relevant_files=[f[0] for f in relevant_files],
-                                   estimated_tokens=estimated_context_tokens)
+                                   estimated_tokens=estimated_tokens)
             return context_analysis_output
         except Exception as e:
             self._log_with_context("error", f"Error during context analysis: {e}", exc_info=True, original_exception=e)
@@ -1018,7 +1018,9 @@ class SocraticDebate:
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
         debate_history_summary_budget = int(self.phase_budgets["synthesis"] * 0.1) # e.g., 10% for history (even more aggressive)
-        summarized_debate_history = self._summarize_debate_history_for_llm(debate_persona_results, debate_history_summary_budget)
+        # Dynamically adjust history summary budget, ensuring enough budget for core synthesis
+        effective_history_budget = max(200, min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4))
+        summarized_debate_history = self._summarize_debate_history_for_llm(debate_persona_results, effective_history_budget)
         synthesis_prompt_parts.append(f"Debate History:\n{json.dumps(summarized_debate_history, indent=2)}\n\n")
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
@@ -1040,8 +1042,9 @@ class SocraticDebate:
             collected_metrics = metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
-            metrics_summary_budget = int(self.phase_budgets["synthesis"] * 0.2) # e.g., 20% for metrics (more aggressive)
-            summarized_metrics = self._summarize_metrics_for_llm(collected_metrics, metrics_summary_budget)
+            # Dynamically adjust metrics summary budget, ensuring it doesn't starve the main prompt
+            effective_metrics_budget = max(300, min(int(self.phase_budgets["synthesis"] * 0.2), self.phase_budgets["synthesis"] // 3))
+            summarized_metrics = self._summarize_metrics_for_llm(collected_metrics, effective_metrics_budget)
             synthesis_prompt_parts.append(f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2)}\n\n")
 
             synthesis_prompt_parts.append(
@@ -1066,7 +1069,7 @@ class SocraticDebate:
 
         final_synthesis_prompt_raw = "\n".join(synthesis_prompt_parts)
         
-        input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.3) # e.g., 30% for input (more aggressive)
+        input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4) # Allocate more for the core prompt itself
         
         final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
             final_synthesis_prompt_raw,
