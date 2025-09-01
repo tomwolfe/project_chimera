@@ -1205,7 +1205,7 @@ class SocraticDebate:
         self.status_callback(message="Phase 3: Executing Debate Turns...", state="running",
                              current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
                              progress_pct=self.get_progress_pct("debate"))
-        debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results)
+        debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results if context_persona_turn_results is not None else {})
         self.intermediate_steps["Debate_History"] = debate_persona_results
 
         self.status_callback(message="Phase 4: Synthesizing Final Answer...", state="running",
