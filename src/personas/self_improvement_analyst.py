@@ -118,9 +118,6 @@ Summarize findings concisely.
         # Focus on the top 3 highest impact areas based on metrics (Pareto principle).
         # Prioritize Security, Maintainability, and Robustness.
         
-        # Example: Identify Ruff issues count and Bandit issues count
-        # MODIFIED: Refined problem descriptions and AREA labels for clarity.
-        
         # Maintainability (Linting Issues)
         ruff_issues_count = self.metrics.get('code_quality', {}).get('ruff_issues_count', 0)
         if ruff_issues_count > 100: # Threshold for significant linting issues
@@ -160,11 +157,7 @@ Summarize findings concisely.
             })
         
         # Efficiency (Token Usage)
-        # This metric is more about LLM usage than code efficiency, but impacts overall project efficiency.
-        # We'll focus on the prompt optimization aspect here.
         high_token_personas = self.metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('persona_token_breakdown', {})
-        # Identify personas consuming significantly more tokens than average or a baseline
-        # For simplicity, let's flag personas consuming > 2000 tokens as potentially high
         high_token_consumers = {p: t for p, t in high_token_personas.items() if t > 2000}
         
         if high_token_consumers:
@@ -187,12 +180,7 @@ Summarize findings concisely.
                 "CODE_CHANGES_SUGGESTED": [] # This is a prompt engineering suggestion
             })
         
-        # --- Apply Pareto Principle: Limit to top 3 suggestions ---
-        # Sort suggestions by a hypothetical impact score (e.g., prioritizing Security > Maintainability > Efficiency)
-        # For this example, we'll just take the first 3 as they are added in a prioritized order.
-        # A more sophisticated approach would involve scoring each suggestion.
-        
-        # Ensure we don't exceed the limit if fewer than 3 are generated
+        # Apply Pareto Principle: Limit to top 3 suggestions
         final_suggestions = suggestions[:3] 
         
         logger.info(f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}.")
@@ -200,16 +188,10 @@ Summarize findings concisely.
         return final_suggestions
 
     # --- Placeholder methods for other potential analyses ---
-    # These would be implemented if more detailed metrics were collected.
-    
     def analyze_codebase_structure(self) -> Dict[str, Any]:
-        """Analyzes the overall structure and architecture of the codebase."""
         logger.info("Analyzing codebase structure.")
-        # Placeholder for structural analysis
         return {"summary": "Codebase structure analysis is a placeholder."}
 
     def analyze_performance_bottlenecks(self) -> Dict[str, Any]:
-        """Identifies potential performance bottlenecks."""
         logger.info("Analyzing performance bottlenecks.")
-        # Placeholder for performance analysis
         return {"summary": "Performance bottleneck analysis is a placeholder."}

@@ -1,46 +1,43 @@
+# tests/test_llm_provider.py
 import pytest
 from unittest.mock import MagicMock
 
 # Assuming llm_provider.py contains a class or functions related to LLM interaction
-# Replace with actual imports from your project
-# from src.llm_provider import LLMProvider, generate_response
+# Replace with actual import path if different
+from src.llm_provider import LLMProvider
 
-# Mock LLMProvider for testing
-class MockLLMProvider:
+# Mocking the LLM client to avoid actual API calls during unit tests
+class MockLLMClient:
     def __init__(self, api_key=None):
         pass
 
-    def generate_content(self, prompt):
-        if "hello" in prompt.lower():
-            return "Hello there!"
-        elif "weather" in prompt.lower():
-            return "The weather is sunny."
-        else:
-            return "I cannot help with that."
+    def generate_content(self, prompt, generation_config=None, safety_settings=None):
+        # Simulate a response
+        class MockResponse:
+            def text(self):
+_                return "This is a simulated LLM response."
+        return MockResponse()
 
 @pytest.fixture
 def llm_provider():
-    # Replace with actual LLMProvider instantiation if needed, or use the mock
-    # return LLMProvider(api_key="dummy_key")
-    return MockLLMProvider()
+    # Replace MockLLMClient with the actual client if it's different
+    # or if you need to mock specific behaviors.
+    provider = LLMProvider(api_key="dummy_api_key", client=MockLLMClient())
+    return provider
 
-def test_llm_provider_initialization():
-    provider = MockLLMProvider(api_key="test_key")
-    assert provider is not None
+def test_llm_provider_initialization(llm_provider):
+    """Test that the LLMProvider initializes correctly."""
+    assert llm_provider.api_key == "dummy_api_key"
+    assert isinstance(llm_provider.client, MockLLMClient)
 
-def test_generate_content_greeting(llm_provider):
-    prompt = "Say hello"
+def test_llm_provider_generate_content(llm_provider):
+    """Test the generate_content method of LLMProvider."""
+    prompt = "What is the capital of France?"
     response = llm_provider.generate_content(prompt)
-    assert response == "Hello there!"
+    assert response == "This is a simulated LLM response."
 
-def test_generate_content_weather(llm_provider):
-    prompt = "What is the weather today?"
-    response = llm_provider.generate_content(prompt)
-    assert response == "The weather is sunny."
-
-def test_generate_content_unknown(llm_provider):
-    prompt = "Tell me a joke"
-    response = llm_provider.generate_content(prompt)
-    assert response == "I cannot help with that."
-
-# Add more tests for different scenarios and error handling
+def test_llm_provider_generate_content_with_config(llm_provider):
+    """Test generate_content with custom generation configura..."""
+    # This test case was cut off in the original output.
+    # You would add assertions here to test generate_content with specific configs.
+    pass # Placeholder for the rest of the test
