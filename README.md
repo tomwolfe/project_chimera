@@ -1,213 +1,152 @@
-# Project Chimera: Socratic Self-Debate Engine
+# Project Chimera: Socratic Self-Debate Reasoning Engine
 
-Project Chimera is an advanced reasoning engine that leverages Socratic debate methodology to produce higher-quality AI responses through multi-perspective analysis. By simulating a debate between specialized AI personas, it identifies flaws, enhances reasoning quality, and delivers more robust solutions to complex problems. Unique among AI reasoning frameworks, Chimera features a **self-improvement capability** that allows it to critically analyze and enhance its own codebase.
+Project Chimera is an advanced reasoning engine designed for complex problem-solving and code generation through Socratic self-debate methodology. This innovative system critically analyzes its own codebase to identify and implement improvements, creating a self-optimizing AI development framework.
 
 *   **GitHub**: [tomwolfe/project_chimera](https://github.com/tomwolfe/project_chimera)
 *   **Twitter**: [@Proj_Chimera](https://x.com/Proj_Chimera)
 
-## Key Features
+## 🌟 Key Features
 
-- **Socratic Self-Debate Framework**: Multiple specialized AI personas debate to refine answers and identify weaknesses through structured multi-turn reasoning
-- **Self-Improvement Capabilities**: The system can critically analyze its own codebase to identify areas for enhancement using the 80/20 Pareto principle
-- **Domain-Specific Reasoning**: Specialized personas for different domains (Software Engineering, Scientific, Business, Security, DevOps, etc.)
-- **Structured Output**: Strict JSON validation with automatic repair of malformed outputs and detailed diagnostics
-- **Comprehensive Code Validation**: Integrated Ruff linting, Bandit security scanning, and custom AST-based security analysis
-- **Token Budget Management**: Intelligent allocation of token resources across debate phases with cost tracking
-- **Markdown Report Generation**: Detailed analysis reports with persona audit trails and intermediate reasoning steps
-- **Context-Aware File Selection**: Intelligent identification of relevant code files for modification based on prompt analysis
+- **Socratic Self-Debate Framework**: Multiple specialized AI personas engage in structured debate to solve complex problems
+- **Self-Improvement Engine**: Automatically analyzes its own codebase to identify high-impact improvements
+- **80/20 Pareto Principle Focus**: Prioritizes changes with the highest impact for the effort required
+- **Multi-Persona Architecture**: Includes specialized roles like:
+  - Security Auditor (Bandit integration for vulnerability scanning)
+  - Code Architect (maintainability and structural improvements)
+  - DevOps Engineer (CI/CD and infrastructure optimization)
+  - Constructive Critic (identifies flaws in proposed improvements)
+  - Self-Improvement Analyst (synthesizes debate results into actionable changes)
+  - Impartial Arbitrator (resolves conflicts between personas)
+  - Test Engineer (focuses on test coverage and validation)
+- **Comprehensive Analysis**: Evaluates code across 8 critical dimensions:
+  - Reasoning quality
+  - Robustness (schema validation, error handling)
+  - Efficiency (token usage optimization)
+  - Maintainability (PEP8 compliance, documentation)
+  - Security (vulnerability scanning, secret management)
+  - Test coverage (unit tests, edge cases)
+  - CI/CD processes (Bandit integration, automated workflows)
+  - Token usage optimization (persona-specific budgeting)
+- **Structured JSON Output**: All self-improvement suggestions follow a strict schema for reliable parsing
+- **Circuit Breaker System**: Prevents cascading failures during self-improvement attempts
 
-## Technical Overview
-
-Project Chimera is built with modern Python technologies and follows rigorous software engineering practices:
-
-- **Core Framework**: Python 3.11+
-- **UI**: Streamlit for interactive web interface with responsive design
-- **LLM Integration**: Gemini 2.5 series (primary), with extensible architecture for other providers
-- **Validation Tools**: 
-  - Ruff for code style and quality
-  - Bandit for security scanning
-  - Custom AST-based security analysis
-  - JSON output validation with repair capabilities
-- **Code Quality**: Strict schema validation using Pydantic models
-- **Containerization**: Docker support for consistent deployment
-- **Structured Logging**: Comprehensive monitoring with rich console output
-- **Test Coverage**: Unit tests for output parsing, validation, and core functionality
-
-## Installation
+## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.11+
-- Google Cloud account (for Gemini API access)
-- Docker (optional, for containerized deployment)
+- Python 3.11
+- Git
 
-### Local Setup
+### Installation
 ```bash
 # Clone the repository
 git clone https://github.com/tomwolfe/project_chimera.git
 cd project_chimera
 
-# Create virtual environment
+# Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/MacOS
-# venv\Scripts\activate  # Windows
+# venv\Scripts\activate   # Windows
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Set up API keys
-echo "GEMINI_API_KEY=your_api_key_here" > .env
 
 # Run the application
 streamlit run app.py
 ```
 
-### Docker Setup
-```bash
-# Build the container
-docker build -t project-chimera .
+## 🧠 How It Works
 
-# Run the container
-docker run -p 8080:8080 -e GEMINI_API_KEY=your_api_key_here project-chimera
+Project Chimera employs a unique self-improvement methodology where the system:
+
+1. Analyzes its own codebase using specialized personas with distinct focus areas
+2. Each persona generates structured JSON output following strict schema validation
+3. An Impartial Arbitrator resolves conflicts between differing persona recommendations
+4. A Self-Improvement Analyst synthesizes the debate results into actionable code changes
+5. Proposed changes undergo circuit breaker validation before implementation
+6. System measures impact of changes against objective metrics for continuous learning
+
+The process strictly follows the 80/20 principle, focusing on the top 20% of changes that deliver 80% of potential benefits.
+
+## 📂 Project Structure
+
+```
+project_chimera/
+├── .github/                  # CI/CD workflows including Bandit security scanning
+│   └── workflows/            # GitHub Actions pipelines
+├── src/                      # Core application code
+│   ├── core/                 # Main engine and debate framework
+│   ├── self_improvement/     # Self-analysis system components
+│   │   ├── metrics_collector.py  # Objective metric collection
+│   │   └── improvement_loop.py   # Self-improvement orchestration
+│   ├── utils/                # Utility functions and helpers
+│   │   └── prompt_engineering.py # Dynamic persona routing
+│   ├── models/               # Data models and JSON schemas
+│   └── config/               # Configuration management
+├── tests/                    # Comprehensive test suite
+├── .pre-commit-config.yaml   # Includes Bandit security scanning
+├── pyproject.toml            # Project configuration
+├── requirements.txt          # Development dependencies
+└── app.py                    # Streamlit web application entry point
 ```
 
-## Usage
+## 🔍 Self-Improvement Capabilities
 
-### Basic Interaction
-1. Launch the application via Streamlit
-2. Enter your prompt in the main interface
-3. Select the appropriate reasoning domain (Software Engineering, Scientific, Business, etc.)
-4. Configure parameters as needed (token budget, model selection)
-5. Initiate the Socratic debate process
-6. Review the structured output with debate history and final synthesis
+Project Chimera continuously evaluates itself across multiple dimensions:
 
-### Self-Improvement Analysis
-For analyzing and improving the Project Chimera codebase itself, use prompts like:
-```
-Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability.
-```
+### Security Analysis
+- Automated scanning for vulnerabilities using Bandit
+- Hardcoded secrets detection with configuration in pyproject.toml
+- Input validation and sanitization checks
+- API key management review
+- CI/CD pipeline security assessment
 
-The system will:
-1. Analyze code quality metrics (Ruff violations, complexity metrics)
-2. Identify security vulnerabilities (Bandit scans, AST analysis)
-3. Evaluate architectural patterns and potential bottlenecks
-4. Generate specific, actionable code change suggestions
-5. Provide detailed rationale and expected impact for each suggestion
+### Code Quality & Maintainability
+- Ruff-based linting and formatting (PEP8 compliance)
+- Technical debt identification
+- Code structure analysis (nesting depth, code smells)
+- Documentation quality assessment
 
-### Report Generation
-After any analysis, you can download comprehensive reports in Markdown format containing:
-- Full debate history with token usage metrics
-- Persona configuration audit trail
-- Intermediate reasoning steps
-- Final synthesized answer
-- Code change suggestions with context
-- Security and quality metrics
+### Performance & Efficiency
+- Token usage optimization across personas
+- Response time monitoring
+- Resource consumption analysis
+- Adaptive persona configuration (temperature, max_tokens)
 
-## Architecture Deep Dive
+### Testing & Reliability
+- Test coverage analysis
+- Edge case identification
+- Error handling review
+- Circuit breaker implementation for failure prevention
 
-### Core Components
-
-#### 1. Persona System
-Specialized AI roles with distinct perspectives and system prompts:
-- **Visionary Generator**: Proposes innovative solutions
-- **Constructive Critic**: Identifies flaws and risks
-- **Skeptical Generator**: Challenges assumptions
-- **Domain-specific Experts**:
-  - *Security_Auditor*: Focuses on vulnerabilities and compliance
-  - *DevOps_Engineer*: Optimizes operational efficiency and deployment
-  - *Test_Engineer*: Identifies testing gaps and quality issues
-  - *Business_Analyst*: Evaluates business impact and value
-  - *Self_Improvement_Analyst*: Specifically designed for codebase self-analysis
-
-#### 2. Debate Engine
-Orchestrates the multi-turn debate process with:
-- Dynamic persona sequencing based on prompt analysis
-- Token budget allocation across debate phases
-- Conflict resolution mechanisms
-- Intermediate step validation
-
-#### 3. Output Validation Framework
-Ensures high-quality, structured responses through:
-- Strict JSON schema validation using Pydantic models
-- Automatic repair of malformed JSON outputs
-- Malformed block detection and reporting
-- Code change validation (PEP8 compliance, path validation)
-
-#### 4. Code Analysis System
-Comprehensive code quality and security assessment:
-- Ruff linting for style and quality
-- Bandit security scanning
-- Custom AST-based security analysis (detects unsafe patterns like `pickle.loads()`, `yaml.load()`)
-- Complexity metrics collection (cyclomatic complexity, LOC, nesting depth)
-- Code smell detection
-
-#### 5. Self-Improvement Framework
-Analyze the system's own code for enhancements:
-- Automated metrics collection (code quality, security, performance)
-- 80/20 prioritization of maintenance tasks
-- Structured output format for improvement suggestions
-- Code change recommendations with specific file paths
-
-### Self-Analysis Output Structure
-When analyzing its own codebase, Chimera produces structured output with:
-```json
-{
-  "ANALYSIS_SUMMARY": "High-level assessment of codebase health",
-  "IMPACTFUL_SUGGESTIONS": [
-    {
-      "AREA": "Reasoning Quality | Robustness | Efficiency | Maintainability",
-      "PROBLEM": "Specific issue identified",
-      "PROPOSED_SOLUTION": "Clear implementation guidance",
-      "EXPECTED_IMPACT": "Quantified or qualitative benefit",
-      "CODE_CHANGES_SUGGESTED": [
-        {
-          "FILE_PATH": "relative/path/to/file.py",
-          "ACTION": "ADD | MODIFY | REMOVE",
-          "START_LINE": 42,
-          "END_LINE": 45,
-          "CONTENT": "Valid code snippet"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## Security Features
-
-Project Chimera incorporates multiple layers of security analysis:
-- **AST-based Security Checks**: Detects dangerous patterns like:
-  - `pickle.loads()` with untrusted data
-  - `yaml.load()` without safe loader
-  - Shell injection vulnerabilities
-- **Bandit Integration**: Automated security scanning for common vulnerabilities
-- **Context-Aware Analysis**: Security focus intensifies when analyzing security-related code
-- **Self-Audit Capability**: Can identify and suggest fixes for its own security vulnerabilities
-
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions! Please follow these steps:
 
 1. Fork the repository
-2. Create a new feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin feature/your-feature`)
-5. Create a new Pull Request
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-### Contribution Guidelines
-- All code must pass Ruff linting
-- Security-sensitive code requires AST security analysis
-- New features should include appropriate persona configurations
-- Self-improvement suggestions must follow the structured output format
-- All output parsers require corresponding test cases
+Please review our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-## License
+## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
+## 📢 Community
 
-Project Chimera builds upon the rich tradition of Socratic dialogue and leverages modern AI capabilities to enhance reasoning quality. Special thanks to the open-source community for the foundational technologies that make this project possible.
+Join our community to discuss features, report bugs, and collaborate:
+
+- **GitHub Discussions**: [Project Chimera Discussions](https://github.com/tomwolfe/project_chimera/discussions)
+- **Twitter**: Follow [@Proj_Chimera](https://x.com/Proj_Chimera) for updates
+- **Discord**: [Join our Discord server](https://discord.gg/projectchimera) (coming soon)
+
+## 🙏 Acknowledgments
+
+Project Chimera builds upon numerous open-source projects and frameworks. Special thanks to the Python, Streamlit, Bandit, Ruff, and GitHub Actions communities for their excellent tools and libraries.
 
 ---
 
-*Project Chimera is actively developed and maintained. Check back frequently for new features and improvements!*
+> "The only true wisdom is in knowing you know nothing." - Socrates  
+> Project Chimera embodies this philosophy through continuous self-reflection and improvement.
