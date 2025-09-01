@@ -1,3 +1,4 @@
+# tests/test_core.py
 import pytest
 
 # Assuming core.py contains process_complex_logic and analyze_data
@@ -41,4 +42,13 @@ def test_process_complex_logic_condition2():
 
 def test_process_complex_logic_nested_condition():
     """Tests when the nested condition is met."""
-    item = {'condition1': True, 'value': 15, 'nested': {'deep_conditio...
+    item = {
+        'condition1': True,
+        'value': 15,
+        'nested': {'deep_condition': True, 'deep_value': 100}
+    }
+    expected_output = "Processed item with nested condition met."
+    assert process_complex_logic(item) == expected_output
+
+def test_process_complex_logic_no_condition():
+    """Tests when no conditions are met."""

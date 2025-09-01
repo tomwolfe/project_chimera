@@ -20,17 +20,17 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 
-[tool.ruff.lint.isort]
-known-first-party = ["src", "core"]
-
 [tool.bandit]
 # Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
-exclude_dirs = ["tests", "venv", # Exclude virtual environment directories from Bandit scan
-".venv"] # Exclude virtual environment directories from Bandit scan
-# Only report issues with severity Medium or High
-severity_level = "HIGH" # Configure Bandit to fail on High severity issues
-# Only report issues with confidence Medium or High
-confidence_level = "HIGH" # Configure Bandit to fail on High confidence issues
-# Define specific checks to include or exclude if needed
-# checks = ["B101", "B104"]
-# skip_checks = ["B101"]
+exclude_dirs = [
+        "tests",
+        "venv",
+        ".venv"
+    ]
+severity_level = "B", # Enforce at least B level findings
+confidence_level = "B", # Enforce at least B level confidence
+skip_checks = null
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "core"]
