@@ -23,9 +23,10 @@ skip-magic-trailing-comma = false
 [tool.bandit]
 # Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
 exclude_dirs = [
-        "tests",
         "venv",
-        ".venv"
+        ".git",
+        "__pycache__",
+        "tests" # ADDED THIS LINE as per LLM suggestion
     ]
 severity_level = "B" # Enforce at least B level findings
 confidence_level = "B", # Enforce at least B level confidence

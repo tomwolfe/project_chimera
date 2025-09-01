@@ -1,43 +1,45 @@
-# tests/test_llm_provider.py
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 
-# Assuming llm_provider.py contains a class or functions related to LLM interaction
-# Replace with actual import path if different
-from src.llm_provider import LLMProvider
+# Assuming llm_provider.py is in the src directory
+from src.llm_provider import get_llm_response
 
-# Mocking the LLM client to avoid actual API calls during unit tests
-class MockLLMClient:
-    def __init__(self, api_key=None):
-        pass
 
-    def generate_content(self, prompt, generation_config=None, safety_settings=None):
-        # Simulate a response
-        class MockResponse:
-            def text(self):
-_                return "This is a simulated LLM response."
-        return MockResponse()
+def test_get_llm_response_success():
+    mock_response = MagicMock()
+    mock_response.text.return_value = 'Mocked LLM response'
+    
+    with patch('src.llm_provider.GeminiProvider') as MockGeminiProvider: # Corrected mock target
+        mock_provider_instance = MockGeminiProvider.return_value
+        mock_provider_instance.generate.return_value = ('Mocked LLM response', 100, 50) # Simulate return tuple (text, input_tokens, output_tokens)
+        
+        response = get_llm_response("Test prompt")
+        assert response == 'Mocked LLM response'
+        MockGeminiProvider.assert_called_once()
+        mock_provider_instance.generate.assert_called_once()
 
-@pytest.fixture
-def llm_provider():
-    # Replace MockLLMClient with the actual client if it's different
-    # or if you need to mock specific behaviors.
-    provider = LLMProvider(api_key="dummy_api_key", client=MockLLMClient())
-    return provider
+def test_get_llm_response_api_error():
+    with patch('src.llm_provider.GeminiProvider') as MockGeminiProvider:
+        mock_provider_instance = MockGeminiProvider.return_value
+        # Simulate an API error during generation
+        mock_provider_instance.generate.side_effect = Exception('API Error')
+        
+        with pytest.raises(Exception, match='API Error'):
+            get_llm_response("Test prompt")
 
-def test_llm_provider_initialization(llm_provider):
-    """Test that the LLMProvider initializes correctly."""
-    assert llm_provider.api_key == "dummy_api_key"
-    assert isinstance(llm_provider.client, MockLLMClient)
+def test_get_llm_response_empty_response():
+    mock_response = MagicMock()
+    mock_response.text.return_value = ''
 
-def test_llm_provider_generate_content(llm_provider):
-    """Test the generate_content method of LLMProvider."""
-    prompt = "What is the capital of France?"
-    response = llm_provider.generate_content(prompt)
-    assert response == "This is a simulated LLM response."
+    with patch('src.llm_provider.GeminiProvider') as MockGeminiProvider:
+        mock_provider_instance = MockGeminiProvider.return_value
+        mock_provider_instance.generate.return_value = ('', 50, 0) # Simulate empty response
 
-def test_llm_provider_generate_content_with_config(llm_provider):
-    """Test generate_content with custom generation configura..."""
-    # This test case was cut off in the original output.
-    # You would add assertions here to test generate_content with specific configs.
-    pass # Placeholder for the rest of the test
+        response = get_llm_response("Test prompt")
+        assert response == ''
+        MockGeminiProvider.assert_called_once()
+        mock_provider_instance.generate.assert_called_once()
+
+# Note: The original LLM output was cut off for this file.
+# The above is a reasonable completion based on common testing patterns.
+# If the original output had more specific content, use that instead.
