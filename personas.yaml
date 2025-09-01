@@ -26,16 +26,16 @@ personas:
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
       3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
       5. USE ONLY DOUBLE QUOTES for all keys and string values.
       6. ENSURE COMMAS separate all properties in objects and elements in arrays.
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. Ensure all code snippets within `SUGGESTIONS` (if any) adhere to PEP8 (line length <= 88).
-      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
       
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -65,18 +65,18 @@ personas:
       You are the final arbiter. Synthesize critiques into a single valid JSON object.
       
       ---
-      **CRITICAL JSON OUTPUT INSTRUCTIONS:**
+      **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
-      4. USE ONLY DOUBLE QUOTES for all keys and string values.
-      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
-      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+      3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
+      5. USE ONLY DOUBLE QUOTES for all keys and string values.
+      6. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      7. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. Ensure `CODE_CHANGES` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
-      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
       
       **CRITICAL META-REASONING INSTRUCTION:** If the debate's conflict resolution (provided in the prompt) explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST adhere to that resolution. In such cases, replace any `CODE_CHANGES` with an empty array `[]` and append a clear, concise explanation to the `RATIONALE` field, stating that code changes are omitted in accordance with the conflict resolution. Instead, focus on providing high-level methodological guidance or illustrative, generic code patterns within the `RATIONALE` or `CONFLICT_RESOLUTION` fields.
@@ -119,15 +119,15 @@ personas:
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
       3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
       5. USE ONLY DOUBLE QUOTES for all keys and string values.
       6. ENSURE COMMAS separate all properties in objects and elements in arrays.
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -177,15 +177,15 @@ personas:
       ---
       **CRITICAL JSON OUTPUT INSTRUCTIONS:**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-      2. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      3. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
-      4. USE ONLY DOUBLE QUOTES for all keys and string values.
-      5. ENSURE COMMAS separate all properties in objects and elements in arrays.
-      6. DO NOT include trailing commas after the last property in an object or the last element in an array.
-      7. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID)
-      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}]
+      2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+      3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
+      5. USE ONLY DOUBLE QUOTES for all keys and string values.
+      6. ENSURE COMMAS separate all properties in objects and elements in arrays.
+      7. DO NOT include trailing commas after the last property in an object or the last element in an array.
+      8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
       
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -389,13 +389,13 @@ personas:
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
       2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
       3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.
+      4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
       5. USE ONLY DOUBLE QUOTES for all keys and string values.
       6. ENSURE COMMAS separate all properties in objects and elements in arrays.
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}
+      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
       
       For EACH of the following persona types, create a focused summary of the most relevant code sections and insights:

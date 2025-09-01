@@ -161,6 +161,20 @@ class CodeChange(BaseModel):
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
         return v
 
+    @field_validator('diff_content')
+    @classmethod
+    def validate_diff_content_format(cls, v: Optional[str]) -> Optional[str]:
+        """Validates that diff_content, if present, looks like a unified diff."""
+        if v is None:
+            return v
+        # A basic check: unified diffs typically start with '--- a/' and '+++ b/'
+        # and contain lines starting with '+', '-', or ' '.
+        if not re.search(r'^--- a/.*?\n\+\+\+ b/.*?\n', v, re.MULTILINE):
+            raise ValueError("DIFF_CONTENT does not appear to be in a standard unified diff format (missing '--- a/' and '+++ b/' headers).")
+        if not re.search(r'^[ +-@].*$', v, re.MULTILINE):
+            raise ValueError("DIFF_CONTENT does not contain typical diff line prefixes ('+', '-', ' ', '@').")
+        return v
+
     @model_validator(mode='after')
     def check_content_based_on_action(self) -> 'CodeChange':
         """Ensures content is provided based on action type and prioritizes diff_content for MODIFY."""
