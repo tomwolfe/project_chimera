@@ -18,7 +18,7 @@ from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_c
 from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig, DeploymentAnalysisOutput # NEW IMPORTS
 import toml # Added for TOML parsing
 from pydantic import ValidationError # Added for Pydantic validation in parsing
-from src.utils.command_executor import execute_command_safely # Re-import for clarity
+from src.utils.command_executor import execute_system_command # Re-import for clarity
 from src.utils.path_utils import PROJECT_ROOT # Re-import for clarity
 
 logger = logging.getLogger(__name__)

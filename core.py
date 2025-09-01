@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
 from functools import lru_cache
 from rich.console import Console
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 import difflib # Added for _consolidate_self_improvement_code_changes
 
 # --- IMPORT MODIFICATIONS ---
