@@ -1,6 +1,6 @@
 # src/personas/self_improvement_analyst.py
 import logging
-from typing import Dict, Any, List # Added List for type hinting
+from typing import Dict, Any, List # Added List
 from datetime import datetime # Added for _create_file_backup
 import shutil # Added for _create_file_backup
 import os # Added for _create_file_backup, _run_targeted_tests, _get_relevant_test_files
@@ -166,7 +166,10 @@ Summarize findings concisely.
                 "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
                 "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
                 "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
-                "CODE_CHANGES_SUGGESTED": [] # This is a prompt engineering suggestion, not direct code modification
+                "CODE_CHANGES_SUGGESTED": [
+                    # Example code changes are provided in the main analysis output, not here.
+                    # This section would typically be populated by a more detailed analysis.
+                ]
             })
         
         # Reasoning Quality (Content Misalignment)
