@@ -40,3 +40,12 @@ level = "info" # Equivalent to -ll, includes low severity issues
 # ]
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

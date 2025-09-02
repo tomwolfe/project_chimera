@@ -1,7 +1,6 @@
 import pytest
 from src.llm_provider import LLMProvider
 
-
 # Mocking the LLM API response for testing
 class MockLLMResponse:
     def __init__(self, text):

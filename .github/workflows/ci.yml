@@ -36,9 +36,9 @@ jobs:
     - name: Run Bandit Security Scan with corrected configuration # MODIFIED NAME
       # Configure Bandit to fail on high/medium severity issues
       run: |
-        bandit -r . -ll -c pyproject.toml --exit-on-error
+        bandit -r . --config pyproject.toml --exit-on-error # MODIFIED LINE: Changed -c to --config
         # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
     - name: Run Pytest and generate coverage report
       run: |
-        pytest --cov=src --cov-report=xml --cov-report=term
+        pytest --cov=src --cov-report=xml --cov-report=term --cov-fail-under=80 # MODIFIED LINE: Added --cov-fail-under=80
     # You could add more steps here, e.g., for security scanning (Bandit), deployment, etc.
