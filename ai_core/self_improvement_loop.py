@@ -1,17 +1,18 @@
 # ai_core/self_improvement_loop.py
 import logging
-from typing import Any, Dict, List, Optional, Tuple  # Added List, Tuple
-from datetime import datetime  # Added for _create_file_backup
-import shutil  # Added for _create_file_backup
-import os  # Added for _create_file_backup, _run_targeted_tests, _get_relevant_test_files
-import subprocess  # Added for _run_targeted_tests
-import re  # Added for _get_relevant_test_files
-import json  # Added for _calculate_improvement_score, save_improvement_results
-import sys # Added for sys.executable
-from pathlib import Path # Added for Path operations
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+import shutil
+import os
+import subprocess
+import re
+import json
+import sys
+from pathlib import Path
 
 # Assuming FocusedMetricsCollector and other necessary classes/functions are importable
-# from src.self_improvement.metrics_collector import FocusedMetricsCollector
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
+from src.self_improvement.context_collector import CodebaseContextCollector # NEW IMPORT
 # from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
 # from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
 
@@ -295,6 +296,20 @@ class SelfImprovementLoop:
         """
         logger.info("Starting self-improvement application phase.")
         
+        # Auto-detect self-analysis and collect codebase context
+        # This logic is moved here from the original prompt-based check
+        # to ensure context is collected before metrics if self-analysis is implied.
+        # The actual prompt check is handled in core.py's SocraticDebate.
+        # Here, we assume if run_self_improvement is called, it's part of a self-analysis cycle.
+        collector = CodebaseContextCollector(root_dir=str(self.codebase_path))
+        self.codebase_context = collector.collect()
+        self.intermediate_steps["codebase_context_summary"] = {
+            "total_files": len(self.codebase_context["structure"]),
+            "key_modules_analyzed": list(self.codebase_context["modules"].keys())[:10],
+            "configs_found": list(self.codebase_context["config_files"].keys())
+        }
+        logger.info(f"Codebase context collected for self-improvement: {self.intermediate_steps['codebase_context_summary']}")
+
         # --- MODIFIED: Use FocusedMetricsCollector if available, otherwise fallback ---
         # This part assumes FocusedMetricsCollector is defined elsewhere and imported.
         # If not, it will fall back to the original FocusedMetricsCollector.
