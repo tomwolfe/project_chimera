@@ -15,7 +15,6 @@ from pathlib import Path # Added for Path operations
 # from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
 # from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
 
-
 # Mock classes from original file for context, but they will be replaced by actual logic
 class MockAIModel:
     """A mock AI model for demonstration purposes."""
@@ -30,7 +29,7 @@ class MockAIModel:
         pass
 
     def update(self, learning_rate: float, adaptability: float, robustness: float):
-        loggerD.debug(
+        logger.debug(
             f"Mock model updating with learning_rate={learning_rate}, adaptability={adaptability}, robustness={robustness}"
         )
         pass
@@ -64,7 +63,7 @@ def calculate_adaptability(model: Any, novel_data: Any) -> float:
 
 def calculate_robustness(model: Any, adversarial_data: Any) -> float:
     """
-    Calculates a score indicating the model's robustness to adversarial data.
+    Calculsates a score indicating the model's robustness to adversarial data.
     This is a placeholder.
     """
     logger.debug("Calculating robustness score (placeholder).")
@@ -101,7 +100,7 @@ class SelfImprovementLoop:
         """
         Initializes the self-improvement loop with model, data, and context for analysis.
         """
-        selfself.model = model
+        self.model = model
         self.training_data = training_data
         self.validation_data = validation_data
         self.novel_data = novel_data
@@ -191,7 +190,7 @@ class SelfImprovementLoop:
                 logger.warning(f"Attempted to modify non-existent file: {file_path}")
         elif action == "REMOVE":
             if file_path.exists():
-                selfal._create_file_backup(file_path)
+                self._create_file_backup(file_path)
                 file_path.unlink()
                 logger.info(f"Removed file: {file_path}")
             else:
@@ -296,7 +295,14 @@ class SelfImprovementLoop:
         """
         logger.info("Starting self-improvement application phase.")
         
-        metrics_collector = ImprovementMetricsCollector(
+        # --- MODIFIED: Use FocusedMetricsCollector if available, otherwise fallback ---
+        # This part assumes FocusedMetricsCollector is defined elsewhere and imported.
+        # If not, it will fall back to the original ImprovementMetricsCollector.
+        # For this specific change, we'll assume the original class name is used for compatibility.
+        # If you intend to rename it, ensure the import path is updated.
+        metrics_collector_class = ImprovementMetricsCollector # Or FocusedMetricsCollector if renamed
+        
+        metrics_collector = metrics_collector_class(
             initial_prompt=self.initial_prompt,
             debate_history=self.debate_history,
             intermediate_steps=self.intermediate_steps,
@@ -342,7 +348,7 @@ class SelfImprovementLoop:
             logger.info("No code changes applied, skipping test execution.")
 
         metrics_after = metrics_collector.collect_all_metrics()
-        improvement_score = selfThis._calculate_improvement_score(metrics_before, metrics_after)
+        improvement_score = self._calculate_improvement_score(metrics_before, metrics_after)
 
         self.intermediate_steps["improvement_score"] = improvement_score
         self.intermediate_steps["metrics_before_improvement"] = metrics_before
