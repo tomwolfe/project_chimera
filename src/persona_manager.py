@@ -3,30 +3,30 @@ import os
 import json
 import yaml
 import datetime
-import re # ADDED: For _analyze_prompt_complexity
+import re
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
 import streamlit as st
-import copy # Added for deepcopy
-import time # Added for time.time()
+import copy
+import time
 
 from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
-from src.config.persistence import ConfigPersistence # NEW IMPORT
-from src.utils.prompt_analyzer import PromptAnalyzer # NEW IMPORT
+from src.config.persistence import ConfigPersistence
+from src.utils.prompt_analyzer import PromptAnalyzer
+from src.token_tracker import TokenUsageTracker # NEW IMPORT
 
 logger = logging.getLogger(__name__)
 
-# CUSTOM_FRAMEWORKS_DIR = "custom_frameworks" # REMOVED: Now managed by ConfigPersistence
 DEFAULT_PERSONAS_FILE = "personas.yaml"
 
 class PersonaManager:
-    def __init__(self, domain_keywords: Dict[str, List[str]]): # Accept domain_keywords
+    def __init__(self, domain_keywords: Dict[str, List[str]], token_tracker: Optional[TokenUsageTracker] = None): # MODIFIED: Accept token_tracker
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
         self.available_domains: List[str] = []
-        self.all_custom_frameworks_data: Dict[str, Any] = {} # Stores full config data for custom frameworks
+        self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
         self._original_personas: Dict[str, PersonaConfig] = {}
 
@@ -35,7 +35,7 @@ class PersonaManager:
         self.adjustment_cooldown_seconds = 300 # 5 minutes cooldown
         self.min_turns_for_adjustment = 5 # Minimum turns before considering adjustment
 
-        self.config_persistence = ConfigPersistence() # NEW: Initialize ConfigPersistence
+        self.config_persistence = ConfigPersistence()
 
         # NEW: Initialize PromptAnalyzer first
         self.prompt_analyzer = PromptAnalyzer(domain_keywords)
@@ -47,20 +47,19 @@ class PersonaManager:
             # In a real app, you might want to raise an exception here or have a more robust fallback.
             # For now, we'll proceed with potentially empty or minimal data, logging the error.
 
-        self._load_custom_frameworks_on_init() # Call after config_persistence is initialized
+        self._load_custom_frameworks_on_init()
         self._load_original_personas()
         
         # Initialize PersonaRouter with all loaded personas and persona_sets, and the prompt_analyzer
         # This ensures the router always has the correct prompt_analyzer instance.
         self.persona_router: Optional[PersonaRouter] = PersonaRouter(
-            self.all_personas, self.persona_sets, self.prompt_analyzer # Pass prompt_analyzer
+            self.all_personas, self.persona_sets, self.prompt_analyzer
         )
 
         # NEW: Initialize performance metrics after all personas are loaded
         self._initialize_performance_metrics()
 
-    # REMOVED: _ensure_custom_frameworks_dir as it's now handled by ConfigPersistence
-    # REMOVED: _sanitize_framework_filename as it's now handled by ConfigPersistence
+        self.token_tracker = token_tracker # NEW: Store token_tracker
 
     def _load_initial_data(self, file_path: str = DEFAULT_PERSONAS_FILE) -> Tuple[bool, Optional[str]]:
         """Loads the default personas and persona sets from a YAML file.
@@ -156,13 +155,12 @@ class PersonaManager:
             self.persona_performance_metrics[p_name] = {
                 'total_turns': 0,
                 'schema_failures': 0,
-                'truncation_failures': 0,
+                'truncation_failures': 0, # NEW: Track truncation failures
                 'last_adjusted_temp': self.all_personas[p_name].temperature,
                 'last_adjusted_max_tokens': self.all_personas[p_name].max_tokens,
                 'last_adjustment_timestamp': 0.0
             }
 
-    # MODIFIED: save_framework to accept description and use ConfigPersistence
     def save_framework(self, name: str, current_persona_set_name: str, current_active_personas: Dict[str, PersonaConfig], description: str = "") -> Tuple[bool, str]:
         """Saves the current framework configuration (including persona edits) as a custom framework.
         Returns:
@@ -212,7 +210,6 @@ class PersonaManager:
         else:
             return False, message
 
-    # MODIFIED: load_framework_into_session to use ConfigPersistence
     def load_framework_into_session(self, framework_name: str) -> Tuple[bool, str, Dict[str, PersonaConfig], Dict[str, List[str]], str]:
         """Loads a framework's personas and sets, returning them for session state update.
         Returns:
@@ -336,7 +333,6 @@ class PersonaManager:
             logger.warning(f"Partial success or failure during reset of personas for framework '{framework_name}'.")
         return success
 
-    # NEW: export_framework_for_sharing method
     def export_framework_for_sharing(self, framework_name: str) -> Tuple[bool, str, Optional[str]]:
         """Exports a framework configuration as YAML for sharing using ConfigPersistence."""
         exported_content = self.config_persistence.export_framework_for_sharing(framework_name)
@@ -344,7 +340,6 @@ class PersonaManager:
             return True, f"Framework '{framework_name}' exported successfully.", exported_content
         return False, f"Framework '{framework_name}' not found or could not be exported.", None
 
-    # NEW: import_framework method
     def import_framework(self, file_content: str, filename: str) -> Tuple[bool, str]:
         """Imports a framework from file content using ConfigPersistence."""
         success, message, loaded_config_data = self.config_persistence.import_framework_from_file(file_content, filename)
@@ -366,19 +361,31 @@ class PersonaManager:
                 self._initialize_performance_metrics() # Re-initialize performance metrics
         return success, message
 
-    # NEW: For Adaptive LLM Parameter Adjustment
     def get_adjusted_persona_config(self, persona_name: str) -> PersonaConfig:
         """
         Returns a PersonaConfig with dynamically adjusted parameters based on performance.
+        Also handles `_TRUNCATED` persona names by adjusting max_tokens and system_prompt.
         Returns a deep copy to prevent direct modification of cached objects.
         """
-        base_config = self.all_personas.get(persona_name)
+        base_persona_name = persona_name.replace("_TRUNCATED", "")
+        base_config = self.all_personas.get(base_persona_name)
         if not base_config:
-            logger.warning(f"Persona '{persona_name}' not found for adjustment.")
+            logger.warning(f"Persona '{base_persona_name}' not found for adjustment.")
             return PersonaConfig(name="Fallback", system_prompt="Error", temperature=0.7, max_tokens=1024) # Fallback
 
         adjusted_config = copy.deepcopy(base_config)
-        metrics = self.persona_performance_metrics.get(persona_name)
+        metrics = self.persona_performance_metrics.get(base_persona_name)
+
+        # Apply truncation if the persona name indicates it
+        if "_TRUNCATED" in persona_name:
+            # Reduce max_tokens for truncated versions
+            original_max_tokens = adjusted_config.max_tokens
+            adjusted_config.max_tokens = max(512, int(original_max_tokens * 0.75)) # Reduce by 25%, min 512
+            adjusted_config.system_prompt += "\n\nCRITICAL: Be extremely concise and focus only on the most essential information due to token constraints. Prioritize brevity."
+            logger.info(f"Applied truncation to '{persona_name}': max_tokens reduced from {original_max_tokens} to {adjusted_config.max_tokens}.")
+            # Note: We don't record truncation_failures here, but when the LLM call is made and returns `is_truncated`.
+            # This ensures we only count actual truncations, not just requests for truncated personas.
+            return adjusted_config
 
         if not metrics or metrics['total_turns'] < self.min_turns_for_adjustment or \
            (time.time() - metrics['last_adjustment_timestamp']) < self.adjustment_cooldown_seconds:
@@ -391,20 +398,20 @@ class PersonaManager:
         # Adaptive Temperature Adjustment (for schema failures/malformed output)
         if schema_failure_rate > 0.2: # More than 20% schema failures
             adjusted_config.temperature = max(0.1, adjusted_config.temperature - 0.15)
-            logger.info(f"Adjusted {persona_name} temperature to {adjusted_config.temperature:.2f} due to high schema failure rate ({schema_failure_rate:.2f}).")
+            logger.info(f"Adjusted {base_persona_name} temperature to {adjusted_config.temperature:.2f} due to high schema failure rate ({schema_failure_rate:.2f}).")
         elif schema_failure_rate < 0.05 and adjusted_config.temperature < base_config.temperature:
             # Gently revert temperature if performance improves and it was previously lowered
             adjusted_config.temperature = min(base_config.temperature, adjusted_config.temperature + 0.05)
-            logger.info(f"Reverted {persona_name} temperature to {adjusted_config.temperature:.2f} due to improved schema adherence.")
+            logger.info(f"Reverted {base_persona_name} temperature to {adjusted_config.temperature:.2f} due to improved schema adherence.")
 
         # Adaptive Max Tokens Adjustment (for truncation)
         if truncation_failure_rate > 0.15: # More than 15% truncation failures
             adjusted_config.max_tokens = min(8192, adjusted_config.max_tokens + 512) # Increase by 512 tokens, max 8192
-            logger.info(f"Adjusted {persona_name} max_tokens to {adjusted_config.max_tokens} due to high truncation rate ({truncation_failure_rate:.2f}).")
+            logger.info(f"Adjusted {base_persona_name} max_tokens to {adjusted_config.max_tokens} due to high truncation rate ({truncation_failure_rate:.2f}).")
         elif truncation_failure_rate < 0.05 and adjusted_config.max_tokens > base_config.max_tokens:
             # Gently revert max_tokens if truncation improves and it was previously increased
             adjusted_config.max_tokens = max(base_config.max_tokens, adjusted_config.max_tokens - 256)
-            logger.info(f"Reverted {persona_name} max_tokens to {adjusted_config.max_tokens} due to improved truncation.")
+            logger.info(f"Reverted {base_persona_name} max_tokens to {adjusted_config.max_tokens} due to improved truncation.")
 
         # Update last adjusted values and timestamp
         metrics['last_adjusted_temp'] = adjusted_config.temperature
@@ -418,24 +425,19 @@ class PersonaManager:
 
         return adjusted_config
 
-    # MODIFIED: Signature and body adapted as per fix description for Issue 2.
-    # NOTE: The original method tracked `success`, `is_truncated`, `has_schema_error`.
-    # The new signature provides `is_valid` (which can map to success), but `is_truncated`
-    # and `has_schema_error` are no longer directly available. This is a regression
-    # in the adaptive parameter adjustment tracking due to the incomplete fix description.
     def record_persona_performance(self, persona_name: str, turn_number: int, 
-                                 output: Any, is_valid: bool, validation_message: str):
+                                 output: Any, is_valid: bool, validation_message: str,
+                                 is_truncated: bool = False): # MODIFIED: Added is_truncated
         """Record performance metrics for a persona's turn."""
-        metrics = self.persona_performance_metrics.get(persona_name)
+        base_persona_name = persona_name.replace("_TRUNCATED", "") # Use base name for metrics
+        metrics = self.persona_performance_metrics.get(base_persona_name)
         if metrics:
             metrics['total_turns'] += 1
-            # Assuming is_valid maps to success for performance tracking
-            # is_truncated and has_schema_error are not available in this new signature.
-            # If these metrics are critical, the signature or the calling context needs adjustment.
             if not is_valid: # If not valid, count as a schema failure for adaptive adjustment
                 metrics['schema_failures'] += 1
-            # No direct way to track truncation or schema errors from this signature.
-            logger.debug(f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}")
+            if is_truncated: # NEW: Track truncation failures
+                metrics['truncation_failures'] += 1
+            logger.debug(f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, IsTruncated={is_truncated}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}")
 
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:

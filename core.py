@@ -9,7 +9,7 @@ from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
 from functools import lru_cache
 from rich.console import Console
 from pydantic import BaseModel, ValidationError
-import difflib # Added for _consolidate_self_improvement_code_changes
+import difflib
 
 # --- IMPORT MODIFICATIONS ---
 from src.llm_provider import GeminiProvider
@@ -25,6 +25,7 @@ from src.persona_manager import PersonaManager
 # NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement.metrics_collector import ImprovementMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
+from src.token_tracker import TokenUsageTracker # NEW IMPORT
 
 # Configure logging for the core module itself
 logger = logging.getLogger(__name__)
@@ -54,7 +55,8 @@ class SocraticDebate:
                  rich_console: Optional[Console] = None,
                  context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
                  is_self_analysis: bool = False,
-                 persona_manager: Optional[PersonaManager] = None
+                 persona_manager: Optional[PersonaManager] = None,
+                 token_tracker: Optional[TokenUsageTracker] = None # NEW: Accept token_tracker
                  ):
         """
         Initialize a Socratic debate session.
@@ -64,7 +66,7 @@ class SocraticDebate:
 
         self.settings = settings or ChimeraSettings()
         self.max_total_tokens_budget = self.settings.total_budget
-        self.tokens_used = 0
+        # self.tokens_used = 0 # REMOVED: Managed by TokenUsageTracker
         self.model_name = model_name
         self.status_callback = status_callback
         self.rich_console = rich_console or Console(stderr=True)
@@ -92,13 +94,19 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
+        # NEW: Initialize TokenUsageTracker
+        self.token_tracker = token_tracker or TokenUsageTracker(budget=self.max_total_tokens_budget)
+        
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning("PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI.")
-            self.persona_manager = PersonaManager({})
+            # NEW: Pass token_tracker to PersonaManager
+            self.persona_manager = PersonaManager({}, token_tracker=self.token_tracker)
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
         else:
+            # NEW: Ensure PersonaManager has the correct token_tracker
+            self.persona_manager.token_tracker = self.token_tracker
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
 
@@ -118,7 +126,7 @@ class SocraticDebate:
                     if not self.context_analyzer.file_embeddings:
                         self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 except Exception as e:
-                    self._log_with_context("error", f"Failed to compute embeddings for codebase context: {e}", exc_info=True)
+                    self._log_with_context("error", f"Error computing context embeddings: {e}[/red]")
                     if self.status_callback:
                         self.status_callback(message=f"[red]Error computing context embeddings: {e}[/red]")
             else:
@@ -250,29 +258,29 @@ class SocraticDebate:
             self.initial_input_tokens = 0
             raise ChimeraError("Failed to calculate token budgets due to an unexpected error.", original_exception=e) from e
 
-    def track_token_usage(self, phase: str, tokens: int):
+    def track_token_usage(self, phase: str, tokens: int, persona_name: Optional[str] = None): # MODIFIED: Added persona_name
         """Tracks token usage for a given phase."""
-        self.tokens_used += tokens
+        self.token_tracker.record_usage(tokens, persona=persona_name) # MODIFIED: Use token_tracker
         cost = self.llm_provider.calculate_usd_cost(tokens, 0)
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
         self.intermediate_steps[f"{phase}_Tokens_Used"] += tokens
         self.intermediate_steps.setdefault(f"{phase}_Estimated_Cost_USD", 0.0)
         self.intermediate_steps[f"{phase}_Estimated_Cost_USD"] += cost
-        self._log_with_context("debug", f"Tokens used in {phase}: {tokens}. Total: {self.tokens_used}",
-                               phase=phase, tokens_added=tokens, total_tokens=self.tokens_used)
+        self._log_with_context("debug", f"Tokens used in {phase}: {tokens}. Total: {self.token_tracker.current_usage}", # MODIFIED: Use token_tracker
+                               phase=phase, tokens_added=tokens, total_tokens=self.token_tracker.current_usage)
 
     def check_budget(self, phase: str, tokens_needed: int, step_name: str):
         """Checks if adding tokens for the next step would exceed the budget."""
-        if self.tokens_used + tokens_needed > self.max_total_tokens_budget:
+        if self.token_tracker.current_usage + tokens_needed > self.max_total_tokens_budget: # MODIFIED: Use token_tracker
             self._log_with_context("warning", f"Token budget exceeded for {step_name} in {phase} phase.",
-                                   current_tokens=self.tokens_used, tokens_needed=tokens_needed,
+                                   current_tokens=self.token_tracker.current_usage, tokens_needed=tokens_needed, # MODIFIED: Use token_tracker
                                    budget=self.max_total_tokens_budget, step=step_name, phase=phase)
-            raise TokenBudgetExceededError(self.tokens_used, self.max_total_tokens_budget,
+            raise TokenBudgetExceededError(self.token_tracker.current_usage, self.max_total_tokens_budget, # MODIFIED: Use token_tracker
                                            details={"phase": phase, "step_name": step_name, "tokens_needed": tokens_needed})
 
     def get_total_used_tokens(self) -> int:
         """Returns the total tokens used so far."""
-        return self.tokens_used
+        return self.token_tracker.current_usage # MODIFIED: Use token_tracker
 
     def get_total_estimated_cost(self) -> float:
         """Returns the total estimated cost so far."""
@@ -329,7 +337,7 @@ class SocraticDebate:
             persona_config=persona_config,
             requested_model_name=final_model_to_use
         )
-        self.track_token_usage("debate", input_tokens + output_tokens)
+        self.track_token_usage("debate", input_tokens + output_tokens, persona_name=persona_config.name) # MODIFIED: Pass persona_name
         self.intermediate_steps[f"{persona_config.name}_Actual_Temperature"] = persona_config.temperature
         self.intermediate_steps[f"{persona_config.name}_Actual_Max_Tokens"] = effective_max_output_tokens
         is_truncated = output_tokens >= effective_max_output_tokens * 0.95
@@ -359,10 +367,11 @@ class SocraticDebate:
         retry_feedback += "REMEMBER: OUTPUT MUST BE RAW JSON ONLY WITH NO MARKDOWN. STRICTLY ADHERE TO THE SCHEMA.\n\n"
         return f"{retry_feedback}Original prompt: {prompt_for_llm}"
 
-    def _handle_content_alignment_check(self, persona_name: str, parsed_output: Dict[str, Any], has_schema_error: bool):
+    def _handle_content_alignment_check(self, persona_name: str, parsed_output: Dict[str, Any], has_schema_error: bool, is_truncated: bool): # MODIFIED: Added is_truncated
         """Performs content alignment validation and records performance."""
         is_aligned, validation_message, nuanced_feedback = self.content_validator.validate(persona_name, parsed_output)
-        self.persona_manager.record_persona_performance(persona_name, 1, parsed_output, is_aligned and not has_schema_error, validation_message) # Assuming 1 turn for this check
+        # MODIFIED: Pass is_truncated to record_persona_performance
+        self.persona_manager.record_persona_performance(persona_name, 1, parsed_output, is_aligned and not has_schema_error, validation_message, is_truncated=is_truncated) # Assuming 1 turn for this check
 
         if not is_aligned:
             self._log_with_context("warning", f"Content misalignment detected for {persona_name}: {validation_message}",
@@ -392,17 +401,19 @@ class SocraticDebate:
         self._log_with_context("debug", f"Executing LLM turn for {persona_name} in {phase} phase.",
                                persona=persona_name, phase=phase)
 
-        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name.replace("_TRUNCATED", ""), GeneralOutput) # MODIFIED: Use base persona name for schema
         self._log_with_context("debug", f"Using schema {output_schema.__name__} for {persona_name}.")
 
         current_prompt = prompt_for_llm
+        raw_llm_output = "" # Initialize for error handling
+        is_truncated = False # Initialize for error handling
 
         for attempt in range(max_retries + 1):
             try:
                 if self.status_callback:
                     self.status_callback(message=f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...",
                                          state="running",
-                                         current_total_tokens=self.tokens_used,
+                                         current_total_tokens=self.token_tracker.current_usage, # MODIFIED: Use token_tracker
                                          current_total_cost=self.get_total_estimated_cost(),
                                          progress_pct=self.get_progress_pct(phase),
                                          current_persona_name=persona_name)
@@ -413,7 +424,8 @@ class SocraticDebate:
                 parsed_output, has_schema_error = self._parse_and_track_llm_output(persona_name, raw_llm_output, output_schema)
                 
                 # Handle content alignment and record performance
-                parsed_output = self._handle_content_alignment_check(persona_name, parsed_output, has_schema_error)
+                # MODIFIED: Pass is_truncated
+                parsed_output = self._handle_content_alignment_check(persona_name, parsed_output, has_schema_error, is_truncated)
 
                 break # Exit retry loop on success
 
@@ -421,7 +433,8 @@ class SocraticDebate:
                 self._log_with_context("error", f"Non-retryable error during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Non-retryable error: {type(e).__name__}")
+                    # MODIFIED: Pass is_truncated (even if it's False for non-LLM errors)
+                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Non-retryable error: {type(e).__name__}", is_truncated=is_truncated)
                 raise e
 
             except SchemaValidationError as e:
@@ -439,7 +452,8 @@ class SocraticDebate:
                 else:
                     self._log_with_context("error", f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.", persona=persona_name)
                     if self.persona_manager:
-                        self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, "Schema validation failed after multiple attempts")
+                        # MODIFIED: Pass is_truncated
+                        self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, "Schema validation failed after multiple attempts", is_truncated=is_truncated)
                     return {
                         "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
                         "IMPACTFUL_SUGGESTIONS": [{
@@ -454,7 +468,8 @@ class SocraticDebate:
                 self._log_with_context("error", f"An unexpected error occurred during LLM turn for {persona_name}: {e}",
                                        persona=persona_name, phase=phase, exc_info=True, original_exception=e)
                 if self.persona_manager:
-                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Unexpected error: {type(e).__name__}")
+                    # MODIFIED: Pass is_truncated
+                    self.persona_manager.record_persona_performance(persona_name, attempt + 1, raw_llm_output, False, f"Unexpected error: {type(e).__name__}", is_truncated=is_truncated)
                 raise ChimeraError(f"Unexpected error in LLM turn for {persona_name}: {e}", original_exception=e) from e
 
         self.intermediate_steps[f"{persona_name}_Output"] = parsed_output
@@ -471,7 +486,7 @@ class SocraticDebate:
     def _initialize_debate_state(self):
         """Initializes or resets the debate's internal state variables."""
         self.intermediate_steps = {}
-        self.tokens_used = 0
+        self.token_tracker.reset() # MODIFIED: Use token_tracker to reset
         self.rich_console.print(f"[bold green]Starting Socratic Debate for prompt:[/bold green] [italic]{self.initial_prompt}[/italic]")
         self._log_with_context("info", "Debate state initialized.")
 
@@ -736,7 +751,7 @@ class SocraticDebate:
             self.status_callback(
                 message=f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...",
                 state="running",
-                current_total_tokens=self.tokens_used,
+                current_total_tokens=self.token_tracker.current_usage, # MODIFIED: Use token_tracker
                 current_total_cost=self.get_total_estimated_cost(),
                 progress_pct=self.get_progress_pct("debate"),
                 current_persona_name=persona_name
@@ -803,7 +818,7 @@ class SocraticDebate:
             self._log_with_context("warning", "No relevant personas found for conflict sub-debate. Skipping resolution.")
             return None
 
-        remaining_tokens = self.max_total_tokens_budget - self.tokens_used
+        remaining_tokens = self.max_total_tokens_budget - self.token_tracker.current_usage # MODIFIED: Use token_tracker
         sub_debate_budget = max(1000, min(5000, int(remaining_tokens * 0.1)))
 
         if sub_debate_budget < 1000:
@@ -834,7 +849,7 @@ class SocraticDebate:
             self.status_callback(
                 message=f"Sub-Debate: [bold]{persona_name.replace('_', ' ')}[/bold] resolving conflict...",
                 state="running",
-                current_total_tokens=self.tokens_used,
+                current_total_tokens=self.token_tracker.current_usage, # MODIFIED: Use token_tracker
                 current_total_cost=self.get_total_estimated_cost(),
                 progress_pct=self.get_progress_pct("debate"),
                 current_persona_name=persona_name
@@ -1169,7 +1184,7 @@ class SocraticDebate:
 
     def _update_intermediate_steps_with_totals(self):
         """Updates the intermediate steps dictionary with total token usage and estimated cost."""
-        self.intermediate_steps["Total_Tokens_Used"] = self.tokens_used
+        self.intermediate_steps["Total_Tokens_Used"] = self.token_tracker.current_usage # MODIFIED: Use token_tracker
         self.intermediate_steps["Total_Estimated_Cost_USD"] = self.get_total_estimated_cost()
 
     @handle_errors(default_return=None, log_level="ERROR")
@@ -1184,12 +1199,14 @@ class SocraticDebate:
         self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
 
         self.status_callback(message="Phase 1: Analyzing Context...", state="running",
-                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                              progress_pct=self.get_progress_pct("context"))
         context_analysis_results = self._perform_context_analysis(tuple(initial_persona_sequence))
         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
 
         persona_sequence = self._get_final_persona_sequence(self.initial_prompt, context_analysis_results)
+        # NEW: Apply token optimization to the persona sequence
+        persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(persona_sequence)
         self.intermediate_steps["Persona_Sequence"] = persona_sequence
 
         self._distribute_debate_persona_budgets(persona_sequence)
@@ -1197,34 +1214,34 @@ class SocraticDebate:
         context_persona_turn_results = None
         if "Context_Aware_Assistant" in persona_sequence:
             self.status_callback(message="Phase 2: Context-Aware Assistant Turn...", state="running",
-                                 current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                                 current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                                  progress_pct=self.get_progress_pct("debate"), current_persona_name="Context_Aware_Assistant")
             context_persona_turn_results = self._process_context_persona_turn(persona_sequence, context_analysis_results)
             self.intermediate_steps["Context_Aware_Assistant_Output"] = context_persona_turn_results
 
         self.status_callback(message="Phase 3: Executing Debate Turns...", state="running",
-                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                              progress_pct=self.get_progress_pct("debate"))
         debate_persona_results = self._execute_debate_persona_turns(persona_sequence, context_persona_turn_results if context_persona_turn_results is not None else {})
         self.intermediate_steps["Debate_History"] = debate_persona_results
 
         self.status_callback(message="Phase 4: Synthesizing Final Answer...", state="running",
-                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                              progress_pct=self.get_progress_pct("synthesis"))
 
         synthesis_persona_results = self._perform_synthesis_persona_turn(persona_sequence, debate_persona_results)
         self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
 
         self.status_callback(message="Finalizing Results...", state="running",
-                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                              progress_pct=0.95)
         final_answer, intermediate_steps = self._finalize_debate_results(context_persona_turn_results, debate_persona_results, synthesis_persona_results)
 
         self.status_callback(message="Socratic Debate Complete!", state="complete",
-                             current_total_tokens=self.tokens_used, current_total_cost=self.get_total_estimated_cost(),
+                             current_total_tokens=self.token_tracker.current_usage, current_total_cost=self.get_total_estimated_cost(), # MODIFIED: Use token_tracker
                              progress_pct=1.0)
         self._log_with_context("info", "Socratic Debate process completed successfully.",
-                               total_tokens=self.tokens_used, total_cost=self.get_total_estimated_cost())
+                               total_tokens=self.token_tracker.current_usage, total_cost=self.get_total_estimated_cost()) # MODIFIED: Use token_tracker
 
         return final_answer, intermediate_steps
 

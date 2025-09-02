@@ -19,7 +19,7 @@ from google.genai.errors import APIError
 
 from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CodeChange, ContextAnalysisOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutput, SelfImprovementAnalysisOutputV1
 from src.utils.output_parser import LLMOutputParser
-from src.utils.code_validator import validate_code_output_batch # CORRECTED IMPORT
+from src.utils.code_validator import validate_code_output_batch
 from src.persona_manager import PersonaManager
 from src.exceptions import ChimeraError, LLMResponseValidationError, SchemaValidationError, TokenBudgetExceededError, LLMProviderError, CircuitBreakerError
 from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
@@ -34,10 +34,11 @@ import uuid
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
-from pathlib import Path # Added for Path in Self-Improvement download button
+from pathlib import Path
 
 # NEW IMPORT: For centralized prompt analysis
 from src.utils.prompt_analyzer import PromptAnalyzer
+from src.token_tracker import TokenUsageTracker # NEW IMPORT
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -105,6 +106,11 @@ def on_api_key_change():
     api_key_value = st.session_state.api_key_input
     st.session_state.api_key_valid_format = validate_gemini_api_key_format(api_key_value)
     update_activity_timestamp()
+    # NEW: Reset token tracker on API key change
+    if "token_tracker" in st.session_state:
+        st.session_state.token_tracker.reset()
+        st.session_state.current_debate_tokens_used = 0
+        st.session_state.current_debate_cost_usd = 0.0
 # --- END NEW: Callback for API Key Input ---
 # --- END NEW: API Key Validation and Test Functions ---
 
@@ -285,9 +291,9 @@ def get_context_analyzer(_pm_instance: PersonaManager):
         return ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR)
 
 # FIX START: REMOVED @st.cache_resource from get_persona_manager()
-def get_persona_manager():
-    # PersonaManager now requires DOMAIN_KEYWORDS
-    return PersonaManager(DOMAIN_KEYWORDS)
+def get_persona_manager(token_tracker: Optional[TokenUsageTracker] = None): # MODIFIED: Accept token_tracker
+    # PersonaManager now requires DOMAIN_KEYWORDS and token_tracker
+    return PersonaManager(DOMAIN_KEYWORDS, token_tracker=token_tracker) # MODIFIED: Pass token_tracker
 # FIX END
 
 # --- Helper to update activity timestamp ---
@@ -302,7 +308,7 @@ def _initialize_session_state():
         "initialized": True,
         "api_key_input": os.getenv("GEMINI_API_KEY", ""),
         "user_prompt_input": "",
-        "max_tokens_budget_input": 1000000,
+        "max_tokens_budget_input": MAX_TOKENS_LIMIT, # MODIFIED: Use MAX_TOKENS_LIMIT from config
         "show_intermediate_steps_checkbox": True,
         "selected_model_selectbox": "gemini-2.5-flash-lite",
         "selected_example_name": "",
@@ -336,9 +342,17 @@ def _initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
+    # NEW: Initialize TokenUsageTracker
+    if "token_tracker" not in st.session_state:
+        st.session_state.token_tracker = TokenUsageTracker(budget=st.session_state.max_tokens_budget_input)
+    else:
+        # Ensure tracker budget is updated if max_tokens_budget_input changed
+        st.session_state.token_tracker.budget = st.session_state.max_tokens_budget_input
+        st.session_state.token_tracker.reset() # Reset tracker on re-init
+
     if "persona_manager" not in st.session_state:
-        # MODIFIED: Pass DOMAIN_KEYWORDS to PersonaManager constructor
-        st.session_state.persona_manager = PersonaManager(DOMAIN_KEYWORDS)
+        # MODIFIED: Pass DOMAIN_KEYWORDS and token_tracker to PersonaManager constructor
+        st.session_state.persona_manager = PersonaManager(DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker)
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
         st.session_state.selected_persona_set = st.session_state.persona_manager.available_domains[0] if st.session_state.persona_manager.available_domains else "General"
@@ -354,7 +368,7 @@ def _initialize_session_state():
 
     if "session_rate_limiter_instance" not in st.session_state:
         st.session_state.session_rate_limiter_instance = RateLimiter(
-            key_func=lambda: st.session_state._session_id, # FIX: Corrected argument order
+            key_func=lambda: st.session_state._session_id,
             calls=10,
             period=60.0
         )
@@ -591,7 +605,7 @@ with st.sidebar:
         api_key_input_val = st.text_input("Enter your Gemini API Key", type="password", 
                                         key="api_key_input", 
                                         value=st.session_state.api_key_input,
-                                        on_change=on_api_key_change, # MODIFIED THIS LINE
+                                        on_change=on_api_key_change,
                                         help="Your API key will not be stored.")
         
         api_key_col1, api_key_col2 = st.columns([3, 1])
@@ -635,14 +649,19 @@ with st.sidebar:
 
     with st.expander("Resource Management", expanded=False):
         st.markdown("---")
+        # NEW: Update token tracker budget if max_tokens_budget_input changes
+        def on_max_tokens_budget_change():
+            st.session_state.token_tracker.budget = st.session_state.max_tokens_budget_input
+            update_activity_timestamp()
+
         st.number_input(
             "Max Total Tokens Budget:", 
             min_value=1000, 
-            max_value=2000000,
+            max_value=MAX_TOKENS_LIMIT, # MODIFIED: Use MAX_TOKENS_LIMIT
             step=1000, 
             key="max_tokens_budget_input",
             value=st.session_state.max_tokens_budget_input,
-            on_change=update_activity_timestamp
+            on_change=on_max_tokens_budget_change # MODIFIED: Add on_change callback
         )
         st.checkbox("Show Intermediate Reasoning Steps", key="show_intermediate_steps_checkbox", value=st.session_state.show_intermediate_steps_checkbox, on_change=update_activity_timestamp)
         st.markdown("---")
@@ -1134,7 +1153,7 @@ with st.expander("⚙️ View and Edit Personas", expanded=st.session_state.pers
             new_max_tokens = st.number_input(
                 "Max Output Tokens",
                 min_value=1,
-                max_value=MAX_TOKENS_LIMIT, # UPDATED: Using configurable MAX_TOKENS_LIMIT
+                max_value=MAX_TOKENS_LIMIT,
                 value=persona.max_tokens,
                 step=128,
                 key=f"max_tokens_{p_name}",
@@ -1172,8 +1191,9 @@ def _run_socratic_debate_process():
     
     logger.info("Starting Socratic Debate process.", extra={'request_id': request_id, 'user_prompt': user_prompt})
     
-    st.session_state.current_debate_tokens_used = 0
-    st.session_state.current_debate_cost_usd = 0.0
+    # st.session_state.current_debate_tokens_used = 0 # REMOVED: Managed by token_tracker
+    # st.session_state.current_debate_cost_usd = 0.0 # REMOVED: Managed by token_tracker
+    st.session_state.token_tracker.reset() # NEW: Reset token tracker at start of debate
 
     if not st.session_state.api_key_input.strip():
         st.error("Please enter your Gemini API Key in the sidebar to proceed.")
@@ -1293,7 +1313,8 @@ def _run_socratic_debate_process():
                     context_analyzer=st.session_state.context_analyzer,
                     is_self_analysis=is_self_analysis_prompt(current_user_prompt_for_debate),
                     settings=current_settings,
-                    persona_manager=st.session_state.persona_manager
+                    persona_manager=st.session_state.persona_manager,
+                    token_tracker=st.session_state.token_tracker # NEW: Pass token_tracker
                 )
                 
                 logger.info("Executing Socratic Debate via core.SocraticDebate.", extra={'request_id': request_id, 'debate_instance_id': id(debate_instance)})
