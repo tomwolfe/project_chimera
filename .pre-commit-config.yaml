@@ -25,7 +25,7 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-same-line] # Automatically fix linting errors and fail if unfixed issues remain
         # Ensure Ruff checks for formatting issues as well
-      - id: ruff-format # Formats code using Ruff's formatter (similar to Black)
+      - id: ruff-format # Formats code using Ruff's formatter (similar to Black), fails if not formatted
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.5 # Use a specific, stable version (ensure this is kept up-to-date)
     hooks:

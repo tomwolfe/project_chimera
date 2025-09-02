@@ -121,8 +121,9 @@ class SelfImprovementAnalyst:
         reasoning_quality_context = context.get("reasoning_quality", "N/A")
 
         # Construct the prompt using f-string for clarity
-        self_improvement_prompt = f"""
-CRITICAL INSTRUCTION: Focus on actionable improvements with highest impact (80/20 principle).
+        self_improvement_prompt = f"""Analyze Project Chimera for high-impact self-improvement (80/20).
+Prioritize: reasoning quality, robustness, efficiency, maintainability.
+Provide clear rationale and actionable code modifications.
 
 SECURITY ANALYSIS:
 - Prioritize HIGH severity Bandit issues (SQLi, command injection, hardcoded secrets)
