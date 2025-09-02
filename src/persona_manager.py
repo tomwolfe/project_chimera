@@ -15,14 +15,18 @@ from src.persona.routing import PersonaRouter
 from src.models import PersonaConfig, ReasoningFrameworkConfig
 from src.config.persistence import ConfigPersistence
 from src.utils.prompt_analyzer import PromptAnalyzer
-from src.token_tracker import TokenUsageTracker # NEW IMPORT
+from src.token_tracker import TokenUsageTracker
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PERSONAS_FILE = "personas.yaml"
 
 class PersonaManager:
-    def __init__(self, domain_keywords: Dict[str, List[str]], token_tracker: Optional[TokenUsageTracker] = None): # MODIFIED: Accept token_tracker
+    # Define thresholds for triggering truncation as class constants
+    TRUNCATION_FAILURE_RATE_THRESHOLD = 0.2  # If a persona fails truncation in >20% of its turns
+    GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = 0.7 # If overall token usage exceeds 70% of budget
+
+    def __init__(self, domain_keywords: Dict[str, List[str]], token_tracker: Optional[TokenUsageTracker] = None):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
         self.available_domains: List[str] = []
@@ -30,14 +34,14 @@ class PersonaManager:
         self.default_persona_set_name: str = "General"
         self._original_personas: Dict[str, PersonaConfig] = {}
 
-        # NEW: For Adaptive LLM Parameter Adjustment
+        # For Adaptive LLM Parameter Adjustment
         self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
         self.adjustment_cooldown_seconds = 300 # 5 minutes cooldown
         self.min_turns_for_adjustment = 5 # Minimum turns before considering adjustment
 
         self.config_persistence = ConfigPersistence()
 
-        # NEW: Initialize PromptAnalyzer first
+        # Initialize PromptAnalyzer first
         self.prompt_analyzer = PromptAnalyzer(domain_keywords)
 
         # Load initial data and custom frameworks, handle errors internally
@@ -56,10 +60,10 @@ class PersonaManager:
             self.all_personas, self.persona_sets, self.prompt_analyzer
         )
 
-        # NEW: Initialize performance metrics after all personas are loaded
+        # Initialize performance metrics after all personas are loaded
         self._initialize_performance_metrics()
 
-        self.token_tracker = token_tracker # NEW: Store token_tracker
+        self.token_tracker = token_tracker # Store token_tracker
 
     def _load_initial_data(self, file_path: str = DEFAULT_PERSONAS_FILE) -> Tuple[bool, Optional[str]]:
         """Loads the default personas and persona sets from a YAML file.
@@ -427,7 +431,7 @@ class PersonaManager:
 
     def record_persona_performance(self, persona_name: str, turn_number: int, 
                                  output: Any, is_valid: bool, validation_message: str,
-                                 is_truncated: bool = False): # MODIFIED: Added is_truncated
+                                 is_truncated: bool = False):
         """Record performance metrics for a persona's turn."""
         base_persona_name = persona_name.replace("_TRUNCATED", "") # Use base name for metrics
         metrics = self.persona_performance_metrics.get(base_persona_name)
@@ -435,10 +439,45 @@ class PersonaManager:
             metrics['total_turns'] += 1
             if not is_valid: # If not valid, count as a schema failure for adaptive adjustment
                 metrics['schema_failures'] += 1
-            if is_truncated: # NEW: Track truncation failures
+            if is_truncated: # Track truncation failures
                 metrics['truncation_failures'] += 1
             logger.debug(f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, IsTruncated={is_truncated}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}")
 
+    def get_token_optimized_persona_sequence(self, persona_sequence: List[str]) -> List[str]:
+        """
+        Optimizes the persona sequence by potentially replacing personas with their
+        '_TRUNCATED' versions if historical performance indicates high truncation rates
+        or if the overall token budget is becoming constrained.
+        """
+        optimized_sequence = []
+        
+        global_token_consumption_high = False
+        if self.token_tracker:
+            global_token_consumption_high = self.token_tracker.get_consumption_rate() > self.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD
+        
+        for p_name in persona_sequence:
+            base_p_name = p_name.replace("_TRUNCATED", "") # Ensure we're working with the base name
+            
+            # Check individual persona performance
+            persona_truncation_prone = False
+            metrics = self.persona_performance_metrics.get(base_p_name)
+            if metrics and metrics['total_turns'] >= self.min_turns_for_adjustment:
+                truncation_rate = metrics['truncation_failures'] / metrics['total_turns']
+                if truncation_rate > self.TRUNCATION_FAILURE_RATE_THRESHOLD:
+                    persona_truncation_prone = True
+            
+            # Decide whether to use the truncated version
+            if persona_truncation_prone or global_token_consumption_high:
+                # Only append _TRUNCATED if it's not already a _TRUNCATED version
+                if "_TRUNCATED" not in p_name:
+                    optimized_sequence.append(f"{base_p_name}_TRUNCATED")
+                    logger.info(f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f} if calculated) or high global token consumption.")
+                else:
+                    optimized_sequence.append(p_name) # Already truncated, keep as is
+            else:
+                optimized_sequence.append(p_name)
+        
+        return optimized_sequence
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
