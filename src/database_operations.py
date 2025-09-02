@@ -145,10 +145,13 @@ def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
                 # Use parameterized queries to prevent SQL injection
                 placeholders = ', '.join([f'{field} = ?' for field in update_fields])
                 query = f"UPDATE user_profiles SET {placeholders} WHERE user_id = ?"
-                values.append(user_id)
-                cursor.execute(query, tuple(values))
+                params = values + [user_id]
+                cursor.execute(query, params)
                 conn.commit()
                 logger.info(f"User profile updated for user ID: {user_id}")
+            else:
+                # If no fields to update, just commit the transaction
+                pass
         else:
             # Insert new profile
             display_name = profile_data.get("display_name")

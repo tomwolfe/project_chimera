@@ -36,6 +36,7 @@ def create_self_improvement_prompt(
 ) -> str:
     """
     Enhanced prompt that guides more targeted, actionable self-analysis with historical context.
+    This version is more concise and structured, reflecting token optimization goals.
     """
     # Get historical effectiveness data
     # Instantiate ImprovementMetricsCollector to access analysis methods
@@ -78,12 +79,12 @@ def create_self_improvement_prompt(
         }
 
     # Format historical data for the prompt
-    historical_effectiveness = ""
+    historical_effectiveness_str = ""
     if historical_analysis.get("total_attempts", 0) > 0:
         success_rate = historical_analysis.get("success_rate", 0) * 100
-        historical_effectiveness = (
+        historical_effectiveness_str = (
             f"\n\n--- HISTORICAL IMPROVEMENT EFFECTIVENESS ---\n"
-            f"- Total improvement attempts: {historical_analysis['total_attempts']}\n"
+            f"- Total attempts: {historical_analysis['total_attempts']}\n"
             f"- Success rate: {success_rate:.1f}%\n"
         )
 
@@ -93,7 +94,7 @@ def create_self_improvement_prompt(
                 f"{area['area']} ({area['success_rate'] * 100:.1f}% success)"
                 for area in top_areas
             ]
-            historical_effectiveness += (
+            historical_effectiveness_str += (
                 f"- Most successful areas: {', '.join(top_areas_formatted)}\n"
             )
 
@@ -103,52 +104,41 @@ def create_self_improvement_prompt(
                 f"{mode['metric']} (failed {mode['occurrences']} times)"
                 for mode in failure_modes
             ]
-            historical_effectiveness += (
+            historical_effectiveness_str += (
                 f"- Common failure patterns: {', '.join(failure_modes_formatted)}\n"
             )
-        historical_effectiveness += "-------------------------------------------\n"
+        historical_effectiveness_str += "-------------------------------------------\n"
 
-    # REVISED GUIDANCE SECTIONS
+    # Refined guidance sections for conciseness
     security_guidance = (
-        "SECURITY ANALYSIS:\n"
-        "- **Prioritize HIGH severity Bandit issues first** (e.g., SQL injection, command injection, hardcoded secrets).\n"
-        "- **Group similar issues** together rather than listing individually.\n"
-        "- Provide **specific examples of the MOST critical 3-5 vulnerabilities**, referencing the exact file path and line number.\n"
-        "- Analyze for common Python security pitfalls like insecure deserialization (pickle, yaml.load without safe_loader), insecure subprocess usage (shell=True), and XML External Entity (XXE) vulnerabilities.\n"
-        "- Evaluate the security of the CI/CD pipeline and dependency management (e.g., unpinned prod dependencies)."
+        "SECURITY: Prioritize HIGH severity Bandit issues (SQLi, command injection, hardcoded secrets). "
+        "Group similar issues. Provide specific examples (3-5) with `code_snippet` in `PROBLEM` field. "
+        "Analyze Python security pitfalls (deserialization, subprocess.run shell=True, XXE). "
+        "Evaluate CI/CD security and unpinned prod dependencies."
     )
 
     token_optimization_guidance = (
-        "TOKEN USAGE & EFFICIENCY:\n"
-        "- Analyze which personas or debate turns consume disproportionate tokens.\n"
-        "- Identify repetitive or redundant analysis patterns that inflate token usage.\n"
-        "- Suggest specific prompt truncation strategies or persona adjustments for high-token personas.\n"
-        "- Evaluate the effectiveness of the current token budget allocation ratios."
+        "EFFICIENCY: Analyze persona token consumption and redundant patterns. "
+        "Suggest prompt truncation strategies for high-token personas. "
+        "Evaluate current token budget allocation effectiveness."
     )
 
     maintainability_and_testing_guidance = (
-        "MAINTAINABILITY & TEST COVERAGE:\n"
-        "- **Prioritize testing core logic** (SocraticDebate, LLM interaction, metrics collection) before UI components.\n"
-        "- Focus on areas with **highest bug density** or complexity metrics (e.g., cyclomatic complexity, nesting depth) based on static analysis.\n"
-        "- **Implement targeted smoke tests** for critical paths first, providing example test code.\n"
-        "- Evaluate the adherence to **PEP8 standards** and identify areas with significant linting violations.\n"
-        "- Assess the overall **maintainability** of the codebase, including documentation and code structure."
+        "MAINTAINABILITY & TESTING: Prioritize testing core logic (SocraticDebate, LLM interaction, metrics). "
+        "Focus on high bug density/complexity areas. Implement targeted smoke tests with example code. "
+        "Evaluate PEP8 adherence and overall maintainability (docs, structure)."
     )
 
     self_reflection_guidance = (
-        "CRITICAL SELF-REFLECTION ON THE IMPROVEMENT PROCESS:\n"
-        "1.  **Effectiveness of Past Analyses**: What aspects of previous self-improvement analyses were most/least effective? How can we learn from both successful AND failed improvement attempts?\n"
-        "2.  **Framework Enhancement**: How can the self-analysis framework (personas, routing, prompt engineering) be enhanced to produce better, more actionable recommendations?\n"
-        "3.  **Metric Selection**: What metrics would best measure the effectiveness of self-improvement changes? Are the current metrics sufficient?\n"
-        "4.  **80/20 Principle**: Ensure recommendations clearly follow the 80/20 principle, focusing on changes with the highest impact for the effort."
+        "SELF-REFLECTION: Evaluate past analyses effectiveness. "
+        "Enhance framework (personas, routing, prompt engineering) for better recommendations. "
+        "Identify metrics for self-improvement changes. "
+        "Ensure 80/20 principle adherence in recommendations."
     )
 
-    # Combine all sections
+    # Combine all sections into a concise prompt
     prompt_sections = [
-        "You are Project Chimera's Self-Improvement Analyst.",
-        "Your primary goal is to critically analyze the Project Chimera codebase itself and propose actionable improvements.",
-        "Focus on the 80/20 principle: identify changes with the highest impact for the effort.",
-        "Prioritize enhancements in the following areas:",
+        "You are Project Chimera's Self-Improvement Analyst. Critically analyze the provided metrics and identify the most impactful improvements (80/20 principle) across reasoning quality, robustness, efficiency, and maintainability.",
         security_guidance,
         token_optimization_guidance,
         maintainability_and_testing_guidance,
@@ -156,8 +146,8 @@ def create_self_improvement_prompt(
     ]
 
     # Add historical context if available
-    if historical_effectiveness:
-        prompt_sections.append(historical_effectiveness)
+    if historical_effectiveness_str:
+        prompt_sections.append(historical_effectiveness_str)
 
     # Add current metrics
     prompt_sections.append(
@@ -173,11 +163,11 @@ def create_self_improvement_prompt(
     # Final instructions for output format
     output_instructions = (
         "\n\nProvide your analysis with:\n"
-        "1.  **Specific, prioritized recommendations** (top 3-5) that clearly follow the 80/20 principle.\n"
-        "2.  **Concrete code examples** with complete implementation details (FILE_PATH, ACTION, FULL_CONTENT/DIFF_CONTENT/LINES).\n"
-        "3.  **Expected impact metrics** for each change, referencing historical success rates or objective metrics where applicable.\n"
-        "4.  **Clear rationale** for each recommendation, explaining how it addresses the identified problem and improves the self-improvement process itself.\n"
-        "5.  **Adherence to JSON Schema**: Ensure your output strictly follows the `SelfImprovementAnalysisOutputV1` schema, including `malformed_blocks`."
+        "1.  **Specific, prioritized recommendations** (top 3-5) following the 80/20 principle.\n"
+        "2.  **Concrete code examples** (FILE_PATH, ACTION, FULL_CONTENT/DIFF_CONTENT/LINES).\n"
+        "3.  **Expected impact metrics** for each change.\n"
+        "4.  **Clear rationale** for each recommendation.\n"
+        "5.  **Adherence to JSON Schema**: Strictly follow `SelfImprovementAnalysisOutputV1` schema, including `malformed_blocks`."
     )
     prompt_sections.append(output_instructions)
 

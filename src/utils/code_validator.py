@@ -86,24 +86,19 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path),
             ]
 
-            return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
-                lint_command,
-                timeout=30,
-                check=False,  # Ruff returns non-zero for linting issues
-            )
+            # MODIFIED: Added try-except block and check=True as per AI's suggestion 7
+            try:
+                process = subprocess.run(
+                    lint_command,
+                    capture_output=True,
+                    text=True,
+                    check=True, # Changed from False to True
+                    shell=False,
+                    timeout=30,
+                )
+                stdout_lint = process.stdout
+                stderr_lint = process.stderr
 
-            if return_code_lint != 0:
-                logger.error(
-                    f"Ruff lint command failed with exit code {return_code_lint}. Stderr: {stderr_lint}"
-                )
-                issues.append(
-                    {
-                        "type": "Validation Tool Error",
-                        "file": filename,
-                        "message": f"Ruff lint command failed with exit code {return_code_lint}.",
-                    }
-                )
-            else:
                 if stdout_lint:
                     try:
                         lint_results = json.loads(stdout_lint)
@@ -135,6 +130,12 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                                 "message": f"Failed to parse Ruff lint output: {jde}",
                             }
                         )
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Ruff check failed: {e}")
+                # Return a structured error for the UI/metrics collector
+                issues.append({"type": "Ruff Linting Issue", "message": f"Ruff command failed: {e.stderr}"})
+                stdout_lint = "" # Clear stdout as it's an error
+                stderr_lint = e.stderr # Capture stderr from the exception
 
             if stderr_lint:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
@@ -242,10 +243,10 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=False,  # Bandit returns 1 for issues, 0 for no issues. Other codes are errors.
+                check=True, # Changed from False to True as per AI's suggestion 1
             )
 
-            if return_code not in (0, 1):
+            if return_code not in (0, 1): # This check might be redundant if check=True is used in execute_command_safely
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )

@@ -23,6 +23,9 @@ jobs:
         pip install -r requirements.txt
         # Explicitly install Ruff and Black for CI to ensure they are available
         pip install ruff black
+    - name: Run Ruff format to fix any formatting issues before running Bandit and Pytest # ADDED STEP
+      run: |
+        ruff format .
     - name: Run Ruff (Linter & Formatter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs
@@ -30,7 +33,7 @@ jobs:
       run: |
         ruff check . --output-format=github --exit-non-zero-on-fix
         ruff format --check --diff --exit-non-zero-on-fix # Show diff and fail on formatting issues
-    - name: Run Bandit Security Scan with corrected configuration
+    - name: Run Bandit Security Scan with corrected configuration # MODIFIED NAME
       # Configure Bandit to fail on high/medium severity issues
       run: |
         bandit -r . -ll -c pyproject.toml --exit-on-error
