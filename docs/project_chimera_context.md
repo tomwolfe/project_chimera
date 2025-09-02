@@ -1,52 +1,42 @@
-# Project Chimera Context
+# Project Chimera Context Documentation
 
-## Overview
+## Project Purpose
+Project Chimera is an advanced reasoning engine designed for complex problem-solving and code generation through Socratic self-debate methodology. This innovative system critically analyzes its own codebase to identify and implement improvements, creating a self-optimizing AI development framework.
 
-Project Chimera is an AI-powered system designed for [briefly describe the project's main purpose]. This document provides essential context for understanding the project's structure, development practices, and analysis frameworks.
+## Architecture Overview
+Project Chimera follows a multi-layered architecture:
+- **Core Engine**: Handles the Socratic debate process and manages persona interactions
+- **LLM Interface**: Provides abstraction for different LLM providers (currently Gemini)
+- **Self-Improvement Framework**: Analyzes code quality, security, and performance
+- **Validation Tools**: Integrates Ruff, Bandit, and pytest for code quality checks
 
-## Project Structure
+## Key Components
+- **`src/socratic_debate.py`**: Core implementation of the Socratic debate framework
+- **`src/llm_provider.py`**: Interface for interacting with Large Language Models
+- **`src/personas/`**: Directory containing persona definitions and configurations
+- **`src/utils/`**: Utility functions for token counting, logging, and prompt engineering
+- **`tests/`**: Test suite for core functionality
+- **`.github/workflows/ci.yml`**: CI pipeline configuration
+- **`pyproject.toml`**: Project configuration for Ruff, Bandit, and other tools
 
-- `src/`: Contains the core application logic, including LLM integration, persona management, and self-improvement mechanisms.
-  - `ai_core/`: Core AI functionalities.
-  - `personas/`: Definitions for different AI personas.
-  - `utils/`: Utility functions and helpers.
-  - `llm_provider.py`: Interface for interacting with Large Language Models.
-  - `database_operations.py`: Handles data persistence.
-  - `code_validator.py`: Tools for code analysis and validation.
-  - `metrics_collector.py`: Collects performance and quality metrics.
-  - `prompt_engineering.py`: Utilities for prompt construction and management.
-- `tests/`: Unit and integration tests for various components.
-- `ai_core/`: Contains the core self-improvement loop and related logic.
-- `config/`: Configuration files.
-- `docs/`: Documentation files, including this context document.
+## Dependencies
+- Python 3.11+
+- Google Generative AI API
+- Streamlit (for UI)
+- Ruff (linting and formatting)
+- Bandit (security scanning)
+- pytest (testing framework)
 
-## Development Environment & Tooling
+## Setup Instructions
+1. Clone the repository: `git clone https://github.com/tomwolfe/project_chimera.git`
+2. Install dependencies: `pip install -r requirements.txt`
+3. Set up environment variables: `export GEMINI_API_KEY=your_api_key`
+4. Run the application: `streamlit run main.py`
 
-- **Python Version:** 3.11
-- **Dependency Management:** `requirements.txt` (production), `requirements-dev.txt` (development - assumed, not provided)
-- **Code Formatting & Linting:** Ruff (`pyproject.toml` configuration)
-- **Security Analysis:** Bandit (`pyproject.toml` configuration)
-- **Testing Framework:** Pytest
-- **Pre-commit Hooks:** Configured in `.pre-commit-config.yaml` for automated checks before commits.
-
-## Development Workflow
-
-1. **Code Changes:** Implement features or fixes.
-2. **Pre-commit Hooks:** Run `pre-commit install` and ensure all hooks pass on commit.
-3. **Local Testing:** Execute relevant unit and integration tests using `pytest`.
-4. **Code Quality Checks:** Run `ruff check .` and `ruff format --check .` locally.
-5. **Security Scan:** Run `bandit -r . -ll -c pyproject.toml` locally.
-6. **Commit:** Commit changes with a descriptive message.
-7. **CI Pipeline:** Push to trigger the CI pipeline, which includes automated checks for formatting, linting, security, and testing.
-
-## Key Metrics & Goals
-
-- **Code Quality:** Maintain high standards through consistent linting and formatting (Ruff).
-- **Security:** Proactively identify and mitigate security vulnerabilities (Bandit).
-- **Robustness:** Ensure system stability through comprehensive testing and error handling.
-- **Efficiency:** Optimize token usage and processing time.
-- **Maintainability:** Improve code readability, modularity, and testability.
-
-## Analysis Framework
-
-This document serves as the foundation for the self-improvement analysis. Future analyses should build upon this context, referencing specific components and metrics to provide targeted recommendations.
+## Analysis Context
+When performing self-analysis, focus on:
+- Reasoning quality of the debate process
+- Robustness of error handling
+- Efficiency of token usage
+- Maintainability of code structure
+- Security of API key management

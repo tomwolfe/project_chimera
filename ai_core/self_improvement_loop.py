@@ -1,12 +1,14 @@
 # ai_core/self_improvement_loop.py
 import logging
-from typing import Any, Dict, List  # Added List
+from typing import Any, Dict, List, Optional, Tuple  # Added List, Tuple
 from datetime import datetime  # Added for _create_file_backup
 import shutil  # Added for _create_file_backup
 import os  # Added for _create_file_backup, _run_targeted_tests, _get_relevant_test_files
 import subprocess  # Added for _run_targeted_tests
 import re  # Added for _get_relevant_test_files
 import json  # Added for _calculate_improvement_score, save_improvement_results
+import sys # Added for sys.executable
+from pathlib import Path # Added for Path operations
 
 # Assuming ImprovementMetricsCollector and other necessary classes/functions are importable
 # from src.self_improvement.metrics_collector import ImprovementMetricsCollector
@@ -28,7 +30,7 @@ class MockAIModel:
         pass
 
     def update(self, learning_rate: float, adaptability: float, robustness: float):
-        logger.debug(
+        loggerD.debug(
             f"Mock model updating with learning_rate={learning_rate}, adaptability={adaptability}, robustness={robustness}"
         )
         pass
@@ -99,7 +101,7 @@ class SelfImprovementLoop:
         """
         Initializes the self-improvement loop with model, data, and context for analysis.
         """
-        self.model = model
+        selfself.model = model
         self.training_data = training_data
         self.validation_data = validation_data
         self.novel_data = novel_data
@@ -189,7 +191,7 @@ class SelfImprovementLoop:
                 logger.warning(f"Attempted to modify non-existent file: {file_path}")
         elif action == "REMOVE":
             if file_path.exists():
-                self._create_file_backup(file_path)
+                selfal._create_file_backup(file_path)
                 file_path.unlink()
                 logger.info(f"Removed file: {file_path}")
             else:
@@ -340,7 +342,7 @@ class SelfImprovementLoop:
             logger.info("No code changes applied, skipping test execution.")
 
         metrics_after = metrics_collector.collect_all_metrics()
-        improvement_score = self._calculate_improvement_score(metrics_before, metrics_after)
+        improvement_score = selfThis._calculate_improvement_score(metrics_before, metrics_after)
 
         self.intermediate_steps["improvement_score"] = improvement_score
         self.intermediate_steps["metrics_before_improvement"] = metrics_before
