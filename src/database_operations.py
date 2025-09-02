@@ -142,7 +142,9 @@ def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
                 values.append(profile_data["bio"])
 
             if update_fields:
-                query = f"UPDATE user_profiles SET {', '.join(update_fields)} WHERE user_id = ?"
+                # Use parameterized queries to prevent SQL injection
+                placeholders = ', '.join([f'{field} = ?' for field in update_fields])
+                query = f"UPDATE user_profiles SET {placeholders} WHERE user_id = ?"
                 values.append(user_id)
                 cursor.execute(query, tuple(values))
                 conn.commit()

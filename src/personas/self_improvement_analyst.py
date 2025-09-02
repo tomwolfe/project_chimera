@@ -121,7 +121,30 @@ class SelfImprovementAnalyst:
         reasoning_quality_context = context.get("reasoning_quality", "N/A")
 
         # Construct the prompt using f-string for clarity
-        prompt = f"""Critically analyze the following metrics and provide the MOST impactful self-improvement suggestions based on the 80/20 principle. Focus on actionable code changes and prioritize reasoning quality, robustness, efficiency, and maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification. 
+        self_improvement_prompt = f"""
+CRITICAL INSTRUCTION: Focus on actionable improvements with highest impact (80/20 principle).
+
+SECURITY ANALYSIS:
+- Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)
+- Group similar issues together rather than listing individually
+- Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.**
+
+TOKEN OPTIMIZATION:
+- Analyze which personas consume disproportionate tokens
+- Identify repetitive or redundant analysis patterns
+- Suggest specific prompt truncation strategies for high-token personas
+
+TESTING STRATEGY:
+- Prioritize testing core logic (SocraticDebate, LLM interaction) before UI components
+- Focus on areas with highest bug density per historical data
+- Implement targeted smoke tests for critical paths first, **providing example test code in `CODE_CHANGES_SUGGESTED` (FULL_CONTENT for ADD actions).**
+
+SELF-REFLECTION:
+- What aspects of previous self-improvement analyses were most/least effective?
+- How can the self-analysis framework be enhanced to produce better recommendations?
+- What metrics would best measure the effectiveness of self-improvement changes?
+
+---
 
 Metrics:
 {metrics_context}
@@ -131,7 +154,7 @@ Reasoning Quality Analysis:
 
 Summarize findings concisely.
 """
-        return prompt
+        return self_improvement_prompt
         # --- END MODIFIED PROMPT ---
 
     def analyze(self) -> List[Dict[str, Any]]:

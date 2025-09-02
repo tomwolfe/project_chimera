@@ -5,10 +5,10 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py311" # Target Python 3.11 for modern syntax and features
 
 [tool.ruff.lint]
-# Added "COM" for trailing commas
+# Select a comprehensive set of linting rules, including security (B)
 select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B"] # Black compatibility
 
 ignore = [
@@ -26,13 +26,17 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.bandit]
-# Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
-exclude_dirs = [
-        "venv",
-        ".git",
-        "__pycache__",
-        "tests"
-    ]
-level = "info" # Set to 'info' to enable scanning for all severity levels
-recursive = true
-config_file = "pyproject.toml"
+# Configure Bandit to scan recursively, include low severity issues, and use this config file.
+# Ensure all relevant security checks are enabled by default or explicitly configured.
+# The CI workflow already uses these flags, ensuring consistency.
+conf_file = "pyproject.toml"
+level = "info" # Equivalent to -ll, includes low severity issues
+# Optionally, you can specify exclude directories here as well, though the CI command handles it.
+# exclude_dirs = [
+#         "venv",
+#         ".git",
+#         "__pycache__",
+#         "tests", # Explicitly exclude tests if desired, though often useful to scan them too
+# ]
+
+# Add other configurations as needed, e.g., for MyPy, Pytest, etc.

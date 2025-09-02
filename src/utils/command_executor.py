@@ -26,19 +26,20 @@ def execute_command_safely(
         Exception: For other errors during command execution.
     """
     try:
-        logger.info(f"Executing command: {' '.join(command)}")
+        # Ensure shell=False for security when passing a list of arguments
+        logger.info(f"Executing command: {command}")
         process = subprocess.run(
             command,
             capture_output=True,
             text=True,
             check=check,  # Pass the 'check' argument to subprocess.run
+            shell=False, # Explicitly set to False for security
             timeout=timeout,
         )
 
         if process.returncode != 0:
-            logger.error(
-                f"Command failed with exit code {process.returncode}:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
-            )
+            logger.error(f"Command failed: {command}")
+            logger.error(f"Stderr: {process.stderr}")
         else:
             logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
 

@@ -823,13 +823,6 @@ def validate_code_output_batch(
                     "message": issue_message,
                 }
             )
-            parsed_data.setdefault("malformed_code_change_items", []).append(
-                {
-                    "index": i,
-                    "original_value": str(change_entry)[:500],
-                    "error": "Entry must be a dictionary",
-                }
-            )
             continue
 
         file_path = change_entry.get("FILE_PATH")
@@ -843,7 +836,7 @@ def validate_code_output_batch(
                     f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues."
                 )
             except Exception as e:
-                logger.exception(
+                logger.error(
                     f"Error during validation of change entry {i} for file {file_path}: {e}"
                 )
                 if file_path not in all_validation_results:
