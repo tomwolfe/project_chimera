@@ -21,17 +21,17 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.bandit]
-# Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
-exclude_dirs = [
-        "venv",
-        ".git",
-        "__pycache__",
-        "tests" # ADDED THIS LINE as per LLM suggestion
-    ]
-severity_level = "B" # Enforce at least B level findings
-confidence_level = "B" # Enforce at least B level confidence
-skip_checks = null
-
-
-[tool.ruff.lint.isort]
-known-first-party = ["src", "core"]
+conf_file = "pyproject.toml"
+# The self-analysis indicated an invalid 'null' value for Bandit's level.
+# Replacing 'severity_level' and 'confidence_level' with a single 'level'
+# setting to resolve the parsing error and enable scans.
+level = "info"
+# Other Bandit configurations can be added here as needed.
+# For example:
+# exclude_dirs = [
+#         "venv",
+#         ".git",
+#         "__pycache__",
+#         "tests"
+#     ]
+# skip_checks = null
