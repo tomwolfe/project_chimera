@@ -13,8 +13,8 @@ import toml # Added for TOML parsing
 from pydantic import ValidationError # Added for Pydantic validation in parsing
 
 # Import existing validation functions to reuse their logic
-# Assuming these are correctly placed and importable
-from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks, _get_code_snippet
+# Ensure _get_code_snippet is imported from src.utils.code_validator
+from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks, _get_code_snippet 
 from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig, DeploymentAnalysisOutput # NEW IMPORTS
 import toml # Added for TOML parsing
 from pydantic import ValidationError # Added for Pydantic validation in parsing
@@ -229,6 +229,7 @@ class ImprovementMetricsCollector:
             try:
                 with open(ci_yml_path, 'r', encoding='utf-8') as f:
                     ci_config_raw = yaml.safe_load(f)
+                with open(ci_yml_path, 'r', encoding='utf-8') as f: # Re-open to read lines
                     ci_content_lines = f.readlines()
                     ci_workflow_jobs = {}
                     for job_name, job_details in ci_config_raw.get("jobs", {}).items():
@@ -243,7 +244,18 @@ class ImprovementMetricsCollector:
                             if step_run:
                                 commands = [cmd.strip() for cmd in step_run.split('\n') if cmd.strip()]
                                 summary_item_data["runs_commands"] = commands
-                                summary_item_data["code_snippet"] = _get_code_snippet(ci_content_lines, step.get("line_number"), context_lines=3)
+                                # Find the line number for the 'run' block to get a snippet
+                                # This is a heuristic, might need refinement for complex YAML structures
+                                run_line_number = None
+                                for i, line in enumerate(ci_content_lines):
+                                    if f"name: \"{step_name}\"" in line:
+                                        # Look for the 'run:' keyword after the name
+                                        for j in range(i, len(ci_content_lines)):
+                                            if "run:" in ci_content_lines[j]:
+                                                run_line_number = j + 1 # 1-indexed
+                                                break
+                                        break
+                                summary_item_data["code_snippet"] = _get_code_snippet(ci_content_lines, run_line_number, context_lines=3)
                             steps_summary.append(CiWorkflowStep(**summary_item_data))
                         ci_workflow_jobs[job_name] = CiWorkflowJob(steps_summary=steps_summary)
                     
@@ -262,6 +274,7 @@ class ImprovementMetricsCollector:
             try:
                 with open(pre_commit_path, 'r', encoding='utf-8') as f:
                     pre_commit_config_raw = yaml.safe_load(f)
+                with open(pre_commit_path, 'r', encoding='utf-8') as f: # Re-open to read lines
                     pre_commit_content_lines = f.readlines()
                     for repo_config in pre_commit_config_raw.get("repos", []):
                         repo_url = repo_config.get("repo")
@@ -269,8 +282,16 @@ class ImprovementMetricsCollector:
                         for hook in repo_config.get("hooks", []):
                             hook_id = hook.get("id")
                             hook_args = hook.get("args", [])
+                            
+                            # Find line number for the hook definition
+                            hook_line_number = None
+                            for i, line in enumerate(pre_commit_content_lines):
+                                if f"id: {hook_id}" in line:
+                                    hook_line_number = i + 1
+                                    break
+                            
                             config_analysis_data["pre_commit_hooks"].append(
-                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args, code_snippet=_get_code_snippet(pre_commit_content_lines, hook.get("line_number"), context_lines=3))
+                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args, code_snippet=_get_code_snippet(pre_commit_content_lines, hook_line_number, context_lines=3))
                             )
             except (yaml.YAMLError, OSError, ValidationError) as e:
                 logger.error(f"Error parsing pre-commit config file {pre_commit_path}: {e}")
@@ -282,27 +303,42 @@ class ImprovementMetricsCollector:
             try:
                 with open(pyproject_path, 'r', encoding='utf-8') as f:
                     pyproject_config_raw = toml.load(f)
+                with open(pyproject_path, 'r', encoding='utf-8') as f: # Re-open to read lines
                     pyproject_content_lines = f.readlines()
                     pyproject_toml_data = {}
 
                     ruff_tool_config = pyproject_config_raw.get("tool", {}).get("ruff", {})
                     if ruff_tool_config:
+                        # Heuristic to find line number for ruff config
+                        ruff_line_number = None
+                        for i, line in enumerate(pyproject_content_lines):
+                            if "[tool.ruff]" in line:
+                                ruff_line_number = i + 1
+                                break
+
                         pyproject_toml_data["ruff"] = RuffConfig(
                             line_length=ruff_tool_config.get("line-length"),
                             target_version=ruff_tool_config.get("target-version"),
                             lint_select=ruff_tool_config.get("lint", {}).get("select"),
                             lint_ignore=ruff_tool_config.get("lint", {}).get("ignore"),
                             format_settings=ruff_tool_config.get("format"),
-                            config_snippet=_get_code_snippet(pyproject_content_lines, ruff_tool_config.get("line_number"), context_lines=5)
+                            config_snippet=_get_code_snippet(pyproject_content_lines, ruff_line_number, context_lines=5)
                         )
                     bandit_tool_config = pyproject_config_raw.get("tool", {}).get("bandit", {})
                     if bandit_tool_config:
+                        # Heuristic to find line number for bandit config
+                        bandit_line_number = None
+                        for i, line in enumerate(pyproject_content_lines):
+                            if "[tool.bandit]" in line:
+                                bandit_line_number = i + 1
+                                break
+
                         pyproject_toml_data["bandit"] = BanditConfig(
                             exclude_dirs=bandit_tool_config.get("exclude_dirs"),
                             severity_level=bandit_tool_config.get("severity_level"),
                             confidence_level=bandit_tool_config.get("confidence_level"),
                             skip_checks=bandit_tool_config.get("skip_checks"),
-                            config_snippet=_get_code_snippet(pyproject_content_lines, bandit_tool_config.get("line_number"), context_lines=5)
+                            config_snippet=_get_code_snippet(pyproject_content_lines, bandit_line_number, context_lines=5)
                         )
                     pydantic_settings_config = pyproject_config_raw.get("tool", {}).get("pydantic-settings", {})
                     if pydantic_settings_config:
@@ -810,19 +846,354 @@ class ImprovementMetricsCollector:
             ]
         }
 
-    # --- SUGGESTED METHODS TO ADD ---
-    # These methods are already present in the original suggestions,
-    # but they are placed here for completeness if they were missing from the initial file.
-    # The logic is identical to the suggestions provided earlier.
-    
-    # save_improvement_results is already defined above.
-    # get_historical_improvement_data is already defined above.
-    # analyze_historical_effectiveness is already defined above.
-    # _calculate_performance_changes is defined within save_improvement_results logic.
+    def analyze(self) -> List[Dict[str, Any]]:
+        """
+        Performs the self-analysis and generates improvement suggestions.
+        Focuses on the top 3 highest impact areas based on metrics, adhering to the Pareto principle.
+        """
+        logger.info("Performing self-analysis for Project Chimera.")
+        
+        suggestions = []
+        
+        # --- NEW: Handle Conflict Resolution first if codebase access is denied ---
+        conflict_resolution_summary = self.intermediate_steps.get("Conflict_Resolution_Attempt", {}).get("resolution_summary", {})
+        if conflict_resolution_summary and conflict_resolution_summary.get("conflict_resolved") and \
+           "cannot be fulfilled due to the absence of the codebase" in conflict_resolution_summary.get("RATIONALE", ""):
+            
+            # This is the most impactful immediate action as per the conflict resolution
+            suggestions.append({
+                "AREA": "Maintainability",
+                "PROBLEM": "Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase. The conflict resolution summary correctly identified the need for the codebase to proceed.",
+                "PROPOSED_SOLUTION": "Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
+                "EXPECTED_IMPACT": "Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                "CODE_CHANGES_SUGGESTED": [
+                    {
+                        "FILE_PATH": "docs/project_chimera_context.md",
+                        "ACTION": "ADD",
+                        "FULL_CONTENT": "# Project Chimera Context and Codebase\\n\\nThis document outlines the necessary context for analyzing and improving Project Chimera.\\n\\n## Project Purpose:\\n\\n[Insert a clear and concise description of Project Chimera's overall goal and function here.]\\n\\n## Architecture Overview:\\n\\n[Describe the high-level architecture, key components, and their interactions. For example:\\n- Core modules (e.g., LLM interaction, data processing, UI)\\n- Key libraries and frameworks used\\n- Data flow and storage mechanisms]\\n\\n## Codebase Location:\\n\\n[Provide the location or a representative subset of the Project Chimera codebase. If a subset is provided, specify which parts are included and why.]\\n\\n## Prior Analysis Context:\\n\\n[If applicable, reference or include the 'Previous Debate Output Summary' or any other relevant historical analysis that informs the current self-improvement goals.]\\n\\n## Current Focus Areas for Improvement:\\n\\n[Based on prior discussions or initial observations, list the key areas targeted for improvement (e.g., Security, Performance, Maintainability, Reasoning Quality).]\\n"
+                    }
+                ]
+            })
+            # If codebase access is the primary blocker, other code changes are secondary or conceptual.
+            # We return here to ensure this is the ONLY suggestion if the codebase is missing.
+            return suggestions 
 
-    # Placeholder for _calculate_performance_changes if it were a separate method
-    # def _calculate_performance_changes(self, metrics_before: Dict, metrics_after: Dict) -> Dict:
-    #     """Calculate detailed performance changes between metrics."""
-    #     changes = {}
-    #     # ... (implementation as provided in the suggestion) ...
-    #     return changes
+        # --- Extract top Ruff and Bandit issues for snippets ---
+        top_ruff_issues_snippets = []
+        top_bandit_issues_snippets = []
+        
+        # Filter and collect snippets for Ruff issues
+        ruff_detailed_issues = [
+            issue for issue in self.metrics.get('code_quality', {}).get('detailed_issues', [])
+            if issue.get('source') == 'ruff_lint' or issue.get('source') == 'ruff_format'
+        ]
+        for issue in ruff_detailed_issues[:3]: # Take top 3
+            snippet = issue.get('code_snippet')
+            if snippet:
+                top_ruff_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```")
+            else:
+                top_ruff_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}")
+
+        # Filter and collect snippets for Bandit issues
+        bandit_detailed_issues = [
+            issue for issue in self.metrics.get('code_quality', {}).get('detailed_issues', [])
+            if issue.get('source') == 'bandit'
+        ]
+        for issue in bandit_detailed_issues[:3]: # Take top 3
+            snippet = issue.get('code_snippet')
+            if snippet:
+                top_bandit_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```")
+            else:
+                top_bandit_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}")
+        # --- End snippet extraction ---
+
+        # --- MODIFIED LOGIC FOR PARETO PRINCIPLE AND CLARITY ---
+        # Focus on the top 3 highest impact areas based on metrics (Pareto principle).
+        # Prioritize Security, Maintainability, and Robustness.
+        
+        # Maintainability (Linting Issues)
+        ruff_issues_count = self.metrics.get('code_quality', {}).get('ruff_issues_count', 0)
+        if ruff_issues_count > 100: # Threshold for significant linting issues
+            suggestions.append({
+                "AREA": "Maintainability",
+                "PROBLEM": f"The project exhibits widespread Ruff formatting issues across numerous files (e.g., `core.py`, `code_validator.py`, `app.py`, all test files, etc.). The `code_quality.ruff_violations` list contains {ruff_issues_count} entries, predominantly `FMT` (formatting) errors. This inconsistency detracts from readability and maintainability. Examples:\n" + "\n".join(top_ruff_issues_snippets),
+                "PROPOSED_SOLUTION": "Enforce consistent code formatting by running `ruff format .` across the entire project. Integrate this command into the CI pipeline and pre-commit hooks to ensure all committed code adheres to the defined style guidelines. This will resolve the numerous `FMT` violations.",
+                "EXPECTED_IMPACT": "Improved code readability and consistency, reduced cognitive load for developers, and a cleaner codebase. This directly addresses the maintainability aspect by enforcing a standard.",
+                "CODE_CHANGES_SUGGESTED": [
+                    {
+                        "FILE_PATH": ".github/workflows/ci.yml",
+                        "ACTION": "MODIFY",
+                        "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -18,8 +18,8 @@
+               # Explicitly install Ruff and Black for CI to ensure they are available
+               pip install ruff black
+             },
+-            {
+-              name: "Run Ruff (Linter & Formatter Check) - Fail on Violation",
++            # Run Ruff for linting and formatting checks
++            {
++              name: "Run Ruff Check and Format",
+               uses: null,
+               runs_commands:
+                 - "ruff check . --output-format=github --exit-non-zero-on-fix"
+@@ -27,7 +27,7 @@
+ 
+             {
+               name: "Run Bandit Security Scan",
+-              uses: null,
++              uses: null
+               runs_commands:
+                 - "bandit -r . -ll -c pyproject.toml --exit-on-error"
+                 # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
+"""
+                    },
+                    {
+                        "FILE_PATH": ".pre-commit-config.yaml",
+                        "ACTION": "MODIFY",
+                        "DIFF_CONTENT": """--- a/.pre-commit-config.yaml
++++ b/.pre-commit-config.yaml
+@@ -16,7 +16,7 @@
+       - id: ruff
+         args: [
+           "--fix"
+-        ]
++        ]
+ 
+       - repo: https://github.com/charliermarsh/ruff-pre-commit
+         rev: v0.1.9
+@@ -24,7 +24,7 @@
+         id: ruff-format
+         args: []
+ 
+-      - repo: https://github.com/PyCQA/bandit
++      - repo: https://github.com/PyCQA/bandit
+         rev: 1.7.5
+         id: bandit
+         args: [
+"""
+                    }
+                ]
+            })
+        
+        # Security
+        bandit_issues_count = self.metrics.get('security', {}).get('bandit_issues_count', 0)
+        pyproject_config_error = any(block.get('type') == 'PYPROJECT_CONFIG_PARSE_ERROR' for block in self.metrics.get('configuration_analysis', {}).get('malformed_blocks', []))
+        
+        if bandit_issues_count > 0 or pyproject_config_error: # Trigger if issues or config error
+            problem_description = f"Bandit security scans are failing with configuration errors (`Bandit failed with exit code 2: [config] ERROR Invalid value (at line 33, column 15) [main] ERROR /Users/tom/Documents/apps/project_chimera/pyproject.toml : Error parsing file.`). This indicates a misconfiguration in `pyproject.toml` for Bandit, preventing security vulnerabilities from being detected. The `pyproject.toml` file itself has a `PYPROJECT_CONFIG_PARSE_ERROR` related to `ruff` configuration."
+            if bandit_issues_count > 0:
+                problem_description += f"\nAdditionally, {bandit_issues_count} Bandit security vulnerabilities were detected. Prioritize HIGH severity issues like potential injection flaws. Examples:\n" + "\n".join(top_bandit_issues_snippets)
+            
+            suggestions.append({
+                "AREA": "Security",
+                "PROBLEM": problem_description,
+                "PROPOSED_SOLUTION": "Correct the Bandit configuration within `pyproject.toml`. Ensure that all Bandit-related settings are valid and adhere to Bandit's expected format. Additionally, address the Ruff configuration error in `pyproject.toml` to ensure consistent code formatting and linting. The CI workflow should also be updated to correctly invoke Bandit with the corrected configuration.",
+                "EXPECTED_IMPACT": "Enables the Bandit security scanner to run successfully, identifying potential security vulnerabilities. This will improve the overall security posture of the project.",
+                "CODE_CHANGES_SUGGESTED": [
+                    {
+                        "FILE_PATH": "pyproject.toml",
+                        "ACTION": "MODIFY",
+                        "DIFF_CONTENT": """--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -30,7 +30,7 @@
+ 
+ [tool.ruff]
+ line-length = 88
+-target-version = "null"
++target-version = "py311"
+ 
+ [tool.ruff.lint]
+ ignore = [
+@@ -310,7 +310,7 @@
+ 
+ [tool.bandit]
+ conf_file = "pyproject.toml"
+-level = "null"
++level = "info"
+ # Other Bandit configurations can be added here as needed.
+ # For example:
+ # exclude = [
+"""
+                    },
+                    {
+                        "FILE_PATH": ".github/workflows/ci.yml",
+                        "ACTION": "MODIFY",
+                        "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -21,7 +21,7 @@
+             # Run Ruff (Linter & Formatter Check) - Fail on Violation
+             ruff check . --output-format=github --exit-non-zero-on-fix
+             ruff format --check --diff --exit-non-zero-on-fix # Show diff and fail on formatting issues
+-            # Run Bandit Security Scan
+-            bandit -r . -ll -c pyproject.toml --exit-on-error
++            # Run Bandit Security Scan with corrected configuration
++            bandit -r . --config pyproject.toml --exit-on-error
+             # Run Pytest and generate coverage report
+             pytest --cov=src --cov-report=xml --cov-report=term
+"""
+                    }
+                ]
+            })
+        
+        # Maintainability (Testing)
+        zero_test_coverage = self.metrics.get('maintainability', {}).get('test_coverage_summary', {}).get('overall_coverage_percentage', 0) == 0
+        if zero_test_coverage:
+            suggestions.append({
+                "AREA": "Maintainability",
+                "PROBLEM": "The project lacks automated test coverage. The `maintainability.test_coverage_summary` shows `overall_coverage_percentage: 0.0` and `coverage_details: 'Automated test coverage assessment not implemented.'`. This significantly hinders the ability to refactor code confidently, introduce new features without regressions, and ensure the long-term health of the codebase.",
+                "PROPOSED_SOLUTION": "Implement a comprehensive testing strategy. This includes writing unit tests for core logic (e.g., LLM interactions, data processing, utility functions) and integration tests for key workflows. Start with critical modules like `src/llm_provider.py`, `src/utils/prompt_engineering.py`, and `src/persona_manager.py`. Aim for a minimum of 70% test coverage within the next iteration.",
+                "EXPECTED_IMPACT": "Improved code stability, reduced regression bugs, increased developer confidence during changes, and a clearer understanding of code behavior. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                "CODE_CHANGES_SUGGESTED": [
+                    {
+                        "FILE_PATH": "tests/test_llm_provider.py",
+                        "ACTION": "ADD",
+                        "FULL_CONTENT": """import pytest
+from src.llm_provider import LLMProvider
+
+# Mocking the LLM API for testing
+class MockLLMClient:
+    def __init__(self, model_name):
+        self.model_name = model_name
+
+    def generate_content(self, prompt):
+        # Simulate a response based on prompt content
+        if "summarize" in prompt.lower():
+            return "This is a simulated summary."
+        elif "analyze" in prompt.lower():
+            return "This is a simulated analysis."
+        else:
+            return "This is a simulated default response."
+
+@pytest.fixture
+def llm_provider():
+    # Use the mock client for testing
+    client = MockLLMClient(model_name="mock-model")
+    return LLMProvider(client=client)
+
+def test_llm_provider_initialization(llm_provider):
+    \"\"\"Test that the LLMProvider initializes correctly.\"\"\"
+    assert llm_provider.client.model_name == "mock-model"
+
+def test_llm_provider_generate_content_summary(llm_provider):
+    \"\"\"Test content generation for a summarization prompt.\"\"\"
+    prompt = "Please summarize the following text: ..."
+    response = llm_provider.generate_content(prompt)
+    assert response == "This is a simulated summary."
+
+def test_llm_provider_generate_content_analysis(llm_provider):
+    \"\"\"Test content generation for an analysis prompt.\"\"\"
+    prompt = "Analyze the provided data: ..."
+    response = llm_provider.generate_content(prompt)
+    assert response == "This is a simulated analysis."
+
+def test_llm_provider_generate_content_default(llm_provider):
+    \"\"\"Test content generation for a general prompt.\"\"\"
+    prompt = "What is the capital of France?"
+    response = llm_provider.generate_content(prompt)
+    assert response == "This is a simulated default response."
+
+# Add more tests for different scenarios and edge cases
+"""
+                    },
+                    {
+                        "FILE_PATH": "tests/test_prompt_engineering.py",
+                        "ACTION": "ADD",
+                        "FULL_CONTENT": """import pytest
+from src.utils.prompt_engineering import create_persona_prompt, create_task_prompt
+
+def test_create_persona_prompt_basic():
+    \"\"\"Test creating a persona prompt with basic details.\"\"\"
+    persona_details = {
+        "name": "Test Persona",
+        "role": "Tester",
+        "goal": "Evaluate prompts"
+    }
+    expected_prompt = "You are Test Persona, a Tester. Your goal is to Evaluate prompts."
+    assert create_persona_prompt(persona_details) == expected_prompt
+
+def test_create_persona_prompt_with_constraints():
+    \"\"\"Test creating a persona prompt with additional constraints.\"\"\"
+    persona_details = {
+        "name": "Constraint Bot",
+        "role": "Rule Enforcer",
+        "goal": "Ensure adherence to rules",
+        "constraints": ["Be concise", "Avoid jargon"]
+    }
+    expected_prompt = "You are Constraint Bot, a Rule Enforcer. Your goal is to Ensure adherence to rules. Adhere to the following constraints: Be concise, Avoid jargon."
+    assert create_persona_prompt(persona_details) == expected_prompt
+
+def test_create_persona_prompt_empty_details():
+    \"\"\"Test creating a persona prompt with empty details.\"\"\"
+    persona_details = {}
+    expected_prompt = "You are an AI assistant. Your goal is to assist the user."
+    assert create_persona_prompt(persona_details) == expected_prompt
+
+def test_create_task_prompt_basic():
+    \"\"\"Test creating a basic task prompt.\"\"\"
+    task_description = "Summarize the provided text."
+    expected_prompt = f"Task: {task_description}\\n\\nProvide a concise summary."
+    assert create_task_prompt(task_description) == expected_prompt
+
+def test_create_task_prompt_with_context():
+    \"\"\"Test creating a task prompt with context.\"\"\"
+    task_description = "Analyze the user query."
+    context = "User is asking about project status."
+    expected_prompt = f"Task: {task_description}\\n\\nContext: {context}\\n\\nProvide a detailed analysis."
+    assert create_task_prompt(task_description, context=context) == expected_prompt
+
+def test_create_task_prompt_with_specific_instructions():
+    \"\"\"Test creating a task prompt with specific output instructions.\"\"\"
+    task_description = "Extract key entities."
+    instructions = "Output the entities as a JSON list."
+    expected_prompt = f"Task: {task_description}\\n\\nInstructions: {instructions}\\n\\nProvide the extracted entities in the specified format."
+    assert create_task_prompt(task_description, instructions=instructions) == expected_prompt
+
+# Add more tests for edge cases and variations in input
+"""
+                    }
+                ]
+            })
+        
+        # Efficiency (Token Usage)
+        high_token_personas = self.metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('persona_token_breakdown', {})
+        high_token_consumers = {p: t for p, t in high_token_personas.items() if t > 2000}
+        
+        if high_token_consumers:
+            suggestions.append({
+                "AREA": "Efficiency",
+                "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
+                "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
+                "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
+                "CODE_CHANGES_SUGGESTED": [
+                    # Example code changes are provided in the main analysis output, not here.
+                    # This section would typically be populated by a more detailed analysis.
+                ]
+            })
+        
+        # Reasoning Quality (Content Misalignment)
+        content_misalignment_warnings = self.metrics.get('reasoning_quality', {}).get('content_misalignment_warnings', 0)
+        if content_misalignment_warnings > 3: # Threshold for multiple warnings
+            suggestions.append({
+                "AREA": "Reasoning Quality",
+                "PROBLEM": f"Content misalignment warnings ({content_misalignment_warnings}) indicate potential issues in persona reasoning or prompt engineering.",
+                "PROPOSED_SOLUTION": "Refine prompts for clarity and specificity. Review persona logic for consistency and accuracy. Ensure personas stay focused on the core task and domain.",
+                "EXPECTED_IMPACT": "Enhances the quality and relevance of persona outputs, leading to more coherent and accurate final answers.",
+                "CODE_CHANGES_SUGGESTED": [] # This is a prompt engineering suggestion
+            })
+        
+        # Apply Pareto Principle: Limit to top 3 suggestions
+        final_suggestions = suggestions[:3] 
+        
+        logger.info(f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}.")
+        
+        return final_suggestions
+
+    # --- Placeholder methods for other potential analyses ---
+    def analyze_codebase_structure(self) -> Dict[str, Any]:
+        logger.info("Analyzing codebase structure.")
+        return {"summary": "Codebase structure analysis is a placeholder."}
+
+    def analyze_performance_bottlenecks(self) -> Dict[str, Any]:
+        logger.info("Analyzing performance bottlenecks.")
+        return {"summary": "Performance bottleneck analysis is a placeholder."}
