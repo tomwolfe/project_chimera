@@ -30,7 +30,7 @@ jobs:
       run: |
         ruff check . --output-format=github --exit-non-zero-on-fix
         ruff format --check --diff --exit-non-zero-on-fix # Show diff and fail on formatting issues
-    - name: Run Bandit Security Scan with corrected configuration
+    - name: Run Bandit Security Scan
       # Configure Bandit to fail on high/medium severity issues
       run: |
         bandit -r . -ll -c pyproject.toml --exit-on-error

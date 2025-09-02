@@ -8,18 +8,34 @@ from typing import Dict, Any, List, Tuple, Union
 from collections import defaultdict
 from pathlib import Path
 import re
-import yaml # Added for YAML parsing
-import toml # Added for TOML parsing
-from pydantic import ValidationError # Added for Pydantic validation in parsing
+import yaml  # Added for YAML parsing
+import toml  # Added for TOML parsing
+from pydantic import ValidationError  # Added for Pydantic validation in parsing
 
 # Import existing validation functions to reuse their logic
 # Ensure _get_code_snippet is imported from src.utils.code_validator
-from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks, _get_code_snippet 
-from src.models import ConfigurationAnalysisOutput, CiWorkflowConfig, CiWorkflowJob, CiWorkflowStep, PreCommitHook, PyprojectTomlConfig, RuffConfig, BanditConfig, PydanticSettingsConfig, DeploymentAnalysisOutput # NEW IMPORTS
-import toml # Added for TOML parsing
-from pydantic import ValidationError # Added for Pydantic validation in parsing
-from src.utils.command_executor import execute_command_safely # Re-import for clarity
-from src.utils.path_utils import PROJECT_ROOT # Re-import for clarity
+from src.utils.code_validator import (
+    _run_ruff,
+    _run_bandit,
+    _run_ast_security_checks,
+    _get_code_snippet,
+)
+from src.models import (
+    ConfigurationAnalysisOutput,
+    CiWorkflowConfig,
+    CiWorkflowJob,
+    CiWorkflowStep,
+    PreCommitHook,
+    PyprojectTomlConfig,
+    RuffConfig,
+    BanditConfig,
+    PydanticSettingsConfig,
+    DeploymentAnalysisOutput,
+)  # NEW IMPORTS
+import toml  # Added for TOML parsing
+from pydantic import ValidationError  # Added for Pydantic validation in parsing
+from src.utils.command_executor import execute_command_safely  # Re-import for clarity
+from src.utils.path_utils import PROJECT_ROOT  # Re-import for clarity
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +112,9 @@ PEP8_DESCRIPTIONS = {
     "W604": "Backticks are deprecated",
     "W605": "Invalid escape sequence 'x'",
     "W606": "f-string contains backslash",
-    "W607": "Invalid escape sequence 'x'"
+    "W607": "Invalid escape sequence 'x'",
 }
+
 
 # --- AST Visitor for detailed code metrics ---
 class ComplexityVisitor(ast.NodeVisitor):
@@ -105,18 +122,21 @@ class ComplexityVisitor(ast.NodeVisitor):
     AST visitor to calculate various code metrics for functions and methods,
     including cyclomatic complexity, lines of code, nesting depth, and code smells.
     """
+
     def __init__(self, content_lines: List[str]):
         self.content_lines = content_lines
-        self.function_metrics = [] # Stores metrics for each function/method
+        self.function_metrics = []  # Stores metrics for each function/method
         self.current_function_name = None
         self.current_function_start_line = None
 
     def _calculate_loc(self, node: ast.AST) -> int:
         """Calculates non-blank, non-comment lines of code within a node's body."""
-        if not hasattr(node, 'body') or not node.body:
+        if not hasattr(node, "body") or not node.body:
             return 0
 
-        if not hasattr(node.body[0], 'lineno') or not hasattr(node.body[-1], 'end_lineno'):
+        if not hasattr(node.body[0], "lineno") or not hasattr(
+            node.body[-1], "end_lineno"
+        ):
             return 0
 
         start_line = node.body[0].lineno
@@ -126,7 +146,7 @@ class ComplexityVisitor(ast.NodeVisitor):
         for i in range(start_line - 1, end_line):
             if i < len(self.content_lines):
                 line = self.content_lines[i].strip()
-                if line and not line.startswith('#'):
+                if line and not line.startswith("#"):
                     loc_count += 1
         return loc_count
 
@@ -149,56 +169,102 @@ class ComplexityVisitor(ast.NodeVisitor):
         stack = []
 
         for sub_node in ast.walk(node):
-            if isinstance(sub_node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith, ast.ExceptHandler)):
+            if isinstance(
+                sub_node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.AsyncFor,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.ExceptHandler,
+                ),
+            ):
                 complexity += 1
             elif isinstance(sub_node, ast.BoolOp):
                 complexity += len(sub_node.values) - 1
             elif isinstance(sub_node, ast.comprehension) and sub_node.ifs:
                 complexity += len(sub_node.ifs)
 
-            if isinstance(sub_node, (ast.If, ast.For, ast.While, ast.AsyncFor, ast.With, ast.AsyncWith, ast.ExceptHandler, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(
+                sub_node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.AsyncFor,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.ExceptHandler,
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                ),
+            ):
                 if sub_node != node and sub_node not in stack:
                     stack.append(sub_node)
                     current_nesting_depth = len(stack)
                     max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
 
             if isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor)):
-                if any(isinstance(s, (ast.For, ast.While, ast.AsyncFor)) for s in stack[:-1]):
+                if any(
+                    isinstance(s, (ast.For, ast.While, ast.AsyncFor))
+                    for s in stack[:-1]
+                ):
                     nested_loops_count += 1
 
         stack.clear()
         loc = self._calculate_loc(node)
-        num_args = len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
+        num_args = (
+            len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
+        )
 
         code_smells = 0
-        if loc > 50: code_smells += 1
-        if num_args > 5: code_smells += 1
-        if max_nesting_depth > 3: code_smells += 1
+        if loc > 50:
+            code_smells += 1
+        if num_args > 5:
+            code_smells += 1
+        if max_nesting_depth > 3:
+            code_smells += 1
 
         bottlenecks = 0
-        if nested_loops_count > 0: bottlenecks += 1
+        if nested_loops_count > 0:
+            bottlenecks += 1
 
-        self.function_metrics.append({
-            "name": function_name,
-            "start_line": start_line,
-            "end_line": end_line,
-            "loc": loc,
-            "cyclomatic_complexity": complexity,
-            "num_arguments": num_args,
-            "max_nesting_depth": max_nesting_depth,
-            "nested_loops_count": nested_loops_count,
-            "code_smells": code_smells,
-            "potential_bottlenecks": bottlenecks
-        })
+        self.function_metrics.append(
+            {
+                "name": function_name,
+                "start_line": start_line,
+                "end_line": end_line,
+                "loc": loc,
+                "cyclomatic_complexity": complexity,
+                "num_arguments": num_args,
+                "max_nesting_depth": max_nesting_depth,
+                "nested_loops_count": nested_loops_count,
+                "code_smells": code_smells,
+                "potential_bottlenecks": bottlenecks,
+            }
+        )
+
 
 # --- AST Visitor for detailed code metrics ---
+
 
 class ImprovementMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
 
-    def __init__(self, initial_prompt: str, debate_history: List[Dict], intermediate_steps: Dict[str, Any],
-                 codebase_context: Dict[str, str], tokenizer: Any, llm_provider: Any,
-                 persona_manager: Any, content_validator: Any):
+    def __init__(
+        self,
+        initial_prompt: str,
+        debate_history: List[Dict],
+        intermediate_steps: Dict[str, Any],
+        codebase_context: Dict[str, str],
+        tokenizer: Any,
+        llm_provider: Any,
+        persona_manager: Any,
+        content_validator: Any,
+    ):
         """Initialize with debate context for analysis."""
         self.initial_prompt = initial_prompt
         self.debate_history = debate_history
@@ -208,10 +274,14 @@ class ImprovementMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.codebase_path = PROJECT_ROOT # Assuming PROJECT_ROOT is the base path for analysis
+        self.codebase_path = (
+            PROJECT_ROOT  # Assuming PROJECT_ROOT is the base path for analysis
+        )
 
     @classmethod
-    def _collect_configuration_analysis(cls, codebase_path: str) -> ConfigurationAnalysisOutput:
+    def _collect_configuration_analysis(
+        cls, codebase_path: str
+    ) -> ConfigurationAnalysisOutput:
         """
         Collects structured information about existing tool configurations from
         critical project configuration files.
@@ -219,7 +289,7 @@ class ImprovementMetricsCollector:
         config_analysis_data = {
             "ci_workflow": {},
             "pre_commit_hooks": [],
-            "pyproject_toml": {}
+            "pyproject_toml": {},
         }
         malformed_blocks = []
 
@@ -227,9 +297,11 @@ class ImprovementMetricsCollector:
         ci_yml_path = Path(codebase_path) / ".github/workflows/ci.yml"
         if ci_yml_path.exists():
             try:
-                with open(ci_yml_path, 'r', encoding='utf-8') as f:
+                with open(ci_yml_path, "r", encoding="utf-8") as f:
                     ci_config_raw = yaml.safe_load(f)
-                with open(ci_yml_path, 'r', encoding='utf-8') as f: # Re-open to read lines
+                with open(
+                    ci_yml_path, "r", encoding="utf-8"
+                ) as f:  # Re-open to read lines
                     ci_content_lines = f.readlines()
                     ci_workflow_jobs = {}
                     for job_name, job_details in ci_config_raw.get("jobs", {}).items():
@@ -238,43 +310,60 @@ class ImprovementMetricsCollector:
                             step_name = step.get("name", "Unnamed Step")
                             step_run = step.get("run")
                             step_uses = step.get("uses")
-                            
+
                             summary_item_data = {"name": step_name}
-                            if step_uses: summary_item_data["uses"] = step_uses
+                            if step_uses:
+                                summary_item_data["uses"] = step_uses
                             if step_run:
-                                commands = [cmd.strip() for cmd in step_run.split('\n') if cmd.strip()]
+                                commands = [
+                                    cmd.strip()
+                                    for cmd in step_run.split("\n")
+                                    if cmd.strip()
+                                ]
                                 summary_item_data["runs_commands"] = commands
                                 # Find the line number for the 'run' block to get a snippet
                                 # This is a heuristic, might need refinement for complex YAML structures
                                 run_line_number = None
                                 for i, line in enumerate(ci_content_lines):
-                                    if f"name: \"{step_name}\"" in line:
+                                    if f'name: "{step_name}"' in line:
                                         # Look for the 'run:' keyword after the name
                                         for j in range(i, len(ci_content_lines)):
                                             if "run:" in ci_content_lines[j]:
-                                                run_line_number = j + 1 # 1-indexed
+                                                run_line_number = j + 1  # 1-indexed
                                                 break
                                         break
-                                summary_item_data["code_snippet"] = _get_code_snippet(ci_content_lines, run_line_number, context_lines=3)
+                                summary_item_data["code_snippet"] = _get_code_snippet(
+                                    ci_content_lines, run_line_number, context_lines=3
+                                )
                             steps_summary.append(CiWorkflowStep(**summary_item_data))
-                        ci_workflow_jobs[job_name] = CiWorkflowJob(steps_summary=steps_summary)
-                    
+                        ci_workflow_jobs[job_name] = CiWorkflowJob(
+                            steps_summary=steps_summary
+                        )
+
                     config_analysis_data["ci_workflow"] = CiWorkflowConfig(
                         name=ci_config_raw.get("name"),
                         on_triggers=ci_config_raw.get("on"),
-                        jobs=ci_workflow_jobs
+                        jobs=ci_workflow_jobs,
                     )
             except (yaml.YAMLError, OSError, ValidationError) as e:
                 logger.error(f"Error parsing CI workflow file {ci_yml_path}: {e}")
-                malformed_blocks.append({"type": "CI_CONFIG_PARSE_ERROR", "message": str(e), "file": str(ci_yml_path)})
+                malformed_blocks.append(
+                    {
+                        "type": "CI_CONFIG_PARSE_ERROR",
+                        "message": str(e),
+                        "file": str(ci_yml_path),
+                    }
+                )
 
         # 2. Analyze .pre-commit-config.yaml
         pre_commit_path = Path(codebase_path) / ".pre-commit-config.yaml"
         if pre_commit_path.exists():
             try:
-                with open(pre_commit_path, 'r', encoding='utf-8') as f:
+                with open(pre_commit_path, "r", encoding="utf-8") as f:
                     pre_commit_config_raw = yaml.safe_load(f)
-                with open(pre_commit_path, 'r', encoding='utf-8') as f: # Re-open to read lines
+                with open(
+                    pre_commit_path, "r", encoding="utf-8"
+                ) as f:  # Re-open to read lines
                     pre_commit_content_lines = f.readlines()
                     for repo_config in pre_commit_config_raw.get("repos", []):
                         repo_url = repo_config.get("repo")
@@ -282,32 +371,54 @@ class ImprovementMetricsCollector:
                         for hook in repo_config.get("hooks", []):
                             hook_id = hook.get("id")
                             hook_args = hook.get("args", [])
-                            
+
                             # Find line number for the hook definition
                             hook_line_number = None
                             for i, line in enumerate(pre_commit_content_lines):
                                 if f"id: {hook_id}" in line:
                                     hook_line_number = i + 1
                                     break
-                            
+
                             config_analysis_data["pre_commit_hooks"].append(
-                                PreCommitHook(repo=repo_url, rev=repo_rev, id=hook_id, args=hook_args, code_snippet=_get_code_snippet(pre_commit_content_lines, hook_line_number, context_lines=3))
+                                PreCommitHook(
+                                    repo=repo_url,
+                                    rev=repo_rev,
+                                    id=hook_id,
+                                    args=hook_args,
+                                    code_snippet=_get_code_snippet(
+                                        pre_commit_content_lines,
+                                        hook_line_number,
+                                        context_lines=3,
+                                    ),
+                                )
                             )
             except (yaml.YAMLError, OSError, ValidationError) as e:
-                logger.error(f"Error parsing pre-commit config file {pre_commit_path}: {e}")
-                malformed_blocks.append({"type": "PRE_COMMIT_CONFIG_PARSE_ERROR", "message": str(e), "file": str(pre_commit_path)})
+                logger.error(
+                    f"Error parsing pre-commit config file {pre_commit_path}: {e}"
+                )
+                malformed_blocks.append(
+                    {
+                        "type": "PRE_COMMIT_CONFIG_PARSE_ERROR",
+                        "message": str(e),
+                        "file": str(pre_commit_path),
+                    }
+                )
 
         # 3. Analyze pyproject.toml
         pyproject_path = Path(codebase_path) / "pyproject.toml"
         if pyproject_path.exists():
             try:
-                with open(pyproject_path, 'r', encoding='utf-8') as f:
+                with open(pyproject_path, "r", encoding="utf-8") as f:
                     pyproject_config_raw = toml.load(f)
-                with open(pyproject_path, 'r', encoding='utf-8') as f: # Re-open to read lines
+                with open(
+                    pyproject_path, "r", encoding="utf-8"
+                ) as f:  # Re-open to read lines
                     pyproject_content_lines = f.readlines()
                     pyproject_toml_data = {}
 
-                    ruff_tool_config = pyproject_config_raw.get("tool", {}).get("ruff", {})
+                    ruff_tool_config = pyproject_config_raw.get("tool", {}).get(
+                        "ruff", {}
+                    )
                     if ruff_tool_config:
                         # Heuristic to find line number for ruff config
                         ruff_line_number = None
@@ -322,9 +433,15 @@ class ImprovementMetricsCollector:
                             lint_select=ruff_tool_config.get("lint", {}).get("select"),
                             lint_ignore=ruff_tool_config.get("lint", {}).get("ignore"),
                             format_settings=ruff_tool_config.get("format"),
-                            config_snippet=_get_code_snippet(pyproject_content_lines, ruff_line_number, context_lines=5)
+                            config_snippet=_get_code_snippet(
+                                pyproject_content_lines,
+                                ruff_line_number,
+                                context_lines=5,
+                            ),
                         )
-                    bandit_tool_config = pyproject_config_raw.get("tool", {}).get("bandit", {})
+                    bandit_tool_config = pyproject_config_raw.get("tool", {}).get(
+                        "bandit", {}
+                    )
                     if bandit_tool_config:
                         # Heuristic to find line number for bandit config
                         bandit_line_number = None
@@ -338,27 +455,45 @@ class ImprovementMetricsCollector:
                             severity_level=bandit_tool_config.get("severity_level"),
                             confidence_level=bandit_tool_config.get("confidence_level"),
                             skip_checks=bandit_tool_config.get("skip_checks"),
-                            config_snippet=_get_code_snippet(pyproject_content_lines, bandit_line_number, context_lines=5)
+                            config_snippet=_get_code_snippet(
+                                pyproject_content_lines,
+                                bandit_line_number,
+                                context_lines=5,
+                            ),
                         )
-                    pydantic_settings_config = pyproject_config_raw.get("tool", {}).get("pydantic-settings", {})
+                    pydantic_settings_config = pyproject_config_raw.get("tool", {}).get(
+                        "pydantic-settings", {}
+                    )
                     if pydantic_settings_config:
-                        pyproject_toml_data["pydantic_settings"] = PydanticSettingsConfig(**pydantic_settings_config)
-                    
-                    config_analysis_data["pyproject_toml"] = PyprojectTomlConfig(**pyproject_toml_data)
+                        pyproject_toml_data["pydantic_settings"] = (
+                            PydanticSettingsConfig(**pydantic_settings_config)
+                        )
+
+                    config_analysis_data["pyproject_toml"] = PyprojectTomlConfig(
+                        **pyproject_toml_data
+                    )
 
             except (toml.TomlDecodeError, OSError, ValidationError) as e:
                 logger.error(f"Error parsing pyproject.toml file {pyproject_path}: {e}")
-                malformed_blocks.append({"type": "PYPROJECT_CONFIG_PARSE_ERROR", "message": str(e), "file": str(pyproject_path)})
+                malformed_blocks.append(
+                    {
+                        "type": "PYPROJECT_CONFIG_PARSE_ERROR",
+                        "message": str(e),
+                        "file": str(pyproject_path),
+                    }
+                )
 
         return ConfigurationAnalysisOutput(
             ci_workflow=config_analysis_data["ci_workflow"],
             pre_commit_hooks=config_analysis_data["pre_commit_hooks"],
             pyproject_toml=config_analysis_data["pyproject_toml"],
-            malformed_blocks=malformed_blocks
+            malformed_blocks=malformed_blocks,
         )
 
     @classmethod
-    def _collect_deployment_robustness_metrics(cls, codebase_path: str) -> DeploymentAnalysisOutput:
+    def _collect_deployment_robustness_metrics(
+        cls, codebase_path: str
+    ) -> DeploymentAnalysisOutput:
         """
         Collects metrics related to deployment robustness by analyzing Dockerfile
         and production requirements.
@@ -374,18 +509,18 @@ class ImprovementMetricsCollector:
             "prod_dependency_count": 0,
             "dev_dependency_overlap_count": 0,
             "unpinned_prod_dependencies": [],
-            "malformed_blocks": []
+            "malformed_blocks": [],
         }
-        
+
         # 1. Analyze Dockerfile
         dockerfile_path = Path(codebase_path) / "Dockerfile"
         if dockerfile_path.exists():
             deployment_metrics_data["dockerfile_present"] = True
             try:
-                with open(dockerfile_path, 'r', encoding='utf-8') as f:
+                with open(dockerfile_path, "r", encoding="utf-8") as f:
                     dockerfile_content = f.read()
                     dockerfile_lines = dockerfile_content.splitlines()
-                
+
                 if "HEALTHCHECK" not in dockerfile_content:
                     deployment_metrics_data["dockerfile_problem_snippets"].append(
                         "Missing HEALTHCHECK instruction. Example: `HEALTHCHECK --interval=30s --timeout=5s CMD curl -f http://localhost:8080/health || exit 1`"
@@ -399,11 +534,17 @@ class ImprovementMetricsCollector:
                     )
                 else:
                     deployment_metrics_data["dockerfile_non_root_user"] = True
-                
-                exposed_ports = re.findall(r"EXPOSE\s+(\d+)", dockerfile_content)
-                deployment_metrics_data["dockerfile_exposed_ports"] = [int(p) for p in exposed_ports]
 
-                if not re.search(r"FROM\s+.*?AS\s+.*?\nFROM", dockerfile_content, re.DOTALL | re.IGNORECASE):
+                exposed_ports = re.findall(r"EXPOSE\s+(\d+)", dockerfile_content)
+                deployment_metrics_data["dockerfile_exposed_ports"] = [
+                    int(p) for p in exposed_ports
+                ]
+
+                if not re.search(
+                    r"FROM\s+.*?AS\s+.*?\nFROM",
+                    dockerfile_content,
+                    re.DOTALL | re.IGNORECASE,
+                ):
                     deployment_metrics_data["dockerfile_problem_snippets"].append(
                         "Missing multi-stage build. Consider using multiple FROM statements for smaller images."
                     )
@@ -412,8 +553,14 @@ class ImprovementMetricsCollector:
 
             except OSError as e:
                 logger.error(f"Error reading Dockerfile {dockerfile_path}: {e}")
-                deployment_metrics_data["malformed_blocks"].append({"type": "DOCKERFILE_READ_ERROR", "message": str(e), "file": str(dockerfile_path)})
-        
+                deployment_metrics_data["malformed_blocks"].append(
+                    {
+                        "type": "DOCKERFILE_READ_ERROR",
+                        "message": str(e),
+                        "file": str(dockerfile_path),
+                    }
+                )
+
         # 2. Analyze requirements-prod.txt and requirements.txt
         prod_req_path = Path(codebase_path) / "requirements-prod.txt"
         dev_req_path = Path(codebase_path) / "requirements.txt"
@@ -423,33 +570,59 @@ class ImprovementMetricsCollector:
         if prod_req_path.exists():
             deployment_metrics_data["prod_requirements_present"] = True
             try:
-                with open(prod_req_path, 'r', encoding='utf-8') as f:
+                with open(prod_req_path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#'):
-                            if not re.search(r'[=~><]=', line):
+                        if line and not line.startswith("#"):
+                            if not re.search(r"[=~><]=", line):
                                 unpinned_prod_deps.append(line)
-                            prod_deps.add(line.split('==')[0].split('>=')[0].split('~=')[0].lower())
+                            prod_deps.add(
+                                line.split("==")[0]
+                                .split(">=")[0]
+                                .split("~=")[0]
+                                .lower()
+                            )
                 deployment_metrics_data["prod_dependency_count"] = len(prod_deps)
-                deployment_metrics_data["unpinned_prod_dependencies"] = unpinned_prod_deps
+                deployment_metrics_data["unpinned_prod_dependencies"] = (
+                    unpinned_prod_deps
+                )
             except OSError as e:
-                logger.error(f"Error reading requirements-prod.txt {prod_req_path}: {e}")
-                deployment_metrics_data["malformed_blocks"].append({"type": "PROD_REQ_READ_ERROR", "message": str(e), "file": str(prod_req_path)})
+                logger.error(
+                    f"Error reading requirements-prod.txt {prod_req_path}: {e}"
+                )
+                deployment_metrics_data["malformed_blocks"].append(
+                    {
+                        "type": "PROD_REQ_READ_ERROR",
+                        "message": str(e),
+                        "file": str(prod_req_path),
+                    }
+                )
 
         if dev_req_path.exists() and prod_req_path.exists():
             dev_deps = set()
             try:
-                with open(dev_req_path, 'r', encoding='utf-8') as f:
+                with open(dev_req_path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#'):
-                            dev_deps.add(line.split('==')[0].split('>=')[0].split('~=')[0].lower())
-                
+                        if line and not line.startswith("#"):
+                            dev_deps.add(
+                                line.split("==")[0]
+                                .split(">=")[0]
+                                .split("~=")[0]
+                                .lower()
+                            )
+
                 overlap = prod_deps.intersection(dev_deps)
                 deployment_metrics_data["dev_dependency_overlap_count"] = len(overlap)
             except OSError as e:
                 logger.error(f"Error reading requirements.txt {dev_req_path}: {e}")
-                deployment_metrics_data["malformed_blocks"].append({"type": "DEV_REQ_READ_ERROR", "message": str(e), "file": str(dev_req_path)})
+                deployment_metrics_data["malformed_blocks"].append(
+                    {
+                        "type": "DEV_REQ_READ_ERROR",
+                        "message": str(e),
+                        "file": str(dev_req_path),
+                    }
+                )
 
         return DeploymentAnalysisOutput(**deployment_metrics_data)
 
@@ -467,9 +640,16 @@ class ImprovementMetricsCollector:
             "conflict_resolution_successes": 0,
             "unresolved_conflict_present": False,
             "average_persona_output_tokens": 0.0,
-            "persona_specific_performance": defaultdict(lambda: {"success_rate": 0.0, "schema_failures": 0, "truncations": 0, "total_turns": 0}),
+            "persona_specific_performance": defaultdict(
+                lambda: {
+                    "success_rate": 0.0,
+                    "schema_failures": 0,
+                    "truncations": 0,
+                    "total_turns": 0,
+                }
+            ),
             "prompt_verbosity_score": 0.0,
-            "malformed_blocks_summary": defaultdict(int)
+            "malformed_blocks_summary": defaultdict(int),
         }
 
         debate_history = self.intermediate_steps.get("Debate_History", [])
@@ -482,43 +662,84 @@ class ImprovementMetricsCollector:
         reasoning_metrics["unique_personas_involved"] = len(unique_personas)
 
         all_malformed_blocks = self.intermediate_steps.get("malformed_blocks", [])
-        reasoning_metrics["schema_validation_failures_count"] = sum(1 for b in all_malformed_blocks if b.get("type") == "SCHEMA_VALIDATION_ERROR")
-        reasoning_metrics["content_misalignment_warnings"] = sum(1 for b in all_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT")
-        reasoning_metrics["debate_turn_errors"] = sum(1 for b in all_malformed_blocks if b.get("type") == "DEBATE_TURN_ERROR")
-        
+        reasoning_metrics["schema_validation_failures_count"] = sum(
+            1
+            for b in all_malformed_blocks
+            if b.get("type") == "SCHEMA_VALIDATION_ERROR"
+        )
+        reasoning_metrics["content_misalignment_warnings"] = sum(
+            1 for b in all_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT"
+        )
+        reasoning_metrics["debate_turn_errors"] = sum(
+            1 for b in all_malformed_blocks if b.get("type") == "DEBATE_TURN_ERROR"
+        )
+
         for block in all_malformed_blocks:
-            reasoning_metrics["malformed_blocks_summary"][block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
+            reasoning_metrics["malformed_blocks_summary"][
+                block.get("type", "UNKNOWN_MALFORMED_BLOCK")
+            ] += 1
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
             reasoning_metrics["conflict_resolution_attempts"] = 1
-            if self.intermediate_steps["Conflict_Resolution_Attempt"].get("conflict_resolved"):
+            if self.intermediate_steps["Conflict_Resolution_Attempt"].get(
+                "conflict_resolved"
+            ):
                 reasoning_metrics["conflict_resolution_successes"] = 1
-        reasoning_metrics["unresolved_conflict_present"] = bool(self.intermediate_steps.get("Unresolved_Conflict"))
+        reasoning_metrics["unresolved_conflict_present"] = bool(
+            self.intermediate_steps.get("Unresolved_Conflict")
+        )
 
         total_output_tokens = 0
         for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_", "debate_")):
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
                 total_output_tokens += value
-        
+
         if reasoning_metrics["total_debate_turns"] > 0:
-            reasoning_metrics["average_persona_output_tokens"] = total_output_tokens / reasoning_metrics["total_debate_turns"]
+            reasoning_metrics["average_persona_output_tokens"] = (
+                total_output_tokens / reasoning_metrics["total_debate_turns"]
+            )
 
         for persona_name in unique_personas:
-            persona_malformed_blocks = [b for b in all_malformed_blocks if b.get("persona") == persona_name]
-            schema_failures = sum(1 for b in persona_malformed_blocks if b.get("type") == "SCHEMA_VALIDATION_ERROR")
-            content_misalignments = sum(1 for b in persona_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT")
-            
-            persona_turns = sum(1 for turn in debate_history if turn.get("persona") == persona_name)
-            
-            reasoning_metrics["persona_specific_performance"][persona_name]["total_turns"] = persona_turns
-            reasoning_metrics["persona_specific_performance"][persona_name]["schema_failures"] = schema_failures
-            reasoning_metrics["persona_specific_performance"][persona_name]["truncations"] = 0
-            
+            persona_malformed_blocks = [
+                b for b in all_malformed_blocks if b.get("persona") == persona_name
+            ]
+            schema_failures = sum(
+                1
+                for b in persona_malformed_blocks
+                if b.get("type") == "SCHEMA_VALIDATION_ERROR"
+            )
+            content_misalignments = sum(
+                1
+                for b in persona_malformed_blocks
+                if b.get("type") == "CONTENT_MISALIGNMENT"
+            )
+
+            persona_turns = sum(
+                1 for turn in debate_history if turn.get("persona") == persona_name
+            )
+
+            reasoning_metrics["persona_specific_performance"][persona_name][
+                "total_turns"
+            ] = persona_turns
+            reasoning_metrics["persona_specific_performance"][persona_name][
+                "schema_failures"
+            ] = schema_failures
+            reasoning_metrics["persona_specific_performance"][persona_name][
+                "truncations"
+            ] = 0
+
             if persona_turns > 0:
-                reasoning_metrics["persona_specific_performance"][persona_name]["success_rate"] = \
-                    (persona_turns - schema_failures - content_misalignments) / persona_turns
+                reasoning_metrics["persona_specific_performance"][persona_name][
+                    "success_rate"
+                ] = (
+                    persona_turns - schema_failures - content_misalignments
+                ) / persona_turns
             else:
-                reasoning_metrics["persona_specific_performance"][persona_name]["success_rate"] = 0.0
+                reasoning_metrics["persona_specific_performance"][persona_name][
+                    "success_rate"
+                ] = 0.0
 
         return reasoning_metrics
 
@@ -533,11 +754,11 @@ class ImprovementMetricsCollector:
                     "avg_cyclomatic_complexity": 0.0,
                     "avg_loc_per_function": 0.0,
                     "avg_num_arguments": 0.0,
-                    "avg_max_nesting_depth": 0.0
+                    "avg_max_nesting_depth": 0.0,
                 },
                 "code_smells_count": 0,
                 "detailed_issues": [],
-                "ruff_violations": []
+                "ruff_violations": [],
             },
             "security": {
                 "bandit_issues_count": 0,
@@ -546,19 +767,27 @@ class ImprovementMetricsCollector:
             "performance_efficiency": {
                 "token_usage_stats": self._collect_token_usage_stats(),
                 "debate_efficiency_summary": self._analyze_debate_efficiency(),
-                "potential_bottlenecks_count": 0
+                "potential_bottlenecks_count": 0,
             },
             "robustness": {
-                "schema_validation_failures_count": len(self.intermediate_steps.get("malformed_blocks", [])),
-                "unresolved_conflict_present": bool(self.intermediate_steps.get("Unresolved_Conflict")),
-                "conflict_resolution_attempted": bool(self.intermediate_steps.get("Conflict_Resolution_Attempt"))
+                "schema_validation_failures_count": len(
+                    self.intermediate_steps.get("malformed_blocks", [])
+                ),
+                "unresolved_conflict_present": bool(
+                    self.intermediate_steps.get("Unresolved_Conflict")
+                ),
+                "conflict_resolution_attempted": bool(
+                    self.intermediate_steps.get("Conflict_Resolution_Attempt")
+                ),
             },
-            "maintainability": {
-                "test_coverage_summary": self._assess_test_coverage()
-            },
-            "configuration_analysis": self._collect_configuration_analysis(self.codebase_path).model_dump(by_alias=True),
-            "deployment_robustness": self._collect_deployment_robustness_metrics(self.codebase_path).model_dump(by_alias=True),
-            "reasoning_quality": self._collect_reasoning_quality_metrics()
+            "maintainability": {"test_coverage_summary": self._assess_test_coverage()},
+            "configuration_analysis": self._collect_configuration_analysis(
+                self.codebase_path
+            ).model_dump(by_alias=True),
+            "deployment_robustness": self._collect_deployment_robustness_metrics(
+                self.codebase_path
+            ).model_dump(by_alias=True),
+            "reasoning_quality": self._collect_reasoning_quality_metrics(),
         }
 
         total_functions_across_codebase = 0
@@ -569,48 +798,85 @@ class ImprovementMetricsCollector:
 
         for root, _, files in os.walk(self.codebase_path):
             for file in files:
-                if file.endswith('.py'):
+                if file.endswith(".py"):
                     file_path = os.path.join(root, file)
                     try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
+                        with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                             content_lines = content.splitlines()
 
                         ruff_issues = _run_ruff(content, file_path)
                         if ruff_issues:
-                            metrics["code_quality"]["ruff_issues_count"] += len(ruff_issues)
-                            metrics["code_quality"]["detailed_issues"].extend(ruff_issues)
-                            metrics["code_quality"]["ruff_violations"].extend(ruff_issues)
+                            metrics["code_quality"]["ruff_issues_count"] += len(
+                                ruff_issues
+                            )
+                            metrics["code_quality"]["detailed_issues"].extend(
+                                ruff_issues
+                            )
+                            metrics["code_quality"]["ruff_violations"].extend(
+                                ruff_issues
+                            )
 
                         bandit_issues = _run_bandit(content, file_path)
                         if bandit_issues:
-                            metrics["security"]["bandit_issues_count"] += len(bandit_issues)
-                            metrics["code_quality"]["detailed_issues"].extend(bandit_issues)
+                            metrics["security"]["bandit_issues_count"] += len(
+                                bandit_issues
+                            )
+                            metrics["code_quality"]["detailed_issues"].extend(
+                                bandit_issues
+                            )
 
-                        ast_security_issues = _run_ast_security_checks(content, file_path)
+                        ast_security_issues = _run_ast_security_checks(
+                            content, file_path
+                        )
                         if ast_security_issues:
-                            metrics["security"]["ast_security_issues_count"] += len(ast_security_issues)
-                            metrics["code_quality"]["detailed_issues"].extend(ast_security_issues)
+                            metrics["security"]["ast_security_issues_count"] += len(
+                                ast_security_issues
+                            )
+                            metrics["code_quality"]["detailed_issues"].extend(
+                                ast_security_issues
+                            )
 
-                        file_function_metrics = self._analyze_python_file_ast(content, content_lines, file_path)
+                        file_function_metrics = self._analyze_python_file_ast(
+                            content, content_lines, file_path
+                        )
 
                         for func_metric in file_function_metrics:
                             total_functions_across_codebase += 1
-                            total_complexity_across_functions += func_metric["cyclomatic_complexity"]
+                            total_complexity_across_functions += func_metric[
+                                "cyclomatic_complexity"
+                            ]
                             total_loc_across_functions += func_metric["loc"]
                             total_args_across_functions += func_metric["num_arguments"]
-                            total_nesting_depth_across_functions += func_metric["max_nesting_depth"]
-                            metrics["code_quality"]["code_smells_count"] += func_metric["code_smells"]
-                            metrics["performance_efficiency"]["potential_bottlenecks_count"] += func_metric["potential_bottlenecks"]
+                            total_nesting_depth_across_functions += func_metric[
+                                "max_nesting_depth"
+                            ]
+                            metrics["code_quality"]["code_smells_count"] += func_metric[
+                                "code_smells"
+                            ]
+                            metrics["performance_efficiency"][
+                                "potential_bottlenecks_count"
+                            ] += func_metric["potential_bottlenecks"]
 
                     except Exception as e:
-                        logger.error(f"Error collecting code metrics for {file_path}: {e}", exc_info=True)
+                        logger.error(
+                            f"Error collecting code metrics for {file_path}: {e}",
+                            exc_info=True,
+                        )
 
         if total_functions_across_codebase > 0:
-            metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = total_complexity_across_functions / total_functions_across_codebase
-            metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = total_loc_across_functions / total_functions_across_codebase
-            metrics["code_quality"]["complexity_metrics"]["avg_num_arguments"] = total_args_across_functions / total_functions_across_codebase
-            metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = total_nesting_depth_across_functions / total_functions_across_codebase
+            metrics["code_quality"]["complexity_metrics"][
+                "avg_cyclomatic_complexity"
+            ] = total_complexity_across_functions / total_functions_across_codebase
+            metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
+                total_loc_across_functions / total_functions_across_codebase
+            )
+            metrics["code_quality"]["complexity_metrics"]["avg_num_arguments"] = (
+                total_args_across_functions / total_functions_across_codebase
+            )
+            metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = (
+                total_nesting_depth_across_functions / total_functions_across_codebase
+            )
 
         return metrics
 
@@ -623,14 +889,16 @@ class ImprovementMetricsCollector:
 
         phase_token_usage = {}
         for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_", "debate_")):
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
                 phase_name = key.replace("_Tokens_Used", "")
                 phase_token_usage[phase_name] = value
 
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
-            "phase_token_usage": phase_token_usage
+            "phase_token_usage": phase_token_usage,
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
@@ -639,11 +907,17 @@ class ImprovementMetricsCollector:
         """
         efficiency_summary = {
             "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
-            "malformed_blocks_count": len(self.intermediate_steps.get("malformed_blocks", [])),
-            "conflict_resolution_attempts": 1 if self.intermediate_steps.get("Conflict_Resolution_Attempt") else 0,
-            "unresolved_conflict": bool(self.intermediate_steps.get("Unresolved_Conflict")),
+            "malformed_blocks_count": len(
+                self.intermediate_steps.get("malformed_blocks", [])
+            ),
+            "conflict_resolution_attempts": 1
+            if self.intermediate_steps.get("Conflict_Resolution_Attempt")
+            else 0,
+            "unresolved_conflict": bool(
+                self.intermediate_steps.get("Unresolved_Conflict")
+            ),
             "average_turn_tokens": 0.0,
-            "persona_token_breakdown": {}
+            "persona_token_breakdown": {},
         }
 
         total_debate_tokens = self.intermediate_steps.get("debate_Tokens_Used", 0)
@@ -652,7 +926,9 @@ class ImprovementMetricsCollector:
             efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
 
         for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(("Total_", "context_", "synthesis_", "debate_")):
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
                 persona_name = key.replace("_Tokens_Used", "")
                 efficiency_summary["persona_token_breakdown"][persona_name] = value
 
@@ -667,11 +943,13 @@ class ImprovementMetricsCollector:
             "overall_coverage_percentage": 0.0,
             "files_covered": 0,
             "total_files": 0,
-            "coverage_details": "Automated test coverage assessment not implemented."
+            "coverage_details": "Automated test coverage assessment not implemented.",
         }
 
     @classmethod
-    def _analyze_python_file_ast(cls, content: str, content_lines: List[str], file_path: str) -> List[Dict[str, Any]]:
+    def _analyze_python_file_ast(
+        cls, content: str, content_lines: List[str], file_path: str
+    ) -> List[Dict[str, Any]]:
         """
         Analyzes a Python file's AST for complexity, lines of code in functions,
         number of functions, code smells, and potential bottlenecks.
@@ -685,18 +963,26 @@ class ImprovementMetricsCollector:
             logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
             return []
         except Exception as e:
-            logger.error(f"Unexpected error during AST analysis for {file_path}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error during AST analysis for {file_path}: {e}",
+                exc_info=True,
+            )
             return []
 
     # --- SUGGESTED METHODS TO ADD ---
 
-    def save_improvement_results(self, suggestions: List[Dict], metrics_before: Dict,
-                                 metrics_after: Dict, success: bool):
+    def save_improvement_results(
+        self,
+        suggestions: List[Dict],
+        metrics_before: Dict,
+        metrics_after: Dict,
+        success: bool,
+    ):
         """Save results of improvement attempt for future learning"""
         from datetime import datetime
         import json
         from pathlib import Path
-        
+
         # Calculate performance changes here as well, for consistency in the record
         performance_changes = {}
         for category, metrics in metrics_after.items():
@@ -705,20 +991,26 @@ class ImprovementMetricsCollector:
                 for metric, value_after in metrics.items():
                     if metric in metrics_before[category]:
                         value_before = metrics_before[category][metric]
-                        
-                        if isinstance(value_before, (int, float)) and isinstance(value_after, (int, float)):
+
+                        if isinstance(value_before, (int, float)) and isinstance(
+                            value_after, (int, float)
+                        ):
                             absolute_change = value_after - value_before
-                            percent_change = (absolute_change / value_before * 100) if value_before != 0 else float('inf')
-                            
+                            percent_change = (
+                                (absolute_change / value_before * 100)
+                                if value_before != 0
+                                else float("inf")
+                            )
+
                             category_changes[metric] = {
                                 "absolute_change": absolute_change,
-                                "percent_change": percent_change
+                                "percent_change": percent_change,
                             }
                         else:
                             category_changes[metric] = {
                                 "changed": value_before != value_after,
                                 "before": value_before,
-                                "after": value_after
+                                "after": value_after,
                             }
                 if category_changes:
                     performance_changes[category] = category_changes
@@ -730,15 +1022,17 @@ class ImprovementMetricsCollector:
             "metrics_after": metrics_after,
             "success": success,
             "performance_changes": performance_changes,
-            "improvement_score": self.intermediate_steps.get("improvement_score", 0.0) # Assuming score is stored here
+            "improvement_score": self.intermediate_steps.get(
+                "improvement_score", 0.0
+            ),  # Assuming score is stored here
         }
-        
+
         # Append to historical data
         history_file = Path("data/improvement_history.jsonl")
         history_file.parent.mkdir(exist_ok=True)
-        
+
         try:
-            with open(history_file, "a", encoding='utf-8') as f:
+            with open(history_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(improvement_record) + "\n")
             logger.info(f"Saved improvement results to {history_file}")
         except IOError as e:
@@ -750,88 +1044,100 @@ class ImprovementMetricsCollector:
         if not history_file.exists():
             logger.info("No historical improvement data found.")
             return []
-        
+
         records = []
         try:
-            with open(history_file, "r", encoding='utf-8') as f:
+            with open(history_file, "r", encoding="utf-8") as f:
                 for line in f:
                     try:
                         records.append(json.loads(line))
                         if len(records) >= limit:
                             break
                     except json.JSONDecodeError:
-                        logger.warning(f"Skipping malformed line in {history_file}: {line.strip()}")
+                        logger.warning(
+                            f"Skipping malformed line in {history_file}: {line.strip()}"
+                        )
                         continue
             logger.info(f"Retrieved {len(records)} historical improvement records.")
             return records
         except IOError as e:
-            logger.error(f"Failed to read historical improvement data from {history_file}: {e}")
+            logger.error(
+                f"Failed to read historical improvement data from {history_file}: {e}"
+            )
             return []
 
     def analyze_historical_effectiveness(self) -> Dict:
         """Analyze historical data to identify patterns of successful improvements"""
         history = self.get_historical_improvement_data()
-        
+
         if not history:
             return {
                 "success_rate": 0.0,
                 "total_attempts": 0,
                 "successful_attempts": 0,
                 "top_performing_areas": [],
-                "common_failure_modes": []
+                "common_failure_modes": [],
             }
-        
+
         # Calculate overall success rate
         successful_attempts = sum(1 for h in history if h.get("success", False))
         total_attempts = len(history)
-        success_rate = successful_attempts / total_attempts if total_attempts > 0 else 0.0
-        
+        success_rate = (
+            successful_attempts / total_attempts if total_attempts > 0 else 0.0
+        )
+
         # Analyze by improvement area
         area_success = defaultdict(int)
         area_attempts = defaultdict(int)
-        
+
         for record in history:
             for suggestion in record.get("suggestions", []):
                 area = suggestion.get("AREA", "Unknown")
                 area_attempts[area] += 1
-                
+
                 if record.get("success"):
                     area_success[area] += 1
-        
+
         # Calculate success rates by area
         area_success_rates = {}
         for area, attempts in area_attempts.items():
             successes = area_success.get(area, 0)
             area_success_rates[area] = successes / attempts if attempts > 0 else 0.0
-        
+
         # Identify top performing areas (minimum 3 attempts to be considered)
         top_areas = [
-            area for area, rate in sorted(area_success_rates.items(), key=lambda x: x[1], reverse=True)
+            area
+            for area, rate in sorted(
+                area_success_rates.items(), key=lambda x: x[1], reverse=True
+            )
             if area_attempts.get(area, 0) >= 3
         ][:5]
-        
+
         # Identify common failure modes
         failure_modes = defaultdict(int)
         for record in history:
             if not record.get("success", False):
                 for category, changes in record.get("performance_changes", {}).items():
                     for metric, change_data in changes.items():
-                        if isinstance(change_data, dict) and "percent_change" in change_data:
+                        if (
+                            isinstance(change_data, dict)
+                            and "percent_change" in change_data
+                        ):
                             # Consider negative percent change as a failure mode for "higher is better" metrics
                             # Or positive percent change for "lower is better" metrics
                             # This logic needs to be more robust based on metric directionality
                             # For simplicity, let's assume negative percent_change is bad for most metrics
-                            if change_data.get("percent_change", 0) < -5: # If metric decreased by more than 5%
+                            if (
+                                change_data.get("percent_change", 0) < -5
+                            ):  # If metric decreased by more than 5%
                                 key = f"{category}.{metric}"
                                 failure_modes[key] += 1
-        
+
         # Sort failure modes by frequency
         common_failure_modes = sorted(
-            failure_modes.items(), 
-            key=lambda x: x[1], 
-            reverse=True
+            failure_modes.items(), key=lambda x: x[1], reverse=True
         )[:5]
-        
+
         return {
             "success_rate": success_rate,
             "total_attempts": total_attempts,
@@ -843,7 +1149,7 @@ class ImprovementMetricsCollector:
             "common_failure_modes": [
                 {"metric": mode[0], "occurrences": mode[1]}
                 for mode in common_failure_modes
-            ]
+            ],
         }
 
     def analyze(self) -> List[Dict[str, Any]]:
@@ -852,78 +1158,100 @@ class ImprovementMetricsCollector:
         Focuses on the top 3 highest impact areas based on metrics, adhering to the Pareto principle.
         """
         logger.info("Performing self-analysis for Project Chimera.")
-        
+
         suggestions = []
-        
+
         # --- NEW: Handle Conflict Resolution first if codebase access is denied ---
-        conflict_resolution_summary = self.intermediate_steps.get("Conflict_Resolution_Attempt", {}).get("resolution_summary", {})
-        if conflict_resolution_summary and conflict_resolution_summary.get("conflict_resolved") and \
-           "cannot be fulfilled due to the absence of the codebase" in conflict_resolution_summary.get("RATIONALE", ""):
-            
+        conflict_resolution_summary = self.intermediate_steps.get(
+            "Conflict_Resolution_Attempt", {}
+        ).get("resolution_summary", {})
+        if (
+            conflict_resolution_summary
+            and conflict_resolution_summary.get("conflict_resolved")
+            and "cannot be fulfilled due to the absence of the codebase"
+            in conflict_resolution_summary.get("RATIONALE", "")
+        ):
             # This is the most impactful immediate action as per the conflict resolution
-            suggestions.append({
-                "AREA": "Maintainability",
-                "PROBLEM": "Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase. The conflict resolution summary correctly identified the need for the codebase to proceed.",
-                "PROPOSED_SOLUTION": "Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
-                "EXPECTED_IMPACT": "Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
-                "CODE_CHANGES_SUGGESTED": [
-                    {
-                        "FILE_PATH": "docs/project_chimera_context.md",
-                        "ACTION": "ADD",
-                        "FULL_CONTENT": "# Project Chimera Context and Codebase\\n\\nThis document outlines the necessary context for analyzing and improving Project Chimera.\\n\\n## Project Purpose:\\n\\n[Insert a clear and concise description of Project Chimera's overall goal and function here.]\\n\\n## Architecture Overview:\\n\\n[Describe the high-level architecture, key components, and their interactions. For example:\\n- Core modules (e.g., LLM interaction, data processing, UI)\\n- Key libraries and frameworks used\\n- Data flow and storage mechanisms]\\n\\n## Codebase Location:\\n\\n[Provide the location or a representative subset of the Project Chimera codebase. If a subset is provided, specify which parts are included and why.]\\n\\n## Prior Analysis Context:\\n\\n[If applicable, reference or include the 'Previous Debate Output Summary' or any other relevant historical analysis that informs the current self-improvement goals.]\\n\\n## Current Focus Areas for Improvement:\\n\\n[Based on prior discussions or initial observations, list the key areas targeted for improvement (e.g., Security, Performance, Maintainability, Reasoning Quality).]\\n"
-                    }
-                ]
-            })
+            suggestions.append(
+                {
+                    "AREA": "Maintainability",
+                    "PROBLEM": "Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase. The conflict resolution summary correctly identified the need for the codebase to proceed.",
+                    "PROPOSED_SOLUTION": "Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
+                    "EXPECTED_IMPACT": "Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "docs/project_chimera_context.md",
+                            "ACTION": "ADD",
+                            "FULL_CONTENT": "# Project Chimera Context and Codebase\\n\\nThis document outlines the necessary context for analyzing and improving Project Chimera.\\n\\n## Project Purpose:\\n\\n[Insert a clear and concise description of Project Chimera's overall goal and function here.]\\n\\n## Architecture Overview:\\n\\n[Describe the high-level architecture, key components, and their interactions. For example:\\n- Core modules (e.g., LLM interaction, data processing, UI)\\n- Key libraries and frameworks used\\n- Data flow and storage mechanisms]\\n\\n## Codebase Location:\\n\\n[Provide the location or a representative subset of the Project Chimera codebase. If a subset is provided, specify which parts are included and why.]\\n\\n## Prior Analysis Context:\\n\\n[If applicable, reference or include the 'Previous Debate Output Summary' or any other relevant historical analysis that informs the current self-improvement goals.]\\n\\n## Current Focus Areas for Improvement:\\n\\n[Based on prior discussions or initial observations, list the key areas targeted for improvement (e.g., Security, Performance, Maintainability, Reasoning Quality).]\\n",
+                        }
+                    ],
+                }
+            )
             # If codebase access is the primary blocker, other code changes are secondary or conceptual.
             # We return here to ensure this is the ONLY suggestion if the codebase is missing.
-            return suggestions 
+            return suggestions
 
         # --- Extract top Ruff and Bandit issues for snippets ---
         top_ruff_issues_snippets = []
         top_bandit_issues_snippets = []
-        
+
         # Filter and collect snippets for Ruff issues
         ruff_detailed_issues = [
-            issue for issue in self.metrics.get('code_quality', {}).get('detailed_issues', [])
-            if issue.get('source') == 'ruff_lint' or issue.get('source') == 'ruff_format'
+            issue
+            for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
+            if issue.get("source") == "ruff_lint"
+            or issue.get("source") == "ruff_format"
         ]
-        for issue in ruff_detailed_issues[:3]: # Take top 3
-            snippet = issue.get('code_snippet')
+        for issue in ruff_detailed_issues[:3]:  # Take top 3
+            snippet = issue.get("code_snippet")
             if snippet:
-                top_ruff_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```")
+                top_ruff_issues_snippets.append(
+                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```"
+                )
             else:
-                top_ruff_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}")
+                top_ruff_issues_snippets.append(
+                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
+                )
 
         # Filter and collect snippets for Bandit issues
         bandit_detailed_issues = [
-            issue for issue in self.metrics.get('code_quality', {}).get('detailed_issues', [])
-            if issue.get('source') == 'bandit'
+            issue
+            for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
+            if issue.get("source") == "bandit"
         ]
-        for issue in bandit_detailed_issues[:3]: # Take top 3
-            snippet = issue.get('code_snippet')
+        for issue in bandit_detailed_issues[:3]:  # Take top 3
+            snippet = issue.get("code_snippet")
             if snippet:
-                top_bandit_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```")
+                top_bandit_issues_snippets.append(
+                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```"
+                )
             else:
-                top_bandit_issues_snippets.append(f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}")
+                top_bandit_issues_snippets.append(
+                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
+                )
         # --- End snippet extraction ---
 
         # --- MODIFIED LOGIC FOR PARETO PRINCIPLE AND CLARITY ---
         # Focus on the top 3 highest impact areas based on metrics (Pareto principle).
         # Prioritize Security, Maintainability, and Robustness.
-        
+
         # Maintainability (Linting Issues)
-        ruff_issues_count = self.metrics.get('code_quality', {}).get('ruff_issues_count', 0)
-        if ruff_issues_count > 100: # Threshold for significant linting issues
-            suggestions.append({
-                "AREA": "Maintainability",
-                "PROBLEM": f"The project exhibits widespread Ruff formatting issues across numerous files (e.g., `core.py`, `code_validator.py`, `app.py`, all test files, etc.). The `code_quality.ruff_violations` list contains {ruff_issues_count} entries, predominantly `FMT` (formatting) errors. This inconsistency detracts from readability and maintainability. Examples:\n" + "\n".join(top_ruff_issues_snippets),
-                "PROPOSED_SOLUTION": "Enforce consistent code formatting by running `ruff format .` across the entire project. Integrate this command into the CI pipeline and pre-commit hooks to ensure all committed code adheres to the defined style guidelines. This will resolve the numerous `FMT` violations.",
-                "EXPECTED_IMPACT": "Improved code readability and consistency, reduced cognitive load for developers, and a cleaner codebase. This directly addresses the maintainability aspect by enforcing a standard.",
-                "CODE_CHANGES_SUGGESTED": [
-                    {
-                        "FILE_PATH": ".github/workflows/ci.yml",
-                        "ACTION": "MODIFY",
-                        "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
+        ruff_issues_count = self.metrics.get("code_quality", {}).get(
+            "ruff_issues_count", 0
+        )
+        if ruff_issues_count > 100:  # Threshold for significant linting issues
+            suggestions.append(
+                {
+                    "AREA": "Maintainability",
+                    "PROBLEM": f"The project exhibits widespread Ruff formatting issues across numerous files (e.g., `core.py`, `code_validator.py`, `app.py`, all test files, etc.). The `code_quality.ruff_violations` list contains {ruff_issues_count} entries, predominantly `FMT` (formatting) errors. This inconsistency detracts from readability and maintainability. Examples:\n"
+                    + "\n".join(top_ruff_issues_snippets),
+                    "PROPOSED_SOLUTION": "Enforce consistent code formatting by running `ruff format .` across the entire project. Integrate this command into the CI pipeline and pre-commit hooks to ensure all committed code adheres to the defined style guidelines. This will resolve the numerous `FMT` violations.",
+                    "EXPECTED_IMPACT": "Improved code readability and consistency, reduced cognitive load for developers, and a cleaner codebase. This directly addresses the maintainability aspect by enforcing a standard.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": ".github/workflows/ci.yml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
 @@ -18,8 +18,8 @@
                # Explicitly install Ruff and Black for CI to ensure they are available
@@ -946,12 +1274,12 @@ class ImprovementMetricsCollector:
                runs_commands:
                  - "bandit -r . -ll -c pyproject.toml --exit-on-error"
                  # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
-"""
-                    },
-                    {
-                        "FILE_PATH": ".pre-commit-config.yaml",
-                        "ACTION": "MODIFY",
-                        "DIFF_CONTENT": """--- a/.pre-commit-config.yaml
+""",
+                        },
+                        {
+                            "FILE_PATH": ".pre-commit-config.yaml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/.pre-commit-config.yaml
 +++ b/.pre-commit-config.yaml
 @@ -16,7 +16,7 @@
        - id: ruff
@@ -971,30 +1299,44 @@ class ImprovementMetricsCollector:
          rev: 1.7.5
          id: bandit
          args: [
-"""
-                    }
-                ]
-            })
-        
+""",
+                        },
+                    ],
+                }
+            )
+
         # Security
-        bandit_issues_count = self.metrics.get('security', {}).get('bandit_issues_count', 0)
-        pyproject_config_error = any(block.get('type') == 'PYPROJECT_CONFIG_PARSE_ERROR' for block in self.metrics.get('configuration_analysis', {}).get('malformed_blocks', []))
-        
-        if bandit_issues_count > 0 or pyproject_config_error: # Trigger if issues or config error
+        bandit_issues_count = self.metrics.get("security", {}).get(
+            "bandit_issues_count", 0
+        )
+        pyproject_config_error = any(
+            block.get("type") == "PYPROJECT_CONFIG_PARSE_ERROR"
+            for block in self.metrics.get("configuration_analysis", {}).get(
+                "malformed_blocks", []
+            )
+        )
+
+        if (
+            bandit_issues_count > 0 or pyproject_config_error
+        ):  # Trigger if issues or config error
             problem_description = f"Bandit security scans are failing with configuration errors (`Bandit failed with exit code 2: [config] ERROR Invalid value (at line 33, column 15) [main] ERROR /Users/tom/Documents/apps/project_chimera/pyproject.toml : Error parsing file.`). This indicates a misconfiguration in `pyproject.toml` for Bandit, preventing security vulnerabilities from being detected. The `pyproject.toml` file itself has a `PYPROJECT_CONFIG_PARSE_ERROR` related to `ruff` configuration."
             if bandit_issues_count > 0:
-                problem_description += f"\nAdditionally, {bandit_issues_count} Bandit security vulnerabilities were detected. Prioritize HIGH severity issues like potential injection flaws. Examples:\n" + "\n".join(top_bandit_issues_snippets)
-            
-            suggestions.append({
-                "AREA": "Security",
-                "PROBLEM": problem_description,
-                "PROPOSED_SOLUTION": "Correct the Bandit configuration within `pyproject.toml`. Ensure that all Bandit-related settings are valid and adhere to Bandit's expected format. Additionally, address the Ruff configuration error in `pyproject.toml` to ensure consistent code formatting and linting. The CI workflow should also be updated to correctly invoke Bandit with the corrected configuration.",
-                "EXPECTED_IMPACT": "Enables the Bandit security scanner to run successfully, identifying potential security vulnerabilities. This will improve the overall security posture of the project.",
-                "CODE_CHANGES_SUGGESTED": [
-                    {
-                        "FILE_PATH": "pyproject.toml",
-                        "ACTION": "MODIFY",
-                        "DIFF_CONTENT": """--- a/pyproject.toml
+                problem_description += (
+                    f"\nAdditionally, {bandit_issues_count} Bandit security vulnerabilities were detected. Prioritize HIGH severity issues like potential injection flaws. Examples:\n"
+                    + "\n".join(top_bandit_issues_snippets)
+                )
+
+            suggestions.append(
+                {
+                    "AREA": "Security",
+                    "PROBLEM": problem_description,
+                    "PROPOSED_SOLUTION": "Correct the Bandit configuration within `pyproject.toml`. Ensure that all Bandit-related settings are valid and adhere to Bandit's expected format. Additionally, address the Ruff configuration error in `pyproject.toml` to ensure consistent code formatting and linting. The CI workflow should also be updated to correctly invoke Bandit with the corrected configuration.",
+                    "EXPECTED_IMPACT": "Enables the Bandit security scanner to run successfully, identifying potential security vulnerabilities. This will improve the overall security posture of the project.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "pyproject.toml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -30,7 +30,7 @@
  
@@ -1014,12 +1356,12 @@ class ImprovementMetricsCollector:
  # Other Bandit configurations can be added here as needed.
  # For example:
  # exclude = [
-"""
-                    },
-                    {
-                        "FILE_PATH": ".github/workflows/ci.yml",
-                        "ACTION": "MODIFY",
-                        "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
+""",
+                        },
+                        {
+                            "FILE_PATH": ".github/workflows/ci.yml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
 @@ -21,7 +21,7 @@
              # Run Ruff (Linter & Formatter Check) - Fail on Violation
@@ -1031,24 +1373,31 @@ class ImprovementMetricsCollector:
 +            bandit -r . --config pyproject.toml --exit-on-error
              # Run Pytest and generate coverage report
              pytest --cov=src --cov-report=xml --cov-report=term
-"""
-                    }
-                ]
-            })
-        
+""",
+                        },
+                    ],
+                }
+            )
+
         # Maintainability (Testing)
-        zero_test_coverage = self.metrics.get('maintainability', {}).get('test_coverage_summary', {}).get('overall_coverage_percentage', 0) == 0
+        zero_test_coverage = (
+            self.metrics.get("maintainability", {})
+            .get("test_coverage_summary", {})
+            .get("overall_coverage_percentage", 0)
+            == 0
+        )
         if zero_test_coverage:
-            suggestions.append({
-                "AREA": "Maintainability",
-                "PROBLEM": "The project lacks automated test coverage. The `maintainability.test_coverage_summary` shows `overall_coverage_percentage: 0.0` and `coverage_details: 'Automated test coverage assessment not implemented.'`. This significantly hinders the ability to refactor code confidently, introduce new features without regressions, and ensure the long-term health of the codebase.",
-                "PROPOSED_SOLUTION": "Implement a comprehensive testing strategy. This includes writing unit tests for core logic (e.g., LLM interactions, data processing, utility functions) and integration tests for key workflows. Start with critical modules like `src/llm_provider.py`, `src/utils/prompt_engineering.py`, and `src/persona_manager.py`. Aim for a minimum of 70% test coverage within the next iteration.",
-                "EXPECTED_IMPACT": "Improved code stability, reduced regression bugs, increased developer confidence during changes, and a clearer understanding of code behavior. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
-                "CODE_CHANGES_SUGGESTED": [
-                    {
-                        "FILE_PATH": "tests/test_llm_provider.py",
-                        "ACTION": "ADD",
-                        "FULL_CONTENT": """import pytest
+            suggestions.append(
+                {
+                    "AREA": "Maintainability",
+                    "PROBLEM": "The project lacks automated test coverage. The `maintainability.test_coverage_summary` shows `overall_coverage_percentage: 0.0` and `coverage_details: 'Automated test coverage assessment not implemented.'`. This significantly hinders the ability to refactor code confidently, introduce new features without regressions, and ensure the long-term health of the codebase.",
+                    "PROPOSED_SOLUTION": "Implement a comprehensive testing strategy. This includes writing unit tests for core logic (e.g., LLM interactions, data processing, utility functions) and integration tests for key workflows. Start with critical modules like `src/llm_provider.py`, `src/utils/prompt_engineering.py`, and `src/persona_manager.py`. Aim for a minimum of 70% test coverage within the next iteration.",
+                    "EXPECTED_IMPACT": "Improved code stability, reduced regression bugs, increased developer confidence during changes, and a clearer understanding of code behavior. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "tests/test_llm_provider.py",
+                            "ACTION": "ADD",
+                            "FULL_CONTENT": """import pytest
 from src.llm_provider import LLMProvider
 
 # Mocking the LLM API for testing
@@ -1094,12 +1443,12 @@ def test_llm_provider_generate_content_default(llm_provider):
     assert response == "This is a simulated default response."
 
 # Add more tests for different scenarios and edge cases
-"""
-                    },
-                    {
-                        "FILE_PATH": "tests/test_prompt_engineering.py",
-                        "ACTION": "ADD",
-                        "FULL_CONTENT": """import pytest
+""",
+                        },
+                        {
+                            "FILE_PATH": "tests/test_prompt_engineering.py",
+                            "ACTION": "ADD",
+                            "FULL_CONTENT": """import pytest
 from src.utils.prompt_engineering import create_persona_prompt, create_task_prompt
 
 def test_create_persona_prompt_basic():
@@ -1150,43 +1499,58 @@ def test_create_task_prompt_with_specific_instructions():
     assert create_task_prompt(task_description, instructions=instructions) == expected_prompt
 
 # Add more tests for edge cases and variations in input
-"""
-                    }
-                ]
-            })
-        
+""",
+                        },
+                    ],
+                }
+            )
+
         # Efficiency (Token Usage)
-        high_token_personas = self.metrics.get('performance_efficiency', {}).get('debate_efficiency_summary', {}).get('persona_token_breakdown', {})
-        high_token_consumers = {p: t for p, t in high_token_personas.items() if t > 2000}
-        
+        high_token_personas = (
+            self.metrics.get("performance_efficiency", {})
+            .get("debate_efficiency_summary", {})
+            .get("persona_token_breakdown", {})
+        )
+        high_token_consumers = {
+            p: t for p, t in high_token_personas.items() if t > 2000
+        }
+
         if high_token_consumers:
-            suggestions.append({
-                "AREA": "Efficiency",
-                "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
-                "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
-                "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
-                "CODE_CHANGES_SUGGESTED": [
-                    # Example code changes are provided in the main analysis output, not here.
-                    # This section would typically be populated by a more detailed analysis.
-                ]
-            })
-        
+            suggestions.append(
+                {
+                    "AREA": "Efficiency",
+                    "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
+                    "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
+                    "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        # Example code changes are provided in the main analysis output, not here.
+                        # This section would typically be populated by a more detailed analysis.
+                    ],
+                }
+            )
+
         # Reasoning Quality (Content Misalignment)
-        content_misalignment_warnings = self.metrics.get('reasoning_quality', {}).get('content_misalignment_warnings', 0)
-        if content_misalignment_warnings > 3: # Threshold for multiple warnings
-            suggestions.append({
-                "AREA": "Reasoning Quality",
-                "PROBLEM": f"Content misalignment warnings ({content_misalignment_warnings}) indicate potential issues in persona reasoning or prompt engineering.",
-                "PROPOSED_SOLUTION": "Refine prompts for clarity and specificity. Review persona logic for consistency and accuracy. Ensure personas stay focused on the core task and domain.",
-                "EXPECTED_IMPACT": "Enhances the quality and relevance of persona outputs, leading to more coherent and accurate final answers.",
-                "CODE_CHANGES_SUGGESTED": [] # This is a prompt engineering suggestion
-            })
-        
+        content_misalignment_warnings = self.metrics.get("reasoning_quality", {}).get(
+            "content_misalignment_warnings", 0
+        )
+        if content_misalignment_warnings > 3:  # Threshold for multiple warnings
+            suggestions.append(
+                {
+                    "AREA": "Reasoning Quality",
+                    "PROBLEM": f"Content misalignment warnings ({content_misalignment_warnings}) indicate potential issues in persona reasoning or prompt engineering.",
+                    "PROPOSED_SOLUTION": "Refine prompts for clarity and specificity. Review persona logic for consistency and accuracy. Ensure personas stay focused on the core task and domain.",
+                    "EXPECTED_IMPACT": "Enhances the quality and relevance of persona outputs, leading to more coherent and accurate final answers.",
+                    "CODE_CHANGES_SUGGESTED": [],  # This is a prompt engineering suggestion
+                }
+            )
+
         # Apply Pareto Principle: Limit to top 3 suggestions
-        final_suggestions = suggestions[:3] 
-        
-        logger.info(f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}.")
-        
+        final_suggestions = suggestions[:3]
+
+        logger.info(
+            f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
+        )
+
         return final_suggestions
 
     # --- Placeholder methods for other potential analyses ---

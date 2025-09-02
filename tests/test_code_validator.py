@@ -1,8 +1,14 @@
 # tests/test_code_validator.py
 
 import pytest
+
 # Assuming src/utils/code_validator.py contains functions like validate_code_output
-from src.utils.code_validator import validate_code_output, _run_ruff, _run_bandit, _run_ast_security_checks
+from src.utils.code_validator import (
+    validate_code_output,
+    _run_ruff,
+    _run_bandit,
+    _run_ast_security_checks,
+)
 
 
 def test_validate_code_output_add_action():
@@ -14,14 +20,22 @@ def test_validate_code_output_add_action():
     }
     result = validate_code_output(change)
     assert not any(issue["type"] == "Ruff Linting Issue" for issue in result["issues"])
-    assert not any(issue["type"] == "Bandit Security Issue" for issue in result["issues"])
-    assert not any(issue["type"] == "Security Vulnerability (AST)" for issue in result["issues"])
+    assert not any(
+        issue["type"] == "Bandit Security Issue" for issue in result["issues"]
+    )
+    assert not any(
+        issue["type"] == "Security Vulnerability (AST)" for issue in result["issues"]
+    )
 
 
 def test_validate_code_output_modify_action_no_change():
     """Test MODIFY action where content is identical."""
     original_content = "def func(): pass"
-    change = {"FILE_PATH": "existing_file.py", "ACTION": "MODIFY", "FULL_CONTENT": "def func(): pass"}
+    change = {
+        "FILE_PATH": "existing_file.py",
+        "ACTION": "MODIFY",
+        "FULL_CONTENT": "def func(): pass",
+    }
     result = validate_code_output(change, original_content)
     assert any(issue["type"] == "No Change Detected" for issue in result["issues"])
 
@@ -31,7 +45,9 @@ def test_validate_code_output_remove_action_line_not_found():
     original_content = "line1\nline2\nline3"
     change = {"FILE_PATH": "existing_file.py", "ACTION": "REMOVE", "LINES": ["line4"]}
     result = validate_code_output(change, original_content)
-    assert any(issue["type"] == "Potential Removal Mismatch" for issue in result["issues"])
+    assert any(
+        issue["type"] == "Potential Removal Mismatch" for issue in result["issues"]
+    )
 
 
 def test_run_ruff_detects_linting_issue():
@@ -47,7 +63,9 @@ def test_run_bandit_detects_security_issue():
     content = "password = 'hardcoded_secret'\n"
     filename = "test_bandit.py"
     issues = _run_bandit(content, filename)
-    assert any(issue["code"] == "B105" for issue in issues)  # B105: hardcoded_password_string
+    assert any(
+        issue["code"] == "B105" for issue in issues
+    )  # B105: hardcoded_password_string
 
 
 def test_run_ast_security_checks_detects_eval():

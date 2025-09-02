@@ -1,5 +1,5 @@
 # src/utils/prompt_engineering.py
-import streamlit as st # Assuming this is used in the app context, but not strictly needed for the function itself
+import streamlit as st  # Assuming this is used in the app context, but not strictly needed for the function itself
 import json
 import os
 import io
@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 import yaml
 import logging
 from rich.console import Console
-from core import SocraticDebate # Assuming SocraticDebate is available for context
+from core import SocraticDebate  # Assuming SocraticDebate is available for context
 
 # --- MODIFIED IMPORTS ---
 # Import necessary classes for historical analysis
@@ -27,10 +27,13 @@ from src.self_improvement.metrics_collector import ImprovementMetricsCollector
 
 # Setup logging if this module is run standalone or needs its own logger
 logger = logging.getLogger(__name__)
-if not logger.handlers: # Basic setup if not already configured
+if not logger.handlers:  # Basic setup if not already configured
     logging.basicConfig(level=logging.INFO)
 
-def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: Optional[List[Dict]] = None) -> str:
+
+def create_self_improvement_prompt(
+    metrics: Dict[str, Any], previous_analyses: Optional[List[Dict]] = None
+) -> str:
     """
     Enhanced prompt that guides more targeted, actionable self-analysis with historical context.
     """
@@ -40,30 +43,39 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
     # In a real application, this would likely be passed down from a higher-level orchestrator
     # that has access to the necessary components (like LLMProvider, Tokenizer, etc.).
     # For this function's purpose, we'll assume a minimal instantiation is possible or mock it.
-    
+
     # Placeholder/Mock objects for instantiation if not available in this scope
-    mock_tokenizer = None # Replace with actual tokenizer if available
-    mock_llm_provider = None # Replace with actual LLM provider if available
-    mock_persona_manager = None # Replace with actual PersonaManager if available
-    mock_content_validator = None # Replace with actual ContentValidator if available
-    
+    mock_tokenizer = None  # Replace with actual tokenizer if available
+    mock_llm_provider = None  # Replace with actual LLM provider if available
+    mock_persona_manager = None  # Replace with actual PersonaManager if available
+    mock_content_validator = None  # Replace with actual ContentValidator if available
+
     try:
         # Assuming ImprovementMetricsCollector can load data from disk without full context
         metrics_collector_instance = ImprovementMetricsCollector(
-            initial_prompt="Historical effectiveness analysis", # Dummy prompt
-            debate_history=[], # Dummy data
-            intermediate_steps={}, # Dummy data
-            codebase_context={}, # Dummy data
+            initial_prompt="Historical effectiveness analysis",  # Dummy prompt
+            debate_history=[],  # Dummy data
+            intermediate_steps={},  # Dummy data
+            codebase_context={},  # Dummy data
             tokenizer=mock_tokenizer,
             llm_provider=mock_llm_provider,
             persona_manager=mock_persona_manager,
-            content_validator=mock_content_validator
+            content_validator=mock_content_validator,
         )
-        historical_analysis = metrics_collector_instance.analyze_historical_effectiveness()
-        
+        historical_analysis = (
+            metrics_collector_instance.analyze_historical_effectiveness()
+        )
+
     except Exception as e:
-        logger.error(f"Could not perform historical analysis for prompt generation: {e}")
-        historical_analysis = {"success_rate": 0, "total_attempts": 0, "top_performing_areas": [], "common_failure_modes": []}
+        logger.error(
+            f"Could not perform historical analysis for prompt generation: {e}"
+        )
+        historical_analysis = {
+            "success_rate": 0,
+            "total_attempts": 0,
+            "top_performing_areas": [],
+            "common_failure_modes": [],
+        }
 
     # Format historical data for the prompt
     historical_effectiveness = ""
@@ -74,24 +86,28 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
             f"- Total improvement attempts: {historical_analysis['total_attempts']}\n"
             f"- Success rate: {success_rate:.1f}%\n"
         )
-        
+
         top_areas = historical_analysis.get("top_performing_areas", [])
         if top_areas:
             top_areas_formatted = [
-                f"{area['area']} ({area['success_rate']*100:.1f}% success)"
+                f"{area['area']} ({area['success_rate'] * 100:.1f}% success)"
                 for area in top_areas
             ]
-            historical_effectiveness += f"- Most successful areas: {', '.join(top_areas_formatted)}\n"
-        
+            historical_effectiveness += (
+                f"- Most successful areas: {', '.join(top_areas_formatted)}\n"
+            )
+
         failure_modes = historical_analysis.get("common_failure_modes", [])
         if failure_modes:
             failure_modes_formatted = [
                 f"{mode['metric']} (failed {mode['occurrences']} times)"
                 for mode in failure_modes
             ]
-            historical_effectiveness += f"- Common failure patterns: {', '.join(failure_modes_formatted)}\n"
+            historical_effectiveness += (
+                f"- Common failure patterns: {', '.join(failure_modes_formatted)}\n"
+            )
         historical_effectiveness += "-------------------------------------------\n"
-    
+
     # REVISED GUIDANCE SECTIONS
     security_guidance = (
         "SECURITY ANALYSIS:\n"
@@ -101,7 +117,7 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         "- Analyze for common Python security pitfalls like insecure deserialization (pickle, yaml.load without safe_loader), insecure subprocess usage (shell=True), and XML External Entity (XXE) vulnerabilities.\n"
         "- Evaluate the security of the CI/CD pipeline and dependency management (e.g., unpinned prod dependencies)."
     )
-    
+
     token_optimization_guidance = (
         "TOKEN USAGE & EFFICIENCY:\n"
         "- Analyze which personas or debate turns consume disproportionate tokens.\n"
@@ -109,7 +125,7 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         "- Suggest specific prompt truncation strategies or persona adjustments for high-token personas.\n"
         "- Evaluate the effectiveness of the current token budget allocation ratios."
     )
-    
+
     maintainability_and_testing_guidance = (
         "MAINTAINABILITY & TEST COVERAGE:\n"
         "- **Prioritize testing core logic** (SocraticDebate, LLM interaction, metrics collection) before UI components.\n"
@@ -118,7 +134,7 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         "- Evaluate the adherence to **PEP8 standards** and identify areas with significant linting violations.\n"
         "- Assess the overall **maintainability** of the codebase, including documentation and code structure."
     )
-    
+
     self_reflection_guidance = (
         "CRITICAL SELF-REFLECTION ON THE IMPROVEMENT PROCESS:\n"
         "1.  **Effectiveness of Past Analyses**: What aspects of previous self-improvement analyses were most/least effective? How can we learn from both successful AND failed improvement attempts?\n"
@@ -126,7 +142,7 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         "3.  **Metric Selection**: What metrics would best measure the effectiveness of self-improvement changes? Are the current metrics sufficient?\n"
         "4.  **80/20 Principle**: Ensure recommendations clearly follow the 80/20 principle, focusing on changes with the highest impact for the effort."
     )
-    
+
     # Combine all sections
     prompt_sections = [
         "You are Project Chimera's Self-Improvement Analyst.",
@@ -136,20 +152,24 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         security_guidance,
         token_optimization_guidance,
         maintainability_and_testing_guidance,
-        self_reflection_guidance
+        self_reflection_guidance,
     ]
-    
+
     # Add historical context if available
     if historical_effectiveness:
         prompt_sections.append(historical_effectiveness)
-    
+
     # Add current metrics
-    prompt_sections.append(f"\n\n--- CURRENT METRICS ---\n{json.dumps(metrics, indent=2)}\n-----------------------\n")
-    
+    prompt_sections.append(
+        f"\n\n--- CURRENT METRICS ---\n{json.dumps(metrics, indent=2)}\n-----------------------\n"
+    )
+
     # Add previous analyses if provided (though historical_analysis is more direct)
     if previous_analyses:
-        prompt_sections.append(f"\nPrevious analyses provided for context:\n{json.dumps(previous_analyses, indent=2)}\n")
-    
+        prompt_sections.append(
+            f"\nPrevious analyses provided for context:\n{json.dumps(previous_analyses, indent=2)}\n"
+        )
+
     # Final instructions for output format
     output_instructions = (
         "\n\nProvide your analysis with:\n"
@@ -160,10 +180,11 @@ def create_self_improvement_prompt(metrics: Dict[str, Any], previous_analyses: O
         "5.  **Adherence to JSON Schema**: Ensure your output strictly follows the `SelfImprovementAnalysisOutputV1` schema, including `malformed_blocks`."
     )
     prompt_sections.append(output_instructions)
-    
+
     final_prompt = "\n".join(prompt_sections)
-    
+
     return final_prompt
+
 
 # --- Placeholder for other functions if they exist in the original file ---
 # def generate_socratic_question(topic): ...

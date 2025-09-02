@@ -1,9 +1,9 @@
 # tests/test_app_logic.py
 import unittest
-from app import sanitize_user_input # Import the function from app.py
+from app import sanitize_user_input  # Import the function from app.py
+
 
 class TestAppLogic(unittest.TestCase):
-
     def test_sanitize_user_input_basic(self):
         """Test basic sanitization of a clean prompt."""
         prompt = "This is a normal prompt."
@@ -38,14 +38,13 @@ class TestAppLogic(unittest.TestCase):
 
     def test_sanitize_user_input_long_prompt_truncation(self):
         """Test truncation of overly long prompts."""
-        long_prompt = "A" * 2500 # Max length is 2000 in app.py
+        long_prompt = "A" * 2500  # Max length is 2000 in app.py
         sanitized = sanitize_user_input(long_prompt)
         # The prompt itself will contain the warning message, so check for its presence
         self.assertIn("Prompt length exceeded", sanitized)
         # The actual length will be 2000 (MAX_PROMPT_LENGTH) + length of the warning message
         # Let's just check for the warning and that it's not the original length
         self.assertLess(len(sanitized), len(long_prompt))
-
 
     def test_sanitize_user_input_unbalanced_quotes(self):
         """Test balancing of quotes."""
@@ -55,7 +54,7 @@ class TestAppLogic(unittest.TestCase):
 
         prompt_single = "'unbalanced"
         sanitized_single = sanitize_user_input(prompt_single)
-        self.assertEqual(sanitized_single, "''unbalanced") # Should add a leading quote
+        self.assertEqual(sanitized_single, "''unbalanced")  # Should add a leading quote
 
     def test_sanitize_user_input_special_token_manipulation(self):
         """Test detection of special token manipulation."""
@@ -69,5 +68,6 @@ class TestAppLogic(unittest.TestCase):
         sanitized = sanitize_user_input(prompt)
         self.assertIn("[SENSITIVE_DATA_PROBE]", sanitized)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,11 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+
 # ADDED 'check' parameter to the function signature
-def execute_command_safely(command: list[str], timeout: int = 60, check: bool = False) -> tuple[int, str, str]:
+def execute_command_safely(
+    command: list[str], timeout: int = 60, check: bool = False
+) -> tuple[int, str, str]:
     """Executes a shell command safely, capturing output and errors.
 
     Args:
@@ -29,7 +32,7 @@ def execute_command_safely(command: list[str], timeout: int = 60, check: bool = 
             capture_output=True,
             text=True,
             check=check,  # Pass the 'check' argument to subprocess.run
-            timeout=timeout
+            timeout=timeout,
         )
 
         if process.returncode != 0:
@@ -37,17 +40,17 @@ def execute_command_safely(command: list[str], timeout: int = 60, check: bool = 
                 f"Command failed with exit code {process.returncode}:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
             )
         else:
-            logger.info(
-                f"Command executed successfully. STDOUT:\n{process.stdout}"
-            )
+            logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
 
         return process.returncode, process.stdout, process.stderr
 
     except subprocess.TimeoutExpired:
         logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")
         raise
-    except subprocess.CalledProcessError: # Added this specific exception handler
-        logger.error(f"Command failed with non-zero exit code (check=True): {' '.join(command)}")
+    except subprocess.CalledProcessError:  # Added this specific exception handler
+        logger.error(
+            f"Command failed with non-zero exit code (check=True): {' '.join(command)}"
+        )
         raise
     except Exception as e:
         logger.error(f"An error occurred while executing command: {e}")

@@ -9,8 +9,8 @@ import time
 # or by ensuring the Streamlit app is running and its internal FastAPI is active.
 # For a dedicated integration test, it's best to run the FastAPI component directly.
 
-class TestAPIIntegration(unittest.TestCase):
 
+class TestAPIIntegration(unittest.TestCase):
     # Use an environment variable for the base URL for flexibility
     BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8080/api/v1")
 
@@ -29,12 +29,17 @@ class TestAPIIntegration(unittest.TestCase):
             if response.status_code == 200:
                 print("API server is reachable.")
             else:
-                print(f"API server returned status {response.status_code} on /status endpoint.")
+                print(
+                    f"API server returned status {response.status_code} on /status endpoint."
+                )
         except requests.exceptions.ConnectionError:
-            print(f"WARNING: API server not reachable at {cls.BASE_URL}. Integration tests may fail.")
+            print(
+                f"WARNING: API server not reachable at {cls.BASE_URL}. Integration tests may fail."
+            )
         except Exception as e:
-            print(f"WARNING: An unexpected error occurred during API reachability check: {e}")
-
+            print(
+                f"WARNING: An unexpected error occurred during API reachability check: {e}"
+            )
 
     def test_status_endpoint(self):
         """Test the /api/v1/status endpoint."""
@@ -43,9 +48,13 @@ class TestAPIIntegration(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {"status": "operational"})
         except requests.exceptions.ConnectionError as e:
-            self.fail(f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}")
+            self.fail(
+                f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}"
+            )
         except Exception as e:
-            self.fail(f"An unexpected error occurred while testing /status endpoint: {e}")
+            self.fail(
+                f"An unexpected error occurred while testing /status endpoint: {e}"
+            )
 
     def test_analyze_code_endpoint_success(self):
         """Test the /api/v1/analyze_code endpoint with valid input."""
@@ -55,26 +64,38 @@ class TestAPIIntegration(unittest.TestCase):
         # A successful 200 would require a full LLM call.
         payload = {
             "prompt": "Analyze the following Python code for potential improvements: def func(): pass",
-            "api_key": os.environ.get("TEST_LLM_API_KEY", "sk-test-api-key-placeholder"),
+            "api_key": os.environ.get(
+                "TEST_LLM_API_KEY", "sk-test-api-key-placeholder"
+            ),
             "model_name": "gemini-2.5-flash-lite",
             "domain": "Software Engineering",
             "codebase_context": {"test_file.py": "def example_func():\n    pass"},
-            "max_tokens_budget": 10000
+            "max_tokens_budget": 10000,
         }
         try:
             response = requests.post(f"{self.BASE_URL}/analyze_code", json=payload)
             # Expect 200 for success, or 400/401/429 if API key is missing/invalid or rate limited
-            self.assertIn(response.status_code, [200, 400, 401, 429], f"Unexpected status code: {response.status_code}, Response: {response.text}")
+            self.assertIn(
+                response.status_code,
+                [200, 400, 401, 429],
+                f"Unexpected status code: {response.status_code}, Response: {response.text}",
+            )
             if response.status_code == 200:
                 data = response.json()
                 self.assertIn("message", data)
                 self.assertEqual(data["message"], "Analysis complete")
             else:
-                print(f"Skipping full analysis check due to API error: {response.status_code} - {response.text}")
+                print(
+                    f"Skipping full analysis check due to API error: {response.status_code} - {response.text}"
+                )
         except requests.exceptions.ConnectionError as e:
-            self.fail(f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}")
+            self.fail(
+                f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}"
+            )
         except Exception as e:
-            self.fail(f"An unexpected error occurred while testing /analyze_code endpoint: {e}")
+            self.fail(
+                f"An unexpected error occurred while testing /analyze_code endpoint: {e}"
+            )
 
     def test_analyze_code_endpoint_invalid_input(self):
         """Test the /api/v1/analyze_code endpoint with invalid input (missing prompt)."""
@@ -83,18 +104,23 @@ class TestAPIIntegration(unittest.TestCase):
             "model_name": "gemini-2.5-flash-lite",
             "domain": "Software Engineering",
             "codebase_context": {},
-            "max_tokens_budget": 10000
+            "max_tokens_budget": 10000,
         }
         try:
             response = requests.post(f"{self.BASE_URL}/analyze_code", json=payload)
-            self.assertEqual(response.status_code, 422) # FastAPI validation error
+            self.assertEqual(response.status_code, 422)  # FastAPI validation error
             data = response.json()
             self.assertIn("detail", data)
             self.assertIn("field required", str(data["detail"]))
         except requests.exceptions.ConnectionError as e:
-            self.fail(f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}")
+            self.fail(
+                f"Could not connect to API server at {self.BASE_URL}. Is it running? Error: {e}"
+            )
         except Exception as e:
-            self.fail(f"An unexpected error occurred while testing /analyze_code endpoint: {e}")
+            self.fail(
+                f"An unexpected error occurred while testing /analyze_code endpoint: {e}"
+            )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

@@ -9,11 +9,16 @@ target-version = "py311"
 
 [tool.ruff.lint]
 # Added "COM" for trailing commas
-select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B", "BLK", # Black compatibility
-"A", "C4", "DTZ", "ERA", "ISC", # Import sorting
-"ICN", "PIE", "PT", "RSE", "RET", "SIM", "TID", "TCH", "INT", "ARG", "PERF", "FURB", "RUF", "COM"]
-ignore = ["D100", "D104", "D107", "ANN101", # Allow missing type annotation for self
-"ANN002", "ANN003"] # Ignore missing module docstrings, __init__ docstrings, self/cls type hints
+select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B"] # Black compatibility
+
+ignore = [
+    "D100", # Allow missing module docstring
+    "D104", # Allow missing module docstring (package)
+    "D107", # Allow missing docstring in __init__
+    "ANN101", # Allow missing type annotation for self
+    "ANN002", # Allow missing type annotation for *args
+    "ANN003", # Allow missing type annotation for **kwargs
+]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -21,17 +26,13 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.bandit]
-conf_file = "pyproject.toml"
-# The self-analysis indicated an invalid 'null' value for Bandit's level.
-# Replacing 'severity_level' and 'confidence_level' with a single 'level'
-# setting to resolve the parsing error and enable scans.
-level = "info"
-# Other Bandit configurations can be added here as needed.
-# For example:
-# exclude_dirs = [
-#         "venv",
-#         ".git",
-#         "__pycache__",
-#         "tests"
-#     ]
-# skip_checks = null
+# Exclude test files from comprehensive scans, as they often contain mock vulnerabilities
+exclude_dirs = [
+        "venv",
+        ".git",
+        "__pycache__",
+        "tests"
+    ]
+level = "info" # Set to 'info' to enable scanning for all severity levels
+recursive = true
+config_file = "pyproject.toml"

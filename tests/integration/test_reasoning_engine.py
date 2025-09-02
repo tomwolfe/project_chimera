@@ -5,8 +5,12 @@ from unittest.mock import patch, MagicMock
 
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
-from core import SocraticDebate  # SocraticDebate is in the project root, so direct import
-from src.llm_provider import GeminiProvider  # Assuming GeminiProvider is in src/llm_provider.py
+from core import (
+    SocraticDebate,
+)  # SocraticDebate is in the project root, so direct import
+from src.llm_provider import (
+    GeminiProvider,
+)  # Assuming GeminiProvider is in src/llm_provider.py
 
 
 # Fixture to provide a real LLM client for integration tests.
@@ -15,7 +19,9 @@ from src.llm_provider import GeminiProvider  # Assuming GeminiProvider is in src
 def real_llm_client():
     api_key = os.environ.get("TEST_LLM_API_KEY")
     if not api_key:
-        pytest.skip("TEST_LLM_API_KEY environment variable not set. Skipping real LLM integration tests.")
+        pytest.skip(
+            "TEST_LLM_API_KEY environment variable not set. Skipping real LLM integration tests."
+        )
 
     # Replace with actual LLM client initialization pointing to a test endpoint
     # Ensure API keys and configurations are handled securely (e.g., env vars)
@@ -43,7 +49,9 @@ def test_reasoning_engine_integration(real_llm_client):
     # So, we need to pass the API key directly.
     api_key = os.environ.get("TEST_LLM_API_KEY")
     if not api_key:
-        pytest.skip("TEST_LLM_API_KEY environment variable not set for SocraticDebate init.")
+        pytest.skip(
+            "TEST_LLM_API_KEY environment variable not set for SocraticDebate init."
+        )
 
     user_input = "What is the capital of France?"
     context = {"country": "France"}
@@ -55,14 +63,19 @@ def test_reasoning_engine_integration(real_llm_client):
 
     # For simplicity, let's create a minimal PersonaManager for the test
     from src.persona_manager import PersonaManager
-    from app import DOMAIN_KEYWORDS  # Assuming DOMAIN_KEYWORDS is accessible or can be mocked
+    from app import (
+        DOMAIN_KEYWORDS,
+    )  # Assuming DOMAIN_KEYWORDS is accessible or can be mocked
 
     # Mock DOMAIN_KEYWORDS if app.py is not directly imported or if it's not a global constant
     # For now, let's assume it's accessible.
 
     # Minimal PersonaManager setup for testing
     # In a real test, you might mock this or load a specific test config
-    mock_domain_keywords = {"General": ["general", "question", "answer"], "Software Engineering": ["code", "python"]}
+    mock_domain_keywords = {
+        "General": ["general", "question", "answer"],
+        "Software Engineering": ["code", "python"],
+    }
     persona_manager_instance = PersonaManager(mock_domain_keywords)
 
     try:
@@ -77,13 +90,19 @@ def test_reasoning_engine_integration(real_llm_client):
         result, intermediate_steps = engine.run_debate()
 
         assert isinstance(result, dict)
-        assert "general_output" in result  # Adjust based on expected output structure for General domain
-        assert "Paris" in result["general_output"] or "paris" in result["general_output"]  # Basic check
+        assert (
+            "general_output" in result
+        )  # Adjust based on expected output structure for General domain
+        assert (
+            "Paris" in result["general_output"] or "paris" in result["general_output"]
+        )  # Basic check
 
         # Add checks for latency, error rates if possible (requires more advanced metrics collection)
         print(f"Integration test successful. Result: {result['general_output']}")
         print(f"Total tokens used: {intermediate_steps.get('Total_Tokens_Used', 0)}")
-        print(f"Estimated cost: ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.6f}")
+        print(
+            f"Estimated cost: ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.6f}"
+        )
 
     except Exception as e:
         pytest.fail(f"Integration test failed with exception: {e}")

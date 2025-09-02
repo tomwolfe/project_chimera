@@ -6,73 +6,196 @@ from typing import List, Tuple, Dict, Any, Union, Optional
 
 logger = logging.getLogger(__name__)
 
+
 class ContentAlignmentValidator:
     """
     Validates if a persona's output aligns with the original prompt's focus areas.
     Designed to prevent content drift during the debate process.
     """
-    def __init__(self, original_prompt: str, debate_domain: str, focus_areas: Optional[List[str]] = None):
+
+    def __init__(
+        self,
+        original_prompt: str,
+        debate_domain: str,
+        focus_areas: Optional[List[str]] = None,
+    ):
         self.original_prompt = original_prompt.lower()
         self.debate_domain = debate_domain.lower()
-        
+
         # Define default focus areas if not explicitly provided, based on self-improvement context
         if focus_areas is None:
             if self.debate_domain == "self-improvement":
-                self.base_focus_areas = [ # Renamed to base_focus_areas
-                    "reasoning quality", "robustness", "efficiency", "maintainability",
-                    "code changes", "process adjustments", "project chimera codebase",
-                    "pep8", "code smells", "security vulnerabilities", "token usage",
-                    "schema validation", "conflict resolution", "test coverage",
-                    "deployment", "dockerfile", "requirements-prod.txt", "ci/cd" # NEW: Added deployment keywords
+                self.base_focus_areas = [  # Renamed to base_focus_areas
+                    "reasoning quality",
+                    "robustness",
+                    "efficiency",
+                    "maintainability",
+                    "code changes",
+                    "process adjustments",
+                    "project chimera codebase",
+                    "pep8",
+                    "code smells",
+                    "security vulnerabilities",
+                    "token usage",
+                    "schema validation",
+                    "conflict resolution",
+                    "test coverage",
+                    "deployment",
+                    "dockerfile",
+                    "requirements-prod.txt",
+                    "ci/cd",  # NEW: Added deployment keywords
                 ]
             elif self.debate_domain == "software engineering":
-                self.base_focus_areas = [ # Renamed to base_focus_areas
-                    "code", "implement", "refactor", "bug fix", "architecture", "security", "testing", "devops",
-                    "api", "database", "function", "class", "module", "performance", "scalability"
+                self.base_focus_areas = [  # Renamed to base_focus_areas
+                    "code",
+                    "implement",
+                    "refactor",
+                    "bug fix",
+                    "architecture",
+                    "security",
+                    "testing",
+                    "devops",
+                    "api",
+                    "database",
+                    "function",
+                    "class",
+                    "module",
+                    "performance",
+                    "scalability",
                 ]
             else:
                 # For other domains, extract keywords from the original prompt itself
                 # This is a basic heuristic and can be refined.
-                self.base_focus_areas = self._extract_keywords_from_prompt(self.original_prompt)
+                self.base_focus_areas = self._extract_keywords_from_prompt(
+                    self.original_prompt
+                )
         else:
             self.base_focus_areas = [area.lower() for area in focus_areas]
-        
-        logger.info(f"ContentAlignmentValidator initialized for domain '{self.debate_domain}' with focus areas: {self.base_focus_areas}")
 
-    def _extract_keywords_from_prompt(self, prompt: str, num_keywords: int = 5) -> List[str]:
+        logger.info(
+            f"ContentAlignmentValidator initialized for domain '{self.debate_domain}' with focus areas: {self.base_focus_areas}"
+        )
+
+    def _extract_keywords_from_prompt(
+        self, prompt: str, num_keywords: int = 5
+    ) -> List[str]:
         """Extracts significant keywords from the prompt to form dynamic focus areas."""
-        words = re.findall(r'\b\w+\b', prompt.lower())
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'of', 'is', 'it', 'this', 'that', 'be', 'are', 'was', 'were', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'what', 'which', 'who', 'whom', 'whose', 'how', 'do', 'does', 'did', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must'} # Added more stop words
-        
+        words = re.findall(r"\b\w+\b", prompt.lower())
+        stop_words = {
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "with",
+            "by",
+            "of",
+            "is",
+            "it",
+            "this",
+            "that",
+            "be",
+            "are",
+            "was",
+            "were",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "me",
+            "him",
+            "her",
+            "us",
+            "them",
+            "my",
+            "your",
+            "his",
+            "her",
+            "its",
+            "our",
+            "their",
+            "what",
+            "which",
+            "who",
+            "whom",
+            "whose",
+            "how",
+            "do",
+            "does",
+            "did",
+            "am",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "can",
+            "could",
+            "will",
+            "would",
+            "shall",
+            "should",
+            "may",
+            "might",
+            "must",
+        }  # Added more stop words
+
         # Filter out stop words and short words, then count frequency
         word_counts = {}
         for word in words:
             if word not in stop_words and len(word) > 2:
                 word_counts[word] = word_counts.get(word, 0) + 1
-        
+
         # Get top N most frequent words as keywords
-        sorted_keywords = sorted(word_counts.items(), key=lambda item: item[1], reverse=True)
+        sorted_keywords = sorted(
+            word_counts.items(), key=lambda item: item[1], reverse=True
+        )
         return [kw[0] for kw in sorted_keywords[:num_keywords]]
 
-    def validate(self, persona_name: str, persona_output: Union[str, Dict[str, Any]]) -> Tuple[bool, str, Optional[Dict[str, Any]]]: # NEW: Return nuanced feedback
+    def validate(
+        self, persona_name: str, persona_output: Union[str, Dict[str, Any]]
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:  # NEW: Return nuanced feedback
         """
         Checks if the persona's output aligns with the defined focus areas.
-        
+
         Args:
             persona_name: The name of the persona generating the output.
             persona_output: The output from the persona (can be string or dict).
-            
+
         Returns:
             Tuple[bool, str, Optional[Dict[str, Any]]]: (is_aligned, validation_message, nuanced_feedback)
         """
         output_text = ""
         if isinstance(persona_output, dict):
             # Extract relevant text from structured output
-            if persona_name == "Constructive_Critic" and "CRITIQUE_SUMMARY" in persona_output:
+            if (
+                persona_name == "Constructive_Critic"
+                and "CRITIQUE_SUMMARY" in persona_output
+            ):
                 output_text = persona_output["CRITIQUE_SUMMARY"]
             elif persona_name == "Devils_Advocate" and "summary" in persona_output:
                 output_text = persona_output["summary"]
-            elif persona_name == "Self_Improvement_Analyst" and "ANALYSIS_SUMMARY" in persona_output:
+            elif (
+                persona_name == "Self_Improvement_Analyst"
+                and "ANALYSIS_SUMMARY" in persona_output
+            ):
                 output_text = persona_output["ANALYSIS_SUMMARY"]
             elif "general_output" in persona_output:
                 output_text = persona_output["general_output"]
@@ -81,39 +204,102 @@ class ContentAlignmentValidator:
                 output_text = json.dumps(persona_output)
         else:
             output_text = str(persona_output)
-        
+
         output_text_lower = output_text.lower()
 
         nuanced_feedback = {
             "alignment_score": 0.0,
             "matched_keywords": [],
             "drift_keywords": [],
-            "is_aligned": False
+            "is_aligned": False,
         }
 
         # Determine the effective focus areas for this persona
         effective_focus_areas = self.base_focus_areas
         # For non-synthesis personas in self-improvement, their focus is narrower.
         # We can dynamically adjust the focus areas for validation.
-        if self.debate_domain == "self-improvement" and persona_name != "Self_Improvement_Analyst":
-            if persona_name.startswith("Code_Architect"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["architecture", "modularity", "scalability", "maintainability", "technical debt", "design patterns"]
-            elif persona_name.startswith("Security_Auditor"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["security", "vulnerability", "threat model", "data privacy", "authentication", "authorization", "api key management"]
-            elif persona_name.startswith("DevOps_Engineer"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["ci/cd", "deployment", "monitoring", "logging", "reliability", "efficiency", "token usage"]
-            elif persona_name.startswith("Test_Engineer"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["test coverage", "unit tests", "integration tests", "robustness", "testability", "edge cases"]
-            elif persona_name.startswith("Constructive_Critic"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["logical gaps", "security vulnerabilities", "architectural weaknesses", "testability deficiencies", "operational concerns", "maintainability issues"]
-            elif persona_name.startswith("Devils_Advocate"): # Handle _TRUNCATED versions
-                effective_focus_areas = ["flaws", "unintended consequences", "overlooked risks", "complexity", "assumptions", "effectiveness", "edge cases", "conflict"]
+        if (
+            self.debate_domain == "self-improvement"
+            and persona_name != "Self_Improvement_Analyst"
+        ):
+            if persona_name.startswith("Code_Architect"):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "architecture",
+                    "modularity",
+                    "scalability",
+                    "maintainability",
+                    "technical debt",
+                    "design patterns",
+                ]
+            elif persona_name.startswith(
+                "Security_Auditor"
+            ):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "security",
+                    "vulnerability",
+                    "threat model",
+                    "data privacy",
+                    "authentication",
+                    "authorization",
+                    "api key management",
+                ]
+            elif persona_name.startswith(
+                "DevOps_Engineer"
+            ):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "ci/cd",
+                    "deployment",
+                    "monitoring",
+                    "logging",
+                    "reliability",
+                    "efficiency",
+                    "token usage",
+                ]
+            elif persona_name.startswith("Test_Engineer"):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "test coverage",
+                    "unit tests",
+                    "integration tests",
+                    "robustness",
+                    "testability",
+                    "edge cases",
+                ]
+            elif persona_name.startswith(
+                "Constructive_Critic"
+            ):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "logical gaps",
+                    "security vulnerabilities",
+                    "architectural weaknesses",
+                    "testability deficiencies",
+                    "operational concerns",
+                    "maintainability issues",
+                ]
+            elif persona_name.startswith(
+                "Devils_Advocate"
+            ):  # Handle _TRUNCATED versions
+                effective_focus_areas = [
+                    "flaws",
+                    "unintended consequences",
+                    "overlooked risks",
+                    "complexity",
+                    "assumptions",
+                    "effectiveness",
+                    "edge cases",
+                    "conflict",
+                ]
             # For other personas, use the base_focus_areas or a more general set.
-            
+
         if not effective_focus_areas:
-            logger.debug(f"No specific focus areas defined for domain '{self.debate_domain}'. Content validation skipped for {persona_name}.")
+            logger.debug(
+                f"No specific focus areas defined for domain '{self.debate_domain}'. Content validation skipped for {persona_name}."
+            )
             nuanced_feedback["is_aligned"] = True
-            return True, "No effective focus areas defined for this persona/domain.", nuanced_feedback
+            return (
+                True,
+                "No effective focus areas defined for this persona/domain.",
+                nuanced_feedback,
+            )
 
         # Count how many focus areas are present
         matched_count = 0
@@ -121,26 +307,46 @@ class ContentAlignmentValidator:
             if area in output_text_lower:
                 matched_count += 1
                 nuanced_feedback["matched_keywords"].append(area)
-        
+
         if effective_focus_areas:
-            nuanced_feedback["alignment_score"] = matched_count / len(effective_focus_areas)
-        
+            nuanced_feedback["alignment_score"] = matched_count / len(
+                effective_focus_areas
+            )
+
         # Threshold for alignment
         # Adjusted threshold for individual personas, as they have a narrower focus
-        alignment_threshold = 0.2 if persona_name != "Self_Improvement_Analyst" else 0.3 # Lower threshold for individual critics
+        alignment_threshold = (
+            0.2 if persona_name != "Self_Improvement_Analyst" else 0.3
+        )  # Lower threshold for individual critics
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False
-            return False, f"Output from {persona_name} does not sufficiently address the core focus areas (score: {nuanced_feedback['alignment_score']:.2f}).", nuanced_feedback
+            return (
+                False,
+                f"Output from {persona_name} does not sufficiently address the core focus areas (score: {nuanced_feedback['alignment_score']:.2f}).",
+                nuanced_feedback,
+            )
 
         # Additionally, check for strong negative indicators (e.g., discussing unrelated topics too much)
         # These are examples of topics from other example prompts.
-        negative_keywords = ["mars city", "ethical ai framework", "climate change solution", "fastapi endpoint"] 
+        negative_keywords = [
+            "mars city",
+            "ethical ai framework",
+            "climate change solution",
+            "fastapi endpoint",
+        ]
         for neg_kw in negative_keywords:
-            if neg_kw in output_text_lower and "project chimera" not in output_text_lower:
+            if (
+                neg_kw in output_text_lower
+                and "project chimera" not in output_text_lower
+            ):
                 nuanced_feedback["drift_keywords"].append(neg_kw)
                 nuanced_feedback["is_aligned"] = False
-                return False, f"Output from {persona_name} appears to be discussing an unrelated topic: '{neg_kw}'.", nuanced_feedback
+                return (
+                    False,
+                    f"Output from {persona_name} appears to be discussing an unrelated topic: '{neg_kw}'.",
+                    nuanced_feedback,
+                )
 
         nuanced_feedback["is_aligned"] = True
         return True, "Content aligned with focus areas.", nuanced_feedback

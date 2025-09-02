@@ -30,8 +30,11 @@ def assert_malformed_block_present(result, block_type_substring):
     """Asserts that a malformed_block of a specific type is present in the result."""
     assert "malformed_blocks" in result
     assert any(
-        block_type_substring in block.get("type", "") for block in result["malformed_blocks"]
-    ), f"Expected malformed block type '{block_type_substring}' not found in {result['malformed_blocks']}"
+        block_type_substring in block.get("type", "")
+        for block in result["malformed_blocks"]
+    ), (
+        f"Expected malformed block type '{block_type_substring}' not found in {result['malformed_blocks']}"
+    )
 
 
 # --- Test Cases for LLMOutput ---
@@ -55,7 +58,9 @@ def test_llm_output_valid_json(parser):
     result = parser.parse_and_validate(raw_output, LLMOutput)
     assert result["COMMIT_MESSAGE"] == "Feat: Add new user authentication module"
     assert len(result["CODE_CHANGES"]) == 1
-    assert result["CODE_CHANGES"][0]["FILE_PATH"] == "src/auth/auth_service.py"  # Assert relative path
+    assert (
+        result["CODE_CHANGES"][0]["FILE_PATH"] == "src/auth/auth_service.py"
+    )  # Assert relative path
     assert not result["malformed_blocks"]
 
 
@@ -112,9 +117,13 @@ def test_llm_output_malformed_json_repair(parser):
     result = parser.parse_and_validate(raw_output, LLMOutput)
     assert result["COMMIT_MESSAGE"] == "Feat: Add feature"
     assert len(result["CODE_CHANGES"]) == 1
-    assert result["CODE_CHANGES"][0]["FILE_PATH"] == "src/new_feature.py"  # Assert relative path
+    assert (
+        result["CODE_CHANGES"][0]["FILE_PATH"] == "src/new_feature.py"
+    )  # Assert relative path
     assert_malformed_block_present(result, "JSON_REPAIR_ATTEMPTED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to repairs
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to repairs
 
 
 def test_llm_output_handles_list_of_code_changes(parser):
@@ -136,8 +145,12 @@ def test_llm_output_handles_list_of_code_changes(parser):
     assert "COMMIT_MESSAGE" in result
     assert "LLM returned multiple code changes directly" in result["RATIONALE"]
     assert len(result["CODE_CHANGES"]) == 2
-    assert result["CODE_CHANGES"][0]["FILE_PATH"] == "src/app.py"  # Assert relative path
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert (
+        result["CODE_CHANGES"][0]["FILE_PATH"] == "src/app.py"
+    )  # Assert relative path
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -153,8 +166,12 @@ def test_llm_output_handles_raw_code_change_dict(parser):
     assert "COMMIT_MESSAGE" in result
     assert "LLM generated a direct code change" in result["RATIONALE"]
     assert len(result["CODE_CHANGES"]) == 1
-    assert result["CODE_CHANGES"][0]["FILE_PATH"] == "src/config.py"  # Assert relative path
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to wrapping
+    assert (
+        result["CODE_CHANGES"][0]["FILE_PATH"] == "src/config.py"
+    )  # Assert relative path
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to wrapping
 
 
 def test_llm_output_empty_string_fallback(parser):
@@ -164,7 +181,9 @@ def test_llm_output_empty_string_fallback(parser):
     assert "No valid JSON data could be extracted or parsed" in result["RATIONALE"]
     assert not result["CODE_CHANGES"]
     assert_malformed_block_present(result, "JSON_EXTRACTION_FAILED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to fallback
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to fallback
 
 
 def test_llm_output_non_json_string_fallback(parser):
@@ -174,7 +193,9 @@ def test_llm_output_non_json_string_fallback(parser):
     assert "No valid JSON data could be extracted or parsed" in result["RATIONALE"]
     assert not result["CODE_CHANGES"]
     assert_malformed_block_present(result, "JSON_EXTRACTION_FAILED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to fallback
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to fallback
 
 
 # --- Test Cases for CritiqueOutput ---
@@ -210,7 +231,9 @@ def test_critique_output_handles_list_of_strings_as_suggestions(parser):
     assert "LLM returned a list of strings as suggestions" in result["CRITIQUE_SUMMARY"]
     assert len(result["SUGGESTIONS"]) == 2
     assert result["SUGGESTIONS"][0] == "Suggestion 1: Improve error handling."
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -223,10 +246,14 @@ def test_critique_output_handles_list_of_critique_points(parser):
     """
     result = parser.parse_and_validate(raw_output, CritiqueOutput)
     assert "CRITIQUE_SUMMARY" in result
-    assert "LLM returned a list of dicts as critique points" in result["CRITIQUE_SUMMARY"]
+    assert (
+        "LLM returned a list of dicts as critique points" in result["CRITIQUE_SUMMARY"]
+    )
     assert len(result["CRITIQUE_POINTS"]) == 2
     assert result["CRITIQUE_POINTS"][0]["point_summary"] == "Missing validation"
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -243,7 +270,9 @@ def test_critique_output_handles_mixed_list_fallback(parser):
     assert "LLM returned a mixed/unexpected list" in result["CRITIQUE_SUMMARY"]
     assert not result["CRITIQUE_POINTS"]
     assert not result["SUGGESTIONS"]
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -337,9 +366,15 @@ def test_conflict_report_handles_list_of_dicts(parser):
     ]
     """
     result = parser.parse_and_validate(raw_output, ConflictReport)
-    assert result["conflict_type"] == "METHODOLOGY_DISAGREEMENT"  # Should pick the first valid dict's type
-    assert "First conflict" in result["summary"]  # Should contain the summary from the first dict
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert (
+        result["conflict_type"] == "METHODOLOGY_DISAGREEMENT"
+    )  # Should pick the first valid dict's type
+    assert (
+        "First conflict" in result["summary"]
+    )  # Should contain the summary from the first dict
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -352,9 +387,14 @@ def test_conflict_report_handles_list_of_non_dicts_fallback(parser):
     """
     result = parser.parse_and_validate(raw_output, ConflictReport)
     assert result["conflict_type"] == "METHODOLOGY_DISAGREEMENT"
-    assert "LLM returned a list instead of a single ConflictReport object" in result["summary"]
+    assert (
+        "LLM returned a list instead of a single ConflictReport object"
+        in result["summary"]
+    )
     assert result["conflict_found"] is True
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -382,7 +422,10 @@ def test_general_output_handles_list_of_strings(parser):
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert "general_output" in result
-    assert "First point of general output.\nSecond point of general output." in result["general_output"]
+    assert (
+        "First point of general output.\nSecond point of general output."
+        in result["general_output"]
+    )
     # GeneralOutput can handle lists directly, so no LLM_OUTPUT_MALFORMED or TOP_LEVEL_LIST_WRAPPING
     assert not result["malformed_blocks"]
 
@@ -396,7 +439,10 @@ def test_general_output_handles_list_of_dicts(parser):
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert "general_output" in result
-    assert "LLM returned a list of objects. Summarized content:" in result["general_output"]
+    assert (
+        "LLM returned a list of objects. Summarized content:"
+        in result["general_output"]
+    )
     # GeneralOutput can handle lists directly, so no LLM_OUTPUT_MALFORMED or TOP_LEVEL_LIST_WRAPPING
     assert not result["malformed_blocks"]
 
@@ -472,7 +518,9 @@ def test_self_improvement_parser_handles_list_of_suggestions(parser):
     assert "LLM returned an array of suggestions" in result["data"]["ANALYSIS_SUMMARY"]
     assert len(result["data"]["IMPACTFUL_SUGGESTIONS"]) == 2
     assert result["data"]["IMPACTFUL_SUGGESTIONS"][0]["AREA"] == "Robustness"
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -492,7 +540,9 @@ def test_self_improvement_parser_handles_single_suggestion_dict(parser):
     assert "LLM returned a single suggestion item" in result["data"]["ANALYSIS_SUMMARY"]
     assert len(result["data"]["IMPACTFUL_SUGGESTIONS"]) == 1
     assert result["data"]["IMPACTFUL_SUGGESTIONS"][0]["AREA"] == "Efficiency"
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to wrapping
 
 
 def test_self_improvement_parser_handles_malformed_suggestion_in_list(parser):
@@ -516,8 +566,12 @@ def test_self_improvement_parser_handles_malformed_suggestion_in_list(parser):
     assert len(result["data"]["IMPACTFUL_SUGGESTIONS"]) == 1
     # The invalid CodeChange should be filtered out or marked as malformed by the model_validator
     assert not result["data"]["IMPACTFUL_SUGGESTIONS"][0]["CODE_CHANGES_SUGGESTED"]
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Due to overall transformation/repair
-    assert_malformed_block_present(result, "CODE_CHANGE_SCHEMA_VALIDATION_ERROR")  # Due to inner validation error
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Due to overall transformation/repair
+    assert_malformed_block_present(
+        result, "CODE_CHANGE_SCHEMA_VALIDATION_ERROR"
+    )  # Due to inner validation error
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
@@ -548,7 +602,9 @@ def test_parser_handles_json_with_start_marker_only(parser):
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "This is valid JSON after the start marker."
     assert_malformed_block_present(result, "MISSING_END_MARKER")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to missing end marker
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to missing end marker
 
 
 def test_parser_handles_json_with_unquoted_keys(parser):
@@ -559,9 +615,13 @@ def test_parser_handles_json_with_unquoted_keys(parser):
     }
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == '{"key": "value", "another_key": "another_value"}'
+    assert (
+        result["general_output"] == '{"key": "value", "another_key": "another_value"}'
+    )
     assert_malformed_block_present(result, "JSON_REPAIR_ATTEMPTED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to repairs
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to repairs
     assert any(
         "Added quotes to unquoted keys" in d.get("details", "")
         for block in result["malformed_blocks"]
@@ -577,9 +637,13 @@ def test_parser_handles_json_with_trailing_commas(parser):
     }
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == '{"key": "value", "another_key": "another_value"}'
+    assert (
+        result["general_output"] == '{"key": "value", "another_key": "another_value"}'
+    )
     assert_malformed_block_present(result, "JSON_REPAIR_ATTEMPTED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to repairs
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to repairs
     assert any(
         "Removed trailing commas" in d.get("details", "")
         for block in result["malformed_blocks"]
@@ -597,9 +661,14 @@ def test_parser_handles_json_with_numbered_array_elements(parser):
     }
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == '{"items": [{"id": 1, "name": "Item 1"}, {"id": 2, "name": "Item 2"}]}'
+    assert (
+        result["general_output"]
+        == '{"items": [{"id": 1, "name": "Item 1"}, {"id": 2, "name": "Item 2"}]}'
+    )
     assert_malformed_block_present(result, "JSON_REPAIR_ATTEMPTED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to repairs
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to repairs
     assert any(
         "Fixed numbered array elements" in d.get("details", "")
         for block in result["malformed_blocks"]
@@ -616,7 +685,9 @@ def test_parser_handles_json_with_incorrectly_wrapped_array(parser):
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == '{"data": [{"key": "value"}]}'
     assert_malformed_block_present(result, "JSON_REPAIR_ATTEMPTED")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to repairs
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to repairs
     assert any(
         "Fixed array incorrectly wrapped in quotes" in d.get("details", "")
         for block in result["malformed_blocks"]
@@ -641,28 +712,39 @@ def test_parser_raises_validation_error_for_invalid_content(parser):
     """
     result = parser.parse_and_validate(raw_output, LLMOutput)
     assert result["COMMIT_MESSAGE"] == "LLM_OUTPUT_ERROR"  # Fallback message
-    assert "Schema validation failed: value_error, Invalid action: 'INVALID_ACTION'" in result["RATIONALE"]
+    assert (
+        "Schema validation failed: value_error, Invalid action: 'INVALID_ACTION'"
+        in result["RATIONALE"]
+    )
     assert not result["CODE_CHANGES"]
     assert_malformed_block_present(result, "SCHEMA_VALIDATION_ERROR")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to fallback
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to fallback
 
 
 def test_parser_handles_empty_json_object(parser):
     raw_output = "{}"
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "{}"
-    assert not result["malformed_blocks"]  # Empty object is valid JSON, no repair needed
+    assert not result[
+        "malformed_blocks"
+    ]  # Empty object is valid JSON, no repair needed
 
 
 def test_parser_handles_empty_json_array(parser):
     raw_output = "[]"
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "[]"
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to list wrapping
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to list wrapping
     assert_malformed_block_present(result, "TOP_LEVEL_LIST_WRAPPING")
 
 
-def test_parser_handles_json_with_start_marker_and_no_end_marker_but_valid_json_after(parser):
+def test_parser_handles_json_with_start_marker_and_no_end_marker_but_valid_json_after(
+    parser,
+):
     raw_output = """
     Some preamble.
     START_JSON_OUTPUT
@@ -674,10 +756,14 @@ def test_parser_handles_json_with_start_marker_and_no_end_marker_but_valid_json_
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "This is valid JSON after the start marker."
     assert_malformed_block_present(result, "MISSING_END_MARKER")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to missing end marker
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to missing end marker
 
 
-def test_parser_handles_json_with_start_marker_and_no_end_marker_and_malformed_json_after(parser):
+def test_parser_handles_json_with_start_marker_and_no_end_marker_and_malformed_json_after(
+    parser,
+):
     raw_output = """
     Some preamble.
     START_JSON_OUTPUT
@@ -690,10 +776,15 @@ def test_parser_handles_json_with_start_marker_and_no_end_marker_and_malformed_j
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert "general_output" in result
-    assert "LLM output could not be fully parsed or validated" in result["malformed_blocks"][0]["message"]
+    assert (
+        "LLM output could not be fully parsed or validated"
+        in result["malformed_blocks"][0]["message"]
+    )
     assert_malformed_block_present(result, "MISSING_END_MARKER")
     assert_malformed_block_present(result, "JSON_DECODE_ERROR")
-    assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")  # Should be present due to fallback
+    assert_malformed_block_present(
+        result, "LLM_OUTPUT_MALFORMED"
+    )  # Should be present due to fallback
 
 
 def test_parser_handles_json_with_unbalanced_braces_and_brackets(parser):
@@ -704,7 +795,10 @@ def test_parser_handles_json_with_unbalanced_braces_and_brackets(parser):
     """
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert "general_output" in result
-    assert "LLM output could not be fully parsed or validated" in result["malformed_blocks"][0]["message"]
+    assert (
+        "LLM output could not be fully parsed or validated"
+        in result["malformed_blocks"][0]["message"]
+    )
     assert_malformed_block_present(result, "JSON_DECODE_ERROR")
     assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")
     assert any(
@@ -722,5 +816,7 @@ def test_parser_handles_json_with_unbalanced_braces_and_brackets(parser):
 def test_parser_handles_json_with_multiple_root_objects(parser):
     raw_output = '{"key1": "value1"}{"key2": "value2"}'
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == '{"key1": "value1"}'  # Should only parse the first valid object
+    assert (
+        result["general_output"] == '{"key1": "value1"}'
+    )  # Should only parse the first valid object
     assert_malformed_block_present(result, "LLM_OUTPUT_MALFORMED")

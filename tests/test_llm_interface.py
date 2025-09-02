@@ -32,7 +32,9 @@ def get_llm_response(prompt):
     # Simulate the LLM call
     mock_client = MockLLMClient()
     response = mock_client()
-    return response.chat.completions.create(messages=[{"role": "user", "content": prompt}])
+    return response.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}]
+    )
 
 
 # Test cases
