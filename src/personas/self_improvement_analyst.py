@@ -125,7 +125,7 @@ class SelfImprovementAnalyst:
 CRITICAL INSTRUCTION: Focus on actionable improvements with highest impact (80/20 principle).
 
 SECURITY ANALYSIS:
-- Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)
+- Prioritize HIGH severity Bandit issues (SQLi, command injection, hardcoded secrets)
 - Group similar issues together rather than listing individually
 - Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.**
 
