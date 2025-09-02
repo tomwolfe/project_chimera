@@ -591,7 +591,7 @@ class LLMOutputParser:
                 if detected_suggestion and "IMPACTFUL_SUGGESTIONS" not in data_to_validate and "ANALYSIS_SUMMARY" not in data_to_validate:
                     self.logger.warning("LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it.")
                     data_to_validate = {
-                        "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section.",
+                        "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. This was wrapped into the expected format.", # MODIFIED
                         "IMPACTFUL_SUGGESTIONS": [detected_suggestion],
                         "malformed_blocks": malformed_blocks_list
                     }

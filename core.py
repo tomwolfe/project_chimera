@@ -42,6 +42,16 @@ class SocraticDebate:
         "Security_Auditor": CritiqueOutput,
         "DevOps_Engineer": CritiqueOutput,
         "Test_Engineer": CritiqueOutput,
+        # Add _TRUNCATED versions to map to their base schemas
+        "Code_Architect_TRUNCATED": CritiqueOutput,
+        "Security_Auditor_TRUNCATED": CritiqueOutput,
+        "DevOps_Engineer_TRUNCATED": CritiqueOutput,
+        "Test_Engineer_TRUNCATED": CritiqueOutput,
+        "Constructive_Critic_TRUNCATED": CritiqueOutput,
+        "Impartial_Arbitrator_TRUNCATED": LLMOutput,
+        "Devils_Advocate_TRUNCATED": ConflictReport,
+        "General_Synthesizer_TRUNCATED": GeneralOutput,
+        "Self_Improvement_Analyst_TRUNCATED": SelfImprovementAnalysisOutputV1,
     }
 
     def __init__(self, initial_prompt: str, api_key: str,
@@ -78,7 +88,9 @@ class SocraticDebate:
         self.initial_prompt = initial_prompt
         self.codebase_context = codebase_context or {}
         self.domain = domain
-        self.context_analyzer = context_analyzer
+
+        # Initialize TokenUsageTracker first, as it's needed by PersonaManager and LLMProvider
+        self.token_tracker = token_tracker or TokenUsageTracker(budget=self.max_total_tokens_budget)
 
         try:
             self.llm_provider = GeminiProvider(api_key=api_key, model_name=self.model_name, rich_console=self.rich_console, request_id=self.request_id)
@@ -94,9 +106,6 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
-        # NEW: Initialize TokenUsageTracker
-        self.token_tracker = token_tracker or TokenUsageTracker(budget=self.max_total_tokens_budget)
-        
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning("PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI.")
@@ -114,6 +123,14 @@ class SocraticDebate:
         if not self.persona_router:
              self.logger.warning("PersonaRouter not found in PersonaManager. Initializing a new one. This might indicate an issue in PersonaManager setup.")
              self.persona_router = PersonaRouter(self.all_personas, self.persona_sets, self.persona_manager.prompt_analyzer)
+
+        # Initialize ContextRelevanceAnalyzer after tokenizer is available
+        self.context_analyzer = context_analyzer
+        if not self.context_analyzer:
+            self.logger.warning("ContextRelevanceAnalyzer instance not provided. Initializing a new one.")
+            self.context_analyzer = ContextRelevanceAnalyzer(codebase_context=self.codebase_context)
+            if self.persona_router:
+                self.context_analyzer.set_persona_router(self.persona_router)
 
         self.content_validator = ContentAlignmentValidator(
             original_prompt=self.initial_prompt,
@@ -401,7 +418,7 @@ class SocraticDebate:
         self._log_with_context("debug", f"Executing LLM turn for {persona_name} in {phase} phase.",
                                persona=persona_name, phase=phase)
 
-        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name.replace("_TRUNCATED", ""), GeneralOutput) # MODIFIED: Use base persona name for schema
+        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput) # MODIFIED: Use persona_name directly, as _TRUNCATED versions are in schema map
         self._log_with_context("debug", f"Using schema {output_schema.__name__} for {persona_name}.")
 
         current_prompt = prompt_for_llm
@@ -460,7 +477,8 @@ class SocraticDebate:
                             "AREA": "Robustness",
                             "PROBLEM": f"Failed to produce valid JSON after {max_retries} attempts",
                             "PROPOSED_SOLUTION": "Review system prompts and validation logic",
-                            "IMPACT": "Critical failure in self-improvement process"
+                            "EXPECTED_IMPACT": "Critical failure in self-improvement process",
+                            "CODE_CHANGES_SUGGESTED": [] # Ensure this field is present
                         }]
                     }
             
@@ -899,7 +917,8 @@ class SocraticDebate:
 
     def _summarize_critical_config_deployment(self, summarized_metrics: Dict[str, Any], max_tokens: int) -> Tuple[Dict[str, Any], int]:
         """Summarizes critical configuration and deployment sections."""
-        CRITICAL_SECTION_TOKEN_BUDGET = max(50, min(int(max_tokens * 0.15), int(max_tokens * 0.2)))
+        # MODIFIED: Increased CRITICAL_SECTION_TOKEN_BUDGET to allow more detail
+        CRITICAL_SECTION_TOKEN_BUDGET = max(500, min(int(max_tokens * 0.25), int(max_tokens * 0.3)))
         
         critical_sections_content = {}
         if 'configuration_analysis' in summarized_metrics:
@@ -920,6 +939,7 @@ class SocraticDebate:
                         "ci_workflow_present": bool(content.get("ci_workflow")),
                         "pre_commit_hooks_count": len(content.get("pre_commit_hooks", [])),
                         "pyproject_toml_present": bool(content.get("pyproject_toml")),
+                        "malformed_blocks_count": len(content.get("malformed_blocks", []))
                     }
                     summarized_critical_sections[key] = summarized_config
                 elif key == 'deployment_robustness' and content:
@@ -929,6 +949,7 @@ class SocraticDebate:
                         "dockerfile_non_root_user": content.get("dockerfile_non_root_user"),
                         "prod_dependency_count": content.get("prod_dependency_count"),
                         "unpinned_prod_dependencies_count": len(content.get("unpinned_prod_dependencies", [])),
+                        "malformed_blocks_count": len(content.get("malformed_blocks", []))
                     }
                     summarized_critical_sections[key] = summarized_deployment
                 else:
@@ -942,11 +963,13 @@ class SocraticDebate:
 
     def _truncate_detailed_issue_lists(self, summarized_metrics: Dict[str, Any], remaining_budget_for_issues: int) -> Dict[str, Any]:
         """Truncates detailed issue lists within code_quality to fit budget."""
+        TOKENS_PER_ISSUE_ESTIMATE = 100 # MODIFIED: Increased estimate for more realistic truncation
+        
         for issue_list_key in ['detailed_issues', 'ruff_violations']:
             if 'code_quality' in summarized_metrics and issue_list_key in summarized_metrics['code_quality'] and summarized_metrics['code_quality'][issue_list_key]:
-                original_issues = summarized_metrics['code_quality'][issue_list_key]
+                original_issues = list(summarized_metrics['code_quality'][issue_list_key]) # Make a copy to avoid modifying original list during iteration
                 
-                num_issues_to_keep = min(int(remaining_budget_for_issues / 50), 1) # Assume ~50 tokens per issue, keep max 1
+                num_issues_to_keep = int(remaining_budget_for_issues / TOKENS_PER_ISSUE_ESTIMATE)
                 num_issues_to_keep = max(0, min(len(original_issues), num_issues_to_keep))
 
                 if num_issues_to_keep < len(original_issues):
@@ -957,12 +980,15 @@ class SocraticDebate:
                             "message": f"Only top {num_issues_to_keep} {issue_list_key} are listed due to token limits. Total: {len(original_issues)}."
                         })
                     else:
+                        # If no issues can be kept, replace with a summary string
                         summarized_metrics['code_quality'][issue_list_key] = f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
                     self._log_with_context("debug", f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.")
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
-                    del summarized_metrics['code_quality'][issue_list_key]
+                    # If there are issues but budget allows none, remove the list and add a summary
+                    summarized_metrics['code_quality'][issue_list_key] = f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
                     self._log_with_context("debug", f"Removed {issue_list_key} entirely due to lack of budget.")
             elif 'code_quality' in summarized_metrics and issue_list_key in summarized_metrics['code_quality'] and not summarized_metrics['code_quality'][issue_list_key]:
+                # If the list is empty, remove the key to save tokens
                 del summarized_metrics['code_quality'][issue_list_key]
         return summarized_metrics
 
@@ -1010,7 +1036,7 @@ class SocraticDebate:
         summarized_history = []
         current_tokens = 0
 
-        MAX_TURNS_TO_INCLUDE = 1
+        MAX_TURNS_TO_INCLUDE = 3 # MODIFIED: Increased from 1 to 3 for better context
         
         for turn in reversed(debate_history[-MAX_TURNS_TO_INCLUDE:]):
             turn_copy = json.loads(json.dumps(turn))

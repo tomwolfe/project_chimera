@@ -29,7 +29,7 @@ exclude_dirs = [
         "tests" # ADDED THIS LINE as per LLM suggestion
     ]
 severity_level = "B" # Enforce at least B level findings
-confidence_level = "B", # Enforce at least B level confidence
+confidence_level = "B" # Enforce at least B level confidence
 skip_checks = null
 
 

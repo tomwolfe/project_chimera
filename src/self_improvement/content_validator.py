@@ -18,7 +18,7 @@ class ContentAlignmentValidator:
         # Define default focus areas if not explicitly provided, based on self-improvement context
         if focus_areas is None:
             if self.debate_domain == "self-improvement":
-                self.focus_areas = [
+                self.base_focus_areas = [ # Renamed to base_focus_areas
                     "reasoning quality", "robustness", "efficiency", "maintainability",
                     "code changes", "process adjustments", "project chimera codebase",
                     "pep8", "code smells", "security vulnerabilities", "token usage",
@@ -26,18 +26,18 @@ class ContentAlignmentValidator:
                     "deployment", "dockerfile", "requirements-prod.txt", "ci/cd" # NEW: Added deployment keywords
                 ]
             elif self.debate_domain == "software engineering":
-                self.focus_areas = [
+                self.base_focus_areas = [ # Renamed to base_focus_areas
                     "code", "implement", "refactor", "bug fix", "architecture", "security", "testing", "devops",
                     "api", "database", "function", "class", "module", "performance", "scalability"
                 ]
             else:
                 # For other domains, extract keywords from the original prompt itself
                 # This is a basic heuristic and can be refined.
-                self.focus_areas = self._extract_keywords_from_prompt(self.original_prompt)
+                self.base_focus_areas = self._extract_keywords_from_prompt(self.original_prompt)
         else:
-            self.focus_areas = [area.lower() for area in focus_areas]
+            self.base_focus_areas = [area.lower() for area in focus_areas]
         
-        logger.info(f"ContentAlignmentValidator initialized for domain '{self.debate_domain}' with focus areas: {self.focus_areas}")
+        logger.info(f"ContentAlignmentValidator initialized for domain '{self.debate_domain}' with focus areas: {self.base_focus_areas}")
 
     def _extract_keywords_from_prompt(self, prompt: str, num_keywords: int = 5) -> List[str]:
         """Extracts significant keywords from the prompt to form dynamic focus areas."""
@@ -91,23 +91,43 @@ class ContentAlignmentValidator:
             "is_aligned": False
         }
 
-        if not self.focus_areas:
+        # Determine the effective focus areas for this persona
+        effective_focus_areas = self.base_focus_areas
+        # For non-synthesis personas in self-improvement, their focus is narrower.
+        # We can dynamically adjust the focus areas for validation.
+        if self.debate_domain == "self-improvement" and persona_name != "Self_Improvement_Analyst":
+            if persona_name.startswith("Code_Architect"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["architecture", "modularity", "scalability", "maintainability", "technical debt", "design patterns"]
+            elif persona_name.startswith("Security_Auditor"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["security", "vulnerability", "threat model", "data privacy", "authentication", "authorization", "api key management"]
+            elif persona_name.startswith("DevOps_Engineer"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["ci/cd", "deployment", "monitoring", "logging", "reliability", "efficiency", "token usage"]
+            elif persona_name.startswith("Test_Engineer"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["test coverage", "unit tests", "integration tests", "robustness", "testability", "edge cases"]
+            elif persona_name.startswith("Constructive_Critic"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["logical gaps", "security vulnerabilities", "architectural weaknesses", "testability deficiencies", "operational concerns", "maintainability issues"]
+            elif persona_name.startswith("Devils_Advocate"): # Handle _TRUNCATED versions
+                effective_focus_areas = ["flaws", "unintended consequences", "overlooked risks", "complexity", "assumptions", "effectiveness", "edge cases", "conflict"]
+            # For other personas, use the base_focus_areas or a more general set.
+            
+        if not effective_focus_areas:
             logger.debug(f"No specific focus areas defined for domain '{self.debate_domain}'. Content validation skipped for {persona_name}.")
             nuanced_feedback["is_aligned"] = True
-            return True, "No specific focus areas defined for this domain.", nuanced_feedback
+            return True, "No effective focus areas defined for this persona/domain.", nuanced_feedback
 
         # Count how many focus areas are present
         matched_count = 0
-        for area in self.focus_areas:
+        for area in effective_focus_areas:
             if area in output_text_lower:
                 matched_count += 1
                 nuanced_feedback["matched_keywords"].append(area)
         
-        if self.focus_areas:
-            nuanced_feedback["alignment_score"] = matched_count / len(self.focus_areas)
+        if effective_focus_areas:
+            nuanced_feedback["alignment_score"] = matched_count / len(effective_focus_areas)
         
         # Threshold for alignment
-        alignment_threshold = 0.3 # At least 30% of focus areas should be mentioned
+        # Adjusted threshold for individual personas, as they have a narrower focus
+        alignment_threshold = 0.2 if persona_name != "Self_Improvement_Analyst" else 0.3 # Lower threshold for individual critics
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False
