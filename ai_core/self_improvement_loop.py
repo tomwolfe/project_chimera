@@ -10,8 +10,8 @@ import json  # Added for _calculate_improvement_score, save_improvement_results
 import sys # Added for sys.executable
 from pathlib import Path # Added for Path operations
 
-# Assuming ImprovementMetricsCollector and other necessary classes/functions are importable
-# from src.self_improvement.metrics_collector import ImprovementMetricsCollector
+# Assuming FocusedMetricsCollector and other necessary classes/functions are importable
+# from src.self_improvement.metrics_collector import FocusedMetricsCollector
 # from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
 # from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
 
@@ -79,7 +79,7 @@ class SelfImprovementLoop:
     change application, and learning from results.
     """
 
-    # FIX: Added necessary parameters to __init__ for ImprovementMetricsCollector
+    # FIX: Added necessary parameters to __init__ for FocusedMetricsCollector
     def __init__(
         self,
         model: Any,
@@ -297,10 +297,10 @@ class SelfImprovementLoop:
         
         # --- MODIFIED: Use FocusedMetricsCollector if available, otherwise fallback ---
         # This part assumes FocusedMetricsCollector is defined elsewhere and imported.
-        # If not, it will fall back to the original ImprovementMetricsCollector.
+        # If not, it will fall back to the original FocusedMetricsCollector.
         # For this specific change, we'll assume the original class name is used for compatibility.
         # If you intend to rename it, ensure the import path is updated.
-        metrics_collector_class = ImprovementMetricsCollector # Or FocusedMetricsCollector if renamed
+        metrics_collector_class = FocusedMetricsCollector # Or FocusedMetricsCollector if renamed
         
         metrics_collector = metrics_collector_class(
             initial_prompt=self.initial_prompt,

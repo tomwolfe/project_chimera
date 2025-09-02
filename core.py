@@ -44,7 +44,7 @@ from src.utils.error_handler import handle_errors
 from src.persona_manager import PersonaManager
 
 # NEW IMPORTS FOR SELF-IMPROVEMENT
-from src.self_improvement.metrics_collector import ImprovementMetricsCollector
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
 
@@ -189,10 +189,7 @@ class SocraticDebate:
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
 
-        self.content_validator = ContentAlignmentValidator(
-            original_prompt=self.initial_prompt, debate_domain=self.domain
-        )
-
+        # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context and self.context_analyzer:
             if isinstance(self.codebase_context, dict):
                 try:
@@ -213,6 +210,7 @@ class SocraticDebate:
                     "codebase_context was not a dictionary, skipping embedding computation."
                 )
 
+        # Initialize token budgets AFTER context_analyzer is fully set up
         self._calculate_token_budgets()
 
     def _log_with_context(self, level: str, message: str, **kwargs):
@@ -830,7 +828,8 @@ class SocraticDebate:
         self._log_with_context("info", "Debate state initialized.")
 
     def _perform_context_analysis(
-        self, persona_sequence: Tuple[str, ...]
+        self,
+        persona_sequence: Tuple[str, ...],
     ) -> Optional[Dict[str, Any]]:
         """
         Performs context analysis based on the initial prompt and codebase context.
@@ -1836,7 +1835,7 @@ class SocraticDebate:
             )
 
         if synthesis_persona_name == "Self_Improvement_Analyst":
-            metrics_collector = ImprovementMetricsCollector(
+            metrics_collector = FocusedMetricsCollector(
                 initial_prompt=self.initial_prompt,
                 debate_history=debate_persona_results,
                 intermediate_steps=self.intermediate_steps,

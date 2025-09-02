@@ -9,8 +9,8 @@ import re  # Added for _get_relevant_test_files
 import json  # Added for _calculate_improvement_score, save_improvement_results
 from pathlib import Path  # Added for Path.cwd()
 
-# Assuming ImprovementMetricsCollector and other necessary classes/functions are importable
-# from src.self_improvement.metrics_collector import ImprovementMetricsCollector
+# Assuming FocusedMetricsCollector and other necessary classes/functions are importable
+# from src.self_improvement.metrics_collector import FocusedMetricsCollector
 # from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
 # from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
 
