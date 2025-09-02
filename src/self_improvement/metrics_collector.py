@@ -1270,7 +1270,36 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
                         {
                             "FILE_PATH": "docs/project_chimera_context.md",
                             "ACTION": "ADD",
-                            "FULL_CONTENT": "# Project Chimera Context and Codebase\\n\\nThis document outlines the refined methodology for identifying and implementing self-improvement strategies for Project Chimera. Recognizing that AI self-improvement is fundamentally different from traditional software refactoring, this methodology prioritizes experimental interventions and data-driven optimizations.\\n\\n## Core Principles:\\n\\n1.  **AI-Centric Optimization:** Improvements are driven by adjustments to the AI model's architecture, training data, hyperparameters, and inference strategies, not solely by static code modifications.\\n2.  **Objective Metrics:** All proposed improvements must be tied to measurable metrics that quantify improvements in:\\n    *   **Reasoning Quality:** Accuracy on specific benchmarks, logical consistency, coherence, factual correctness.\\n    *   **Robustness:** Performance under noisy or adversarial inputs, graceful degradation.\\n    *   **Efficiency:** Inference latency, token usage per query, computational cost.\\n3.  **Experimental Interventions:** Suggestions will be framed as experiments. Each suggestion will propose a specific intervention (e.g., \\\"fine-tune on dataset X\\\", \\\"adjust temperature parameter to Y\\\", \\\"implement retrieval-augmented generation with source Z\\\") and the metrics to evaluate its success.\\n4.  **80/20 Principle Applied to Experiments:** Identify interventions with the highest potential impact on the defined metrics, prioritizing those that address core AI capabilities.\\n\\n## Process:\\n\\n1.  **Identify Weakness:** Analyze AI performance against defined metrics to pinpoint areas for improvement.\\n2.  **Propose Experiment:** Formulate a specific, testable intervention targeting the identified weakness.\\n3.  **Define Metrics:** Specify the objective metrics that will be used to evaluate the experiment's success.\\n4.  **Implement & Measure:** Execute the experiment and collect data on the defined metrics.\\n5.  **Iterate:** Based on results, refine the intervention or propose new experiments.\\n\\n## Example Suggestion Format:\\n\\n*   **AREA:** Reasoning Quality\\n*   **PROBLEM:** The AI exhibits logical inconsistencies in complex multi-turn debates.\\n*   **PROPOSED_SOLUTION:** Experiment with fine-tuning the LLM on a curated dataset of high-quality Socratic dialogues, focusing on logical argumentation and refutation. Measure improvements using a custom benchmark assessing logical fallacies and argument coherence.\\n*   **EXPECTED_IMPACT:** Enhanced logical consistency and reduced instances of fallacious reasoning in debates.\\n*   **CODE_CHANGES_SUGGESTED:** [] (As the change is algorithmic/data-driven, direct code changes may not be applicable or the primary focus. If code is involved, it would be in data processing or training scripts, e.g., `src/data/prepare_socratic_dialogues.py`)\",\n                        }
+                            "FULL_CONTENT": """# Project Chimera Self-Improvement Methodology
+
+This document outlines the refined methodology for identifying and implementing self-improvement strategies for Project Chimera. Recognizing that AI self-improvement is fundamentally different from traditional software refactoring, this methodology prioritizes experimental interventions and data-driven optimizations.
+
+## Core Principles:
+
+1.  **AI-Centric Optimization:** Improvements are driven by adjustments to the AI model's architecture, training data, hyperparameters, and inference strategies, not solely by static code modifications.
+2.  **Objective Metrics:** All proposed improvements must be tied to measurable metrics that quantify improvements in:
+    *   **Reasoning Quality:** Accuracy on specific benchmarks, logical consistency, coherence, factual correctness.
+    *   **Robustness:** Performance under noisy or adversarial inputs, graceful degradation.
+    *   **Efficiency:** Inference latency, token usage per query, computational cost.
+3.  **Experimental Interventions:** Suggestions will be framed as experiments. Each suggestion will propose a specific intervention (e.g., \"fine-tune on dataset X\", \"adjust temperature parameter to Y\", \"implement retrieval-augmented generation with source Z\") and the metrics to evaluate its success.
+4.  **80/20 Principle Applied to Experiments:** Identify interventions with the highest potential impact on the defined metrics, prioritizing those that address core AI capabilities.
+
+## Process:
+
+1.  **Identify Weakness:** Analyze AI performance against defined metrics to pinpoint areas for improvement.
+2.  **Propose Experiment:** Formulate a specific, testable intervention targeting the identified weakness.
+3.  **Define Metrics:** Specify the objective metrics that will be used to evaluate the experiment's success.
+4.  **Implement & Measure:** Execute the experiment and collect data on the defined metrics.
+5.  **Iterate:** Based on results, refine the intervention or propose new experiments.
+
+## Example Suggestion Format:
+
+*   **AREA:** Reasoning Quality
+*   **PROBLEM:** The AI exhibits logical inconsistencies in complex multi-turn debates.
+*   **PROPOSED_SOLUTION:** Experiment with fine-tuning the LLM on a curated dataset of high-quality Socratic dialogues, focusing on logical argumentation and refutation. Measure improvements using a custom benchmark assessing logical fallacies and argument coherence.
+*   **EXPECTED_IMPACT:** Enhanced logical consistency and reduced instances of fallacious reasoning in debates.
+*   **CODE_CHANGES_SUGGESTED:** [] (As the change is algorithmic/data-driven, direct code changes may not be applicable or the primary focus. If code is involved, it would be in data processing or training scripts, e.g., `src/data/prepare_socratic_dialogues.py`)"""
+                        }
                     ],
                 }
             )
