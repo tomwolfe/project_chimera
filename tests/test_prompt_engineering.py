@@ -1,55 +1,50 @@
 import pytest
-from src.utils.prompt_engineering import create_self_improvement_prompt, parse_code_analysis_output
+from src.utils.prompt_engineering import optimize_reasoning_prompt, create_reasoning_quality_metrics_prompt
 
-def test_create_self_improvement_prompt_basic():
-    """Test the basic functionality of creating a self-improvement prompt."""
-    persona_description = "An expert Python developer."
-    code_snippet = "def hello_world():\n    print('Hello, world!')"
-    prompt = create_self_improvement_prompt(persona_description, code_snippet)
+class TestPromptEngineering:
 
-    assert "persona: An expert Python developer." in prompt
-    assert "code_snippet: def hello_world():\n    print('Hello, world!')" in prompt
-    assert "Critically analyze the following Python code snippet" in prompt
+    def test_optimize_reasoning_prompt_basic(self):
+        """Test basic reasoning prompt optimization."""
+        original_prompt = "Analyze the codebase for improvements."
+        optimized = optimize_reasoning_prompt(original_prompt)
 
-def test_create_self_improvement_prompt_with_context():
-    """Test prompt creation with additional context."""
-    persona_description = "A security analyst."
-    code_snippet = "import os\nuser_input = input('Enter path: ')\nos.system(f'ls {user_input}')"
-    context = "Focus on potential security vulnerabilities."
-    prompt = create_self_improvement_prompt(persona_description, code_snippet, context=context)
+        # Check that critical elements were added
+        assert "80/20" in optimized or "Pareto" in optimized.lower()
+        assert "reasoning quality" in optimized.lower() or "robustness" in optimized.lower()
+        assert "concise" in optimized.lower() or "token" in optimized.lower()
+        assert "JSON" in optimized or "schema" in optimized
 
-    assert "persona: A security analyst." in prompt
-    assert "code_snippet: import os\nuser_input = input('Enter path: ')\nos.system(f'ls {user_input}')" in prompt
-    assert "Critically analyze the following Python code snippet" in prompt
-    assert "Focus on potential security vulnerabilities." in prompt
+    def test_optimize_reasoning_prompt_already_optimized(self):
+        """Test that already optimized prompts are not redundantly modified."""
+        original_prompt = """Analyze the codebase.
+        CRITICAL: Apply the 80/20 Pareto principle.
+        PRIORITIZE: reasoning quality, robustness.
+        IMPORTANT: Be concise. Target <2000 tokens.
+        FORMAT: Your response MUST follow the SelfImprovementAnalysisOutputV1 JSON schema."""
+        optimized = optimize_reasoning_prompt(original_prompt)
+        assert optimized == original_prompt # Should not add duplicates
 
-def test_parse_code_analysis_output_valid_json():
-    """Test parsing of a valid JSON output."""
-    valid_json = """
-    {
-        "COMMIT_MESSAGE": "Fix security issue",
-        "RATIONALE": "Addressed SQL injection vulnerability",
-        "CODE_CHANGES": [
-            {
-                "FILE_PATH": "src/database.py",
-                "ACTION": "MODIFY",
-                "FULL_CONTENT": "def get_user_data(user_id):\\n    query = \\"SELECT * FROM users WHERE id = ?\\"\\n    return execute_query(query, (user_id,))"
+    def test_create_reasoning_quality_metrics_prompt(self):
+        """Test creation of specialized reasoning quality metrics prompt."""
+        metrics = {
+            "performance_efficiency": {
+                "token_usage_stats": {
+                    "total_tokens": 5000,
+                    "persona_token_usage": {
+                        "Self_Improvement_Analyst": 3912,
+                        "Devils_Advocate": 2500
+                    }
+                }
+            },
+            "reasoning_quality": {
+                "overall_score": 0.65
             }
-        ],
-        "malformed_blocks": []
-    }
-    """
-    result = parse_code_analysis_output(valid_json)
-    
-    assert result["COMMIT_MESSAGE"] == "Fix security issue"
-    assert len(result["CODE_CHANGES"]) == 1
-    assert result["CODE_CHANGES"][0]["FILE_PATH"] == "src/database.py"
+        }
 
-def test_parse_code_analysis_output_malformed():
-    """Test handling of malformed JSON output."""
-    malformed_json = "This is not JSON"
-    result = parse_code_analysis_output(malformed_json)
-    
-    assert "COMMIT_MESSAGE" in result
-    assert "Error" in result["COMMIT_MESSAGE"]
-    assert len(result["malformed_blocks"]) > 0
+        prompt = create_reasoning_quality_metrics_prompt(metrics)
+
+        # Verify key elements are present
+        assert "3912" in prompt  # Token count for high-usage persona
+        assert "Analyze Project Chimera's reasoning quality" in prompt
+        assert "80/20 principle" in prompt
+        assert "top 1-2 most impactful changes" in prompt
