@@ -21,22 +21,31 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Explicitly install Ruff for CI to ensure it is available
+        # Explicitly install Ruff and coverage for CI to ensure they are available and correct versions
         pip install ruff
-    - name: Run Ruff (Linter & Formatter Check) - Fail on Violation
+        pip install pytest-cov
+
+    - name: Run Ruff (Linter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs
       # Ensure Ruff is configured to fail on issues
-      run: |
-        ruff check . --output-format=github --exit-non-zero-on-fix
-        ruff format --diff --exit-non-zero-on-fix # Fail if not formatted
-        ruff format --fix . # Auto-fix formatting issues
+      run: ruff check . --output-format=github --exit-non-zero-on-fix
+
+    - name: Run Ruff (Formatter Validation) - Fail if not formatted
+      # Fail if code is not formatted (prevents unformatted commits via CI)
+      run: ruff format --check --diff --exit-non-zero-on-fix
+
     - name: Run Bandit Security Scan
       # Configure Bandit to fail on high/medium severity issues
+      # Use -c for config file; pyproject.toml is the standard location
+      run: bandit -r . -ll -c pyproject.toml --exit-on-error
+      # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
+
+    - name: Run Tests with Coverage
+      # Run pytest and generate coverage report, enforcing the 80% threshold
       run: |
-        bandit -r . -ll -c pyproject.toml --exit-on-error # -c is correct; config file used
-        # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
-    - name: Run Pytest and generate coverage report
-      run: |
-        pytest --cov=src --cov-report=xml --cov-report=term --cov-fail-under=80 # MODIFIED LINE: Added --cov-fail-under=80
-    # You could add more steps here, e.g., for security scanning (Bandit), deployment, etc.
+        pytest --cov=src \
+               --cov-report=xml \
+               --cov-report=term \
+               --cov-fail-under=80
+    # You could add more steps here, e.g., for deployment, etc.

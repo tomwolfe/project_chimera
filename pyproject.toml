@@ -46,6 +46,6 @@ source = ["src"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 80 # MODIFIED: Enforce minimum 80% coverage
 show_missing = true
 skip_covered = true

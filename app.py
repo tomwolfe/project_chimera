@@ -110,22 +110,32 @@ def validate_gemini_api_key_format(api_key: str) -> bool:
 
 
 def test_gemini_api_key_functional(api_key: str) -> bool:
-    """Attempts a simple API call to validate the key's functionality."""
-    if not api_key:
-        return False
+    """Test if the Gemini API key is functional by making a minimal API call."""
     try:
         test_client = genai.Client(api_key=api_key)
         test_client.models.list()
         return True
     except APIError as e:
         logger.error(f"API key functional test failed: {e}")
+        # Differentiate between key issues and service issues
+        if e.code == 401:
+            st.error("🔐 Invalid API key - access denied")
+        elif e.code == 403:
+            st.error("🚫 API key valid but lacks required permissions")
+        else:
+            st.error(f"⚠️ API error: {e.message}")
         return False
     except Exception as e:
         logger.error(f"Unexpected error during API key functional test: {e}")
+        # Network or service issues
+        if "connection" in str(e).lower() or "timeout" in str(e).lower():
+            st.error("🌐 Network connection issue - check your internet connection")
+        else:
+            st.error("⚠️ Unexpected error during API validation")
         return False
 
 
-# --- NEW: Callback for API Key Input ---
+# - NEW: Callback for API Key Input -
 def on_api_key_change():
     """Callback to validate API key format and update activity timestamp."""
     # Initialize session state variables if they don't exist (defensive programming)
@@ -150,8 +160,32 @@ def on_api_key_change():
         st.session_state.current_debate_cost_usd = 0.0
 
 
-# --- END NEW: Callback for API Key Input ---
-# --- END NEW: API Key Validation and Test Functions ---
+# --- NEW: Helper functions for API Key UI status ---
+def display_key_status():
+    """Display detailed API key status with appropriate icons"""
+    if not st.session_state.api_key_input:
+        st.caption("🔑 Key status: Not provided")
+        return
+    
+    if not st.session_state.api_key_valid_format:
+        st.caption("❌ Key status: Invalid format")
+        return
+    
+    if not st.session_state.api_key_functional:
+        st.caption("⚠️ Key status: Format valid but non-functional")
+        return
+    
+    st.caption("✅ Key status: Valid and functional")
+
+def test_api_key():
+    """Test the API key functionality with proper error handling"""
+    api_key = st.session_state.api_key_input.strip()
+    if not api_key:
+        st.session_state.api_key_functional = False
+        return
+    
+    st.session_state.api_key_functional = test_gemini_api_key_functional(api_key)
+# --- END NEW: Helper functions for API Key UI status ---
 
 
 # --- Demo Codebase Context Loading ---
@@ -795,51 +829,24 @@ with st.sidebar:
             help="Your API key will not be stored.",
         )
 
-        api_key_col1, api_key_col2 = st.columns([3, 1])
+        api_key_col1, api_key_col2, api_key_col3 = st.columns([2, 1, 1])
         with api_key_col1:
             if st.session_state.api_key_input:
                 if st.session_state.api_key_valid_format:
-                    st.success("✅ API key format is valid.")
+                    if st.session_state.api_key_functional:
+                        st.success("✅ API key is valid and functional.")
+                    else:
+                        st.warning("⚠️ API key format valid but functional test failed.")
                 else:
-                    st.error(
-                        "❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores."
-                    )
+                    st.error("❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores.")
             else:
                 st.info("Please enter your Gemini API Key.")
-
+        
         with api_key_col2:
-            if st.button(
-                "Test Key",
-                help="Verify your API key works by making a small API call.",
-                key="test_api_key_button",
-                on_click=update_activity_timestamp,
-            ):
-                if st.session_state.api_key_input:
-                    with st.spinner("Testing API connection..."):
-                        if test_gemini_api_key_functional(
-                            st.session_state.api_key_input
-                        ):
-                            st.session_state.api_key_functional = True
-                            st.success("API key is functional!", icon="✅")
-                        else:
-                            st.session_state.api_key_functional = False
-                            st.error(
-                                "API key functional test failed. Check key or network.",
-                                icon="❌",
-                            )
-                else:
-                    st.warning("Please enter an API key first.")
-
-        if st.session_state.api_key_input and st.session_state.api_key_functional:
-            st.success("API key is ready for use.")
-        elif (
-            st.session_state.api_key_input
-            and not st.session_state.api_key_functional
-            and st.session_state.api_key_valid_format
-        ):
-            st.warning(
-                "API key format is valid, but functional test failed. Please re-test or check network."
-            )
+            st.button("Test Key", on_click=test_api_key, key="test_api_key_btn")
+        
+        with api_key_col3:
+            display_key_status()
 
         st.markdown(
             "Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)."
@@ -1970,6 +1977,7 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get(
                     "Total_Estimated_Cost_USD", 0.0
                 )
+
 
             if "malformed_blocks" not in final_answer:
                 final_answer["malformed_blocks"] = []

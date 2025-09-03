@@ -9,15 +9,15 @@ class ChimeraSettings(BaseModel):
     """
 
     max_retries: int = Field(
-        default=2,
+        default=5,  # MODIFIED DEFAULT
         ge=1,
-        le=5,
+        le=10,  # MODIFIED CONSTRAINT
         description="Maximum number of retries for LLM API calls.",
     )
     max_backoff_seconds: int = Field(
-        default=30,
+        default=30,  # MODIFIED DEFAULT
         ge=5,
-        le=60,
+        le=120,  # MODIFIED CONSTRAINT
         description="Maximum backoff time in seconds for retries.",
     )
 
@@ -69,7 +69,7 @@ class ChimeraSettings(BaseModel):
     total_budget: int = Field(
         default=1000000,
         ge=1000,
-        le=2000000,
+        le=2000000,  # MODIFIED CONSTRAINT
         description="Maximum total tokens allowed for a single Socratic debate run.",
     )
 

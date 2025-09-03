@@ -5,6 +5,7 @@ including retry mechanisms, token counting, cost calculation,
 and circuit breaker protection.
 """
 
+from pathlib import Path
 import time
 from collections import defaultdict
 import streamlit as st
@@ -48,6 +49,8 @@ from src.resilience.circuit_breaker import CircuitBreaker
 from src.utils.error_handler import handle_errors
 # --- END NEW IMPORT ---
 
+from src.config.settings import ChimeraSettings
+
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
     "gemini-1.5-flash": {  # Used for "gemini-2.5-flash-lite" and "gemini-2.5-flash"
@@ -67,8 +70,7 @@ class GeminiProvider:
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
-    MAX_BACKOFF_SECONDS = 60  # Maximum backoff time in seconds
-
+    # MAX_BACKOFF_SECONDS = 60  # Will be set from settings - MODIFIED LINE
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -76,10 +78,13 @@ class GeminiProvider:
         self,
         api_key: str,
         model_name: str = "gemini-2.5-flash-lite",
+        max_retries: int = None,  # MODIFIED PARAMETER
+        max_backoff_seconds: int = None,  # MODIFIED PARAMETER
         tokenizer: Tokenizer = None,
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
-    ):  # ADD request_id parameter
+        settings: Optional[Any] = None, # Added settings parameter
+    ):  # ADD request_id parameter and settings
         self._api_key = api_key
         self.model_name = model_name
         self.rich_console = rich_console or Console(stderr=True)
@@ -87,6 +92,7 @@ class GeminiProvider:
         self._log_extra = {
             "request_id": self.request_id or "N/A"
         }  # Prepare log extra data for this instance
+        self.settings = settings or ChimeraSettings() # MODIFIED: Initialize settings
 
         try:
             self.client = genai.Client(api_key=self._api_key)
@@ -127,7 +133,7 @@ class GeminiProvider:
             raise LLMProviderError(
                 f"Failed to initialize Gemini client unexpectedly: {e}",
                 original_exception=e,
-            ) from e
+            ) from e  # Pass original_exception
         # --- MODIFICATION END ---
 
         try:
@@ -141,6 +147,27 @@ class GeminiProvider:
             raise LLMProviderError(
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e  # Pass original_exception
+
+        # MODIFIED: Use settings or provided values for retry parameters
+        self.MAX_RETRIES = max_retries if max_retries is not None else self.settings.max_retries
+        self.MAX_BACKOFF_SECONDS = max_backoff_seconds if max_backoff_seconds is not None else self.settings.max_backoff_seconds
+
+        # Initialize API client
+        try:
+            self.client = genai.Client(api_key=api_key)
+        except Exception as e:
+            self._log_with_context("error", f"Failed to initialize Gemini client: {e}", exc_info=True)
+            raise LLMProviderError(f"Failed to initialize Gemini client: {e}", original_exception=e) from e
+
+        try:
+            self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
+        except Exception as e:
+            self._log_with_context("error", f"Failed to initialize GeminiTokenizer: {e}", exc_info=True)
+            raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}", original_exception=e) from e
+
+        # MODIFIED: Use settings or provided values for retry parameters
+        self.MAX_RETRIES = max_retries if max_retries is not None else self.settings.max_retries
+        self.MAX_BACKOFF_SECONDS = max_backoff_seconds if max_backoff_seconds is not None else self.settings.max_backoff_seconds
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -457,3 +484,96 @@ class GeminiProvider:
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"
         return self.tokenizer.count_tokens(combined_text)
+
+
+# --- Placeholder methods for other potential analyses ---
+# These are not directly modified by the suggestions but are part of the class structure.
+# They are included here for completeness of the file context.
+
+def _create_file_backup(file_path: Path) -> Optional[Path]:
+    """Creates a timestamped backup of a file."""
+    if not file_path.exists():
+        return None
+    backup_dir = file_path.parent / ".chimera_backups"
+    backup_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup_path = backup_dir / f"{file_path.name}.{timestamp}.bak"
+    try:
+        shutil.copy(file_path, backup_path)
+        logger.info(f"Created backup of {file_path} at {backup_path}")
+        return backup_path
+    except Exception as e:
+        logger.error(f"Failed to create backup for {file_path}: {e}")
+        return None
+
+def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
+    """Applies a single code change (ADD, MODIFY, REMOVE)."""
+    file_path = codebase_path / change["FILE_PATH"]
+    action = change["ACTION"]
+
+    if action == "ADD":
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(change["FULL_CONTENT"])
+        logger.info(f"Added file: {file_path}")
+    elif action == "MODIFY":
+        if file_path.exists():
+            _create_file_backup(file_path)
+            if change.get("FULL_CONTENT") is not None:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(change["FULL_CONTENT"])
+                logger.info(f"Modified file: {file_path} with FULL_CONTENT.")
+            elif change.get("DIFF_CONTENT"):
+                original_content = file_path.read_text()
+                # Simplified diff application - assumes a library or external tool would handle complex diffs
+                # For this example, we'll just overwrite if DIFF_CONTENT is provided but FULL_CONTENT isn't
+                # A real implementation would need a patch utility.
+                if change["DIFF_CONTENT"].strip(): # Only apply if diff content exists
+                    # Placeholder for applying diff - requires a patch library or subprocess call
+                    # For now, we'll just log that it would be applied
+                    logger.info(f"Applying diff content to file: {file_path} (implementation needed)")
+                    # Example: patched_content = apply_diff(original_content, change["DIFF_CONTENT"])
+                    # with open(file_path, "w", encoding="utf-8") as f:
+                    #     f.write(patched_content)
+            else:
+                 logger.warning(f"Modify action for {file_path} provided neither FULL_CONTENT nor DIFF_CONTENT.")
+        else:
+            logger.warning(f"Attempted to modify non-existent file: {file_path}")
+    elif action == "REMOVE":
+        if file_path.exists():
+            _create_file_backup(file_path)
+            file_path.unlink()
+            logger.info(f"Removed file: {file_path}")
+        else:
+            logger.warning(f"Attempted to remove non-existent file: {file_path}")
+
+# --- Placeholder for token counting fallback logic ---
+# This logic is now integrated within the GeminiTokenizer's count_tokens method
+# when an exception occurs. The GeminiProvider itself doesn't directly implement
+# the fallback logic anymore, but relies on the tokenizer's error handling.
+# The original code snippet for fallback logic is commented out here as it's
+# now handled within the tokenizer's exception block.
+
+# def _count_tokens_fallback(text: str) -> int:
+#     """Fallback token counting using character heuristics."""
+#     logger.warning("Using fallback token counting due to error.")
+#     # Improved fallback based on content type heuristic
+#     content_type = "text"
+#     # Check for common code indicators in the first 200 characters
+#     if len(text) > 200 and any(indicator in text[:200] for indicator in ["def ", "class ", "import ", "{", "}", "func", "var ", "const "]):
+#         content_type = "code"
+#         # Use historical accuracy data for better estimation (if available)
+#         # This part requires tracking history, which is not fully implemented here.
+#         # For now, use a fixed ratio for code.
+#         avg_ratio = 3.5 # ~3.5 characters per token for code
+#         approx_tokens = max(1, int(len(text) / avg_ratio))
+#     else:
+#         # Standard text content - use ~4.2 characters per token
+#         avg_ratio = 4.2 # ~4.2 characters per token for text
+#         approx_tokens = max(1, int(len(text) / avg_ratio))
+    
+#     # Track for future accuracy improvements (placeholder)
+#     # self._track_token_estimation(len(text), approx_tokens, content_type) # Requires self context
+    
+#     logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error.")
+#     return approx_tokens

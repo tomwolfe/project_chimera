@@ -417,7 +417,7 @@ class LLMOutputParser:
 
         # Remove Markdown code blocks (```json, ```python, ```, etc.)
         cleaned = re.sub(
-            r"^\s*```(?:json|python|text)?\s*\n", "", cleaned, flags=re.MULTILINE
+            r"^\s*```(?:json|python|text|)\s*\n", "", cleaned, flags=re.MULTILINE
         )
         cleaned = re.sub(r"\n\s*```\s*$", "", cleaned, flags=re.MULTILINE)
 
@@ -660,7 +660,7 @@ class LLMOutputParser:
                     }
                 else:
                     self.logger.warning(
-                        f"LLM returned a mixed/unexpected list for CritiqueOutput. Creating generic fallback."
+                        "LLM returned a mixed/unexpected list for CritiqueOutput. Creating generic fallback."
                     )
                     data_to_validate = {
                         "CRITIQUE_SUMMARY": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:100]}...",
@@ -685,7 +685,7 @@ class LLMOutputParser:
                     }
                 else:
                     self.logger.warning(
-                        f"LLM returned an unexpected list for LLMOutput. Creating generic fallback."
+                        "LLM returned an unexpected list for LLMOutput. Creating generic fallback."
                     )
                     data_to_validate = {
                         "COMMIT_MESSAGE": "LLM_OUTPUT_ERROR: Unexpected list format",
@@ -778,7 +778,7 @@ class LLMOutputParser:
                         "LLM returned a single suggestion dict instead of full SelfImprovementAnalysisOutput. Pre-wrapping it."
                     )
                     data_to_validate = {
-                        "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. This was wrapped into the expected format.",  # MODIFIED
+                        "ANALYSIS_SUMMARY": "LLM returned a single suggestion item instead of the full analysis. This was wrapped into the expected format.",
                         "IMPACTFUL_SUGGESTIONS": [detected_suggestion],
                         "malformed_blocks": malformed_blocks_list,
                     }
@@ -889,7 +889,7 @@ class LLMOutputParser:
                 0,
                 {
                     "type": "LLM_OUTPUT_MALFORMED",
-                    "message": f"LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
+                    "message": "LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
                     "raw_string_snippet": raw_output_snippet[:1000]
                     + ("..." if len(raw_output_snippet) > 1000 else ""),
                 },
@@ -916,7 +916,7 @@ class LLMOutputParser:
             SelfImprovementAnalysisOutputV1,
         ]:
             detected_suggestion = self._detect_potential_suggestion_item(
-                raw_output_snippet
+                extracted_json_str
             )
             if (
                 detected_suggestion
@@ -986,6 +986,12 @@ class LLMOutputParser:
             )
             fallback_data_for_model["general_overview"] = partial_data_as_dict.get(
                 "general_overview", error_message_from_partial
+            )
+            fallback_data_for_model["configuration_summary"] = partial_data_as_dict.get(
+                "configuration_summary", {}
+            )
+            fallback_data_for_model["deployment_summary"] = partial_data_as_dict.get(
+                "deployment_summary", {}
             )
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         elif schema_model == ConflictReport:
