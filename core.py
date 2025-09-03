@@ -49,6 +49,9 @@ from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
 from src.utils.prompt_engineering import optimize_reasoning_prompt # NEW IMPORT
 
+# NEW IMPORT FOR CODEBASE SCANNING
+from src.context.context_analyzer import CodebaseScanner # ADDED LINE
+
 # Configure logging for the core module itself
 logger = logging.getLogger(__name__)
 
@@ -112,7 +115,15 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        self.codebase_context = codebase_context or {}
+        # Initialize codebase context if this is a self-analysis
+        if is_self_analysis and codebase_context is None: # MODIFIED BLOCK
+            self.logger.info("Performing self-analysis - scanning codebase for context...")
+            scanner = CodebaseScanner()
+            self.codebase_context = scanner.scan_codebase()
+            self.logger.info(f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned")
+        else: # END MODIFIED BLOCK
+            self.codebase_context = codebase_context or {}
+        
         self.domain = domain
 
         self.token_tracker = token_tracker or TokenUsageTracker(
