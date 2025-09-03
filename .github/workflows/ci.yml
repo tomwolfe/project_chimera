@@ -29,11 +29,12 @@ jobs:
       # Ensure Ruff is configured to fail on issues
       run: |
         ruff check . --output-format=github --exit-non-zero-on-fix
-        ruff format --check --diff --exit-non-zero-on-fix # Show diff and fail on formatting issues
-    - name: Run Bandit Security Scan with corrected configuration # MODIFIED NAME
+        ruff format --diff --exit-non-zero-on-fix # Fail if not formatted
+        ruff format --fix . # Auto-fix formatting issues
+    - name: Run Bandit Security Scan
       # Configure Bandit to fail on high/medium severity issues
       run: |
-        bandit -r . --config pyproject.toml --exit-on-error # MODIFIED LINE: Changed -c to --config
+        bandit -r . -ll -c pyproject.toml --exit-on-error # -c is correct; config file used
         # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
     - name: Run Pytest and generate coverage report
       run: |

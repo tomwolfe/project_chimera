@@ -25,12 +25,12 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-same-line] # Automatically fix linting errors and fail if unfixed issues remain
         # Ensure Ruff checks for formatting issues as well
-      - id: ruff-format # Formats code using Ruff's formatter (similar to Black), fails if not formatted
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.5 # Use a specific, stable version (ensure this is kept up-to-date)
+      - id: ruff-format # Enforces formatting via Ruff (like Black)
+  - repo: https://github.com/PyCQA/bandit  
+    rev: 1.7.5
     hooks:
       - id: bandit
-        args: ["-r", ".", "-ll", "--config", "pyproject.toml"] # -r for recursive, -ll for low severity, --config for config
+        args: ["-r", ".", "-ll", "-c", "pyproject.toml"] # Use -c for config
         # Ensure Bandit is configured to fail the commit if security issues are found.
 
 # Add other pre-commit hooks as needed, for example:
