@@ -629,3 +629,8 @@ class PersonaRouter:
                 seen.add(persona)
 
         return unique_sequence
+
+    def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
+        """Analyze prompt complexity with domain-specific weighting."""
+        # Delegate to the PromptAnalyzer instance
+        return self.prompt_analyzer.analyze_complexity(prompt)

@@ -11,11 +11,11 @@ from typing import Dict, Any, List, Optional
 import yaml
 import logging
 from rich.console import Console
-from core import SocraticDebate  # Assuming SocraticDebate is available for context
+# from core import SocraticDebate  # Assuming SocraticDebate is available for context - removed as it's not needed here and causes circular dependency
 
 # --- MODIFIED IMPORTS ---
 # Import necessary classes for historical analysis
-from src.self_improvement.metrics_collector import ImprovementMetricsCollector
+# from src.self_improvement.metrics_collector import ImprovementMetricsCollector # This import is problematic as it requires full context
 # --- END MODIFIED IMPORTS ---
 
 # Assuming other necessary imports like PersonaConfig, LLMOutput, etc., are present
@@ -31,150 +31,108 @@ if not logger.handlers:  # Basic setup if not already configured
     logging.basicConfig(level=logging.INFO)
 
 
-def create_self_improvement_prompt(
-    metrics: Dict[str, Any], previous_analyses: Optional[List[Dict]] = None
-) -> str:
+def optimize_reasoning_prompt(original_prompt: str, reasoning_quality_score: float = None) -> str:
     """
-    Enhanced prompt that guides more targeted, actionable self-analysis with historical context.
-    This version is more concise and structured, reflecting token optimization goals.
+    Optimizes prompts specifically for reasoning quality, focusing on conciseness and
+    adherence to the 80/20 principle.
+
+    Args:
+        original_prompt: The original prompt to optimize
+        reasoning_quality_score: Optional pre-calculated reasoning quality score
+
+    Returns:
+        Optimized prompt with improved reasoning focus
     """
-    # Get historical effectiveness data
-    # Instantiate ImprovementMetricsCollector to access analysis methods
-    # Note: This instantiation requires context that might not be available here if called in isolation.
-    # In a real application, this would likely be passed down from a higher-level orchestrator
-    # that has access to the necessary components (like LLMProvider, Tokenizer, etc.).
-    # For this function's purpose, we'll assume a minimal instantiation is possible or mock it.
-
-    # Placeholder/Mock objects for instantiation if not available in this scope
-    mock_tokenizer = None  # Replace with actual tokenizer if available
-    mock_llm_provider = None  # Replace with actual LLM provider if available
-    mock_persona_manager = None  # Replace with actual PersonaManager if available
-    mock_content_validator = None  # Replace with actual ContentValidator if available
-
-    try:
-        # Assuming ImprovementMetricsCollector can load data from disk without full context
-        metrics_collector_instance = ImprovementMetricsCollector(
-            initial_prompt="Historical effectiveness analysis",  # Dummy prompt
-            debate_history=[],  # Dummy data
-            intermediate_steps={},  # Dummy data
-            codebase_context={},  # Dummy data
-            tokenizer=mock_tokenizer,
-            llm_provider=mock_llm_provider,
-            persona_manager=mock_persona_manager,
-            content_validator=mock_content_validator,
+    # If no score provided, create a basic assessment
+    if reasoning_quality_score is None:
+        indicators = {
+            "contains_80_20_language": "80/20" in original_prompt or "Pareto" in original_prompt.lower(),
+            "explicit_focus_areas": any(area in original_prompt.lower() for area in
+                ["reasoning quality", "robustness", "efficiency", "maintainability"]),
+            "token_usage_warning": "token usage" in original_prompt.lower() or "cost" in original_prompt.lower(),
+            "structured_output_request": "JSON" in original_prompt or "schema" in original_prompt.lower()
+        }
+        reasoning_quality_score = (
+            0.25 * indicators["contains_80_20_language"] +
+            0.25 * indicators["explicit_focus_areas"] +
+            0.25 * indicators["token_usage_warning"] +
+            0.25 * indicators["structured_output_request"]
         )
-        historical_analysis = (
-            metrics_collector_instance.analyze_historical_effectiveness()
-        )
-
-    except Exception as e:
-        logger.error(
-            f"Could not perform historical analysis for prompt generation: {e}"
-        )
-        historical_analysis = {
-            "success_rate": 0,
-            "total_attempts": 0,
-            "top_performing_areas": [],
-            "common_failure_modes": [],
+    else:
+        # Re-derive indicators if score is provided, for conditional appending
+        indicators = {
+            "contains_80_20_language": "80/20" in original_prompt or "Pareto" in original_prompt.lower(),
+            "explicit_focus_areas": any(area in original_prompt.lower() for area in
+                ["reasoning quality", "robustness", "efficiency", "maintainability"]),
+            "token_usage_warning": "token usage" in original_prompt.lower() or "cost" in original_prompt.lower(),
+            "structured_output_request": "JSON" in original_prompt or "schema" in original_prompt.lower()
         }
 
-    # Format historical data for the prompt
-    historical_effectiveness_str = ""
-    if historical_analysis.get("total_attempts", 0) > 0:
-        success_rate = historical_analysis.get("success_rate", 0) * 100
-        historical_effectiveness_str = (
-            f"\n\n--- HISTORICAL IMPROVEMENT EFFECTIVENESS ---\n"
-            f"- Total attempts: {historical_analysis['total_attempts']}\n"
-            f"- Success rate: {success_rate:.1f}%\n"
-        )
+    # Create optimized prompt with reasoning quality enhancements
+    optimized_prompt = original_prompt
 
-        top_areas = historical_analysis.get("top_performing_areas", [])
-        if top_areas:
-            top_areas_formatted = [
-                f"{area['area']} ({area['success_rate'] * 100:.1f}% success)"
-                for area in top_areas
-            ]
-            historical_effectiveness_str += (
-                f"- Most successful areas: {', '.join(top_areas_formatted)}\n"
-            )
+    # Add 80/20 principle reminder if missing
+    if not indicators.get("contains_80_20_language", False):
+        optimized_prompt += "\n\nCRITICAL: Apply the 80/20 Pareto principle - focus ONLY on the top 20% of issues that will yield 80% of potential improvements."
 
-        failure_modes = historical_analysis.get("common_failure_modes", [])
-        if failure_modes:
-            failure_modes_formatted = [
-                f"{mode['metric']} (failed {mode['occurrences']} times)"
-                for mode in failure_modes
-            ]
-            historical_effectiveness_str += (
-                f"- Common failure patterns: {', '.join(failure_modes_formatted)}\n"
-            )
-        historical_effectiveness_str += "-------------------------------------------\n"
+    # Add explicit focus areas if missing
+    if not indicators.get("explicit_focus_areas", False):
+        optimized_prompt += "\n\nPRIORITIZE: reasoning quality, robustness, efficiency, and maintainability in that order."
 
-    # Refined guidance sections for conciseness
-    security_guidance = (
-        "SECURITY: Prioritize HIGH severity Bandit issues (SQLi, command injection, hardcoded secrets). "
-        "Group similar issues. Provide specific examples (3-5) with `code_snippet` in `PROBLEM` field. "
-        "Analyze Python security pitfalls (deserialization, subprocess.run shell=True, XXE). "
-        "Evaluate CI/CD security and unpinned prod dependencies."
-    )
+    # Add token consciousness directive
+    if not indicators.get("token_usage_warning", False):
+        optimized_prompt += "\n\nIMPORTANT: Be concise. Prioritize high-impact insights over comprehensiveness. Target <2000 tokens for your response."
 
-    token_optimization_guidance = (
-        "EFFICIENCY: Analyze persona token consumption and redundant patterns. "
-        "Suggest prompt truncation strategies for high-token personas. "
-        "Evaluate current token budget allocation effectiveness."
-    )
+    # Add structured output requirement
+    if not indicators.get("structured_output_request", False):
+        optimized_prompt += "\n\nFORMAT: Your response MUST follow the SelfImprovementAnalysisOutputV1 JSON schema with clear rationale and actionable code modifications."
 
-    maintainability_and_testing_guidance = (
-        "MAINTAINABILITY & TESTING: Prioritize testing core logic (SocraticDebate, LLM interaction, metrics). "
-        "Focus on high bug density/complexity areas. Implement targeted smoke tests with example code. "
-        "Evaluate PEP8 adherence and overall maintainability (docs, structure)."
-    )
+    return optimized_prompt
 
-    self_reflection_guidance = (
-        "SELF-REFLECTION: Evaluate past analyses effectiveness. "
-        "Enhance framework (personas, routing, prompt engineering) for better recommendations. "
-        "Identify metrics for self-improvement changes. "
-        "Ensure 80/20 principle adherence in recommendations."
-    )
 
-    # Combine all sections into a concise prompt
-    prompt_sections = [
-        "You are Project Chimera's Self-Improvement Analyst. Critically analyze the provided metrics and identify the most impactful improvements (80/20 principle) across reasoning quality, robustness, efficiency, and maintainability.",
-        security_guidance,
-        token_optimization_guidance,
-        maintainability_and_testing_guidance,
-        self_reflection_guidance,
-    ]
+def create_reasoning_quality_metrics_prompt(metrics: Dict[str, Any]) -> str:
+    """
+    Creates a specialized prompt for analyzing and improving reasoning quality.
 
-    # Add historical context if available
-    if historical_effectiveness_str:
-        prompt_sections.append(historical_effectiveness_str)
+    Args:
+        metrics: Current system metrics including token usage, debate quality, etc.
 
-    # Add current metrics
-    prompt_sections.append(
-        f"\n\n--- CURRENT METRICS ---\n{json.dumps(metrics, indent=2)}\n-----------------------\n"
-    )
+    Returns:
+        A prompt specifically designed to analyze and improve reasoning quality
+    """
+    token_stats = metrics.get("performance_efficiency", {}).get("token_usage_stats", {})
+    total_tokens = token_stats.get("total_tokens", 0)
+    high_token_personas = []
 
-    # Add previous analyses if provided (though historical_analysis is more direct)
-    if previous_analyses:
-        prompt_sections.append(
-            f"\nPrevious analyses provided for context:\n{json.dumps(previous_analyses, indent=2)}\n"
-        )
+    # Identify personas with high token usage
+    if "persona_token_usage" in token_stats:
+        for persona, tokens in token_stats["persona_token_usage"].items():
+            if tokens > 2000:  # Threshold for "high" token usage
+                high_token_personas.append(f"{persona} ({tokens} tokens)")
 
-    # Final instructions for output format
-    output_instructions = (
-        "\n\nProvide your analysis with:\n"
-        "1.  **Specific, prioritized recommendations** (top 3-5) following the 80/20 principle.\n"
-        "2.  **Concrete code examples** (FILE_PATH, ACTION, FULL_CONTENT/DIFF_CONTENT/LINES).\n"
-        "3.  **Expected impact metrics** for each change.\n"
-        "4.  **Clear rationale** for each recommendation.\n"
-        "5.  **Adherence to JSON Schema**: Strictly follow `SelfImprovementAnalysisOutputV1` schema, including `malformed_blocks`."
-    )
-    prompt_sections.append(output_instructions)
+    # Construct the reasoning quality analysis prompt
+    prompt = f"""Analyze Project Chimera's reasoning quality with specific focus on debate effectiveness and token efficiency.
 
-    final_prompt = "\n".join(prompt_sections)
+CURRENT METRICS:
+- Total tokens used: {total_tokens}
+- High-token personas: {', '.join(high_token_personas) if high_token_personas else 'None'}
+- Reasoning quality score: {metrics.get('reasoning_quality', {}).get('overall_score', 'N/A')}
 
-    return final_prompt
+ANALYSIS FOCUS:
+1. Identify specific patterns causing excessive token usage in debate contributions
+2. Evaluate the effectiveness of the Socratic debate process in generating high-quality insights
+3. Assess whether the 80/20 principle is being properly applied in analysis outputs
+4. Determine if conflict resolution is effectively synthesizing diverse perspectives
 
+RECOMMENDATIONS MUST:
+- Target concrete improvements to reasoning quality (not just general code improvements)
+- Include specific persona prompt modifications
+- Address debate structure and conflict resolution mechanisms
+- Provide measurable outcomes for implemented changes
+
+CRITICAL: Focus ONLY on the top 1-2 most impactful changes for reasoning quality (80/20 principle)."""
+
+    return prompt
 
 # --- Placeholder for other functions if they exist in the original file ---
 # def generate_socratic_question(topic): ...

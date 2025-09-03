@@ -30,4 +30,8 @@ repos:
     rev: 1.7.5 # Use a specific, stable version (ensure this is kept up-to-date)
     hooks:
       - id: bandit
-        args: ["-r", ".", "-ll", "-c", "pyproject.toml"] # -r for recursive, -ll for low severity, -c for config
+        args: ["-r", ".", "-ll", "--config", "pyproject.toml"] # -r for recursive, -ll for low severity, --config for config
+        # Ensure Bandit is configured to fail the commit if security issues are found.
+
+# Add other pre-commit hooks as needed, for example:
+# - repo: https://github.com/psf/black

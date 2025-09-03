@@ -47,6 +47,7 @@ from src.persona_manager import PersonaManager
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
+from src.utils.prompt_engineering import optimize_reasoning_prompt # NEW IMPORT
 
 # Configure logging for the core module itself
 logger = logging.getLogger(__name__)
@@ -1886,7 +1887,7 @@ class SocraticDebate:
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
 
         final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
-            final_synthesis_prompt_raw,
+            optimize_reasoning_prompt(final_synthesis_prompt_raw), # Apply optimization
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )

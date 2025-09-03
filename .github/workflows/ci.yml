@@ -23,9 +23,6 @@ jobs:
         pip install -r requirements.txt
         # Explicitly install Ruff for CI to ensure it is available
         pip install ruff
-    - name: Run Ruff format to fix any formatting issues before running Bandit and Pytest # ADDED STEP
-      run: |
-        ruff format .
     - name: Run Ruff (Linter & Formatter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs

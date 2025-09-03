@@ -49,13 +49,48 @@ class PromptAnalyzer:
         # Simple complexity score calculation
         complexity_score = min(1.0, word_count / 500 + sentence_count / 20)
 
+        # Add reasoning quality metrics
+        reasoning_indicators = {
+            "contains_80_20_language": "80/20" in prompt or "Pareto" in prompt.lower(),
+            "explicit_focus_areas": any(area in prompt.lower() for area in
+                ["reasoning quality", "robustness", "efficiency", "maintainability"]),
+            "token_usage_warning": "token usage" in prompt.lower() or "cost" in prompt.lower(),
+            "structured_output_request": "JSON" in prompt or "schema" in prompt.lower()
+        }
+
+        # Calculate reasoning quality score (0-1)
+        reasoning_score = (
+            0.25 * reasoning_indicators["contains_80_20_language"] +
+            0.25 * reasoning_indicators["explicit_focus_areas"] +
+            0.25 * reasoning_indicators["token_usage_warning"] +
+            0.25 * reasoning_indicators["structured_output_request"]
+        )
+
         return {
             "complexity_score": complexity_score,
             "primary_domain": primary_domain,
             "domain_scores": domain_scores,
             "word_count": word_count,
             "sentence_count": sentence_count,
+            "reasoning_quality_metrics": {
+                "score": reasoning_score,
+                "indicators": reasoning_indicators,
+                "suggested_improvements": self._generate_reasoning_quality_suggestions(reasoning_indicators)
+            }
         }
+
+    def _generate_reasoning_quality_suggestions(self, indicators: Dict[str, bool]) -> List[str]:
+        """Generates suggestions for improving reasoning quality based on indicators."""
+        suggestions = []
+        if not indicators["contains_80_20_language"]:
+            suggestions.append("Add explicit 80/20 Pareto principle directive.")
+        if not indicators["explicit_focus_areas"]:
+            suggestions.append("Specify core focus areas (e.g., reasoning quality, robustness, efficiency, maintainability).")
+        if not indicators["token_usage_warning"]:
+            suggestions.append("Include directives for conciseness and token consciousness.")
+        if not indicators["structured_output_request"]:
+            suggestions.append("Request strict adherence to JSON schema for output.")
+        return suggestions
 
     @lru_cache(maxsize=256)
     def is_self_analysis_prompt(

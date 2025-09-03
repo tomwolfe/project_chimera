@@ -1,16 +1,16 @@
-# src/self_improvement/metrics_collector.py
 import os
 import json
 import subprocess
 import ast
 import logging
-from typing import Dict, Any, List, Tuple, Union
+from typing import Dict, Any, List, Tuple, Union, Optional
 from collections import defaultdict
 from pathlib import Path
 import re
 import yaml  # Added for YAML parsing
 import toml  # Added for TOML parsing
 from pydantic import ValidationError  # Added for Pydantic validation in parsing
+from datetime import datetime # Added for save_improvement_results
 
 # Import existing validation functions to reuse their logic
 # Ensure _get_code_snippet is imported from src.utils.code_validator
@@ -297,7 +297,20 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         )
         self.metrics = {}
         self.critical_metric = None
-        self._collect_core_metrics(tokenizer, llm_provider)
+        # Initialize reasoning quality metrics
+        self.reasoning_quality_metrics = {
+            "argument_strength_score": 0.0,
+            "debate_effectiveness": 0.0,
+            "conflict_resolution_quality": 0.0,
+            "80_20_adherence_score": 0.0,
+            "reasoning_depth": 0,
+            "critical_thinking_indicators": {
+                "counter_arguments": 0,
+                "evidence_citations": 0,
+                "assumption_challenges": 0
+            }
+        }
+        # _collect_core_metrics is called within collect_all_metrics now
 
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
@@ -363,6 +376,53 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "status": "CRITICAL" if (self.critical_metric == "token_efficiency" and value > threshold) or \
                                  (self.critical_metric != "token_efficiency" and value < threshold) else "OK"
         }
+
+    def analyze_reasoning_quality(self, debate_history: List[Dict[str, Any]], analysis_output: Dict[str, Any]):
+        """Analyzes the quality of reasoning in the debate process and final output."""
+        # Reset reasoning quality metrics
+        self.reasoning_quality_metrics = {
+            "argument_strength_score": 0.0,
+            "debate_effectiveness": 0.0,
+            "conflict_resolution_quality": 0.0,
+            "80_20_adherence_score": 0.0,
+            "reasoning_depth": 0,
+            "critical_thinking_indicators": {
+                "counter_arguments": 0,
+                "evidence_citations": 0,
+                "assumption_challenges": 0
+            }
+        }
+
+        # Analyze debate history for critical thinking indicators
+        for turn in debate_history:
+            # Access output from debate history, assuming it's a dict with a 'general_output' or similar
+            # This needs to be robust to different persona outputs.
+            # For now, a simple heuristic:
+            content = ""
+            if isinstance(turn.get("output"), dict):
+                content = turn["output"].get("general_output", "") or \
+                          turn["output"].get("CRITIQUE_SUMMARY", "") or \
+                          turn["output"].get("ANALYSIS_SUMMARY", "") or \
+                          turn["output"].get("summary", "")
+            elif isinstance(turn.get("output"), str):
+                content = turn["output"]
+
+            content_lower = content.lower()
+            self.reasoning_quality_metrics["critical_thinking_indicators"]["counter_arguments"] += content_lower.count("however") + content_lower.count("but") + content_lower.count("counterpoint")
+            self.reasoning_quality_metrics["critical_thinking_indicators"]["evidence_citations"] += content_lower.count("evidence") + content_lower.count("data shows") + content_lower.count("metrics indicate")
+            self.reasoning_quality_metrics["critical_thinking_indicators"]["assumption_challenges"] += content_lower.count("assumption") + content_lower.count("presumes") + content_lower.count("challenging the assumption")
+
+        # Check for 80/20 principle adherence in final output
+        analysis_text = str(analysis_output).lower()
+        self.reasoning_quality_metrics["80_20_adherence_score"] = 0.8 if ("80/20" in analysis_text or "pareto" in analysis_text) else 0.3
+
+        # Calculate overall reasoning depth based on critical thinking indicators
+        ct_indicators = self.reasoning_quality_metrics["critical_thinking_indicators"]
+        total_indicators = sum(ct_indicators.values())
+        self.reasoning_quality_metrics["reasoning_depth"] = min(5, total_indicators // 3)  # Scale to 0-5
+
+        # Update main metrics dictionary
+        self.metrics["reasoning_quality"] = self.reasoning_quality_metrics
 
 
     @classmethod
@@ -835,7 +895,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
         """
         metrics = {
-            "code_quality": {
+            "code_quality": { # Initialize with default values
                 "ruff_issues_count": 0,
                 "complexity_metrics": {
                     "avg_cyclomatic_complexity": 0.0,
@@ -847,11 +907,11 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
                 "detailed_issues": [],
                 "ruff_violations": [],
             },
-            "security": {
+            "security": { # Initialize with default values
                 "bandit_issues_count": 0,
                 "ast_security_issues_count": 0,
             },
-            "performance_efficiency": {
+            "performance_efficiency": { # Initialize with default values
                 "token_usage_stats": self._collect_token_usage_stats(),
                 "debate_efficiency_summary": self._analyze_debate_efficiency(),
                 "potential_bottlenecks_count": 0,
@@ -874,7 +934,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "deployment_robustness": self._collect_deployment_robustness_metrics(
                 self.codebase_path
             ).model_dump(by_alias=True),
-            "reasoning_quality": self._collect_reasoning_quality_metrics(),
+            "reasoning_quality": self.reasoning_quality_metrics, # Will be updated by analyze_reasoning_quality
             "historical_analysis": self.analyze_historical_effectiveness(), # Corrected call to self.analyze_historical_effectiveness()
         }
 
@@ -966,6 +1026,10 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
                 total_nesting_depth_across_functions / total_functions_across_codebase
             )
 
+        # Call analyze_reasoning_quality here, after intermediate_steps are populated
+        self.analyze_reasoning_quality(self.debate_history, self.intermediate_steps.get("Final_Synthesis_Output", {}))
+        metrics["reasoning_quality"] = self.reasoning_quality_metrics # Ensure it's updated in the final metrics dict
+
         return metrics
 
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
@@ -986,7 +1050,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
-            "phase_token_usage": phase_token_usage,
+            "persona_token_usage": phase_token_usage, # Renamed for clarity and consistency with prompt
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
