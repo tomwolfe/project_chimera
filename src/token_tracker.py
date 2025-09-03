@@ -2,8 +2,8 @@
 import time
 from typing import Dict, List, Optional, Any
 import logging
-import re # Added for potential future use, though not strictly needed for current logic
-import hashlib # Added for potential future use, though not strictly needed for current logic
+import re  # Added for potential future use, though not strictly needed for current logic
+import hashlib  # Added for potential future use, though not strictly needed for current logic
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,9 @@ class TokenUsageTracker:
         # This logic categorizes tokens based on the current stage of processing.
         # 'final_synthesis' stage tokens are considered high-value.
         # 'intermediate_reasoning' stage tokens are considered lower-value.
-        if self._current_stage == 'final_synthesis':
+        if self._current_stage == "final_synthesis":
             self.high_value_tokens += tokens
-        elif self._current_stage == 'intermediate_reasoning':
+        elif self._current_stage == "intermediate_reasoning":
             self.low_value_tokens += tokens
         # Other stages (e.g., context analysis, initial prompt) are not explicitly categorized here
         # but contribute to current_usage and potentially persona_token_map.

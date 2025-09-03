@@ -29,8 +29,8 @@ from src.models import (
     ConfigurationAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     DeploymentAnalysisOutput,
-    SelfImprovementFinding, # NEW: Added for _calculate_pareto_score
-    QuantitativeImpactMetrics, # NEW: Added for _calculate_pareto_score
+    SelfImprovementFinding,  # NEW: Added for _calculate_pareto_score
+    QuantitativeImpactMetrics,  # NEW: Added for _calculate_pareto_score
 )
 from src.config.settings import ChimeraSettings
 from src.exceptions import (
@@ -428,7 +428,9 @@ class SocraticDebate:
         self, phase: str, tokens: int, persona_name: Optional[str] = None
     ):
         """Tracks token usage for a given phase."""
-        self.token_tracker.set_current_stage(phase) # NEW: Set the current stage for semantic weighting
+        self.token_tracker.set_current_stage(
+            phase
+        )  # NEW: Set the current stage for semantic weighting
         self.token_tracker.record_usage(tokens, persona=persona_name)
         cost = self.llm_provider.calculate_usd_cost(tokens, 0)
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
@@ -1993,11 +1995,17 @@ class SocraticDebate:
     def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
         # Base impact on quality improvement and token savings
-        impact = (finding.metrics.expected_quality_improvement or 0) + (finding.metrics.token_savings_percent or 0)
+        impact = (finding.metrics.expected_quality_improvement or 0) + (
+            finding.metrics.token_savings_percent or 0
+        )
         # Effort is inversely proportional to score
-        effort_factor = 1.0 / (finding.metrics.estimated_effort or 1) # Avoid division by zero
+        effort_factor = 1.0 / (
+            finding.metrics.estimated_effort or 1
+        )  # Avoid division by zero
         # Return normalized score between 0-1
-        return min(1.0, impact * effort_factor * 5)  # Multiplier to normalize to 0-1 range
+        return min(
+            1.0, impact * effort_factor * 5
+        )  # Multiplier to normalize to 0-1 range
 
     def _update_intermediate_steps_with_totals(self):
         """Updates the intermediate steps dictionary with total token usage and estimated cost."""

@@ -325,6 +325,7 @@ class LLMOutput(BaseModel):
 
 class ImprovementArea(str, Enum):
     """Defines categories for self-improvement findings."""
+
     REASONING_QUALITY = "Reasoning Quality"
     ROBUSTNESS = "Robustness"
     EFFICIENCY = "Efficiency"
@@ -334,6 +335,7 @@ class ImprovementArea(str, Enum):
 
 class CodeChangeDescription(BaseModel):
     """Describes a suggested code change."""
+
     action: str  # e.g., "ADD", "MODIFY", "REMOVE"
     file_path: str
     description: str
@@ -342,14 +344,24 @@ class CodeChangeDescription(BaseModel):
 
 class QuantitativeImpactMetrics(BaseModel):
     """Quantitative metrics for improvement impact assessment."""
-    estimated_effort: int = Field(ge=1, le=10, description="Estimated effort on a scale of 1-10")
-    expected_quality_improvement: float = Field(ge=0.0, le=1.0, description="Expected improvement in reasoning quality (0-1)")
-    token_savings_percent: Optional[float] = Field(None, ge=0.0, le=1.0, description="Expected token usage reduction")
-    error_reduction_percent: Optional[float] = Field(None, ge=0.0, le=1.0, description="Expected error reduction")
+
+    estimated_effort: int = Field(
+        ge=1, le=10, description="Estimated effort on a scale of 1-10"
+    )
+    expected_quality_improvement: float = Field(
+        ge=0.0, le=1.0, description="Expected improvement in reasoning quality (0-1)"
+    )
+    token_savings_percent: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Expected token usage reduction"
+    )
+    error_reduction_percent: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Expected error reduction"
+    )
 
 
 class SelfImprovementFinding(BaseModel):
     """A single self-improvement finding with problem, solution, and impact."""
+
     area: ImprovementArea
     problem: str
     solution: str
@@ -357,7 +369,9 @@ class SelfImprovementFinding(BaseModel):
     priority_score: float = Field(ge=0.0, le=1.0)
     code_changes: List[CodeChange]
     metrics: Optional[QuantitativeImpactMetrics] = None
-    pareto_score: float = Field(ge=0.0, le=1.0, description="80/20 Pareto principle score (impact/effort)")
+    pareto_score: float = Field(
+        ge=0.0, le=1.0, description="80/20 Pareto principle score (impact/effort)"
+    )
 
 
 # NEW: Pydantic model for general critique output
