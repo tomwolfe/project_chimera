@@ -1158,7 +1158,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             )
             return []
 
-    # --- SUGGESTED METHODS TO ADD ---
+    # --- SUGGESTED METHODS TO ADD (Integrated) ---
 
     def save_improvement_results(
         self,

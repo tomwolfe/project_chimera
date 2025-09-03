@@ -429,6 +429,7 @@ class SelfImprovementLoop:
         self.intermediate_steps["failed_changes"] = failed_changes
         self.intermediate_steps["test_results_after_changes"] = test_results
 
+        # --- MODIFICATION START ---
         # Save historical results
         metrics_collector.save_improvement_results(
             analysis_output.get("IMPACTFUL_SUGGESTIONS", []),
@@ -440,6 +441,7 @@ class SelfImprovementLoop:
                 for res in test_results.values()
             ),
         )
+        # --- MODIFICATION END ---
 
         logger.info(
             f"Self-improvement application phase completed. Score: {improvement_score:.2f}"

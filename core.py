@@ -127,13 +127,11 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
-            scanner = CodebaseScanner() # Instantiate CodebaseScanner
-            self.codebase_context = scanner.load_own_codebase_context() # CALL NEW METHOD
+            scanner = CodebaseScanner()
+            self.codebase_context = scanner.scan_codebase()
             self.logger.info(
                 f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
             )
-            # Add a specific note to the prompt that we have context
-            self.initial_prompt = self.initial_prompt + "\n\nNOTE: You now have full access to the Project Chimera codebase for analysis."
         else:  # END MODIFIED BLOCK
             self.codebase_context = codebase_context or {}
 
@@ -620,7 +618,7 @@ class SocraticDebate:
         persona_name: str,
         parsed_output: Dict[str, Any],
         has_schema_error: bool,
-        is_truncated: bool,
+        is_truncated: bool, # ADDED: is_truncated parameter
     ):
         """Performs content alignment validation and records performance."""
         is_aligned, validation_message, nuanced_feedback = (
@@ -628,11 +626,11 @@ class SocraticDebate:
         )
         self.persona_manager.record_persona_performance(
             persona_name,
-            1,
+            1, # Turn number is not directly available here, using 1 as placeholder
             parsed_output,
             is_aligned and not has_schema_error,
             validation_message,
-            is_truncated=is_truncated,
+            is_truncated=is_truncated, # PASSED: is_truncated
         )
 
         if not is_aligned:
@@ -662,7 +660,7 @@ class SocraticDebate:
     def _execute_llm_turn(
         self,
         persona_name: str,
-        persona_config: PersonaConfig,
+        # persona_config: PersonaConfig, # REMOVED: Will get from persona_manager
         prompt_for_llm: str,
         phase: str,
         max_output_tokens_for_turn: int,
@@ -680,9 +678,20 @@ class SocraticDebate:
             phase=phase,
         )
 
+        # MODIFIED: Get persona_config from persona_manager
+        persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
+        if not persona_config:
+            self._log_with_context(
+                "error",
+                f"Persona configuration not found for {persona_name}. Cannot execute turn.",
+                persona=persona_name,
+            )
+            raise ChimeraError(f"Persona configuration not found for {persona_name}.")
+
+
         output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
-        self._log_with_context(
-            "debug", f"Using schema {output_schema.__name__} for {persona_name}."
+        self.logger.debug(
+            f"Using schema {output_schema.__name__} for {persona_name}."
         )
 
         current_prompt = prompt_for_llm
@@ -720,6 +729,7 @@ class SocraticDebate:
                 )
 
                 # Handle content alignment and record performance
+                # PASSED: is_truncated to _handle_content_alignment_check
                 parsed_output = self._handle_content_alignment_check(
                     persona_name, parsed_output, has_schema_error, is_truncated
                 )
@@ -989,6 +999,7 @@ class SocraticDebate:
         persona_turn_budgets: Dict[str, int] = {}
 
         for p_name in active_debate_personas:
+            # MODIFIED: Get adjusted persona config here to use its max_tokens
             persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
             allocated = max(
                 MIN_PERSONA_TOKENS,
@@ -1052,7 +1063,8 @@ class SocraticDebate:
             return None
 
         self._log_with_context("info", "Executing Context_Aware_Assistant turn.")
-        persona_config = self.all_personas.get("Context_Aware_Assistant")
+        # MODIFIED: Get persona_config from persona_manager
+        persona_config = self.persona_manager.get_adjusted_persona_config("Context_Aware_Assistant")
         if not persona_config:
             self._log_with_context(
                 "error", "Context_Aware_Assistant persona configuration not found."
@@ -1081,7 +1093,7 @@ class SocraticDebate:
         try:
             output = self._execute_llm_turn(
                 "Context_Aware_Assistant",
-                persona_config,
+                # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                 prompt,
                 "debate",
                 max_output_tokens_for_turn,
@@ -1272,21 +1284,21 @@ class SocraticDebate:
                 current_persona_name=persona_name,
             )
 
-            persona_config = self.persona_manager.get_adjusted_persona_config(
-                persona_name
-            )
-            if not persona_config:
-                persona_config = self.all_personas.get(persona_name)
-                if not persona_config:
-                    self._log_with_context(
-                        "error",
-                        f"Persona configuration not found for {persona_name}. Skipping turn.",
-                        persona=persona_name,
-                    )
-                    debate_history.append(
-                        {"persona": persona_name, "error": "Config not found"}
-                    )
-                    continue
+            # persona_config = self.persona_manager.get_adjusted_persona_config( # REMOVED: Get inside _execute_llm_turn
+            #     persona_name
+            # )
+            # if not persona_config:
+            #     persona_config = self.all_personas.get(persona_name)
+            #     if not persona_config:
+            #         self._log_with_context(
+            #             "error",
+            #             f"Persona configuration not found for {persona_name}. Skipping turn.",
+            #             persona=persona_name,
+            #         )
+            #         debate_history.append(
+            #             {"persona": persona_name, "error": "Config not found"}
+            #         )
+            #         continue
 
             persona_specific_context_str = self._build_persona_context_string(
                 persona_name, context_persona_turn_results
@@ -1307,9 +1319,13 @@ class SocraticDebate:
                 )
             current_prompt += previous_output_summary_str
 
+            # MODIFIED: max_output_tokens_for_turn will be determined by _execute_llm_turn using adjusted config
+            # For budget check, we can use a heuristic or the base max_tokens from the persona
+            base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
             max_output_tokens_for_turn = self.phase_budgets.get(
                 "persona_turn_budgets", {}
-            ).get(persona_name, persona_config.max_tokens)
+            ).get(persona_name, base_persona_config.max_tokens if base_persona_config else 1024) # Fallback to 1024
+
             estimated_tokens = (
                 self.tokenizer.count_tokens(current_prompt) + max_output_tokens_for_turn
             )
@@ -1318,7 +1334,7 @@ class SocraticDebate:
             try:
                 output = self._execute_llm_turn(
                     persona_name,
-                    persona_config,
+                    # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                     current_prompt,
                     "debate",
                     max_output_tokens_for_turn,
@@ -1442,22 +1458,23 @@ class SocraticDebate:
                 current_persona_name=persona_name,
             )
 
-            persona_config = self.persona_manager.get_adjusted_persona_config(
-                persona_name
-            )
+            # persona_config = self.persona_manager.get_adjusted_persona_config( # REMOVED: Get inside _execute_llm_turn
+            #     persona_name
+            # )
+            base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
 
             max_output_tokens_for_sub_debate_turn = sub_debate_budget // len(
                 sub_debate_personas
             )
             max_output_tokens_for_sub_debate_turn = max(
                 250,
-                min(max_output_tokens_for_sub_debate_turn, persona_config.max_tokens),
+                min(max_output_tokens_for_sub_debate_turn, base_persona_config.max_tokens if base_persona_config else 1024),
             )
 
             try:
                 turn_output = self._execute_llm_turn(
                     persona_name,
-                    persona_config,
+                    # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                     sub_debate_prompt,
                     "sub_debate_phase",
                     max_output_tokens_for_sub_debate_turn,
@@ -1497,7 +1514,7 @@ class SocraticDebate:
                 try:
                     final_resolution = self._execute_llm_turn(
                         synthesizer_persona.name,
-                        synthesizer_persona,
+                        # synthesizer_persona, # REMOVED: Passed implicitly via get_adjusted_persona_config
                         final_resolution_prompt,
                         "sub_debate_synthesis",
                         synthesizer_persona.max_tokens,
@@ -1819,14 +1836,15 @@ class SocraticDebate:
         else:
             synthesis_persona_name = "General_Synthesizer"
 
-        synthesis_persona_config = self.all_personas.get(synthesis_persona_name)
+        # MODIFIED: Get persona_config from persona_manager
+        synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
         if not synthesis_persona_config:
             self._log_with_context(
                 "error",
                 f"Synthesis persona '{synthesis_persona_name}' configuration not found. Falling back to General_Synthesizer.",
             )
             synthesis_persona_name = "General_Synthesizer"
-            synthesis_persona_config = self.all_personas.get(synthesis_persona_name)
+            synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
             if not synthesis_persona_config:
                 raise ChimeraError("No synthesis persona configuration found.")
 
@@ -1927,7 +1945,7 @@ class SocraticDebate:
 
         synthesis_output = self._execute_llm_turn(
             synthesis_persona_name,
-            synthesis_persona_config,
+            # synthesis_persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
             final_synthesis_prompt,
             "synthesis",
             max_output_tokens_for_turn,

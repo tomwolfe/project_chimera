@@ -41,7 +41,7 @@ class PersonaManager:
         self.available_domains: List[str] = []
         self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
-        self._original_personas: Dict[str, PersonaConfig] = {}
+        self._original_personas: Dict[str, PersonaConfig] = {} # Store original configs
 
         # For Adaptive LLM Parameter Adjustment
         self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
@@ -61,7 +61,7 @@ class PersonaManager:
             # For now, we'll proceed with potentially empty or minimal data, logging the error.
 
         self._load_custom_frameworks_on_init()
-        self._load_original_personas()
+        self._load_original_personas() # Load original personas after all others are loaded
 
         # Initialize PersonaRouter with all loaded personas and persona_sets, and the prompt_analyzer
         # This ensures the router always has the correct prompt_analyzer instance.
@@ -603,7 +603,7 @@ class PersonaManager:
         output: Any,
         is_valid: bool,
         validation_message: str,
-        is_truncated: bool = False,
+        is_truncated: bool = False, # NEW parameter
     ):
         """Record performance metrics for a persona's turn."""
         base_persona_name = persona_name.replace(
