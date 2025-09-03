@@ -1,60 +1,79 @@
 # src/token_tracker.py
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+import logging
+import re # Added for potential future use, though not strictly needed for current logic
+import hashlib # Added for potential future use, though not strictly needed for current logic
+
+logger = logging.getLogger(__name__)
 
 
 class TokenUsageTracker:
     """Tracks token usage across the reasoning process with predictive capabilities."""
 
     def __init__(self, budget: int = 128000):
-        self.budget = budget
-        self.current_usage = 0  # Total tokens used (for compatibility with older logic)
-        self.usage_history = []  # (timestamp, total_tokens_for_event)
-        self.persona_token_map = {}  # persona_name: total_tokens
+        """
+        Initializes the token tracker.
 
-        # NEW: For semantic token weighting and granular tracking
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.total_tokens = 0  # Sum of input_tokens and output_tokens
+        Args:
+            budget: The total token budget for the process.
+        """
+        self.budget = budget
+        self.current_usage = 0
+        self.usage_history = []  # Stores (timestamp, tokens_used) tuples
+        self.persona_token_map = {}  # Stores total tokens used per persona: persona_name: total_tokens
+
+        # NEW: Attributes for semantic token weighting
         self.high_value_tokens = 0
         self.low_value_tokens = 0
-        self._current_stage: Optional[str] = None # To be set by the orchestrator (e.g., core.py)
+        self._current_stage = None  # To be set by the orchestrator (e.g., core.py) to indicate the current phase (e.g., 'intermediate_reasoning', 'final_synthesis')
 
-    def track_usage(self, input_tokens: int, output_tokens: int, persona: Optional[str] = None):
+    def record_usage(self, tokens: int, persona: Optional[str] = None):
         """
-        Record token usage with optional persona attribution and semantic weighting.
-        This method replaces the previous 'record_usage'.
+        Records token usage, optionally attributing it to a persona.
+        Also applies semantic token weighting based on the current stage.
+
+        Args:
+            tokens: The number of tokens used in this interaction.
+            persona: The name of the persona involved, if applicable.
         """
-        self.input_tokens += input_tokens
-        self.output_tokens += output_tokens
-        self.total_tokens = self.input_tokens + self.output_tokens
+        self.current_usage += tokens
+        self.usage_history.append((time.time(), tokens))
 
-        # Update current_usage for compatibility with existing methods that might rely on it
-        self.current_usage = self.total_tokens
-
-        # Update usage history (tracks total tokens for this specific event)
-        self.usage_history.append((time.time(), input_tokens + output_tokens))
-
+        # Attribute tokens to persona if provided
         if persona:
             if persona not in self.persona_token_map:
                 self.persona_token_map[persona] = 0
-            self.persona_token_map[persona] += (input_tokens + output_tokens)
+            self.persona_token_map[persona] += tokens
 
-        # NEW: Semantic token weighting logic from the diff
-        if hasattr(self, '_current_stage') and self._current_stage is not None:
-            if self._current_stage == 'final_synthesis':
-                self.high_value_tokens += output_tokens
-            elif self._current_stage == 'intermediate_reasoning':
-                self.low_value_tokens += output_tokens
+        # NEW: Semantic token weighting logic
+        # This logic categorizes tokens based on the current stage of processing.
+        # 'final_synthesis' stage tokens are considered high-value.
+        # 'intermediate_reasoning' stage tokens are considered lower-value.
+        if self._current_stage == 'final_synthesis':
+            self.high_value_tokens += tokens
+        elif self._current_stage == 'intermediate_reasoning':
+            self.low_value_tokens += tokens
+        # Other stages (e.g., context analysis, initial prompt) are not explicitly categorized here
+        # but contribute to current_usage and potentially persona_token_map.
 
     def get_consumption_rate(self) -> float:
-        """Calculate current token consumption rate as percentage of budget."""
-        if self.total_tokens == 0 or self.budget == 0:
+        """Calculates the current token consumption rate as a percentage of the budget."""
+        if not self.usage_history or self.budget == 0:
             return 0.0
-        return min(1.0, self.total_tokens / self.budget)
+        # Ensure division by zero is avoided and rate is capped at 1.0 (100%)
+        return min(1.0, self.current_usage / self.budget)
 
     def get_high_consumption_personas(self, threshold: float = 0.15) -> Dict[str, int]:
-        """Identify personas consuming disproportionate tokens."""
+        """
+        Identifies personas that are consuming a disproportionate amount of tokens.
+
+        Args:
+            threshold: The proportion of total tokens used by a persona to be considered high consumption.
+
+        Returns:
+            A dictionary mapping persona names to their token counts for high consumers.
+        """
         total = sum(self.persona_token_map.values())
         if total == 0:
             return {}
@@ -66,16 +85,21 @@ class TokenUsageTracker:
         }
 
     def reset(self):
-        """Resets the tracker's state."""
-        self.budget = 128000 # Reset budget to default or keep current? Assuming default for full reset.
+        """Resets the tracker's state to initial values."""
         self.current_usage = 0
         self.usage_history = []
         self.persona_token_map = {}
-        
-        # NEW: Reset for semantic token weighting and granular tracking
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.total_tokens = 0
+        # NEW: Reset semantic token counters and stage
         self.high_value_tokens = 0
         self.low_value_tokens = 0
         self._current_stage = None
+
+    def set_current_stage(self, stage: Optional[str]):
+        """
+        Sets the current processing stage. This is crucial for semantic token weighting
+        as it informs the `record_usage` method about the context of token consumption.
+
+        Args:
+            stage: The name of the current processing stage (e.g., 'intermediate_reasoning', 'final_synthesis').
+        """
+        self._current_stage = stage
