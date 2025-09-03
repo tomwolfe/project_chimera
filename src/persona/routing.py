@@ -8,16 +8,16 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Set, Optional, Any, Tuple
 import re
-import json
-from pathlib import Path
+# REMOVED: import json # Not directly used in this file
+# REMOVED: from pathlib import Path # Not directly used in this file
 import logging
 from functools import lru_cache
 
 from src.models import PersonaConfig
 from src.constants import (
     SELF_ANALYSIS_PERSONA_SEQUENCE,
-)  # Re-added specifically for fallback
-from src.utils.prompt_analyzer import PromptAnalyzer  # NEW IMPORT
+)
+from src.utils.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,11 @@ class PersonaRouter:
         all_personas: Dict[str, PersonaConfig],
         persona_sets: Dict[str, List[str]],
         prompt_analyzer: PromptAnalyzer,
-    ):  # Accept PromptAnalyzer
+    ):
         self.all_personas = all_personas
         self.persona_sets = persona_sets
-        self.prompt_analyzer = prompt_analyzer  # Store the PromptAnalyzer instance
+        self.prompt_analyzer = prompt_analyzer
 
-        # Initialize SentenceTransformer for semantic routing
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.persona_embeddings = self._generate_persona_embeddings()
 
@@ -153,7 +152,6 @@ class PersonaRouter:
     ) -> bool:
         """Determine if Test_Engineer persona is needed based on prompt and context."""
 
-        # Keywords indicating testing focus in the prompt
         testing_keywords = [
             "test",
             "unit test",
@@ -176,7 +174,6 @@ class PersonaRouter:
         if any(keyword in prompt_lower for keyword in testing_keywords):
             return True
 
-        # Check for test files in context analysis results
         if context_analysis_results and context_analysis_results.get("relevant_files"):
             for file_path, _ in context_analysis_results["relevant_files"]:
                 if (
@@ -200,7 +197,6 @@ class PersonaRouter:
         if not intermediate_results:
             intermediate_results = {}
 
-        # Extract and map quality metrics from Context_Aware_Assistant's output
         context_analysis_output = intermediate_results.get(
             "Context_Aware_Assistant_Output"
         )
@@ -208,8 +204,8 @@ class PersonaRouter:
             key_modules = context_analysis_output.get("key_modules", [])
             security_concerns = context_analysis_output.get("security_concerns", [])
 
-            avg_code_quality = 1.0  # Default to high
-            avg_complexity = 0.0  # Default to low
+            avg_code_quality = 1.0
+            avg_complexity = 0.0
             if key_modules:
                 avg_code_quality = sum(
                     m.get("code_quality_score", 1.0) for m in key_modules
@@ -218,27 +214,24 @@ class PersonaRouter:
                     m.get("complexity_score", 0.0) for m in key_modules
                 ) / len(key_modules)
 
-            # Prioritize Security_Auditor if security concerns are high
             if security_concerns:
                 self._insert_persona_before_arbitrator(
                     sequence, "Security_Auditor"
-                )  # Use sequence directly
+                )
                 logger.info(
                     "Prioritized Security_Auditor due to security concerns from context analysis."
                 )
 
-            # Prioritize Code_Architect if maintainability/code quality is low or complexity is high
             if avg_code_quality < 0.7 or avg_complexity > 0.7:
                 self._insert_persona_before_arbitrator(
                     sequence, "Code_Architect"
-                )  # Use sequence directly
+                )
                 logger.info(
                     "Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis."
                 )
 
         adjusted_sequence = sequence.copy()
 
-        # Enhanced misclassification detection for architecture terms
         if "Code_Architect" in adjusted_sequence:
             building_arch_terms = [
                 "building",
@@ -285,10 +278,9 @@ class PersonaRouter:
                         adjusted_sequence, "Creative_Thinker"
                     )
 
-        # --- Conditional inclusion/exclusion of Test_Engineer ---
         if (
             domain == "Software Engineering" or domain == "Self-Improvement"
-        ):  # Also apply to Self-Improvement
+        ):
             if (
                 "Test_Engineer" in adjusted_sequence
                 and not self._should_include_test_engineer(
@@ -305,7 +297,6 @@ class PersonaRouter:
                     prompt_lower, context_analysis_results
                 )
             ):
-                # If Test_Engineer is not in the base sequence but is needed, insert it
                 self._insert_persona_before_arbitrator(
                     adjusted_sequence, "Test_Engineer"
                 )
@@ -313,7 +304,6 @@ class PersonaRouter:
                     "Added Test_Engineer to sequence due to testing context/keywords detected."
                 )
 
-        # NEW: Dynamic adjustment based on Reasoning Quality Metrics (if available)
         reasoning_quality_metrics = intermediate_results.get(
             "Self_Improvement_Metrics", {}
         ).get("reasoning_quality", {})
@@ -328,7 +318,6 @@ class PersonaRouter:
                 "unresolved_conflict_present", False
             )
 
-            # If high schema failures or content misalignment, prioritize Constructive_Critic
             if (
                 schema_failures > 0 or content_misalignments > 0
             ) and "Constructive_Critic" not in adjusted_sequence:
@@ -339,7 +328,6 @@ class PersonaRouter:
                     "Prioritized Constructive_Critic due to schema failures or content misalignment."
                 )
 
-            # If unresolved conflicts, ensure Devils_Advocate is present and potentially earlier
             if unresolved_conflict and "Devils_Advocate" not in adjusted_sequence:
                 self._insert_persona_before_arbitrator(
                     adjusted_sequence, "Devils_Advocate"
@@ -358,11 +346,11 @@ class PersonaRouter:
             arbitrator_index = sequence.index("Impartial_Arbitrator")
         elif (
             "Self_Improvement_Analyst" in sequence
-        ):  # Also consider Self_Improvement_Analyst as a final synthesizer
+        ):
             arbitrator_index = sequence.index("Self_Improvement_Analyst")
         elif (
             "General_Synthesizer" in sequence
-        ):  # Also consider General_Synthesizer as a final synthesizer
+        ):
             arbitrator_index = sequence.index("General_Synthesizer")
 
         sequence.insert(arbitrator_index, persona)
@@ -373,33 +361,26 @@ class PersonaRouter:
     def determine_persona_sequence(
         self,
         prompt: str,
-        domain: str,  # Added domain as a required argument
+        domain: str,
         intermediate_results: Optional[Dict[str, Any]] = None,
         context_analysis_results: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Determine the optimal sequence of personas for processing the prompt.
-        Dynamically adjusts the sequence based on prompt keywords, domain,
-        intermediate results, and context analysis.
         """
         prompt_lower = prompt.lower()
 
-        # --- LLM SUGGESTION 2: Dynamic Persona Sequence for Self-Analysis ---
-        # Check if it's a self-analysis prompt and apply specific sequences.
         if self.prompt_analyzer.is_self_analysis_prompt(
             prompt
-        ):  # DELEGATE to PromptAnalyzer
+        ):
             logger.info(
                 "Detected self-analysis prompt. Applying dynamic persona sequence from 'Self-Improvement' set."
             )
 
-            # Use the defined 'Self-Improvement' persona set, with a fallback to the hardcoded sequence
             base_sequence = self.persona_sets.get(
                 "Self-Improvement", SELF_ANALYSIS_PERSONA_SEQUENCE
             ).copy()
 
-            # Dynamic adaptation for self-analysis based on specific keywords (existing logic)
-            # Prioritize Security_Auditor if security keywords are present
             if (
                 any(
                     kw in prompt_lower
@@ -421,7 +402,6 @@ class PersonaRouter:
                     "Self-analysis prompt is security-focused. Added Security_Auditor."
                 )
 
-            # Prioritize DevOps_Engineer if performance/DevOps keywords are present
             if (
                 any(
                     kw in prompt_lower
@@ -441,7 +421,6 @@ class PersonaRouter:
                     "Self-analysis prompt is performance/DevOps-focused. Added DevOps_Engineer."
                 )
 
-            # Prioritize Code_Architect if maintainability/structure keywords are present
             if (
                 any(
                     kw in prompt_lower
@@ -455,14 +434,12 @@ class PersonaRouter:
                 )
                 and "Code_Architect" not in base_sequence
             ):
-                # If Code_Architect is already in the sequence, move it to the front
                 if "Code_Architect" in base_sequence:
                     base_sequence.remove("Code_Architect")
                     base_sequence.insert(
                         0, "Code_Architect"
-                    )  # Prioritize it at the beginning
+                    )
                 else:
-                    # If not present, insert it early
                     self._insert_persona_before_arbitrator(
                         base_sequence, "Code_Architect"
                     )
@@ -470,22 +447,18 @@ class PersonaRouter:
                     "Self-analysis prompt is maintainability/structure-focused. Prioritized Code_Architect."
                 )
 
-            # Ensure Self_Improvement_Analyst is always last for synthesis
             if "Self_Improvement_Analyst" in base_sequence:
                 base_sequence.remove("Self_Improvement_Analyst")
             base_sequence.append("Self_Improvement_Analyst")
 
-            # Ensure Impartial_Arbitrator is before Self_Improvement_Analyst if both are present
             if "Impartial_Arbitrator" in base_sequence:
                 base_sequence.remove("Impartial_Arbitrator")
                 analyst_idx = base_sequence.index("Self_Improvement_Analyst")
                 base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
 
-            # Ensure Devils_Advocate is before Arbitrator/Analyst but after critics
             if "Devils_Advocate" in base_sequence:
                 base_sequence.remove("Devils_Advocate")
 
-            # Find the index of the last critic or the Arbitrator/Analyst if no critic exists
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
@@ -494,7 +467,6 @@ class PersonaRouter:
                     "Self_Improvement_Analyst"
                 )
 
-            # Try to insert after Constructive_Critic if it exists
             if (
                 "Constructive_Critic" in base_sequence
                 and base_sequence.index("Constructive_Critic") < insert_pos_for_advocate
@@ -502,17 +474,14 @@ class PersonaRouter:
                 critic_idx = base_sequence.index("Constructive_Critic")
                 base_sequence.insert(critic_idx + 1, "Devils_Advocate")
             else:
-                # Otherwise, insert it before the Arbitrator/Analyst
                 base_sequence.insert(insert_pos_for_advocate, "Devils_Advocate")
 
             final_sequence = (
-                base_sequence  # Start with the dynamically built base sequence
+                base_sequence
             )
             logger.info(f"Self-analysis persona sequence: {final_sequence}")
 
         else:
-            # --- END LLM SUGGESTION 2 ---
-            # Semantic similarity for initial persona selection (new)
             if self.persona_embeddings:
                 prompt_embedding = self.model.encode([prompt])[0]
                 semantic_scores = {}
@@ -521,22 +490,19 @@ class PersonaRouter:
                         np.linalg.norm(prompt_embedding) * np.linalg.norm(p_embedding)
                     )
 
-                # Boost personas from the selected domain
                 domain_personas = self.persona_sets.get(domain, [])
                 for p_name in domain_personas:
                     semantic_scores[p_name] = (
                         semantic_scores.get(p_name, 0.0) + 0.2
-                    )  # Small boost for domain relevance
+                    )
 
-                # Select top N personas based on semantic score
                 top_semantic_personas = sorted(
                     semantic_scores.items(), key=lambda x: x[1], reverse=True
-                )[:5]  # Top 5
+                )[:5]
                 initial_semantic_sequence = [
                     p[0] for p in top_semantic_personas if p[0] in self.all_personas
                 ]
 
-                # Merge with the base sequence from persona_sets, prioritizing semantic matches
                 base_sequence = []
                 for p_name in initial_semantic_sequence:
                     if p_name not in base_sequence:
@@ -545,7 +511,6 @@ class PersonaRouter:
                     if p_name not in base_sequence:
                         base_sequence.append(p_name)
 
-                # Ensure synthesis persona is always present and last
                 synthesis_persona = (
                     "Impartial_Arbitrator"
                     if domain == "Software Engineering"
@@ -561,7 +526,6 @@ class PersonaRouter:
                     f"Initial semantic-driven persona sequence: {base_sequence}"
                 )
             else:
-                # Fallback to existing logic if semantic model fails
                 if domain not in self.persona_sets:
                     logger.warning(
                         f"Domain '{domain}' not found in persona_sets. Falling back to 'General' sequence."
@@ -580,10 +544,8 @@ class PersonaRouter:
 
             final_sequence = (
                 base_sequence.copy()
-            )  # Start with the domain's base sequence
+            )
 
-        # Apply dynamic adjustments based on context analysis and intermediate results
-        # This will now apply to both self-analysis and general sequences
         final_sequence = self._apply_dynamic_adjustment(
             final_sequence,
             intermediate_results,
@@ -592,7 +554,6 @@ class PersonaRouter:
             context_analysis_results,
         )
 
-        # Further adjustments based on context analysis results (e.g., presence of test files)
         if context_analysis_results:
             relevant_files = context_analysis_results.get("relevant_files", [])
             test_file_count = sum(
@@ -604,12 +565,9 @@ class PersonaRouter:
                 if file_path.endswith((".py", ".js", ".ts", ".java", ".go"))
             )
 
-            # Insert Test_Engineer if many test files are relevant and it's not already in sequence
-            # This is now handled by _apply_dynamic_adjustment, but keeping as a fallback/double-check
             if test_file_count > 3 and "Test_Engineer" not in final_sequence:
                 self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
 
-            # Insert Code_Architect and Security_Auditor if many code files are relevant and they are not in sequence
             if code_file_count > 5:
                 if "Code_Architect" not in final_sequence:
                     self._insert_persona_before_arbitrator(
@@ -620,7 +578,6 @@ class PersonaRouter:
                         final_sequence, "Security_Auditor"
                     )
 
-        # Ensure uniqueness and order by removing duplicates while preserving order
         seen = set()
         unique_sequence = []
         for persona in final_sequence:
@@ -632,5 +589,4 @@ class PersonaRouter:
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
-        # Delegate to the PromptAnalyzer instance
         return self.prompt_analyzer.analyze_complexity(prompt)

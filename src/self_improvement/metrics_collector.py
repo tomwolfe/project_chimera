@@ -1,18 +1,18 @@
 import os
 import json
-import subprocess
-import ast
-import logging
+# REMOVED: import subprocess # Not directly used, execute_command_safely is used
+import ast # Used for ast.parse
+import logging # Used for logger
 from typing import Dict, Any, List, Tuple, Union, Optional
-from collections import defaultdict
-from pathlib import Path
-import re
-import yaml
-import toml
-from pydantic import ValidationError
-from datetime import datetime
+from collections import defaultdict # Used for defaultdict
+from pathlib import Path # Used for Path objects
+import re # Used for regex in _collect_deployment_robustness_metrics
+import yaml # Used for yaml.safe_load in _collect_configuration_analysis
+import toml # Used for toml.load in _collect_configuration_analysis
+from pydantic import ValidationError # Used for ValidationError in _collect_configuration_analysis, _collect_deployment_robustness_metrics
+from datetime import datetime # Used for datetime.now
 
-# NEW IMPORT: Get _get_code_snippet from the new code_utils.py
+# NEW IMPORT: Get _get_code_snippet and ComplexityVisitor from the new code_utils.py
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 
 # Import existing validation functions to reuse their logic
@@ -21,7 +21,7 @@ from src.utils.code_validator import (
     _run_bandit,
     _run_ast_security_checks,
 )
-from src.models import (
+from src.models import ( # All these are used for type hints or schema validation
     ConfigurationAnalysisOutput,
     CiWorkflowConfig,
     CiWorkflowJob,
@@ -33,19 +33,17 @@ from src.models import (
     PydanticSettingsConfig,
     DeploymentAnalysisOutput,
 )
-from src.utils.command_executor import execute_command_safely
-from src.utils.path_utils import PROJECT_ROOT
+from src.utils.command_executor import execute_command_safely # Used for execute_command_safely
+from src.utils.path_utils import PROJECT_ROOT # Used for PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-# Placeholder for PEP8 descriptions. This is no longer needed as _run_pycodestyle is removed.
-# PEP8_DESCRIPTIONS = { ... } # REMOVED
+# REMOVED: Placeholder for PEP8 descriptions. This is no longer needed as _run_pycodestyle is removed.
+# PEP8_DESCRIPTIONS = { ... }
 
 
-# --- AST Visitor for detailed code metrics ---
+# REMOVED: AST Visitor for detailed code metrics (ComplexityVisitor)
 # This class has been moved to src/utils/code_utils.py
-# class ComplexityVisitor(ast.NodeVisitor): # REMOVED
-#     ...
 
 
 class FocusedMetricsCollector:

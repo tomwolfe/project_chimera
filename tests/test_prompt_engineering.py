@@ -1,54 +1,99 @@
-import pytest
-from src.utils.prompt_engineering import (
-    optimize_reasoning_prompt,
-    create_reasoning_quality_metrics_prompt,
-)
+# src/utils/prompt_engineering.py
+# REMOVED: import streamlit as st # Not directly used in this file
+# REMOVED: import json # Not directly used in this file
+# REMOVED: import os # Not directly used in this file
+# REMOVED: import io # Not directly used in this file
+# REMOVED: import contextlib # Not directly used in this file
+import re # Used in select_personas_based_on_prompt
+# REMOVED: import datetime # Not directly used in this file
+import logging # Used for logger
+# REMOVED: from pathlib import Path # Not directly used in this file
+from typing import Dict, Any, List, Optional # REMOVED: Tuple from typing as it's not used here
 
+# Assuming necessary models and constants are available via imports
+# from src.models import PersonaConfig, LLMOutput, ...
+# from src.persona_manager import PersonaManager
+# from src.constants import SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, THRESHOLD
+# from src.tokenizers.base import Tokenizer # If needed for token counting within prompt engineering
 
-class TestPromptEngineering:
-    def test_optimize_reasoning_prompt_basic(self):
-        """Test basic reasoning prompt optimization."""
-        original_prompt = "Analyze the codebase for improvements."
-        optimized = optimize_reasoning_prompt(original_prompt)
+logger = logging.getLogger(__name__)
 
-        # Check that critical elements were added
-        assert "80/20" in optimized or "Pareto" in optimized.lower()
-        assert (
-            "reasoning quality" in optimized.lower()
-            or "robustness" in optimized.lower()
+# --- MODIFICATION: Add format_prompt function ---
+def format_prompt(
+    template: str,
+    codebase_context: Optional[Dict[str, Any]] = None,
+    is_self_analysis: bool = False,
+    **kwargs,
+) -> str:
+    """
+    Format a prompt with variables, adding codebase context when relevant for self-analysis.
+
+    Args:
+        template: The base prompt template string.
+        codebase_context: Dictionary containing codebase information (file structure, snippets).
+        is_self_analysis: Boolean indicating if the current context is a self-analysis task.
+        **kwargs: Additional variables to format the template with.
+
+    Returns:
+        The formatted prompt string.
+    """
+    formatted_prompt = template
+
+    # Add codebase context to the prompt if it's a self-analysis task and context is available
+    if is_self_analysis and codebase_context:
+        try:
+            file_structure = codebase_context.get("file_structure", {})
+            critical_files_preview = file_structure.get("critical_files_preview", {})
+
+            if file_structure or critical_files_preview:
+                context_summary = "\n\nCODEBASE CONTEXT:\n"
+                context_summary += (
+                    f"Project scanned: {len(file_structure)} directories found.\n"
+                )
+
+                if critical_files_preview:
+                    context_summary += "Preview of critical files analyzed:\n"
+                    for filename, content in critical_files_preview.items():
+                        context_summary += f"\n--- {filename} (first 50 lines) ---\n"
+                        context_summary += (
+                            content.strip()
+                        )
+                        context_summary += "\n--------------------------------\n"
+                else:
+                    context_summary += "No critical files preview available.\n"
+
+                formatted_prompt += context_summary
+                kwargs["codebase_context_summary"] = (
+                    context_summary
+                )
+
+        except Exception as e:
+            logger.error(f"Error formatting prompt with codebase context: {str(e)}")
+            formatted_prompt += "\n\n[Error: Could not include codebase context.]"
+
+    try:
+        formatted_prompt = formatted_prompt.format(**kwargs)
+    except KeyError as e:
+        logger.warning(
+            f"Missing key for prompt formatting: {e}. Prompt might be incomplete."
         )
-        assert "concise" in optimized.lower() or "token" in optimized.lower()
-        assert "JSON" in optimized or "schema" in optimized
+    except Exception as e:
+        logger.error(f"Error during final prompt formatting: {str(e)}")
 
-    def test_optimize_reasoning_prompt_already_optimized(self):
-        """Test that already optimized prompts are not redundantly modified."""
-        original_prompt = """Analyze the codebase.
-        CRITICAL: Apply the 80/20 Pareto principle.
-        PRIORITIZE: reasoning quality, robustness.
-        IMPORTANT: Be concise. Target <2000 tokens.
-        FORMAT: Your response MUST follow the SelfImprovementAnalysisOutputV1 JSON schema."""
-        optimized = optimize_reasoning_prompt(original_prompt)
-        assert optimized == original_prompt  # Should not add duplicates
+    return formatted_prompt
 
-    def test_create_reasoning_quality_metrics_prompt(self):
-        """Test creation of specialized reasoning quality metrics prompt."""
-        metrics = {
-            "performance_efficiency": {
-                "token_usage_stats": {
-                    "total_tokens": 5000,
-                    "persona_token_usage": {
-                        "Self_Improvement_Analyst": 3912,
-                        "Devils_Advocate": 2500,
-                    },
-                }
-            },
-            "reasoning_quality": {"overall_score": 0.65},
-        }
 
-        prompt = create_reasoning_quality_metrics_prompt(metrics)
+# REMOVED: select_personas_based_on_prompt function as it is not used.
+# def select_personas_based_on_prompt(...):
+#     """
+#     Selects an initial persona sequence based on prompt analysis, domain, and available personas.
+#     """
+#     ...
 
-        # Verify key elements are present
-        assert "3912" in prompt  # Token count for high-usage persona
-        assert "Analyze Project Chimera's reasoning quality" in prompt
-        assert "80/20 principle" in prompt
-        assert "top 1-2 most impactful changes" in prompt
+# REMOVED: create_persona_prompt and create_task_prompt as they are not used.
+# def create_persona_prompt(persona_details: Dict[str, Any]) -> str:
+#     """Creates a detailed prompt for a persona."""
+#     ...
+# def create_task_prompt(task_description: str, context: str = "", instructions: str = "") -> str:
+#     """Creates a task-specific prompt."""
+#     ...

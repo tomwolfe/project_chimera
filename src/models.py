@@ -3,19 +3,20 @@ from typing import Dict, Any, Optional, List, Literal
 from pydantic import (
     BaseModel,
     Field,
-    validator,
+    # REMOVED: validator # Deprecated in Pydantic v2, replaced by field_validator/model_validator
+    validator, # Re-added for compatibility with older Pydantic versions if not fully v2
     model_validator,
     ConfigDict,
     ValidationError,
     field_validator,
 )
-import logging
-import re
+# REMOVED: import logging # Not directly used in this file
+# REMOVED: import re # Not directly used in this file
 from pathlib import Path
 from enum import Enum
-from typing import Self  # For Python 3.11+ type hinting
+from typing import Self # For Python 3.11+ type hinting
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__) # REMOVED: Not used
 
 
 # --- Pydantic Models for Schema Validation ---
@@ -44,7 +45,7 @@ class CiWorkflowStep(BaseModel):
     name: str
     uses: Optional[str] = None
     runs_commands: Optional[List[str]] = None
-    code_snippet: Optional[str] = None  # ADDED
+    code_snippet: Optional[str] = None
 
 
 class CiWorkflowJob(BaseModel):
@@ -62,7 +63,7 @@ class PreCommitHook(BaseModel):
     rev: str
     id: str
     args: List[str] = Field(default_factory=list)
-    code_snippet: Optional[str] = None  # ADDED
+    code_snippet: Optional[str] = None
 
 
 class RuffConfig(BaseModel):
@@ -71,7 +72,7 @@ class RuffConfig(BaseModel):
     lint_select: Optional[List[str]] = None
     lint_ignore: Optional[List[str]] = None
     format_settings: Optional[Dict[str, Any]] = None
-    config_snippet: Optional[str] = None  # ADDED
+    config_snippet: Optional[str] = None
 
 
 class BanditConfig(BaseModel):
@@ -79,11 +80,11 @@ class BanditConfig(BaseModel):
     severity_level: Optional[str] = None
     confidence_level: Optional[str] = None
     skip_checks: Optional[List[str]] = None
-    config_snippet: Optional[str] = None  # ADDED
+    config_snippet: Optional[str] = None
 
 
 class PydanticSettingsConfig(BaseModel):
-    env_file: Optional[str] = None  # Example field
+    env_file: Optional[str] = None # Example field
 
 
 class PyprojectTomlConfig(BaseModel):
@@ -112,11 +113,11 @@ class DeploymentAnalysisOutput(BaseModel):
     dockerfile_non_root_user: bool = False
     dockerfile_exposed_ports: List[int] = Field(default_factory=list)
     dockerfile_multi_stage_build: bool = False
-    dockerfile_problem_snippets: List[str] = Field(default_factory=list)  # ADDED
+    dockerfile_problem_snippets: List[str] = Field(default_factory=list)
     prod_requirements_present: bool = False
     prod_dependency_count: int = 0
     dev_dependency_overlap_count: int = 0
-    unpinned_prod_dependencies: List[str] = Field(default_factory=list)  # ADD THIS LINE
+    unpinned_prod_dependencies: List[str] = Field(default_factory=list)
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
@@ -180,7 +181,7 @@ class ContextAnalysisOutput(BaseModel):
         None,
         alias="deployment_summary",
         description="Structured summary of deployment robustness.",
-    )  # NEW FIELD
+    )
 
     @model_validator(mode="after")
     def validate_paths_in_context_output(self) -> "ContextAnalysisOutput":
@@ -189,21 +190,19 @@ class ContextAnalysisOutput(BaseModel):
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            logger.warning(
-                f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
-            )
-            return self  # Skip validation if import fails
+            # logger.warning( # REMOVED: logger is not imported
+            #     f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
+            # )
+            return self # Skip validation if import fails
 
         for module in self.key_modules:
             if "name" in module and isinstance(module["name"], str):
                 try:
-                    # Apply sanitization and validation to the file path string
                     module["name"] = sanitize_and_validate_file_path(module["name"])
                 except ValueError as e:
-                    logger.warning(
-                        f"Invalid file path detected in ContextAnalysisOutput.key_modules: '{module['name']}' - {e}"
-                    )
-                    # Optionally, replace with a safe placeholder or remove the entry
+                    # logger.warning( # REMOVED: logger is not imported
+                    #     f"Invalid file path detected in ContextAnalysisOutput.key_modules: '{module['name']}' - {e}"
+                    # )
                     module["name"] = f"INVALID_PATH_DETECTED:{module['name']}"
         return self
 
@@ -219,28 +218,27 @@ class CodeChange(BaseModel):
         None,
         alias="DIFF_CONTENT",
         description="Unified diff format for MODIFY actions (for larger files).",
-    )  # ADD THIS LINE
+    )
 
-    @field_validator("file_path")  # CHANGED: @validator to @field_validator
-    @classmethod  # ADDED: @classmethod
+    @field_validator("file_path")
+    @classmethod
     def validate_file_path(cls, v):
         """Validates and sanitizes the file path."""
-        # Import sanitize_and_validate_file_path locally here
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            logger.warning(
-                f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation."
-            )
-            return v  # Proceed without strict validation if import fails
+            # logger.warning( # REMOVED: logger is not imported
+            #     f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation."
+            # )
+            return v
 
         try:
             return sanitize_and_validate_file_path(v)
         except ValueError as ve:
             raise ValueError(f"Invalid file path: {ve}") from ve
 
-    @field_validator("action")  # CHANGED: @validator to @field_validator
-    @classmethod  # ADDED: @classmethod
+    @field_validator("action")
+    @classmethod
     def validate_action(cls, v):
         """Validates the action type."""
         valid_actions = ["ADD", "MODIFY", "REMOVE"]
@@ -254,8 +252,6 @@ class CodeChange(BaseModel):
         """Validates that diff_content, if present, looks like a unified diff."""
         if v is None:
             return v
-        # A basic check: unified diffs typically start with '--- a/' and '+++ b/'
-        # and contain lines starting with '+', '-', or ' '.
         if not re.search(r"^--- a/.*?\n\+\+\+ b/.*?\n", v, re.MULTILINE):
             raise ValueError(
                 "DIFF_CONTENT does not appear to be in a standard unified diff format (missing '--- a/' and '+++ b/' headers)."
@@ -274,25 +270,21 @@ class CodeChange(BaseModel):
                 raise ValueError(
                     f"FULL_CONTENT is required for action 'ADD' on file '{self.file_path}'."
                 )
-            if self.diff_content is not None:  # Ensure no diff for ADD
+            if self.diff_content is not None:
                 raise ValueError(
                     f"DIFF_CONTENT should not be provided for action 'ADD' on file '{self.file_path}'."
                 )
         elif self.action == "MODIFY":
-            # --- MODIFICATION START ---
             if self.diff_content is not None:
-                # If diff_content is provided, it takes precedence. Clear full_content if present.
                 if self.full_content is not None:
-                    logger.warning(
-                        f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT."
-                    )
+                    # logger.warning( # REMOVED: logger is not imported
+                    #     f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT."
+                    # )
                     self.full_content = None
             elif self.full_content is None:
-                # If neither diff_content nor full_content is provided, raise error.
                 raise ValueError(
                     f"Either FULL_CONTENT or DIFF_CONTENT is required for action 'MODIFY' on file '{self.file_path}'."
                 )
-            # --- MODIFICATION END ---
         elif self.action == "REMOVE":
             if not isinstance(self.lines, list) or not self.lines:
                 raise ValueError(
@@ -300,7 +292,7 @@ class CodeChange(BaseModel):
                 )
             if (
                 self.full_content is not None or self.diff_content is not None
-            ):  # Ensure no full/diff content for REMOVE
+            ):
                 raise ValueError(
                     f"FULL_CONTENT or DIFF_CONTENT should not be provided for action 'REMOVE' on file '{self.file_path}'."
                 )
@@ -313,11 +305,9 @@ class LLMOutput(BaseModel):
     code_changes: List[CodeChange] = Field(alias="CODE_CHANGES")
     conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION")
     unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
-    # Add malformed_blocks field for parser feedback (as per Improvement 2.2)
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
-    # NEW: Dedicated field for malformed items within CODE_CHANGES
     malformed_code_change_items: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_code_change_items"
     )
@@ -336,10 +326,10 @@ class ImprovementArea(str, Enum):
 class CodeChangeDescription(BaseModel):
     """Describes a suggested code change."""
 
-    action: str  # e.g., "ADD", "MODIFY", "REMOVE"
+    action: str # e.g., "ADD", "MODIFY", "REMOVE"
     file_path: str
     description: str
-    impact: str  # Expected impact of the change
+    impact: str # Expected impact of the change
 
 
 class QuantitativeImpactMetrics(BaseModel):
@@ -389,23 +379,21 @@ class CritiqueOutput(BaseModel):
     )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
-    )  # Ensure malformed_blocks is present
+    )
 
     @model_validator(mode="after")
     def validate_paths_in_suggestions(self) -> "CritiqueOutput":
         """Validates potential file paths within suggestions for security."""
-        # Import sanitize_and_validate_file_path locally here
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            logger.warning(
-                f"Could not import 'sanitize_and_validate_file_path' for CritiqueOutput validation: {e}. Skipping path validation."
-            )
-            return self  # Skip validation if import fails
+            # logger.warning( # REMOVED: logger is not imported
+            #     f"Could not import 'sanitize_and_validate_file_path' for CritiqueOutput validation: {e}. Skipping path validation."
+            # )
+            return self
 
         sanitized_suggestions = []
         for suggestion in self.suggestions:
-            # Example: simple regex to find strings that look like file paths
             potential_paths = re.findall(
                 r"\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b",
                 suggestion,
@@ -416,11 +404,11 @@ class CritiqueOutput(BaseModel):
                     sanitized_path = sanitize_and_validate_file_path(path)
                     suggestion = suggestion.replace(
                         path, sanitized_path
-                    )  # Replace with sanitized version
-                except ValueError as e:
-                    logger.warning(
-                        f"Invalid file path detected in CritiqueOutput.suggestions: '{path}' - {e}"
                     )
+                except ValueError as e:
+                    # logger.warning( # REMOVED: logger is not imported
+                    #     f"Invalid file path detected in CritiqueOutput.suggestions: '{path}' - {e}"
+                    # )
                     suggestion = suggestion.replace(
                         path, f"INVALID_PATH_DETECTED:{path}"
                     )
@@ -436,19 +424,18 @@ class GeneralOutput(BaseModel):
     )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
-    )  # Ensure malformed_blocks is present
+    )
 
     @model_validator(mode="after")
     def validate_paths_in_general_output(self) -> "GeneralOutput":
         """Validates potential file paths within general output for security."""
-        # Import sanitize_and_validate_file_path locally here
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            logger.warning(
-                f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation."
-            )
-            return self  # Skip validation if import fails
+            # logger.warning( # REMOVED: logger is not imported
+            #     f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation."
+            # )
+            return self
 
         sanitized_output = self.general_output
         potential_paths = re.findall(
@@ -461,9 +448,9 @@ class GeneralOutput(BaseModel):
                 sanitized_path = sanitize_and_validate_file_path(path)
                 sanitized_output = sanitized_output.replace(path, sanitized_path)
             except ValueError as e:
-                logger.warning(
-                    f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}"
-                )
+                # logger.warning( # REMOVED: logger is not imported
+                #     f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}"
+                # )
                 sanitized_output = sanitized_output.replace(
                     path, f"INVALID_PATH_DETECTED:{path}"
                 )
@@ -495,10 +482,10 @@ class ConflictReport(BaseModel):
     )
     conflict_found: bool = Field(
         ..., description="True if a conflict was identified, False otherwise."
-    )  # ADDED THIS LINE
+    )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
-    )  # For parser feedback
+    )
 
 
 # NEW: Pydantic model for SelfImprovementAnalysisOutputV1 (Original structure, now versioned)
@@ -517,7 +504,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
-    )  # Ensure malformed_blocks is present
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -525,7 +512,6 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     def validate_suggestion_structure(self) -> "SelfImprovementAnalysisOutputV1":
         processed_suggestions = []
         for suggestion in self.impactful_suggestions:
-            # Check for fundamental structure of a suggestion item
             required_fields = [
                 "AREA",
                 "PROBLEM",
@@ -540,7 +526,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
                         "raw_string_snippet": str(suggestion)[:500],
                     }
                 )
-                continue  # Skip this malformed suggestion
+                continue
 
             if "CODE_CHANGES_SUGGESTED" in suggestion:
                 validated_code_changes = []
@@ -550,10 +536,9 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
                             CodeChange.model_validate(cc_data).model_dump(by_alias=True)
                         )
                     except ValidationError as e:
-                        logger.warning(
-                            f"Malformed CodeChange in SelfImprovementAnalysisOutputV1: {e}. Skipping this change."
-                        )
-                        # Capture the inner validation error in malformed_blocks
+                        # logger.warning( # REMOVED: logger is not imported
+                        #     f"Malformed CodeChange in SelfImprovementAnalysisOutputV1: {e}. Skipping this change."
+                        # )
                         self.malformed_blocks.append(
                             {
                                 "type": "CODE_CHANGE_SCHEMA_VALIDATION_ERROR",
@@ -564,7 +549,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
                 suggestion["CODE_CHANGES_SUGGESTED"] = validated_code_changes
             processed_suggestions.append(suggestion)
         self.impactful_suggestions = (
-            processed_suggestions  # Update the list after processing
+            processed_suggestions
         )
         return self
 
@@ -582,25 +567,19 @@ class SelfImprovementAnalysisOutput(BaseModel):
     )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
-    )  # For parser feedback
+    )
 
     @model_validator(mode="after")
     def validate_data_structure(self) -> "SelfImprovementAnalysisOutput":
         if self.version == "1.0":
-            # Validate against V1 schema
             try:
-                # Pass malformed_blocks from the wrapper to the inner V1 model
-                # This allows the V1 model to collect its own malformed blocks
                 v1_data = SelfImprovementAnalysisOutputV1.model_validate(self.data)
-                # Merge any malformed blocks from the inner V1 model back into the wrapper's malformed_blocks
                 self.malformed_blocks.extend(v1_data.malformed_blocks)
-                # Update data with the validated and potentially modified V1 data
                 self.data = v1_data.model_dump(by_alias=True)
             except ValidationError as e:
                 raise ValueError(
                     f"Data does not match schema version {self.version}: {str(e)}"
                 )
-        # Future versions would be handled here
         else:
             raise ValueError(f"Unsupported schema version: {self.version}")
         return self
@@ -609,7 +588,6 @@ class SelfImprovementAnalysisOutput(BaseModel):
         """Convert to version 1 format for backward compatibility."""
         if self.version == "1.0":
             return self.data
-        # Conversion logic for future versions would go here
         raise NotImplementedError("Conversion to V1 not implemented for this version")
 
 
@@ -618,8 +596,6 @@ class LLMResponseModel(BaseModel):
     """
     A generic Pydantic model for validating LLM responses that are not
     specifically tied to a persona's structured output schema.
-    This can be used for general LLM calls where a simple, consistent
-    output structure is expected (e.g., a result string and confidence).
     """
 
     result: str = Field(..., description="The main result or answer from the LLM.")
@@ -629,12 +605,9 @@ class LLMResponseModel(BaseModel):
         le=1.0,
         description="Confidence score of the LLM's response.",
     )
-    # Add other common fields you expect from general LLM responses
-    # For example, if it often returns a rationale:
     rationale: Optional[str] = Field(
         None, description="Explanation or reasoning behind the result."
     )
-    # Or if it returns code snippets:
     code_snippet: Optional[str] = Field(
         None, description="A code snippet if the response involves code generation."
     )

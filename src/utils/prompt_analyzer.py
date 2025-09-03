@@ -211,10 +211,12 @@ class PromptAnalyzer:
                 for match in re.finditer(
                     r"\b" + re.escape(keyword_lower) + r"\b", prompt_lower
                 ):
-                    keyword_start_pos = match.start()
+                    keyword_start_pos = match.start() # Correct variable name
+
                     negated = False
                     search_window_start = max(0, keyword_start_pos - NEGATION_PROXIMITY)
-                    search_window = prompt_lower[search_window_start:keyword_pos]
+                    # FIX: Changed 'keyword_pos' to 'keyword_start_pos'
+                    search_window = prompt_lower[search_window_start:keyword_start_pos]
 
                     for neg_pattern, penalty in NEGATION_PATTERNS:
                         if re.search(neg_pattern, search_window):

@@ -1,12 +1,12 @@
 # src/context/context_analyzer.py
-import os
-import logging
-from pathlib import Path
+import os # Used for os.walk, os.path.relpath
+import logging # Used for logger
+from pathlib import Path # Used for Path objects
 from typing import Dict, Any, List, Tuple, Optional
-from sentence_transformers import SentenceTransformer
-import re
-import json
-import numpy as np
+from sentence_transformers import SentenceTransformer # Needed for embeddings
+import re # For keyword matching
+import json # For potential JSON handling
+import numpy as np # Needed for semantic similarity calculation
 
 logger = logging.getLogger(__name__)
 

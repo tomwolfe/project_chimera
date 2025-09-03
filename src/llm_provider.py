@@ -7,16 +7,17 @@ and circuit breaker protection.
 
 from pathlib import Path
 import time
+# REMOVED: from collections import defaultdict # Not directly used in this file
 import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type
 import google.genai as genai
 from google.genai import types
 from google.genai.errors import APIError
-import hashlib
-import random
-import socket
-import json
+import hashlib # Used in __hash__
+import random # Used in _generate_with_retry
+import socket # Used in _generate_with_retry
+import json # Used for structured logging helper
 
 from rich.console import Console
 
@@ -72,6 +73,7 @@ class GeminiProvider:
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
+    # MAX_BACKOFF_SECONDS = 60 # REMOVED: Will be set from settings - MODIFIED LINE
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -442,9 +444,5 @@ class GeminiProvider:
         combined_text = f"{context_str}\n\n{prompt}"
         return self.tokenizer.count_tokens(combined_text)
 
-# --- Placeholder methods for other potential analyses ---
+# REMOVED: Placeholder methods for other potential analyses (_create_file_backup, _apply_code_change)
 # These functions have been moved to src/utils/file_operations.py
-# def _create_file_backup(file_path: Path) -> Optional[Path]: # REMOVED
-#     ...
-# def _apply_code_change(change: Dict[str, Any], codebase_path: Path): # REMOVED
-#     ...

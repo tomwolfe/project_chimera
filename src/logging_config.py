@@ -1,7 +1,7 @@
 # src/logging_config.py
 import logging
-import json
-import uuid
+# REMOVED: import json # Not directly used in this file
+# REMOVED: import uuid # Not directly used in this file
 from pythonjsonlogger import jsonlogger
 from pathlib import Path
 import sys
@@ -30,7 +30,7 @@ class RequestIDFilter(logging.Filter):
 
 def setup_structured_logging(log_level=logging.INFO):
     """Configures the root logger for structured JSON output."""
-    logger = logging.getLogger()  # Get the root logger
+    logger = logging.getLogger() # Get the root logger
 
     # Prevent adding handlers multiple times if this function is called more than once
     if logger.handlers:
@@ -52,7 +52,7 @@ def setup_structured_logging(log_level=logging.INFO):
             "levelname": "level",
             "name": "logger_name",
         },
-        datefmt="%Y-%m-%dT%H:%M:%S%z",  # ISO 8601 format for timestamps
+        datefmt="%Y-%m-%dT%H:%M:%S%z", # ISO 8601 format for timestamps
     )
     log_handler.setFormatter(formatter)
 
@@ -71,6 +71,6 @@ def setup_structured_logging(log_level=logging.INFO):
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("streamlit").setLevel(
         logging.WARNING
-    )  # Streamlit's own logs can be quite verbose
+    ) # Streamlit's own logs can be quite verbose
 
     logger.info("Structured JSON logging configured successfully.")

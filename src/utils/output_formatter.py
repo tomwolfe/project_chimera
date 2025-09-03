@@ -1,65 +1,16 @@
 # src/utils/output_formatter.py
-import streamlit as st  # Assuming Streamlit is used for UI context, though not directly in this function
-import json
-import os
-import io
-import contextlib
-import re
-import datetime
-import time
-from typing import Dict, Any, List, Optional
-import yaml
-import logging
-from rich.console import Console
-from core import SocraticDebate
+import json # Used for json.dumps
+import logging # Used for logger
+from datetime import datetime # Used for datetime.now
+from typing import Dict, Any, List, Optional # Used for type hints
+from pathlib import Path # Used for Path(change.get('FILE_PATH', 'N/A')).name
 
-import google.genai as genai
-from google.genai.errors import APIError
-
-from src.models import (
-    PersonaConfig,
-    ReasoningFrameworkConfig,
-    LLMOutput,
+from src.models import ( # Used for type hints in format_findings_list, format_complete_report
     CodeChange,
-    ContextAnalysisOutput,
-    CritiqueOutput,
-    GeneralOutput,
-    ConflictReport,
+    SelfImprovementFinding,
+    QuantitativeImpactMetrics,
     SelfImprovementAnalysisOutput,
-    SelfImprovementAnalysisOutputV1,
-    DeploymentAnalysisOutput,
-    SelfImprovementFinding,  # Import SelfImprovementFinding for type hinting
-    QuantitativeImpactMetrics,  # Import QuantitativeImpactMetrics for type hinting
 )
-from src.utils.output_parser import LLMOutputParser
-from src.utils.code_validator import validate_code_output_batch
-from src.persona_manager import PersonaManager
-from src.exceptions import (
-    ChimeraError,
-    LLMResponseValidationError,
-    SchemaValidationError,
-    TokenBudgetExceededError,
-    LLMProviderError,
-    CircuitBreakerError,
-)
-from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
-from src.context.context_analyzer import ContextRelevanceAnalyzer
-import traceback
-from collections import defaultdict
-from pydantic import ValidationError
-import html
-import difflib
-
-import uuid
-from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
-from src.config.settings import ChimeraSettings
-from pathlib import Path
-
-# NEW IMPORT: For centralized prompt analysis
-from src.utils.prompt_analyzer import PromptAnalyzer
-from src.token_tracker import TokenUsageTracker  # NEW IMPORT
-
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +130,7 @@ class OutputFormatter:
                 metrics_str += f"- Token Savings: {token_savings * 100:.1f}%\n"
             else:
                 metrics_str += (
-                    "- Token Savings: N/A\n"  # Or indicate if not applicable/available
+                    "- Token Savings: N/A\n"
                 )
 
             markdown += metrics_str + "\n"

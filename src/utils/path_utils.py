@@ -1,7 +1,7 @@
 # src/utils/path_utils.py
-import logging
-import re
-from pathlib import Path
+import logging # Used for logger
+import re # Used for regex in sanitize_and_validate_file_path
+from pathlib import Path # Used for Path objects
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -20,10 +20,10 @@ def _find_project_root_internal(start_path: Path) -> Optional[Path]:
             return current_dir
 
         parent_path = current_dir.parent
-        if parent_path == current_dir:  # Reached the filesystem root
+        if parent_path == current_dir: # Reached the filesystem root
             break
         current_dir = parent_path
-    return None  # Return None if not found
+    return None # Return None if not found
 
 
 # --- Define PROJECT_ROOT dynamically ---
@@ -34,7 +34,7 @@ if _found_root:
     PROJECT_ROOT = _found_root
     logger.info(f"Project root identified at: {PROJECT_ROOT}")
 else:
-    PROJECT_ROOT = Path.cwd()  # Fallback to current working directory
+    PROJECT_ROOT = Path.cwd() # Fallback to current working directory
     logger.warning(
         f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
     )
@@ -46,7 +46,7 @@ def is_within_base_dir(file_path: Path) -> bool:
         resolved_path = file_path.resolve()
         resolved_path.relative_to(
             PROJECT_ROOT
-        )  # This will raise ValueError if not a subpath
+        ) # This will raise ValueError if not a subpath
         return True
     except ValueError:
         logger.debug(

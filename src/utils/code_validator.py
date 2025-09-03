@@ -1,16 +1,16 @@
 # src/utils/code_validator.py
-import subprocess
+import subprocess # Used for subprocess.run
 from typing import List, Tuple, Dict, Any, Optional, Union
-import os
-import tempfile
-import hashlib
-import re
-import logging
-from pathlib import Path
-import ast
-import json
-import yaml
-from collections import defaultdict
+# REMOVED: import os # Not directly used after tempfile handling and path_utils
+import tempfile # Used for NamedTemporaryFile
+# REMOVED: import hashlib # Not directly used after content integrity checks were simplified or moved
+import re # Used for regex in _run_ast_security_checks
+import logging # Used for logger
+from pathlib import Path # Used for Path objects
+import ast # Used for AST parsing in _run_ast_security_checks
+import json # Used for JSON parsing of Ruff/Bandit output
+# REMOVED: import yaml # Not used in this file
+from collections import defaultdict # Used in validate_code_output_batch
 
 # Import necessary utilities and models
 from src.utils.command_executor import execute_command_safely
@@ -32,6 +32,12 @@ class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
 
     pass
+
+
+# REMOVED: _run_pycodestyle function as Ruff is the primary linter/formatter.
+# def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
+#     """Runs pycodestyle on the given content using its library API."""
+#     ...
 
 
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -176,7 +182,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     finally:
         if tmp_file_path and tmp_file_path.exists():
             try:
-                os.unlink(tmp_file_path)
+                os.unlink(tmp_file_path) # Use os.unlink for Path objects
             except OSError as e:
                 logger.warning(
                     f"Failed to delete temporary Ruff file {tmp_file_path}: {e}"

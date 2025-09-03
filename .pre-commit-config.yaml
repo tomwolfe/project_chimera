@@ -14,7 +14,7 @@ repos:
   # Removed Black in favor of Ruff's formatter for a unified toolchain.
   # Ruff's formatter (ruff-format) is generally compatible with Black's style
   # and allows for a single tool to handle both linting and formatting.
-  # - repo: https://github.com/psf/black
+  # - repo: https://github.com/psf/black # REMOVED: Commented-out Black config
   #   rev: 23.11.0 # Use the latest stable version
   #   hooks:
   #     - id: black
@@ -37,5 +37,6 @@ repos:
         args: ["-r", ".", "-ll", "-c", "pyproject.toml"]
         # Ensure Bandit is configured to fail the commit if security issues are found.
 
+# REMOVED: Commented-out section for other pre-commit hooks
 # Add other pre-commit hooks as needed, for example:
 # - repo: https://github.com/psf/black

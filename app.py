@@ -3,19 +3,20 @@
 import streamlit as st
 import json
 import os
-import re
-import datetime
-import time
+import io # Used in capture_rich_output_and_get_console
+import contextlib # Used in capture_rich_output_and_get_console
+import re # Used in validate_gemini_api_key_format, sanitize_user_input, strip_ansi_codes
+import datetime # Used in generate_markdown_report, _log_persona_change, SESSION_TIMEOUT_SECONDS check
+import time # Used in update_activity_timestamp, SESSION_TIMEOUT_SECONDS check, DEBATE_RETRY_DELAY_SECONDS
 from typing import Dict, Any, List, Optional
-import yaml
-import logging
-from rich.console import Console
-from core import SocraticDebate
+import yaml # Used in load_config
+import logging # Used for logger
+from rich.console import Console # Used in capture_rich_output_and_get_console
+from core import SocraticDebate # Instantiated
+import google.genai as genai # Used in test_gemini_api_key_functional
+from google.genai.errors import APIError # Used in test_gemini_api_key_functional
 
-import google.genai as genai
-from google.genai.errors import APIError
-
-from src.models import (
+from src.models import ( # All these are used for type hints or schema validation in results display
     PersonaConfig,
     ReasoningFrameworkConfig,
     LLMOutput,
@@ -27,10 +28,10 @@ from src.models import (
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
 )
-from src.utils.output_parser import LLMOutputParser
-from src.utils.code_validator import validate_code_output_batch
-from src.persona_manager import PersonaManager
-from src.exceptions import (
+from src.utils.output_parser import LLMOutputParser # Instantiated for parsing final_answer
+from src.utils.code_validator import validate_code_output_batch # Used for validation_results_by_file
+from src.persona_manager import PersonaManager # Instantiated
+from src.exceptions import ( # All these are used in handle_debate_errors
     ChimeraError,
     LLMResponseValidationError,
     SchemaValidationError,
@@ -38,23 +39,24 @@ from src.exceptions import (
     LLMProviderError,
     CircuitBreakerError,
 )
-# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
-from src.context.context_analyzer import ContextRelevanceAnalyzer
-import traceback
-from collections import defaultdict
-from pydantic import ValidationError
-import html
-import difflib
+# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS # SELF_ANALYSIS_KEYWORDS is not directly used in app.py
+# REMOVED: is_self_analysis_prompt is now accessed via st.session_state.persona_manager.prompt_analyzer
+from src.context.context_analyzer import ContextRelevanceAnalyzer # Instantiated
+import traceback # Used in handle_debate_errors
+from collections import defaultdict # Used in generate_markdown_report, validation_results_by_file
+from pydantic import ValidationError # Used in handle_debate_errors
+import html # Used in sanitize_user_input
+import difflib # Used in diff_lines
 
-import uuid
-from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
-from src.config.settings import ChimeraSettings
-from pathlib import Path
+import uuid # Used for _session_id, request_id
+from src.logging_config import setup_structured_logging # Called
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # Instantiated, used in handle_debate_errors
+from src.config.settings import ChimeraSettings # Instantiated
+from pathlib import Path # Used for Path.cwd(), file_path.name
 
-from src.utils.prompt_analyzer import PromptAnalyzer
-from src.token_tracker import TokenUsageTracker
-from src.context.context_analyzer import CodebaseScanner
+from src.utils.prompt_analyzer import PromptAnalyzer # Instantiated via PersonaManager
+from src.token_tracker import TokenUsageTracker # Instantiated
+from src.context.context_analyzer import CodebaseScanner # Instantiated
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -92,9 +94,10 @@ DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
 CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get(
     "context_token_budget_ratio", 0.25
 )
+# NEW: Max tokens limit from config
 MAX_TOKENS_LIMIT = app_config.get(
     "max_tokens_limit", 64000
-)
+) # Default to 64000 if not in config
 
 
 # --- NEW: API Key Validation and Test Functions ---
@@ -113,6 +116,7 @@ def test_gemini_api_key_functional(api_key: str) -> bool:
         return True
     except APIError as e:
         logger.error(f"API key functional test failed: {e}")
+        # Differentiate between key issues and service issues
         if e.code == 401:
             st.error("🔐 Invalid API key - access denied")
         elif e.code == 403:
@@ -122,6 +126,7 @@ def test_gemini_api_key_functional(api_key: str) -> bool:
         return False
     except Exception as e:
         logger.error(f"Unexpected error during API key functional test: {e}")
+        # Network or service issues
         if "connection" in str(e).lower() or "timeout" in str(e).lower():
             st.error("🌐 Network connection issue - check your internet connection")
         else:
@@ -129,24 +134,32 @@ def test_gemini_api_key_functional(api_key: str) -> bool:
         return False
 
 
+# - NEW: Callback for API Key Input -
 def on_api_key_change():
     """Callback to validate API key format and update activity timestamp."""
+    # Initialize session state variables if they don't exist (defensive programming)
+    # While _initialize_session_state() should handle this, callbacks can sometimes
+    # run in contexts where session_state might not be fully populated yet,
+    # especially before the widget itself has fully registered its key.
     if "api_key_input" not in st.session_state:
         st.session_state.api_key_input = ""
     if "api_key_valid_format" not in st.session_state:
         st.session_state.api_key_valid_format = False
 
+    # Access the current value directly from the widget's key in session_state
     api_key_value = st.session_state.api_key_input
     st.session_state.api_key_valid_format = validate_gemini_api_key_format(
         api_key_value
     )
     update_activity_timestamp()
+    # NEW: Reset token tracker on API key change
     if "token_tracker" in st.session_state:
         st.session_state.token_tracker.reset()
         st.session_state.current_debate_tokens_used = 0
         st.session_state.current_debate_cost_usd = 0.0
 
 
+# --- NEW: Helper functions for API Key UI status ---
 def display_key_status():
     """Display detailed API key status with appropriate icons"""
     if not st.session_state.api_key_input:
@@ -174,39 +187,23 @@ def test_api_key():
     st.session_state.api_key_functional = test_gemini_api_key_functional(api_key)
 
 
+# NEW: Instantiate CodebaseScanner once for the UI
 @st.cache_resource
 def get_codebase_scanner():
     return CodebaseScanner()
 
 # --- Demo Codebase Context Loading ---
-@st.cache_data
-def load_demo_codebase_context(
-    file_path: str = "data/demo_codebase_context.json",
-) -> Dict[str, str]:
-    """Loads demo codebase context from a JSON file with enhanced error handling."""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Demo context file not found at '{file_path}'.")
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Error decoding JSON from '{file_path}'. Please check its format: {e}"
-        ) from e
-    except IOError as e:
-        raise IOError(
-            f"IO error reading config file '{file_path}'. Check permissions: {e}"
-        ) from e
+# REMOVED: @st.cache_data
+# REMOVED: def load_demo_codebase_context(...): as data/demo_codebase_context.json was deleted
 
 
 # Redirect rich output to a string buffer for Streamlit display
-# Removed contextlib and io imports as they are not used directly here
-# @contextlib.contextmanager
-# def capture_rich_output_and_get_console():
-#     """Captures rich output (like Streamlit elements) and returns the captured content."""
-#     buffer = io.StringIO()
-#     console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
-#     yield buffer, console_instance
+@contextlib.contextmanager
+def capture_rich_output_and_get_console():
+    """Captures rich output (like Streamlit elements) and returns the captured content."""
+    buffer = io.StringIO()
+    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
+    yield buffer, console_instance
 
 
 ansi_escape_re = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -330,6 +327,8 @@ st.markdown(
     "An advanced reasoning engine for complex problem-solving and code generation. This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project_chimera)."
 )
 
+# --- MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
+# Grouping prompts by category for better UI organization
 EXAMPLE_PROMPTS = {
     "Coding & Implementation": {
         "Implement Python API Endpoint": {
@@ -371,15 +370,22 @@ EXAMPLE_PROMPTS = {
         },
     },
 }
-SESSION_TIMEOUT_SECONDS = 1800
-MAX_DEBATE_RETRIES = 3
-DEBATE_RETRY_DELAY_SECONDS = (
-    5
-)
+# --- END EXAMPLE_PROMPTS STRUCTURE ---
 
+# --- NEW CONSTANTS FOR SESSION MANAGEMENT AND RETRIES ---
+SESSION_TIMEOUT_SECONDS = 1800  # 30 minutes of inactivity
+MAX_DEBATE_RETRIES = 3  # Max retries for the entire debate process if rate limited
+DEBATE_RETRY_DELAY_SECONDS = (
+    5  # Initial delay for debate retries (will be multiplied by attempt number)
+)
+# --- END NEW CONSTANTS ---
+
+# --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
 setup_structured_logging(log_level=logging.INFO)
 logger = logging.getLogger(__name__)
+# --- END LOGGING SETUP ---
 
+# Define the cache directory dynamically based on the environment
 if os.path.expanduser("~") == "/home/appuser":
     SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
 else:
@@ -388,6 +394,7 @@ else:
     )
 
 
+# FIX START: Removed @st.cache_resource from get_context_analyzer()
 def get_context_analyzer(_pm_instance: PersonaManager):
     """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
     if _pm_instance and _pm_instance.persona_router:
@@ -406,26 +413,33 @@ def get_context_analyzer(_pm_instance: PersonaManager):
         return ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR)
 
 
+# FIX START: REMOVED @st.cache_resource from get_persona_manager()
 def get_persona_manager(
     token_tracker: Optional[TokenUsageTracker] = None,
-):
+):  # MODIFIED: Accept token_tracker
+    # PersonaManager now requires DOMAIN_KEYWORDS and token_tracker
     return PersonaManager(
         DOMAIN_KEYWORDS, token_tracker=token_tracker
-    )
+    )  # MODIFIED: Pass token_tracker
 
 
+# FIX END
+
+
+# --- Helper to update activity timestamp ---
 def update_activity_timestamp():
     st.session_state.last_activity_timestamp = time.time()
     logger.debug("Activity timestamp updated.")
 
 
+# --- Session State Initialization ---
 def _initialize_session_state():
     """Initializes or resets all session state variables to their default values."""
     defaults = {
         "initialized": True,
         "api_key_input": os.getenv("GEMINI_API_KEY", ""),
         "user_prompt_input": "",
-        "max_tokens_budget_input": MAX_TOKENS_LIMIT,
+        "max_tokens_budget_input": MAX_TOKENS_LIMIT,  # MODIFIED: Use MAX_TOKENS_LIMIT from config
         "show_intermediate_steps_checkbox": True,
         "selected_model_selectbox": "gemini-2.5-flash-lite",
         "selected_example_name": "",
@@ -459,15 +473,18 @@ def _initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
+    # NEW: Initialize TokenUsageTracker
     if "token_tracker" not in st.session_state:
         st.session_state.token_tracker = TokenUsageTracker(
             budget=st.session_state.max_tokens_budget_input
         )
     else:
+        # Ensure tracker budget is updated if max_tokens_budget_input changed
         st.session_state.token_tracker.budget = st.session_state.max_tokens_budget_input
-        st.session_state.token_tracker.reset()
+        st.session_state.token_tracker.reset()  # Reset tracker on re-init
 
     if "persona_manager" not in st.session_state:
+        # MODIFIED: Pass DOMAIN_KEYWORDS and token_tracker to PersonaManager constructor
         st.session_state.persona_manager = PersonaManager(
             DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker
         )
@@ -488,6 +505,7 @@ def _initialize_session_state():
             for name in initial_framework_personas
             if name in st.session_state.persona_manager.all_personas
         }
+        # REMOVED: The redundant PersonaRouter initialization block, as PersonaManager's __init__ now handles it.
 
     if "context_analyzer" not in st.session_state:
         analyzer = ContextRelevanceAnalyzer(
@@ -524,9 +542,12 @@ def _initialize_session_state():
         ][default_example_name].get("framework_hint")
 
 
+# --- Session State Initialization Call ---
 if "initialized" not in st.session_state:
     _initialize_session_state()
+# --- END Session State Initialization Call ---
 
+# --- NEW: Session Expiration Check ---
 if "initialized" in st.session_state and st.session_state.initialized:
     if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:
         st.warning(
@@ -534,8 +555,10 @@ if "initialized" in st.session_state and st.session_state.initialized:
         )
         _initialize_session_state()
         st.rerun()
+# --- END NEW: Session Expiration Check ---
 
 
+# --- ENHANCED SANITIZATION FUNCTION ---
 def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
     issues = []
@@ -605,12 +628,16 @@ def sanitize_user_input(prompt: str) -> str:
     return sanitized
 
 
+# --- END ENHANCED SANITIZATION FUNCTION ---
+
+
 def reset_app_state():
     """Resets all session state variables to their default values."""
     _initialize_session_state()
     st.rerun()
 
 
+# --- Persona Change Logging ---
 def _log_persona_change(
     persona_name: str, parameter: str, old_value: Any, new_value: Any
 ):
@@ -628,6 +655,7 @@ def _log_persona_change(
     update_activity_timestamp()
 
 
+# --- NEW: HELPER FUNCTION FOR ACTION-ORIENTED ERROR MESSAGING ---
 def handle_debate_errors(error: Exception):
     """Displays user-friendly, action-oriented error messages based on exception type."""
     error_type = type(error).__name__
@@ -772,6 +800,10 @@ def handle_debate_errors(error: Exception):
     logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
 
 
+# --- END NEW HELPER FUNCTION ---
+
+
+# --- MODIFICATIONS FOR SIDEBAR GROUPING ---
 with st.sidebar:
     st.header("Configuration")
 
@@ -831,6 +863,7 @@ with st.sidebar:
     with st.expander("Resource Management", expanded=False):
         st.markdown("---")
 
+        # NEW: Update token tracker budget if max_tokens_budget_input changes
         def on_max_tokens_budget_change():
             st.session_state.token_tracker.budget = (
                 st.session_state.max_tokens_budget_input
@@ -840,11 +873,11 @@ with st.sidebar:
         st.number_input(
             "Max Total Tokens Budget:",
             min_value=1000,
-            max_value=MAX_TOKENS_LIMIT,
+            max_value=MAX_TOKENS_LIMIT,  # MODIFIED: Use MAX_TOKENS_LIMIT
             step=1000,
             key="max_tokens_budget_input",
             value=st.session_state.max_tokens_budget_input,
-            on_change=on_max_tokens_budget_change,
+            on_change=on_max_tokens_budget_change,  # MODIFIED: Add on_change callback
         )
         st.checkbox(
             "Show Intermediate Reasoning Steps",
@@ -871,6 +904,7 @@ with st.sidebar:
         )
 
         if user_prompt_text and not st.session_state.context_ratio_user_modified:
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
             recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 user_prompt_text
             )
@@ -953,6 +987,7 @@ st.header("Project Setup & Input")
 CUSTOM_PROMPT_KEY = "Custom Prompt"
 
 
+# --- Callback functions for prompt selection ---
 def on_custom_prompt_change():
     st.session_state.user_prompt_input = st.session_state.custom_prompt_text_area_widget
     st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
@@ -988,9 +1023,12 @@ def on_example_select_change(selectbox_key, tab_name):
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
 
+    # When "Critically analyze the entire Project Chimera codebase" is selected
     if selected_example_key == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.":
+        # Force load codebase context
         scanner = get_codebase_scanner()
         st.session_state.codebase_context = scanner.load_own_codebase_context()
+        # Update the prompt to reflect we have context
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'] + \
             "\n\nNOTE: You have full access to the Project Chimera codebase for this analysis."
 
@@ -1009,9 +1047,15 @@ def on_example_select_change(selectbox_key, tab_name):
     logger.debug(
         f"Active example framework hint: {st.session_state.active_example_framework_hint}"
     )
+    logger.debug(
+        f"Sidebar selected persona set: {st.session_state.selected_persona_set}"
+    )
     update_activity_timestamp()
     st.rerun()
 
+
+# --- MODIFIED PROMPT SELECTION UI ---
+st.subheader("What would you like to do?")
 
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
 tabs = st.tabs(tab_names)
@@ -1036,6 +1080,7 @@ for i, tab_name in enumerate(tab_names):
                 - **Example Output:** If possible, provide an.example of the desired output format.
                 """)
 
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
             suggested_domain_for_custom = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 st.session_state.user_prompt_input
             )
@@ -1160,12 +1205,14 @@ logger.debug(
     f"Sidebar selected persona set: {st.session_state.selected_persona_set}"
 )
 
+# --- START: UI Layout for Framework and Context ---
 col1, col2 = st.columns(2, gap="medium")
 with col1:
     st.subheader("Reasoning Framework")
 
     if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
         if user_prompt.strip():
+            # MODIFIED: Use PromptAnalyzer for domain recommendation
             suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 user_prompt
             )
@@ -1334,6 +1381,7 @@ with col1:
             st.subheader("Export Framework")
             st.info("Export the currently selected framework to a file for sharing.")
             export_framework_name = st.session_state.selected_persona_set
+            # FIX APPLIED HERE: Changed 'on_change' to 'on_click'
             if st.button(
                 f"Export '{export_framework_name}'",
                 use_container_width=True,
@@ -1449,11 +1497,7 @@ with col2:
         ):
             if not st.session_state.codebase_context:
                 try:
-                    # Removed load_demo_codebase_context as the file is deleted
-                    # st.session_state.codebase_context = load_demo_codebase_context()
-                    # For now, if demo_codebase_context.json is removed, this block should be adjusted
-                    # to either load from a different source or simply not load any demo context.
-                    # For this cleanup, we'll assume no demo context is loaded if the file is gone.
+                    # REMOVED: load_demo_codebase_context() call as the file was deleted in Phase 1
                     st.info("No demo codebase context file found. Please upload files manually.")
                     st.session_state.codebase_context = {}
                     st.session_state.uploaded_files = []
@@ -1483,6 +1527,7 @@ with col2:
             st.session_state.codebase_context = {}
             st.session_state.uploaded_files = []
 
+# --- NEW: Persona Editing UI ---
 st.markdown("---")
 with st.expander(
     "⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode
@@ -1605,6 +1650,7 @@ with st.expander(
                     st.rerun()
                 else:
                     st.error(f"Could not reset persona '{p_name}'.")
+# --- END NEW: Persona Editing UI ---
 
 st.markdown("---")
 run_col, reset_col = st.columns([0.8, 0.2])
@@ -1621,6 +1667,7 @@ with reset_col:
     st.button("🔄 Reset All", on_click=reset_app_state, use_container_width=True)
 
 
+# --- MODIFICATION: Extract debate execution logic into a separate function ---
 def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
 
@@ -1633,7 +1680,7 @@ def _run_socratic_debate_process():
         extra={"request_id": request_id, "user_prompt": user_prompt},
     )
 
-    st.session_state.token_tracker.reset()
+    st.session_state.token_tracker.reset()  # NEW: Reset token tracker at start of debate
 
     if not st.session_state.api_key_input.strip():
         st.error("Please enter your Gemini API Key in the sidebar to proceed.")
@@ -1769,15 +1816,6 @@ def _run_socratic_debate_process():
             st.session_state.current_debate_tokens_used = current_total_tokens
             st.session_state.current_debate_cost_usd = current_total_cost
 
-        # Re-added contextlib and io for this specific block
-        import io
-        import contextlib
-        @contextlib.contextmanager
-        def capture_rich_output_and_get_console():
-            buffer = io.StringIO()
-            console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
-            yield buffer, console_instance
-
         with capture_rich_output_and_get_console() as (
             rich_output_buffer,
             rich_console_instance,
@@ -1794,6 +1832,7 @@ def _run_socratic_debate_process():
                         f"Using active example framework hint: {domain_for_run}"
                     )
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+                    # MODIFIED: Use PromptAnalyzer for domain recommendation
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                         current_user_prompt_for_debate
                     )
@@ -1939,6 +1978,8 @@ def _run_socratic_debate_process():
             intermediate_steps["Total_Tokens_Used"] = final_total_tokens
             intermediate_steps["Total_Estimated_Cost_USD"] = final_total_cost
 
+
+# --- END OF NEW FUNCTION ---
 
 if run_button_clicked:
     st.session_state.last_activity_timestamp = time.time()

@@ -7,8 +7,8 @@ import re
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
-import streamlit as st
-import copy
+# REMOVED: import streamlit as st # Not directly used in this file
+# REMOVED: import copy # Not directly used in this file
 import time
 
 from src.persona.routing import PersonaRouter
@@ -506,6 +506,11 @@ class PersonaManager:
         Also handles `_TRUNCATED` persona names by adjusting max_tokens and system_prompt.
         Returns a deep copy to prevent direct modification of cached objects.
         """
+        # Using copy.deepcopy here to ensure the returned config is mutable and independent
+        # from the internal all_personas dictionary, which is important if the caller
+        # modifies the config (e.g., for a single turn).
+        import copy # Re-added copy import as it's used here
+
         base_persona_name = persona_name.replace("_TRUNCATED", "")
         base_config = self.all_personas.get(base_persona_name)
         if not base_config:
@@ -603,20 +608,20 @@ class PersonaManager:
         output: Any,
         is_valid: bool,
         validation_message: str,
-        is_truncated: bool = False, # NEW parameter
+        is_truncated: bool = False,
     ):
         """Record performance metrics for a persona's turn."""
         base_persona_name = persona_name.replace(
             "_TRUNCATED", ""
-        )  # Use base name for metrics
+        )
         metrics = self.persona_performance_metrics.get(base_persona_name)
         if metrics:
             metrics["total_turns"] += 1
             if (
                 not is_valid
-            ):  # If not valid, count as a schema failure for adaptive adjustment
+            ):
                 metrics["schema_failures"] += 1
-            if is_truncated:  # Track truncation failures
+            if is_truncated:
                 metrics["truncation_failures"] += 1
             logger.debug(
                 f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, IsTruncated={is_truncated}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}"
@@ -642,9 +647,8 @@ class PersonaManager:
         for p_name in persona_sequence:
             base_p_name = p_name.replace(
                 "_TRUNCATED", ""
-            )  # Ensure we're working with the base name
+            )
 
-            # Check individual persona performance
             persona_truncation_prone = False
             metrics = self.persona_performance_metrics.get(base_p_name)
             if metrics and metrics["total_turns"] >= self.min_turns_for_adjustment:
@@ -654,16 +658,14 @@ class PersonaManager:
                 if truncation_rate > self.TRUNCATION_FAILURE_RATE_THRESHOLD:
                     persona_truncation_prone = True
 
-            # Decide whether to use the truncated version
             if persona_truncation_prone or global_token_consumption_high:
-                # Only append _TRUNCATED if it's not already a _TRUNCATED version
                 if "_TRUNCATED" not in p_name:
                     optimized_sequence.append(f"{base_p_name}_TRUNCATED")
                     logger.info(
                         f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f} if calculated) or high global token consumption."
                     )
                 else:
-                    optimized_sequence.append(p_name)  # Already truncated, keep as is
+                    optimized_sequence.append(p_name)
             else:
                 optimized_sequence.append(p_name)
 
@@ -671,5 +673,4 @@ class PersonaManager:
 
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
-        # Delegate to the PromptAnalyzer instance
         return self.prompt_analyzer.analyze_complexity(prompt)

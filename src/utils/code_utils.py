@@ -7,7 +7,7 @@ import logging
 import re
 import ast
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Union # ADDED: Union import
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,6 @@ def _get_code_snippet(
     return "\n".join(snippet_lines)
 
 # --- AST Visitor for detailed code metrics (if needed elsewhere, otherwise can be removed) ---
-# Note: This AST visitor was originally part of src/self_improvement/metrics_collector.py
-# and might be better placed there or in a dedicated AST analysis module if it grows.
-# For now, keeping it here as it's a code utility. If it's only used by metrics_collector,
-# consider moving it there.
 class ComplexityVisitor(ast.NodeVisitor):
     """
     AST visitor to calculate various code metrics for functions and methods,

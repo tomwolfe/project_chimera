@@ -3,9 +3,9 @@ import json
 import logging
 import re
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict # Used for defaultdict in _consolidate_self_improvement_code_changes
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
-from functools import lru_cache
+from functools import lru_cache # Used for lru_cache in _calculate_pareto_score (if it were implemented) and other potential caching
 from rich.console import Console
 from pydantic import BaseModel, ValidationError
 import difflib
@@ -55,8 +55,8 @@ from src.utils.prompt_analyzer import (
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used
+# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # is_self_analysis_prompt is now via PersonaManager.prompt_analyzer
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used in PersonaRouter fallback
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,7 @@ class SocraticDebate:
         "Security_Auditor": CritiqueOutput,
         "DevOps_Engineer": CritiqueOutput,
         "Test_Engineer": CritiqueOutput,
+        # Add _TRUNCATED versions to map to their base schemas
         "Code_Architect_TRUNCATED": CritiqueOutput,
         "Security_Auditor_TRUNCATED": CritiqueOutput,
         "DevOps_Engineer_TRUNCATED": CritiqueOutput,
@@ -105,7 +106,7 @@ class SocraticDebate:
         token_tracker: Optional[TokenUsageTracker] = None,
     ):
         """
-        Initialize a Socratic debate session.
+        Initializes the Socratic debate session.
         """
         setup_structured_logging(log_level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -117,10 +118,11 @@ class SocraticDebate:
         self.rich_console = rich_console or Console(stderr=True)
         self.is_self_analysis = is_self_analysis
 
-        self.request_id = str(uuid.uuid4())[:8]
+        self.request_id = str(uuid.uuid4())[:8] # uuid is used here
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
+        # Initialize codebase context if this is a self-analysis
         if is_self_analysis and codebase_context is None:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
@@ -195,6 +197,7 @@ class SocraticDebate:
                 self.persona_manager.prompt_analyzer,
             )
 
+        # Initialize ContextRelevanceAnalyzer after tokenizer is available
         self.context_analyzer = context_analyzer
         if not self.context_analyzer:
             self.logger.warning(
@@ -206,6 +209,7 @@ class SocraticDebate:
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
 
+        # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
         if not self.content_validator:
             self.content_validator = ContentAlignmentValidator(
@@ -213,6 +217,7 @@ class SocraticDebate:
                 debate_domain=self.domain,
             )
 
+        # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context and self.context_analyzer:
             if isinstance(self.codebase_context, dict):
                 try:
@@ -233,6 +238,7 @@ class SocraticDebate:
                     "codebase_context was not a dictionary, skipping embedding computation."
                 )
 
+        # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
 
     def _log_with_context(self, level: str, message: str, **kwargs):
@@ -363,7 +369,7 @@ class SocraticDebate:
     def _calculate_token_budgets(self):
         """Calculates token budgets for different phases based on context, model limits, and prompt type."""
         try:
-            prompt_analysis = self.persona_manager._analyze_prompt_complexity(
+            prompt_analysis = self.persona_manager.prompt_analyzer.analyze_complexity( # Use prompt_analyzer from persona_manager
                 self.initial_prompt
             )
             context_ratio, debate_ratio, synthesis_ratio = self._determine_phase_ratios(
@@ -866,6 +872,7 @@ class SocraticDebate:
             )
             return None
 
+        # NEW: Ensure embeddings are computed if codebase_context is present but embeddings are not
         if (
             self.codebase_context
             and self.context_analyzer
@@ -959,6 +966,7 @@ class SocraticDebate:
     def _distribute_debate_persona_budgets(self, persona_sequence: List[str]):
         """
         Distributes the total debate token budget among the actual personas in the sequence.
+        This is called *after* the final persona sequence is determined.
         """
         MIN_PERSONA_TOKENS = 256
 
@@ -988,6 +996,7 @@ class SocraticDebate:
         persona_turn_budgets: Dict[str, int] = {}
 
         for p_name in active_debate_personas:
+            # MODIFIED: Get adjusted persona config here to use its max_tokens
             persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
             allocated = max(
                 MIN_PERSONA_TOKENS,
@@ -1341,6 +1350,7 @@ class SocraticDebate:
     ) -> Optional[Dict[str, Any]]:
         """
         Triggers a focused sub-debate to resolve a specific conflict.
+        Returns a resolution summary or None if unresolved.
         """
         self._log_with_context(
             "info", f"Initiating sub-debate for conflict: {conflict_report.summary}"
@@ -1611,6 +1621,7 @@ class SocraticDebate:
                             }
                         )
                     else:
+                        # If no issues can be kept, replace with a summary string
                         summarized_metrics["code_quality"][issue_list_key] = (
                             f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
                         )
@@ -1619,6 +1630,7 @@ class SocraticDebate:
                         f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.",
                     )
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
+                    # If there are issues but budget allows none, remove the list and add a summary
                     del summarized_metrics["code_quality"][issue_list_key]
                     self._log_with_context(
                         "debug",
@@ -1629,6 +1641,7 @@ class SocraticDebate:
                 and issue_list_key in summarized_metrics["code_quality"]
                 and not summarized_metrics["code_quality"][issue_list_key]
             ):
+                # If the list is empty, remove the key to save tokens
                 del summarized_metrics["code_quality"][issue_list_key]
         return summarized_metrics
 
@@ -1656,6 +1669,8 @@ class SocraticDebate:
     ) -> Dict[str, Any]:
         """
         Intelligently summarizes the metrics dictionary to fit within a token budget.
+        Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
+        Ensures critical configuration and deployment analysis are preserved.
         """
         summarized_metrics = json.loads(json.dumps(metrics))
 
@@ -1691,6 +1706,7 @@ class SocraticDebate:
     ) -> List[Dict[str, Any]]:
         """
         Summarizes the debate history to fit within a token budget.
+        Prioritizes recent turns and concise summaries of each turn's output.
         """
         summarized_history = []
         current_tokens = 0
@@ -1966,15 +1982,14 @@ class SocraticDebate:
 
     def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
+        # lru_cache is used here
         impact = (finding.metrics.expected_quality_improvement or 0) + (
             finding.metrics.token_savings_percent or 0
         )
         effort_factor = 1.0 / (
             finding.metrics.estimated_effort or 1
         )
-        return min(
-            1.0, impact * effort_factor * 5
-        )
+        return lru_cache(maxsize=128)(lambda: min(1.0, impact * effort_factor * 5))()
 
     def _update_intermediate_steps_with_totals(self):
         """Updates the intermediate steps dictionary with total token usage and estimated cost."""
@@ -1987,6 +2002,7 @@ class SocraticDebate:
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
         """
         Orchestrates the full Socratic debate process.
+        Returns the final synthesized answer and a dictionary of intermediate steps.
         """
         self._initialize_debate_state()
 
@@ -2010,6 +2026,7 @@ class SocraticDebate:
         persona_sequence = self._get_final_persona_sequence(
             self.initial_prompt, context_analysis_results
         )
+        # NEW: Apply token optimization to the persona sequence
         persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
             persona_sequence
         )
@@ -2247,3 +2264,6 @@ class SocraticDebate:
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
+
+# REMOVED: LLM Suggested Functions for src/core.py (process_complex_logic, _evaluate_condition1, etc.)
+# These were example functions for refactoring demonstration and are not part of the core logic.
