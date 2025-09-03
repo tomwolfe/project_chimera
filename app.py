@@ -57,7 +57,7 @@ from pathlib import Path
 # NEW IMPORT: For centralized prompt analysis
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
-
+from src.context.context_analyzer import CodebaseScanner # ADDED LINE
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -190,6 +190,10 @@ def test_api_key():
 
 # --- END NEW: Helper functions for API Key UI status ---
 
+# NEW: Instantiate CodebaseScanner once for the UI
+@st.cache_resource
+def get_codebase_scanner():
+    return CodebaseScanner()
 
 # --- Demo Codebase Context Loading ---
 @st.cache_data
@@ -1036,6 +1040,15 @@ def on_example_select_change(selectbox_key, tab_name):
 
     st.session_state.codebase_context = {}
     st.session_state.uploaded_files = []
+
+    # When "Critically analyze the entire Project Chimera codebase" is selected
+    if selected_example_key == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.":
+        # Force load codebase context
+        scanner = get_codebase_scanner()
+        st.session_state.codebase_context = scanner.load_own_codebase_context()
+        # Update the prompt to reflect we have context
+        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'] + \
+            "\n\nNOTE: You have full access to the Project Chimera codebase for this analysis."
 
     if "custom_prompt_text_area_widget" in st.session_state:
         st.session_state.custom_prompt_text_area_widget = (

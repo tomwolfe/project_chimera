@@ -1,13 +1,13 @@
 # src/personas/self_improvement_analyst.py
 import logging
-from typing import Dict, Any, List  # Added List
-from datetime import datetime  # Added for _create_file_backup
-import shutil  # Added for _create_file_backup
-import os  # Added for _create_file_backup, _run_targeted_tests, _get_relevant_test_files
-import subprocess  # Added for _run_targeted_tests
-import re  # Added for _get_relevant_test_files
-import json  # Added for _calculate_improvement_score, save_improvement_results
-from pathlib import Path  # Added for Path.cwd()
+from typing import Dict, Any, List
+from datetime import datetime
+import shutil
+import os
+import subprocess
+import re
+import json
+from pathlib import Path
 
 # Assuming FocusedMetricsCollector and other necessary classes/functions are importable
 # from src.self_improvement.metrics_collector import FocusedMetricsCollector
@@ -20,7 +20,7 @@ class MockModel:
     """A mock AI model for demonstration purposes."""
 
     def __init__(self):
-        self.params = {}  # Placeholder for model parameters
+Sef.params = {}  # Placeholder for model parameters
 
     def train(self, data: Any, learning_rate: float):
         logger.debug(
@@ -63,7 +63,7 @@ def calculate_adaptability(model: Any, novel_data: Any) -> float:
 
 def calculate_robustness(model: Any, adversarial_data: Any) -> float:
     """
-    Calculates a score indicating the model's robustness to adversarial data.
+    Calculsates a score indicating the model's robustness to adversarial data.
     This is a placeholder.
     """
     logger.debug("Calculating robustness score (placeholder).")
@@ -101,9 +101,8 @@ class SelfImprovementAnalyst:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.codebase_path = (
-            Path.cwd()
-        )  # Assuming the analyst operates from the project root
+        # Set codebase_path to the project root, assuming the analyst operates from there
+        self.codebase_path = Path.cwd()
 
     def get_prompt(self, context: dict) -> str:
         """
@@ -113,8 +112,7 @@ class SelfImprovementAnalyst:
         """
         # --- MODIFIED PROMPT FOR CONCISENESS AND FOCUS ---
         # The prompt is refined to be more directive about the 80/20 principle,
-        # actionable code changes, and specific focus areas.
-        # It also includes a directive to summarize findings concisely.
+        # actionable code modifications, specific focus areas, and referencing the codebase.
 
         # Ensure context is properly formatted, handling potential missing keys gracefully.
         metrics_context = context.get("metrics", "No metrics provided.")
@@ -122,28 +120,26 @@ class SelfImprovementAnalyst:
 
         # Construct the prompt using f-string for clarity
         self_improvement_prompt = f"""Analyze Project Chimera for high-impact self-improvement (80/20).
+You have full access to the codebase at: {self.codebase_path}
+
 Prioritize: reasoning quality, robustness, efficiency, maintainability.
-Provide clear rationale and actionable code modifications.
+Provide clear rationale and actionable code modifications WITH SPECIFIC FILE PATHS.
+
+CRITICAL: Reference actual files and code snippets from the codebase.
+For example: "In src/core/self_improvement.py, line 42, the function X could be optimized by..."
 
 SECURITY ANALYSIS:
 - Prioritize HIGH severity Bandit issues (SQLi, command injection, hardcoded secrets)
-- Group similar issues together rather than listing individually
-- Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.**
+- Reference specific vulnerable code locations
 
 TOKEN OPTIMIZATION:
-- Analyze which personas consume disproportionate tokens
-- Identify repetitive or redundant analysis patterns
-- Suggest specific prompt truncation strategies for high-token personas
+- Identify where Self_Improvement_Analyst persona uses excessive tokens
+- Reference specific prompt templates that need optimization
 
-TESTING STRATEGY:
-- Prioritize testing core logic (SocraticDebate, LLM interaction) before UI components
-- Focus on areas with highest bug density per historical data
-- Implement targeted smoke tests for critical paths first, **providing example test code in `CODE_CHANGES_SUGGESTED` (FULL_CONTENT for ADD actions).**
-
-SELF-REFLECTION:
-- What aspects of previous self-improvement analyses were most/least effective?
-- How can the self-analysis framework be enhanced to produce better recommendations?
-- What metrics would best measure the effectiveness of self-improvement changes?
+Your analysis MUST include:
+1. Specific file paths and line numbers
+2. Code snippets showing current implementation
+3. Precise recommendations with code changes
 
 ---
 
@@ -178,8 +174,8 @@ Summarize findings concisely.
         if ruff_issues_count > 100:  # Threshold for significant linting issues
             suggestions.append(
                 {
-                    "AREA": "Maintainability (High Volume Linting Issues)",
-                    "PROBLEM": f"High number of Ruff linting issues ({ruff_issues_count}). Refactor code to adhere to style guides and improve readability.",
+                    "AREA": "Maintainability",
+                    "PROBLEM": f"High number of Ruff linting issues found ({ruff_issues_count}). Refactor code to adhere to style guides and improve readability.",
                     "PROPOSED_SOLUTION": "Run Ruff with `--fix` enabled in CI and pre-commit hooks. Address specific linting errors identified by Ruff. Consider increasing Ruff's strictness or enabling more rules.",
                     "EXPECTED_IMPACT": "Improves code consistency, readability, and maintainability, reducing cognitive load for developers.",
                     "CODE_CHANGES_SUGGESTED": [],  # Placeholder for specific code changes if identified
@@ -214,7 +210,7 @@ Summarize findings concisely.
         if zero_test_coverage:
             suggestions.append(
                 {
-                    "AREA": "Maintainability (Testing)",
+                    "AREA": "Maintainability",
                     "PROBLEM": "Zero test coverage. Critical lack of automated tests increases regression risk.",
                     "PROPOSED_SOLUTION": "Implement a comprehensive test suite using pytest. Prioritize writing unit and integration tests for core functionalities, including LLM interactions, data processing pipelines, and utility functions. Start with critical paths and gradually increase coverage.",
                     "EXPECTED_IMPACT": "Increases confidence in code changes, reduces regression bugs, improves code quality, and provides a safety net for future development.",
@@ -237,7 +233,7 @@ Summarize findings concisely.
         if high_token_consumers:
             suggestions.append(
                 {
-                    "AREA": "Efficiency (LLM Token Usage)",
+                    "AREA": "Efficiency",
                     "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
                     "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
                     "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
@@ -259,7 +255,7 @@ Summarize findings concisely.
                     "PROBLEM": f"Content misalignment warnings ({content_misalignment_warnings}) indicate potential issues in persona reasoning or prompt engineering.",
                     "PROPOSED_SOLUTION": "Refine prompts for clarity and specificity. Review persona logic for consistency and accuracy. Ensure personas stay focused on the core task and domain.",
                     "EXPECTED_IMPACT": "Enhances the quality and relevance of persona outputs, leading to more coherent and accurate final answers.",
-                    "CODE_CHANGES_SUGGESTED": [],  # This is a prompt engineering suggestion
+                    "CODE_CHANGES_SUGGESTED": [],
                 }
             )
 

@@ -1,19 +1,21 @@
 # src/context/context_analyzer.py
 import os
 import logging
-from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from pathlib import Path  # ADDED
+from typing import Dict, Any, List, Tuple, Optional  # MODIFIED: Added Optional
 from sentence_transformers import SentenceTransformer  # Needed for embeddings
 import re  # For keyword matching
 import json  # For potential JSON handling
 import numpy as np  # Needed for semantic similarity calculation
-
-# Assuming SentenceTransformer is available and cache_dir is used for it.
+import shutil # Added for _create_file_backup
+import subprocess # Added for _run_targeted_tests
+import sys # Added for _run_targeted_tests
+from datetime import datetime # Added for _create_file_backup
 
 logger = logging.getLogger(__name__)
 
 
-# --- CodebaseScanner Class (as provided in the dump) ---
+# --- CodebaseScanner Class ---
 class CodebaseScanner:
     """Scans and analyzes the project's codebase to provide context for self-improvement."""
 
@@ -21,30 +23,21 @@ class CodebaseScanner:
         """Initialize with optional project root path."""
         # Determine project root dynamically if not provided
         if project_root is None:
-            # Try to find project root using common markers
-            current_path = Path(__file__).resolve().parent
-            for _ in range(10):  # Limit search depth
-                if any(
-                    current_path.joinpath(marker).exists()
-                    for marker in [".git", "pyproject.toml", "Dockerfile"]
-                ):
-                    project_root = str(current_path)
-                    break
-                parent_path = current_path.parent
-                if parent_path == current_path:  # Reached filesystem root
-                    break
-                current_path = parent_path
-
-            # Fallback if markers not found
-            if project_root is None:
+            # Use the new _find_project_root method
+            found_root = self._find_project_root()
+            if found_root:
+                project_root = str(found_root)
+            else:
+                # Fallback if markers not found
                 project_root = str(
                     Path(__file__).resolve().parent.parent.parent
-                )  # Default fallback to project root based on file location
+                )  # Default fallback based on file location
                 logger.warning(
                     f"Project root markers not found. Falling back to default path: {project_root}"
                 )
 
         self.project_root = project_root
+        self.codebase_path = Path(self.project_root)  # Initialize codebase_path
         self.logger = logging.getLogger(__name__)
         self.logger.info(
             f"CodebaseScanner initialized with project root: {self.project_root}"
@@ -57,6 +50,7 @@ class CodebaseScanner:
             "code_quality_metrics": {},
             "security_issues": [],
             "test_coverage": {},
+            "dependencies": {}, # Added for the new method
         }
 
         try:
@@ -75,10 +69,68 @@ class CodebaseScanner:
             # Placeholder implementation:
             context["test_coverage"] = self._analyze_test_coverage()
 
+            # Gather dependencies
+            context["dependencies"] = self._gather_dependencies() # CALL NEW METHOD
+
             return context
         except Exception as e:
             logger.error(f"Error scanning codebase: {str(e)}", exc_info=True)
             return {"error": str(e)}
+
+    # --- NEW METHOD: load_own_codebase_context ---
+    def load_own_codebase_context(self) -> Dict[str, Any]:
+        """Scan and load the current project's codebase context for self-analysis."""
+        # Determine the root of the current project
+        project_root = self._find_project_root()
+        
+        if not project_root:
+            logger.error("Could not determine project root for self-analysis")
+            return {}
+        
+        # Set the codebase path to the project root
+        self.codebase_path = project_root
+        
+        # Now scan the codebase
+        context = {
+            "project_root": str(project_root),
+            "file_structure": self._scan_file_structure(),
+            "code_quality_metrics": self._analyze_code_quality(),
+            "security_issues": self._check_security_issues(),
+            "test_coverage": self._analyze_test_coverage(),
+            "dependencies": self._gather_dependencies()
+        }
+        
+        return context
+    # --- END NEW METHOD ---
+
+    # --- NEW METHOD: _find_project_root ---
+    def _find_project_root(self) -> Optional[Path]:
+        """Determine the root directory of the current Project Chimera instance."""
+        # Start from the current file's directory
+        current_path = Path(__file__).resolve().parent
+        
+        # Look for markers of the project root
+        markers = ['pyproject.toml', '.git', 'README.md', 'src/']
+        
+        # Walk up the directory tree
+        for parent in [current_path] + list(current_path.parents):
+            if any((parent / marker).exists() for marker in markers):
+                return parent
+        
+        return None
+    # --- END NEW METHOD ---
+
+    # --- NEW METHOD: _gather_dependencies (Placeholder) ---
+    def _gather_dependencies(self) -> Dict[str, Any]:
+        """Placeholder to gather project dependencies."""
+        logger.info("Gathering dependencies (placeholder).")
+        # In a real implementation, this would parse requirements.txt, pyproject.toml, etc.
+        return {
+            "python_dependencies": ["streamlit", "google-genai", "pydantic"],
+            "system_dependencies": [],
+            "package_manager": "pip",
+        }
+    # --- END NEW METHOD ---
 
     def _scan_file_structure(self) -> Dict[str, Any]:
         """Scan and document the file structure of the project."""
@@ -100,14 +152,8 @@ class CodebaseScanner:
 
                 rel_path = os.path.relpath(root, self.project_root)
 
-                # Skip the root directory itself if it's empty or just contains skipped dirs
-                if rel_path == ".":
-                    if not files and not dirs:  # If root is empty after skips
-                        continue
-                    # Use '.' as key for root directory structure if it has content
-                    dir_key = "."
-                else:
-                    dir_key = rel_path
+                # Use '.' for the root directory if it's the starting point
+                dir_key = rel_path if rel_path != "." else "."
 
                 file_structure[dir_key] = {
                     "subdirectories": dirs,
@@ -120,13 +166,12 @@ class CodebaseScanner:
             return {"error": f"Failed to scan file structure: {e}"}
 
         # Add code snippets for critical files
-        # CORRECTED critical_files list based on feedback
         critical_files = ["core.py", "src/llm_provider.py", "src/config/settings.py"]
 
         file_structure["critical_files_preview"] = {}
         for filename in critical_files:
-            file_path = os.path.join(self.project_root, filename)
-            if os.path.exists(file_path):
+            file_path = Path(self.project_root) / filename
+            if file_path.exists():
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         # Only take first 50 lines to avoid token explosion
@@ -239,7 +284,7 @@ class ContextRelevanceAnalyzer:
             # Raise a more specific error or handle gracefully if SentenceTransformer is critical
             raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
 
-        # Compute embeddings if context is provided
+        # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context:
             self.file_embeddings = self._compute_file_embeddings(self.codebase_context)
         else:
@@ -374,7 +419,9 @@ class ContextRelevanceAnalyzer:
             for filename, snippet in self.codebase_context[
                 "critical_files_preview"
             ].items():
-                summary += f"\n--- {filename} ---\n{snippet}\n--------------------\n"
+                summary += f"\n--- {filename} (first 50 lines) ---\n{snippet}\n--------------------\n"
+        else:
+            summary += "\nNo critical files preview available.\n"
 
         # Placeholder for actual content summarization logic
         # This would involve reading files and summarizing them, potentially using another LLM call
@@ -383,7 +430,6 @@ class ContextRelevanceAnalyzer:
         summary += "\n(Detailed content summarization is a placeholder.)"
 
         # Trim summary to fit max_tokens (using a simple character-based heuristic if tokenizer is not available)
-        # In a real scenario, use the provided tokenizer.
         # Estimate characters per token (e.g., 4 chars/token)
         chars_per_token_estimate = 4
         if len(summary) > max_tokens * chars_per_token_estimate:

@@ -127,11 +127,13 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
-            scanner = CodebaseScanner()
-            self.codebase_context = scanner.scan_codebase()
+            scanner = CodebaseScanner() # Instantiate CodebaseScanner
+            self.codebase_context = scanner.load_own_codebase_context() # CALL NEW METHOD
             self.logger.info(
                 f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
             )
+            # Add a specific note to the prompt that we have context
+            self.initial_prompt = self.initial_prompt + "\n\nNOTE: You now have full access to the Project Chimera codebase for analysis."
         else:  # END MODIFIED BLOCK
             self.codebase_context = codebase_context or {}
 
@@ -1641,9 +1643,7 @@ class SocraticDebate:
                     )
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
                     # If there are issues but budget allows none, remove the list and add a summary
-                    summarized_metrics["code_quality"][issue_list_key] = (
-                        f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
-                    )
+                    del summarized_metrics["code_quality"][issue_list_key]
                     self._log_with_context(
                         "debug",
                         f"Removed {issue_list_key} entirely due to lack of budget.",
