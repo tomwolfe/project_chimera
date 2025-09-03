@@ -47,7 +47,7 @@ from src.persona_manager import PersonaManager
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
-from src.utils.prompt_engineering import optimize_reasoning_prompt # NEW IMPORT
+from src.utils.prompt_analyzer import PromptAnalyzer, optimize_reasoning_prompt # NEW IMPORT - MODIFIED LINE
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner # ADDED LINE
