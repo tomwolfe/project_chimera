@@ -29,6 +29,7 @@ from src.models import (
     ConfigurationAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     DeploymentAnalysisOutput,
+    SelfImprovementFinding, # ADDED: Import SelfImprovementFinding
 )
 from src.config.settings import ChimeraSettings
 from src.exceptions import (
@@ -2261,6 +2262,15 @@ class SocraticDebate:
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
+
+    def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
+        """Calculate 80/20 Pareto score for a finding (impact/effort)."""
+        # Base impact on quality improvement and token savings
+        impact = (finding.metrics.expected_quality_improvement or 0) + (finding.metrics.token_savings_percent or 0)
+        # Effort is inversely proportional to score
+        effort_factor = 1.0 / finding.metrics.estimated_effort
+        # Return normalized score between 0-1
+        return min(1.0, impact * effort_factor * 5)  # Multiplier to normalize to 0-1 range
 
 
 # --- LLM Suggested Functions for src/core.py (Added outside the SocraticDebate class) ---
