@@ -33,7 +33,7 @@ def execute_command_safely(
             capture_output=True,
             text=True,
             check=check,  # Pass the 'check' argument to subprocess.run
-            shell=False, # Explicitly set to False for security
+            shell=False,  # Explicitly set to False for security
             timeout=timeout,
         )
 

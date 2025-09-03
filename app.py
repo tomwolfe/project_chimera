@@ -166,16 +166,17 @@ def display_key_status():
     if not st.session_state.api_key_input:
         st.caption("🔑 Key status: Not provided")
         return
-    
+
     if not st.session_state.api_key_valid_format:
         st.caption("❌ Key status: Invalid format")
         return
-    
+
     if not st.session_state.api_key_functional:
         st.caption("⚠️ Key status: Format valid but non-functional")
         return
-    
+
     st.caption("✅ Key status: Valid and functional")
+
 
 def test_api_key():
     """Test the API key functionality with proper error handling"""
@@ -183,8 +184,10 @@ def test_api_key():
     if not api_key:
         st.session_state.api_key_functional = False
         return
-    
+
     st.session_state.api_key_functional = test_gemini_api_key_functional(api_key)
+
+
 # --- END NEW: Helper functions for API Key UI status ---
 
 
@@ -838,13 +841,15 @@ with st.sidebar:
                     else:
                         st.warning("⚠️ API key format valid but functional test failed.")
                 else:
-                    st.error("❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores.")
+                    st.error(
+                        "❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores."
+                    )
             else:
                 st.info("Please enter your Gemini API Key.")
-        
+
         with api_key_col2:
             st.button("Test Key", on_click=test_api_key, key="test_api_key_btn")
-        
+
         with api_key_col3:
             display_key_status()
 
@@ -1977,7 +1982,6 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get(
                     "Total_Estimated_Cost_USD", 0.0
                 )
-
 
             if "malformed_blocks" not in final_answer:
                 final_answer["malformed_blocks"] = []

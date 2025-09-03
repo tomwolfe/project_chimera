@@ -4,32 +4,46 @@ from src.llm_provider import GeminiProvider
 from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 import google.genai as genai
 
+
 @pytest.fixture
 def mock_genai_client():
     """Mocks the google.genai.Client."""
     mock_client = MagicMock(spec=genai.Client)
     mock_client.models.count_tokens.return_value = MagicMock(total_tokens=10)
     mock_client.models.generate_content.return_value = MagicMock(
-        candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="Mocked LLM response")]))]
+        candidates=[
+            MagicMock(content=MagicMock(parts=[MagicMock(text="Mocked LLM response")]))
+        ]
     )
     return mock_client
+
 
 @pytest.fixture
 def mock_tokenizer(mock_genai_client):
     """Mocks the GeminiTokenizer."""
     tokenizer = MagicMock(spec=GeminiTokenizer)
     tokenizer.model_name = "gemini-2.5-flash-lite"
-    tokenizer.count_tokens.side_effect = lambda text: len(text) // 4 + 1 # Simple token estimation
+    tokenizer.count_tokens.side_effect = (
+        lambda text: len(text) // 4 + 1
+    )  # Simple token estimation
     tokenizer.max_output_tokens = 65536
     return tokenizer
+
 
 @pytest.fixture
 def gemini_provider(mock_genai_client, mock_tokenizer):
     """Provides an instance of GeminiProvider with mocked dependencies."""
-    with patch('src.llm_provider.genai.Client', return_value=mock_genai_client), \
-         patch('src.llm_provider.GeminiTokenizer', return_value=mock_tokenizer):
-        provider = GeminiProvider(api_key="test-api-key", model_name="gemini-2.5-flash-lite", tokenizer=mock_tokenizer)
+    with (
+        patch("src.llm_provider.genai.Client", return_value=mock_genai_client),
+        patch("src.llm_provider.GeminiTokenizer", return_value=mock_tokenizer),
+    ):
+        provider = GeminiProvider(
+            api_key="test-api-key",
+            model_name="gemini-2.5-flash-lite",
+            tokenizer=mock_tokenizer,
+        )
         return provider
+
 
 class TestGeminiProvider:
     def test_initialization(self, gemini_provider, mock_genai_client, mock_tokenizer):
@@ -47,7 +61,7 @@ class TestGeminiProvider:
             prompt=prompt,
             system_prompt=system_prompt,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
         )
 
         assert generated_text == "Mocked LLM response"
@@ -58,11 +72,13 @@ class TestGeminiProvider:
         mock_genai_client.models.generate_content.assert_called_once()
 
     def test_generate_api_error(self, gemini_provider, mock_genai_client):
-        mock_genai_client.models.generate_content.side_effect = genai.errors.APIError("API error", code=500)
+        mock_genai_client.models.generate_content.side_effect = genai.errors.APIError(
+            "API error", code=500
+        )
         with pytest.raises(Exception, match="API error"):
             gemini_provider.generate(
                 prompt="Error prompt",
                 system_prompt="System instruction",
                 temperature=0.5,
-                max_tokens=100
+                max_tokens=100,
             )

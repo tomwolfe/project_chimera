@@ -58,18 +58,26 @@ class PromptAnalyzer:
         # Add reasoning quality metrics
         reasoning_indicators = {
             "contains_80_20_language": "80/20" in prompt or "Pareto" in prompt.lower(),
-            "explicit_focus_areas": any(area in prompt.lower() for area in
-                ["reasoning quality", "robustness", "efficiency", "maintainability"]),
-            "token_usage_warning": "token usage" in prompt.lower() or "cost" in prompt.lower(),
-            "structured_output_request": "JSON" in prompt or "schema" in prompt.lower()
+            "explicit_focus_areas": any(
+                area in prompt.lower()
+                for area in [
+                    "reasoning quality",
+                    "robustness",
+                    "efficiency",
+                    "maintainability",
+                ]
+            ),
+            "token_usage_warning": "token usage" in prompt.lower()
+            or "cost" in prompt.lower(),
+            "structured_output_request": "JSON" in prompt or "schema" in prompt.lower(),
         }
 
         # Calculate reasoning quality score (0-1)
         reasoning_score = (
-            0.25 * reasoning_indicators["contains_80_20_language"] +
-            0.25 * reasoning_indicators["explicit_focus_areas"] +
-            0.25 * reasoning_indicators["token_usage_warning"] +
-            0.25 * reasoning_indicators["structured_output_request"]
+            0.25 * reasoning_indicators["contains_80_20_language"]
+            + 0.25 * reasoning_indicators["explicit_focus_areas"]
+            + 0.25 * reasoning_indicators["token_usage_warning"]
+            + 0.25 * reasoning_indicators["structured_output_request"]
         )
 
         return {
@@ -81,19 +89,27 @@ class PromptAnalyzer:
             "reasoning_quality_metrics": {
                 "score": reasoning_score,
                 "indicators": reasoning_indicators,
-                "suggested_improvements": self._generate_reasoning_quality_suggestions(reasoning_indicators)
-            }
+                "suggested_improvements": self._generate_reasoning_quality_suggestions(
+                    reasoning_indicators
+                ),
+            },
         }
 
-    def _generate_reasoning_quality_suggestions(self, indicators: Dict[str, bool]) -> List[str]:
+    def _generate_reasoning_quality_suggestions(
+        self, indicators: Dict[str, bool]
+    ) -> List[str]:
         """Generates suggestions for improving reasoning quality based on indicators."""
         suggestions = []
         if not indicators["contains_80_20_language"]:
             suggestions.append("Add explicit 80/20 Pareto principle directive.")
         if not indicators["explicit_focus_areas"]:
-            suggestions.append("Specify core focus areas (e.g., reasoning quality, robustness, efficiency, maintainability).")
+            suggestions.append(
+                "Specify core focus areas (e.g., reasoning quality, robustness, efficiency, maintainability)."
+            )
         if not indicators["token_usage_warning"]:
-            suggestions.append("Include directives for conciseness and token consciousness.")
+            suggestions.append(
+                "Include directives for conciseness and token consciousness."
+            )
         if not indicators["structured_output_request"]:
             suggestions.append("Request strict adherence to JSON schema for output.")
         return suggestions
@@ -169,7 +185,9 @@ class PromptAnalyzer:
             score = max(score, 0.95)
 
         # Boost for multiple keyword matches with stricter requirements
-        found_keywords_count = sum(1 for kw in SELF_ANALYSIS_KEYWORDS if kw in prompt_lower)
+        found_keywords_count = sum(
+            1 for kw in SELF_ANALYSIS_KEYWORDS if kw in prompt_lower
+        )
         if found_keywords_count > 1:
             score *= 1.1 ** (found_keywords_count - 1)
             score = min(score, 1.5)
@@ -239,8 +257,9 @@ class PromptAnalyzer:
 
         return None
 
+
 # --- NEW FUNCTION DEFINITION ---
-@lru_cache(maxsize=256) # Cache results for identical prompts
+@lru_cache(maxsize=256)  # Cache results for identical prompts
 def optimize_reasoning_prompt(prompt: str) -> str:
     """
     Optimizes a prompt for clarity, conciseness, and focus, potentially
@@ -258,8 +277,12 @@ def optimize_reasoning_prompt(prompt: str) -> str:
     optimized_prompt = prompt.strip()
 
     # Basic cleanup: remove excessive whitespace between words and lines
-    optimized_prompt = re.sub(r'\s+', ' ', optimized_prompt) # Replace multiple whitespaces with single space
-    optimized_prompt = re.sub(r'\n\s*\n', '\n\n', optimized_prompt) # Normalize blank lines
+    optimized_prompt = re.sub(
+        r"\s+", " ", optimized_prompt
+    )  # Replace multiple whitespaces with single space
+    optimized_prompt = re.sub(
+        r"\n\s*\n", "\n\n", optimized_prompt
+    )  # Normalize blank lines
 
     # Add more sophisticated prompt optimization logic here if needed, e.g.:
     # - Emphasizing critical instructions (e.g., JSON output format)
@@ -269,5 +292,6 @@ def optimize_reasoning_prompt(prompt: str) -> str:
     # For now, a basic cleanup is sufficient to resolve the import error.
     logger.debug("Applied basic prompt optimization (cleanup).")
     return optimized_prompt
+
 
 # --- END NEW FUNCTION DEFINITION ---

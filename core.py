@@ -47,10 +47,13 @@ from src.persona_manager import PersonaManager
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker  # NEW IMPORT
-from src.utils.prompt_analyzer import PromptAnalyzer, optimize_reasoning_prompt # NEW IMPORT - MODIFIED LINE
+from src.utils.prompt_analyzer import (
+    PromptAnalyzer,
+    optimize_reasoning_prompt,
+)  # NEW IMPORT - MODIFIED LINE
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner # ADDED LINE
+from src.context.context_analyzer import CodebaseScanner  # ADDED LINE
 
 # Configure logging for the core module itself
 logger = logging.getLogger(__name__)
@@ -95,7 +98,9 @@ class SocraticDebate:
         context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
         is_self_analysis: bool = False,
         persona_manager: Optional[PersonaManager] = None,
-        content_validator: Optional[ContentAlignmentValidator] = None, # Added content_validator to __init__
+        content_validator: Optional[
+            ContentAlignmentValidator
+        ] = None,  # Added content_validator to __init__
         token_tracker: Optional[TokenUsageTracker] = None,
     ):
         """
@@ -116,14 +121,18 @@ class SocraticDebate:
 
         self.initial_prompt = initial_prompt
         # Initialize codebase context if this is a self-analysis
-        if is_self_analysis and codebase_context is None: # MODIFIED BLOCK
-            self.logger.info("Performing self-analysis - scanning codebase for context...")
+        if is_self_analysis and codebase_context is None:  # MODIFIED BLOCK
+            self.logger.info(
+                "Performing self-analysis - scanning codebase for context..."
+            )
             scanner = CodebaseScanner()
             self.codebase_context = scanner.scan_codebase()
-            self.logger.info(f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned")
-        else: # END MODIFIED BLOCK
+            self.logger.info(
+                f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
+            )
+        else:  # END MODIFIED BLOCK
             self.codebase_context = codebase_context or {}
-        
+
         self.domain = domain
 
         self.token_tracker = token_tracker or TokenUsageTracker(
@@ -229,7 +238,6 @@ class SocraticDebate:
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
-
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -418,9 +426,7 @@ class SocraticDebate:
         self, phase: str, tokens: int, persona_name: Optional[str] = None
     ):
         """Tracks token usage for a given phase."""
-        self.token_tracker.record_usage(
-            tokens, persona=persona_name
-        )
+        self.token_tracker.record_usage(tokens, persona=persona_name)
         cost = self.llm_provider.calculate_usd_cost(tokens, 0)
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
         self.intermediate_steps[f"{phase}_Tokens_Used"] += tokens
@@ -667,9 +673,7 @@ class SocraticDebate:
             phase=phase,
         )
 
-        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(
-            persona_name, GeneralOutput
-        )
+        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
         self._log_with_context(
             "debug", f"Using schema {output_schema.__name__} for {persona_name}."
         )
@@ -1898,7 +1902,7 @@ class SocraticDebate:
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
 
         final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
-            optimize_reasoning_prompt(final_synthesis_prompt_raw), # Apply optimization
+            optimize_reasoning_prompt(final_synthesis_prompt_raw),  # Apply optimization
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )
@@ -1985,9 +1989,7 @@ class SocraticDebate:
 
     def _update_intermediate_steps_with_totals(self):
         """Updates the intermediate steps dictionary with total token usage and estimated cost."""
-        self.intermediate_steps["Total_Tokens_Used"] = (
-            self.token_tracker.current_usage
-        )
+        self.intermediate_steps["Total_Tokens_Used"] = self.token_tracker.current_usage
         self.intermediate_steps["Total_Estimated_Cost_USD"] = (
             self.get_total_estimated_cost()
         )

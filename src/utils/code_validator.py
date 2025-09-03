@@ -92,7 +92,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                     lint_command,
                     capture_output=True,
                     text=True,
-                    check=True, # Changed from False to True
+                    check=True,  # Changed from False to True
                     shell=False,
                     timeout=30,
                 )
@@ -133,9 +133,14 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             except subprocess.CalledProcessError as e:
                 logging.error(f"Ruff check failed: {e}")
                 # Return a structured error for the UI/metrics collector
-                issues.append({"type": "Ruff Linting Issue", "message": f"Ruff command failed: {e.stderr}"})
-                stdout_lint = "" # Clear stdout as it's an error
-                stderr_lint = e.stderr # Capture stderr from the exception
+                issues.append(
+                    {
+                        "type": "Ruff Linting Issue",
+                        "message": f"Ruff command failed: {e.stderr}",
+                    }
+                )
+                stdout_lint = ""  # Clear stdout as it's an error
+                stderr_lint = e.stderr  # Capture stderr from the exception
 
             if stderr_lint:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
@@ -243,10 +248,12 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=True, # Changed from False to True as per AI's suggestion 1
+                check=True,  # Changed from False to True as per AI's suggestion 1
             )
 
-            if return_code not in (0, 1): # This check might be redundant if check=True is used in execute_command_safely
+            if (
+                return_code not in (0, 1)
+            ):  # This check might be redundant if check=True is used in execute_command_safely
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )

@@ -12,9 +12,12 @@ from pathlib import Path
 
 # Assuming FocusedMetricsCollector and other necessary classes/functions are importable
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
-from src.self_improvement.context_collector import CodebaseContextCollector # NEW IMPORT
+from src.self_improvement.context_collector import (
+    CodebaseContextCollector,
+)  # NEW IMPORT
 # from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
 # from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
+
 
 # Mock classes from original file for context, but they will be replaced by actual logic
 class MockAIModel:
@@ -128,7 +131,9 @@ class SelfImprovementLoop:
             Path.cwd()
         )  # Assuming the loop is run from project root or context is provided
 
-    def _run_targeted_tests(self, repo_path: Path, command: List[str]) -> Tuple[str, str]:
+    def _run_targeted_tests(
+        self, repo_path: Path, command: List[str]
+    ) -> Tuple[str, str]:
         """
         Runs a specific test command within the repository path.
         This is a placeholder for actual test execution logic.
@@ -137,7 +142,14 @@ class SelfImprovementLoop:
             # Use a more secure way to execute commands if possible, e.g., passing args as a list
             # and ensuring shell=False if not strictly necessary.
             # For now, assuming commands are trusted or sanitized elsewhere.
-            result = subprocess.run(command, shell=False, capture_output=True, text=True, check=True, cwd=repo_path)
+            result = subprocess.run(
+                command,
+                shell=False,
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=repo_path,
+            )
 
             return result.stdout, result.stderr
         except subprocess.CalledProcessError as e:
@@ -183,7 +195,9 @@ class SelfImprovementLoop:
                     # Apply diff content (requires a diff utility or manual parsing)
                     # This is a simplified placeholder; real diff application is complex.
                     original_content = file_path.read_text()
-                    patched_content = self._apply_unified_diff(original_content, change["DIFF_CONTENT"])
+                    patched_content = self._apply_unified_diff(
+                        original_content, change["DIFF_CONTENT"]
+                    )
                     with open(file_path, "w") as f:
                         f.write(patched_content)
                     logger.info(f"Modified file: {file_path} with DIFF_CONTENT.")
@@ -205,34 +219,43 @@ class SelfImprovementLoop:
         """
         original_lines = original_content.splitlines(keepends=True)
         diff_lines = diff_content.splitlines(keepends=True)
-        
+
         patched_lines = []
         original_idx = 0
         diff_idx = 0
 
         while diff_idx < len(diff_lines):
             line = diff_lines[diff_idx]
-            if line.startswith('---') or line.startswith('+++') or line.startswith('@@'):
+            if (
+                line.startswith("---")
+                or line.startswith("+++")
+                or line.startswith("@@")
+            ):
                 # Skip diff headers
                 diff_idx += 1
                 continue
-            elif line.startswith('-'):
+            elif line.startswith("-"):
                 # Line removed, skip in original
                 original_idx += 1
-            elif line.startswith('+'):
+            elif line.startswith("+"):
                 # Line added
                 patched_lines.append(line[1:])
             else:
                 # Context line or unchanged line
-                if original_idx < len(original_lines) and original_lines[original_idx].strip() == line.strip():
+                if (
+                    original_idx < len(original_lines)
+                    and original_lines[original_idx].strip() == line.strip()
+                ):
                     patched_lines.append(original_lines[original_idx])
                     original_idx += 1
                 else:
                     # If context line doesn't match, it's a more complex diff or an error
                     # For simplicity, we'll just add the diff line as is, but this is risky
-                    patched_lines.append(line[1:]) # Add the line from diff, removing the space
+                    patched_lines.append(
+                        line[1:]
+                    )  # Add the line from diff, removing the space
             diff_idx += 1
-        
+
         # Add any remaining lines from the original if the diff ended prematurely
         while original_idx < len(original_lines):
             patched_lines.append(original_lines[original_idx])
@@ -254,38 +277,62 @@ class SelfImprovementLoop:
                 potential_test_path = self.codebase_path / "tests" / test_file_name
                 if potential_test_path.exists():
                     relevant_tests.add(potential_test_path)
-                
+
                 # Also check for integration tests if applicable
-                potential_integration_test_path = self.codebase_path / "tests" / "integration" / test_file_name
+                potential_integration_test_path = (
+                    self.codebase_path / "tests" / "integration" / test_file_name
+                )
                 if potential_integration_test_path.exists():
                     relevant_tests.add(potential_integration_test_path)
 
         return list(relevant_tests)
 
-    def _calculate_improvement_score(self, metrics_before: Dict, metrics_after: Dict) -> float:
+    def _calculate_improvement_score(
+        self, metrics_before: Dict, metrics_after: Dict
+    ) -> float:
         """
         Calculates an improvement score based on changes in key metrics.
         This is a simplified scoring mechanism.
         """
         score = 0.0
-        
+
         # Example: Reward for reduced security issues
         bandit_before = metrics_before.get("security", {}).get("bandit_issues_count", 0)
         bandit_after = metrics_after.get("security", {}).get("bandit_issues_count", 0)
         if bandit_before > bandit_after:
-            score += (bandit_before - bandit_after) * 0.1 # 0.1 point per issue reduced
+            score += (bandit_before - bandit_after) * 0.1  # 0.1 point per issue reduced
 
         # Example: Reward for improved test coverage (placeholder)
-        coverage_before = metrics_before.get("maintainability", {}).get("test_coverage_summary", {}).get("overall_coverage_percentage", 0)
-        coverage_after = metrics_after.get("maintainability", {}).get("test_coverage_summary", {}).get("overall_coverage_percentage", 0)
+        coverage_before = (
+            metrics_before.get("maintainability", {})
+            .get("test_coverage_summary", {})
+            .get("overall_coverage_percentage", 0)
+        )
+        coverage_after = (
+            metrics_after.get("maintainability", {})
+            .get("test_coverage_summary", {})
+            .get("overall_coverage_percentage", 0)
+        )
         if coverage_after > coverage_before:
-            score += (coverage_after - coverage_before) * 0.5 # 0.5 point per % coverage increase
+            score += (
+                coverage_after - coverage_before
+            ) * 0.5  # 0.5 point per % coverage increase
 
         # Example: Reward for reduced token usage (efficiency)
-        tokens_before = metrics_before.get("performance_efficiency", {}).get("token_usage_stats", {}).get("total_tokens", 0)
-        tokens_after = metrics_after.get("performance_efficiency", {}).get("token_usage_stats", {}).get("total_tokens", 0)
+        tokens_before = (
+            metrics_before.get("performance_efficiency", {})
+            .get("token_usage_stats", {})
+            .get("total_tokens", 0)
+        )
+        tokens_after = (
+            metrics_after.get("performance_efficiency", {})
+            .get("token_usage_stats", {})
+            .get("total_tokens", 0)
+        )
         if tokens_before > tokens_after:
-            score += (tokens_before - tokens_after) * 0.00001 # Small reward for token reduction
+            score += (
+                tokens_before - tokens_after
+            ) * 0.00001  # Small reward for token reduction
 
         return score
 
@@ -295,7 +342,7 @@ class SelfImprovementLoop:
         and evaluates the impact.
         """
         logger.info("Starting self-improvement application phase.")
-        
+
         # Auto-detect self-analysis and collect codebase context
         # This logic is moved here from the original prompt-based check
         # to ensure context is collected before metrics if self-analysis is implied.
@@ -306,17 +353,21 @@ class SelfImprovementLoop:
         self.intermediate_steps["codebase_context_summary"] = {
             "total_files": len(self.codebase_context["structure"]),
             "key_modules_analyzed": list(self.codebase_context["modules"].keys())[:10],
-            "configs_found": list(self.codebase_context["config_files"].keys())
+            "configs_found": list(self.codebase_context["config_files"].keys()),
         }
-        logger.info(f"Codebase context collected for self-improvement: {self.intermediate_steps['codebase_context_summary']}")
+        logger.info(
+            f"Codebase context collected for self-improvement: {self.intermediate_steps['codebase_context_summary']}"
+        )
 
         # --- MODIFIED: Use FocusedMetricsCollector if available, otherwise fallback ---
         # This part assumes FocusedMetricsCollector is defined elsewhere and imported.
         # If not, it will fall back to the original FocusedMetricsCollector.
         # For this specific change, we'll assume the original class name is used for compatibility.
         # If you intend to rename it, ensure the import path is updated.
-        metrics_collector_class = FocusedMetricsCollector # Or FocusedMetricsCollector if renamed
-        
+        metrics_collector_class = (
+            FocusedMetricsCollector  # Or FocusedMetricsCollector if renamed
+        )
+
         metrics_collector = metrics_collector_class(
             initial_prompt=self.initial_prompt,
             debate_history=self.debate_history,
@@ -350,10 +401,14 @@ class SelfImprovementLoop:
             if relevant_test_files:
                 for test_file in relevant_test_files:
                     test_command = [sys.executable, "-m", "pytest", str(test_file)]
-                    stdout, stderr = self._run_targeted_tests(self.codebase_path, test_command)
+                    stdout, stderr = self._run_targeted_tests(
+                        self.codebase_path, test_command
+                    )
                     test_results[str(test_file)] = {"stdout": stdout, "stderr": stderr}
                     if "failed" in stdout.lower() or stderr:
-                        logger.warning(f"Tests failed for {test_file}: {stderr or stdout}")
+                        logger.warning(
+                            f"Tests failed for {test_file}: {stderr or stdout}"
+                        )
                         # Rollback changes if tests fail (simplified)
                         # For a real system, this would involve more robust rollback logic
                         # For now, we'll just log the failure.
@@ -363,7 +418,9 @@ class SelfImprovementLoop:
             logger.info("No code changes applied, skipping test execution.")
 
         metrics_after = metrics_collector.collect_all_metrics()
-        improvement_score = self._calculate_improvement_score(metrics_before, metrics_after)
+        improvement_score = self._calculate_improvement_score(
+            metrics_before, metrics_after
+        )
 
         self.intermediate_steps["improvement_score"] = improvement_score
         self.intermediate_steps["metrics_before_improvement"] = metrics_before
@@ -377,8 +434,18 @@ class SelfImprovementLoop:
             analysis_output.get("IMPACTFUL_SUGGESTIONS", []),
             metrics_before,
             metrics_after,
-            success=not bool(failed_changes) and not any("failed" in res.get("stdout", "").lower() for res in test_results.values())
+            success=not bool(failed_changes)
+            and not any(
+                "failed" in res.get("stdout", "").lower()
+                for res in test_results.values()
+            ),
         )
 
-        logger.info(f"Self-improvement application phase completed. Score: {improvement_score:.2f}")
-        return {"status": "completed", "improvement_score": improvement_score, "test_results": test_results}
+        logger.info(
+            f"Self-improvement application phase completed. Score: {improvement_score:.2f}"
+        )
+        return {
+            "status": "completed",
+            "improvement_score": improvement_score,
+            "test_results": test_results,
+        }

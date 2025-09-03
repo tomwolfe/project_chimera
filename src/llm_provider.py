@@ -83,7 +83,7 @@ class GeminiProvider:
         tokenizer: Tokenizer = None,
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
-        settings: Optional[Any] = None, # Added settings parameter
+        settings: Optional[Any] = None,  # Added settings parameter
     ):  # ADD request_id parameter and settings
         self._api_key = api_key
         self.model_name = model_name
@@ -92,7 +92,7 @@ class GeminiProvider:
         self._log_extra = {
             "request_id": self.request_id or "N/A"
         }  # Prepare log extra data for this instance
-        self.settings = settings or ChimeraSettings() # MODIFIED: Initialize settings
+        self.settings = settings or ChimeraSettings()  # MODIFIED: Initialize settings
 
         try:
             self.client = genai.Client(api_key=self._api_key)
@@ -149,25 +149,47 @@ class GeminiProvider:
             ) from e  # Pass original_exception
 
         # MODIFIED: Use settings or provided values for retry parameters
-        self.MAX_RETRIES = max_retries if max_retries is not None else self.settings.max_retries
-        self.MAX_BACKOFF_SECONDS = max_backoff_seconds if max_backoff_seconds is not None else self.settings.max_backoff_seconds
+        self.MAX_RETRIES = (
+            max_retries if max_retries is not None else self.settings.max_retries
+        )
+        self.MAX_BACKOFF_SECONDS = (
+            max_backoff_seconds
+            if max_backoff_seconds is not None
+            else self.settings.max_backoff_seconds
+        )
 
         # Initialize API client
         try:
             self.client = genai.Client(api_key=api_key)
         except Exception as e:
-            self._log_with_context("error", f"Failed to initialize Gemini client: {e}", exc_info=True)
-            raise LLMProviderError(f"Failed to initialize Gemini client: {e}", original_exception=e) from e
+            self._log_with_context(
+                "error", f"Failed to initialize Gemini client: {e}", exc_info=True
+            )
+            raise LLMProviderError(
+                f"Failed to initialize Gemini client: {e}", original_exception=e
+            ) from e
 
         try:
-            self.tokenizer = tokenizer or GeminiTokenizer(model_name=self.model_name, genai_client=self.client)
+            self.tokenizer = tokenizer or GeminiTokenizer(
+                model_name=self.model_name, genai_client=self.client
+            )
         except Exception as e:
-            self._log_with_context("error", f"Failed to initialize GeminiTokenizer: {e}", exc_info=True)
-            raise LLMProviderError(f"Failed to initialize Gemini tokenizer: {e}", original_exception=e) from e
+            self._log_with_context(
+                "error", f"Failed to initialize GeminiTokenizer: {e}", exc_info=True
+            )
+            raise LLMProviderError(
+                f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
+            ) from e
 
         # MODIFIED: Use settings or provided values for retry parameters
-        self.MAX_RETRIES = max_retries if max_retries is not None else self.settings.max_retries
-        self.MAX_BACKOFF_SECONDS = max_backoff_seconds if max_backoff_seconds is not None else self.settings.max_backoff_seconds
+        self.MAX_RETRIES = (
+            max_retries if max_retries is not None else self.settings.max_retries
+        )
+        self.MAX_BACKOFF_SECONDS = (
+            max_backoff_seconds
+            if max_backoff_seconds is not None
+            else self.settings.max_backoff_seconds
+        )
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -490,6 +512,7 @@ class GeminiProvider:
 # These are not directly modified by the suggestions but are part of the class structure.
 # They are included here for completeness of the file context.
 
+
 def _create_file_backup(file_path: Path) -> Optional[Path]:
     """Creates a timestamped backup of a file."""
     if not file_path.exists():
@@ -505,6 +528,7 @@ def _create_file_backup(file_path: Path) -> Optional[Path]:
     except Exception as e:
         logger.error(f"Failed to create backup for {file_path}: {e}")
         return None
+
 
 def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
     """Applies a single code change (ADD, MODIFY, REMOVE)."""
@@ -528,15 +552,19 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
                 # Simplified diff application - assumes a library or external tool would handle complex diffs
                 # For this example, we'll just overwrite if DIFF_CONTENT is provided but FULL_CONTENT isn't
                 # A real implementation would need a patch utility.
-                if change["DIFF_CONTENT"].strip(): # Only apply if diff content exists
+                if change["DIFF_CONTENT"].strip():  # Only apply if diff content exists
                     # Placeholder for applying diff - requires a patch library or subprocess call
                     # For now, we'll just log that it would be applied
-                    logger.info(f"Applying diff content to file: {file_path} (implementation needed)")
+                    logger.info(
+                        f"Applying diff content to file: {file_path} (implementation needed)"
+                    )
                     # Example: patched_content = apply_diff(original_content, change["DIFF_CONTENT"])
                     # with open(file_path, "w", encoding="utf-8") as f:
                     #     f.write(patched_content)
             else:
-                 logger.warning(f"Modify action for {file_path} provided neither FULL_CONTENT nor DIFF_CONTENT.")
+                logger.warning(
+                    f"Modify action for {file_path} provided neither FULL_CONTENT nor DIFF_CONTENT."
+                )
         else:
             logger.warning(f"Attempted to modify non-existent file: {file_path}")
     elif action == "REMOVE":
@@ -546,6 +574,7 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
             logger.info(f"Removed file: {file_path}")
         else:
             logger.warning(f"Attempted to remove non-existent file: {file_path}")
+
 
 # --- Placeholder for token counting fallback logic ---
 # This logic is now integrated within the GeminiTokenizer's count_tokens method
@@ -571,9 +600,9 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
 #         # Standard text content - use ~4.2 characters per token
 #         avg_ratio = 4.2 # ~4.2 characters per token for text
 #         approx_tokens = max(1, int(len(text) / avg_ratio))
-    
+
 #     # Track for future accuracy improvements (placeholder)
 #     # self._track_token_estimation(len(text), approx_tokens, content_type) # Requires self context
-    
+
 #     logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error.")
 #     return approx_tokens

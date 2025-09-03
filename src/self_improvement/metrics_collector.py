@@ -10,7 +10,7 @@ import re
 import yaml  # Added for YAML parsing
 import toml  # Added for TOML parsing
 from pydantic import ValidationError  # Added for Pydantic validation in parsing
-from datetime import datetime # Added for save_improvement_results
+from datetime import datetime  # Added for save_improvement_results
 
 # Import existing validation functions to reuse their logic
 # Ensure _get_code_snippet is imported from src.utils.code_validator
@@ -251,25 +251,25 @@ class ComplexityVisitor(ast.NodeVisitor):
 # --- AST Visitor for detailed code metrics ---
 
 
-class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
+class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
     """Collects objective metrics for self-improvement analysis."""
 
     CRITICAL_METRICS = {
         "token_efficiency": {
             "description": "Tokens per meaningful suggestion",
             "threshold": 2000,
-            "priority": 1
+            "priority": 1,
         },
         "impact_potential": {
             "description": "Estimated impact of suggested changes (0-100)",
             "threshold": 40,
-            "priority": 2
+            "priority": 2,
         },
         "fix_confidence": {
             "description": "Confidence in fix correctness (0-100)",
             "threshold": 70,
-            "priority": 3
-        }
+            "priority": 3,
+        },
     }
 
     def __init__(
@@ -307,11 +307,10 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "critical_thinking_indicators": {
                 "counter_arguments": 0,
                 "evidence_citations": 0,
-                "assumption_challenges": 0
-            }
+                "assumption_challenges": 0,
+            },
         }
         # _collect_core_metrics is called within collect_all_metrics now
-
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
         """Collect core metrics and identify the single most critical bottleneck."""
@@ -321,30 +320,36 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         if self.debate_history and len(self.debate_history) > 0:
             last_response = self.debate_history[-1].get("response", "")
             output_tokens = tokenizer.count_tokens(last_response)
-        
+
         # Count valid suggestions
         suggestions_count = 0
         try:
-            analysis = json.loads(self.debate_history[-1]["output"]) # Changed from "response" to "output"
+            analysis = json.loads(
+                self.debate_history[-1]["output"]
+            )  # Changed from "response" to "output"
             suggestions_count = len(analysis.get("IMPACTFUL_SUGGESTIONS", []))
-        except Exception as e: # Catch all exceptions during JSON parsing
+        except Exception as e:  # Catch all exceptions during JSON parsing
             logger.warning(f"Failed to parse debate history for suggestions count: {e}")
             pass
-        
-        self.metrics["token_efficiency"] = output_tokens / max(1, suggestions_count) if suggestions_count > 0 else output_tokens
-        
+
+        self.metrics["token_efficiency"] = (
+            output_tokens / max(1, suggestions_count)
+            if suggestions_count > 0
+            else output_tokens
+        )
+
         # Identify critical metric
         self._identify_critical_metric()
-        
+
     def _identify_critical_metric(self):
         """Identify the single most critical metric that's furthest from threshold."""
         critical_metric = None
         max_deviation = -1
-        
+
         for metric_name, config in self.CRITICAL_METRICS.items():
             value = self.metrics.get(metric_name, 0)
             threshold = config["threshold"]
-            
+
             # Calculate how far we are from threshold (higher deviation = more critical)
             if metric_name == "token_efficiency":
                 # Higher is worse for token efficiency
@@ -352,32 +357,36 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             else:
                 # Higher is better for other metrics
                 deviation = threshold - value
-            
+
             if deviation > max_deviation:
                 max_deviation = deviation
                 critical_metric = metric_name
-        
+
         self.critical_metric = critical_metric
-        
+
     def get_critical_metric_info(self):
         """Get information about the critical metric for prompt engineering."""
         if not self.critical_metric:
             return None
-        
+
         config = self.CRITICAL_METRICS[self.critical_metric]
         value = self.metrics.get(self.critical_metric, 0)
         threshold = config["threshold"]
-        
+
         return {
             "name": self.critical_metric,
             "value": value,
             "threshold": threshold,
             "description": config["description"],
-            "status": "CRITICAL" if (self.critical_metric == "token_efficiency" and value > threshold) or \
-                                 (self.critical_metric != "token_efficiency" and value < threshold) else "OK"
+            "status": "CRITICAL"
+            if (self.critical_metric == "token_efficiency" and value > threshold)
+            or (self.critical_metric != "token_efficiency" and value < threshold)
+            else "OK",
         }
 
-    def analyze_reasoning_quality(self, debate_history: List[Dict[str, Any]], analysis_output: Dict[str, Any]):
+    def analyze_reasoning_quality(
+        self, debate_history: List[Dict[str, Any]], analysis_output: Dict[str, Any]
+    ):
         """Analyzes the quality of reasoning in the debate process and final output."""
         # Reset reasoning quality metrics
         self.reasoning_quality_metrics = {
@@ -389,8 +398,8 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "critical_thinking_indicators": {
                 "counter_arguments": 0,
                 "evidence_citations": 0,
-                "assumption_challenges": 0
-            }
+                "assumption_challenges": 0,
+            },
         }
 
         # Analyze debate history for critical thinking indicators
@@ -400,30 +409,53 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             # For now, a simple heuristic:
             content = ""
             if isinstance(turn.get("output"), dict):
-                content = turn["output"].get("general_output", "") or \
-                          turn["output"].get("CRITIQUE_SUMMARY", "") or \
-                          turn["output"].get("ANALYSIS_SUMMARY", "") or \
-                          turn["output"].get("summary", "")
+                content = (
+                    turn["output"].get("general_output", "")
+                    or turn["output"].get("CRITIQUE_SUMMARY", "")
+                    or turn["output"].get("ANALYSIS_SUMMARY", "")
+                    or turn["output"].get("summary", "")
+                )
             elif isinstance(turn.get("output"), str):
                 content = turn["output"]
 
             content_lower = content.lower()
-            self.reasoning_quality_metrics["critical_thinking_indicators"]["counter_arguments"] += content_lower.count("however") + content_lower.count("but") + content_lower.count("counterpoint")
-            self.reasoning_quality_metrics["critical_thinking_indicators"]["evidence_citations"] += content_lower.count("evidence") + content_lower.count("data shows") + content_lower.count("metrics indicate")
-            self.reasoning_quality_metrics["critical_thinking_indicators"]["assumption_challenges"] += content_lower.count("assumption") + content_lower.count("presumes") + content_lower.count("challenging the assumption")
+            self.reasoning_quality_metrics["critical_thinking_indicators"][
+                "counter_arguments"
+            ] += (
+                content_lower.count("however")
+                + content_lower.count("but")
+                + content_lower.count("counterpoint")
+            )
+            self.reasoning_quality_metrics["critical_thinking_indicators"][
+                "evidence_citations"
+            ] += (
+                content_lower.count("evidence")
+                + content_lower.count("data shows")
+                + content_lower.count("metrics indicate")
+            )
+            self.reasoning_quality_metrics["critical_thinking_indicators"][
+                "assumption_challenges"
+            ] += (
+                content_lower.count("assumption")
+                + content_lower.count("presumes")
+                + content_lower.count("challenging the assumption")
+            )
 
         # Check for 80/20 principle adherence in final output
         analysis_text = str(analysis_output).lower()
-        self.reasoning_quality_metrics["80_20_adherence_score"] = 0.8 if ("80/20" in analysis_text or "pareto" in analysis_text) else 0.3
+        self.reasoning_quality_metrics["80_20_adherence_score"] = (
+            0.8 if ("80/20" in analysis_text or "pareto" in analysis_text) else 0.3
+        )
 
         # Calculate overall reasoning depth based on critical thinking indicators
         ct_indicators = self.reasoning_quality_metrics["critical_thinking_indicators"]
         total_indicators = sum(ct_indicators.values())
-        self.reasoning_quality_metrics["reasoning_depth"] = min(5, total_indicators // 3)  # Scale to 0-5
+        self.reasoning_quality_metrics["reasoning_depth"] = min(
+            5, total_indicators // 3
+        )  # Scale to 0-5
 
         # Update main metrics dictionary
         self.metrics["reasoning_quality"] = self.reasoning_quality_metrics
-
 
     @classmethod
     def _collect_configuration_analysis(
@@ -895,7 +927,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
         """
         metrics = {
-            "code_quality": { # Initialize with default values
+            "code_quality": {  # Initialize with default values
                 "ruff_issues_count": 0,
                 "complexity_metrics": {
                     "avg_cyclomatic_complexity": 0.0,
@@ -907,11 +939,11 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
                 "detailed_issues": [],
                 "ruff_violations": [],
             },
-            "security": { # Initialize with default values
+            "security": {  # Initialize with default values
                 "bandit_issues_count": 0,
                 "ast_security_issues_count": 0,
             },
-            "performance_efficiency": { # Initialize with default values
+            "performance_efficiency": {  # Initialize with default values
                 "token_usage_stats": self._collect_token_usage_stats(),
                 "debate_efficiency_summary": self._analyze_debate_efficiency(),
                 "potential_bottlenecks_count": 0,
@@ -934,8 +966,8 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "deployment_robustness": self._collect_deployment_robustness_metrics(
                 self.codebase_path
             ).model_dump(by_alias=True),
-            "reasoning_quality": self.reasoning_quality_metrics, # Will be updated by analyze_reasoning_quality
-            "historical_analysis": self.analyze_historical_effectiveness(), # Corrected call to self.analyze_historical_effectiveness()
+            "reasoning_quality": self.reasoning_quality_metrics,  # Will be updated by analyze_reasoning_quality
+            "historical_analysis": self.analyze_historical_effectiveness(),  # Corrected call to self.analyze_historical_effectiveness()
         }
 
         total_functions_across_codebase = 0
@@ -1027,8 +1059,13 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             )
 
         # Call analyze_reasoning_quality here, after intermediate_steps are populated
-        self.analyze_reasoning_quality(self.debate_history, self.intermediate_steps.get("Final_Synthesis_Output", {}))
-        metrics["reasoning_quality"] = self.reasoning_quality_metrics # Ensure it's updated in the final metrics dict
+        self.analyze_reasoning_quality(
+            self.debate_history,
+            self.intermediate_steps.get("Final_Synthesis_Output", {}),
+        )
+        metrics["reasoning_quality"] = (
+            self.reasoning_quality_metrics
+        )  # Ensure it's updated in the final metrics dict
 
         return metrics
 
@@ -1050,7 +1087,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
-            "persona_token_usage": phase_token_usage, # Renamed for clarity and consistency with prompt
+            "persona_token_usage": phase_token_usage,  # Renamed for clarity and consistency with prompt
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
@@ -1174,9 +1211,7 @@ class FocusedMetricsCollector: # Renamed from ImprovementMetricsCollector
             "metrics_after": metrics_after,
             "success": success,
             "performance_changes": performance_changes,
-            "improvement_score": self.intermediate_steps.get(
-                "improvement_score", 0.0
-            ),
+            "improvement_score": self.intermediate_steps.get("improvement_score", 0.0),
         }
 
         # Append to historical data
@@ -1362,7 +1397,7 @@ This document outlines the refined methodology for identifying and implementing 
 *   **PROBLEM:** The AI exhibits logical inconsistencies in complex multi-turn debates.
 *   **PROPOSED_SOLUTION:** Experiment with fine-tuning the LLM on a curated dataset of high-quality Socratic dialogues, focusing on logical argumentation and refutation. Measure improvements using a custom benchmark assessing logical fallacies and argument coherence.
 *   **EXPECTED_IMPACT:** Enhanced logical consistency and reduced instances of fallacious reasoning in debates.
-*   **CODE_CHANGES_SUGGESTED:** [] (As the change is algorithmic/data-driven, direct code changes may not be applicable or the primary focus. If code is involved, it would be in data processing or training scripts, e.g., `src/data/prepare_socratic_dialogues.py`)"""
+*   **CODE_CHANGES_SUGGESTED:** [] (As the change is algorithmic/data-driven, direct code changes may not be applicable or the primary focus. If code is involved, it would be in data processing or training scripts, e.g., `src/data/prepare_socratic_dialogues.py`)""",
                         }
                     ],
                 }

@@ -8,7 +8,7 @@ import re
 import datetime
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple # Added Tuple
+from typing import Dict, Any, List, Optional, Tuple  # Added Tuple
 
 # Assuming necessary models and constants are available via imports
 # from src.models import PersonaConfig, LLMOutput, ...
@@ -32,12 +32,13 @@ logger = logging.getLogger(__name__)
 # If is_self_analysis_prompt is used here, ensure it's imported from src.constants
 # from src.constants import is_self_analysis_prompt
 
+
 # --- MODIFICATION: Add format_prompt function ---
 def format_prompt(
     template: str,
     codebase_context: Optional[Dict[str, Any]] = None,
     is_self_analysis: bool = False,
-    **kwargs
+    **kwargs,
 ) -> str:
     """
     Format a prompt with variables, adding codebase context when relevant for self-analysis.
@@ -61,13 +62,17 @@ def format_prompt(
 
             if file_structure or critical_files_preview:
                 context_summary = "\n\nCODEBASE CONTEXT:\n"
-                context_summary += f"Project scanned: {len(file_structure)} directories found.\n"
+                context_summary += (
+                    f"Project scanned: {len(file_structure)} directories found.\n"
+                )
 
                 if critical_files_preview:
                     context_summary += "Preview of critical files analyzed:\n"
                     for filename, content in critical_files_preview.items():
                         context_summary += f"\n--- {filename} (first 50 lines) ---\n"
-                        context_summary += content.strip() # Use strip() to remove leading/trailing whitespace
+                        context_summary += (
+                            content.strip()
+                        )  # Use strip() to remove leading/trailing whitespace
                         context_summary += "\n--------------------------------\n"
                 else:
                     context_summary += "No critical files preview available.\n"
@@ -75,7 +80,9 @@ def format_prompt(
                 # Append the context summary to the prompt
                 # Ensure it doesn't exceed token limits (though this function doesn't manage token limits directly)
                 formatted_prompt += context_summary
-                kwargs["codebase_context_summary"] = context_summary # Add to kwargs if needed elsewhere
+                kwargs["codebase_context_summary"] = (
+                    context_summary  # Add to kwargs if needed elsewhere
+                )
 
         except Exception as e:
             logger.error(f"Error formatting prompt with codebase context: {str(e)}")
@@ -87,7 +94,9 @@ def format_prompt(
         # Ensure all kwargs are strings or JSON serializable if needed
         formatted_prompt = formatted_prompt.format(**kwargs)
     except KeyError as e:
-        logger.warning(f"Missing key for prompt formatting: {e}. Prompt might be incomplete.")
+        logger.warning(
+            f"Missing key for prompt formatting: {e}. Prompt might be incomplete."
+        )
     except Exception as e:
         logger.error(f"Error during final prompt formatting: {str(e)}")
 
@@ -102,7 +111,7 @@ def select_personas_based_on_prompt(
     domain: str,
     available_personas: Dict[str, Any],
     persona_sets: Dict[str, List[str]],
-    prompt_analyzer: Any, # Assuming PromptAnalyzer is available
+    prompt_analyzer: Any,  # Assuming PromptAnalyzer is available
 ) -> List[str]:
     """
     Selects an initial persona sequence based on prompt analysis, domain, and available personas.
@@ -126,7 +135,9 @@ def select_personas_based_on_prompt(
         pass
 
     if selected_domain not in persona_sets:
-        logger.warning(f"Domain '{selected_domain}' not found in persona sets. Falling back to 'General'.")
+        logger.warning(
+            f"Domain '{selected_domain}' not found in persona sets. Falling back to 'General'."
+        )
         selected_domain = "General"
 
     base_sequence = persona_sets.get(selected_domain, persona_sets.get("General", []))
@@ -136,11 +147,17 @@ def select_personas_based_on_prompt(
     prompt_lower = prompt.lower()
 
     if "security" in prompt_lower or "vulnerability" in prompt_lower:
-        if "Security_Auditor" not in final_sequence and "Security_Auditor" in available_personas:
-            final_sequence.insert(0, "Security_Auditor") # Prioritize security
+        if (
+            "Security_Auditor" not in final_sequence
+            and "Security_Auditor" in available_personas
+        ):
+            final_sequence.insert(0, "Security_Auditor")  # Prioritize security
 
     if "test" in prompt_lower or "coverage" in prompt_lower or "bug" in prompt_lower:
-        if "Test_Engineer" not in final_sequence and "Test_Engineer" in available_personas:
+        if (
+            "Test_Engineer" not in final_sequence
+            and "Test_Engineer" in available_personas
+        ):
             # Insert before the final synthesizer
             synth_index = len(final_sequence)
             if "Impartial_Arbitrator" in final_sequence:

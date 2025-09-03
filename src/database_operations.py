@@ -143,7 +143,7 @@ def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
 
             if update_fields:
                 # Use parameterized queries to prevent SQL injection
-                placeholders = ', '.join([f'{field} = ?' for field in update_fields])
+                placeholders = ", ".join([f"{field} = ?" for field in update_fields])
                 query = f"UPDATE user_profiles SET {placeholders} WHERE user_id = ?"
                 params = values + [user_id]
                 cursor.execute(query, params)
