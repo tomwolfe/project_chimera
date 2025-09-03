@@ -9,6 +9,7 @@ from functools import lru_cache # Used for lru_cache in _calculate_pareto_score 
 from rich.console import Console
 from pydantic import BaseModel, ValidationError
 import difflib
+import uuid
 
 # --- IMPORT MODIFICATIONS ---
 from src.llm_provider import GeminiProvider
