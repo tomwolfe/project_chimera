@@ -567,7 +567,7 @@ class LLMOutputParser:
                 }
             )
             return self._create_fallback_output(
-                schema_model, malformed_blocks_list, raw_output
+                schema_model, malformed_blocks_list, raw_output, extracted_json_str=None
             )
 
         # If parsed_data is still None, it means direct parsing of cleaned_raw_output failed,
@@ -599,7 +599,7 @@ class LLMOutputParser:
                 }
             )
             return self._create_fallback_output(
-                schema_model, malformed_blocks_list, raw_output
+                schema_model, malformed_blocks_list, raw_output, extracted_json_str=extracted_json_str
             )
 
         # 3. Handle cases where JSON is a list or a single dict
@@ -621,7 +621,7 @@ class LLMOutputParser:
                     }
                 )
                 return self._create_fallback_output(
-                    schema_model, malformed_blocks_list, raw_output
+                    schema_model, malformed_blocks_list, raw_output, extracted_json_str=extracted_json_str
                 )
 
             # --- NEW: Handle specific schema types that might return lists ---
@@ -790,7 +790,7 @@ class LLMOutputParser:
                 }
             )
             return self._create_fallback_output(
-                schema_model, malformed_blocks_list, raw_output
+                schema_model, malformed_blocks_list, raw_output, extracted_json_str=extracted_json_str
             )
 
         # 4. Validate against schema
@@ -829,7 +829,7 @@ class LLMOutputParser:
                 }
             )
             return self._create_fallback_output(
-                schema_model, malformed_blocks_list, raw_output, data_to_validate
+                schema_model, malformed_blocks_list, raw_output, data_to_validate, extracted_json_str=extracted_json_str
             )
         except Exception as general_e:
             malformed_blocks_list.append(
@@ -842,7 +842,7 @@ class LLMOutputParser:
             )
             # FIX: Corrected argument order here
             return self._create_fallback_output(
-                schema_model, malformed_blocks_list, raw_output, data_to_validate
+                schema_model, malformed_blocks_list, raw_output, data_to_validate, extracted_json_str=extracted_json_str
             )
 
     def _create_fallback_output(
@@ -851,6 +851,7 @@ class LLMOutputParser:
         malformed_blocks: List[Dict[str, Any]],
         raw_output_snippet: str,
         partial_data: Optional[Any] = None,
+        extracted_json_str: Optional[str] = None, # NEW: Added extracted_json_str as an argument
     ) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
 
@@ -896,8 +897,10 @@ class LLMOutputParser:
             )
 
         # NEW: Attempt to find any valid JSON fragment in the raw output for better debugging
+        # Use the passed extracted_json_str if available, otherwise fall back to raw_output_snippet
+        source_for_salvage = extracted_json_str if extracted_json_str is not None else raw_output_snippet
         salvaged_json_fragment = self._extract_largest_valid_subobject(
-            raw_output_snippet
+            source_for_salvage
         )
         if salvaged_json_fragment:
             current_malformed_blocks.append(
@@ -915,8 +918,9 @@ class LLMOutputParser:
             SelfImprovementAnalysisOutput,
             SelfImprovementAnalysisOutputV1,
         ]:
+            # Use the passed extracted_json_str for detecting potential single suggestion items
             detected_suggestion = self._detect_potential_suggestion_item(
-                extracted_json_str
+                extracted_json_str if extracted_json_str is not None else raw_output_snippet
             )
             if (
                 detected_suggestion

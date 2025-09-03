@@ -32,7 +32,7 @@ skip-magic-trailing-comma = false
 conf_file = "pyproject.toml"
 level = "info" # Equivalent to -ll, includes low severity issues
 # Optionally, you can specify exclude directories here as well, though the CI command handles it.
-# exclude_dirs = [
+# exclude = [
 #         "venv",
 #         ".git",
 #         "__pycache__",

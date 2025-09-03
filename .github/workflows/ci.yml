@@ -28,11 +28,11 @@ jobs:
     - name: Run Ruff (Linter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
       # --output-format=github makes annotations appear directly in GitHub PRs
-      # Ensure Ruff is configured to fail on issues
+      # Ensure Ruff checks for formatting issues as well
       run: ruff check . --output-format=github --exit-non-zero-on-fix
 
     - name: Run Ruff (Formatter Validation) - Fail if not formatted
-      # Fail if code is not formatted (prevents unformatted commits via CI)
+      # Enforce formatting and fail if not compliant
       run: ruff format --check --diff --exit-non-zero-on-fix
 
     - name: Run Bandit Security Scan
@@ -41,7 +41,14 @@ jobs:
       run: bandit -r . -ll -c pyproject.toml --exit-on-error
       # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
 
+      # Add a step to explicitly install Bandit if it's not covered by requirements.txt
+      # This ensures the Bandit tool is available for the security scan.
+      # Example: pip install bandit
+      # If Bandit is already in requirements.txt, this step might be redundant but ensures availability.
+      # Consider adding 'bandit' to requirements.txt if not already present.
+
     - name: Run Tests with Coverage
+      # Ensure all tests pass and coverage meets the threshold
       # Run pytest and generate coverage report, enforcing the 80% threshold
       run: |
         pytest --cov=src \
