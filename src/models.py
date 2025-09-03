@@ -4,14 +4,14 @@ from pydantic import (
     BaseModel,
     Field,
     # REMOVED: validator # Deprecated in Pydantic v2, replaced by field_validator/model_validator
-    validator, # Re-added for compatibility with older Pydantic versions if not fully v2
+    # validator, # Re-added for compatibility with older Pydantic versions if not fully v2
     model_validator,
     ConfigDict,
     ValidationError,
     field_validator,
 )
 # REMOVED: import logging # Not directly used in this file
-# REMOVED: import re # Not directly used in this file
+import re # ADDED: re import for regex in validate_diff_content_format and validate_paths_in_suggestions/general_output
 from pathlib import Path
 from enum import Enum
 from typing import Self # For Python 3.11+ type hinting
@@ -84,7 +84,7 @@ class BanditConfig(BaseModel):
 
 
 class PydanticSettingsConfig(BaseModel):
-    env_file: Optional[str] = None # Example field
+    env_file: Optional[str] = None
 
 
 class PyprojectTomlConfig(BaseModel):
@@ -193,7 +193,7 @@ class ContextAnalysisOutput(BaseModel):
             # logger.warning( # REMOVED: logger is not imported
             #     f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
             # )
-            return self # Skip validation if import fails
+            return self
 
         for module in self.key_modules:
             if "name" in module and isinstance(module["name"], str):
@@ -252,6 +252,7 @@ class CodeChange(BaseModel):
         """Validates that diff_content, if present, looks like a unified diff."""
         if v is None:
             return v
+        # FIX: re.search requires 're' module to be imported
         if not re.search(r"^--- a/.*?\n\+\+\+ b/.*?\n", v, re.MULTILINE):
             raise ValueError(
                 "DIFF_CONTENT does not appear to be in a standard unified diff format (missing '--- a/' and '+++ b/' headers)."
@@ -326,10 +327,10 @@ class ImprovementArea(str, Enum):
 class CodeChangeDescription(BaseModel):
     """Describes a suggested code change."""
 
-    action: str # e.g., "ADD", "MODIFY", "REMOVE"
+    action: str
     file_path: str
     description: str
-    impact: str # Expected impact of the change
+    impact: str
 
 
 class QuantitativeImpactMetrics(BaseModel):
@@ -394,6 +395,7 @@ class CritiqueOutput(BaseModel):
 
         sanitized_suggestions = []
         for suggestion in self.suggestions:
+            # FIX: re.findall requires 're' module to be imported
             potential_paths = re.findall(
                 r"\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b",
                 suggestion,
@@ -438,6 +440,7 @@ class GeneralOutput(BaseModel):
             return self
 
         sanitized_output = self.general_output
+        # FIX: re.findall requires 're' module to be imported
         potential_paths = re.findall(
             r"\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b",
             sanitized_output,
