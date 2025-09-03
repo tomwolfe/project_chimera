@@ -2,7 +2,6 @@
 import json
 import logging
 import re
-import uuid
 from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
@@ -29,8 +28,8 @@ from src.models import (
     ConfigurationAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     DeploymentAnalysisOutput,
-    SelfImprovementFinding,  # NEW: Added for _calculate_pareto_score
-    QuantitativeImpactMetrics,  # NEW: Added for _calculate_pareto_score
+    SelfImprovementFinding,
+    QuantitativeImpactMetrics,
 )
 from src.config.settings import ChimeraSettings
 from src.exceptions import (
@@ -48,16 +47,17 @@ from src.persona_manager import PersonaManager
 # NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
-from src.token_tracker import TokenUsageTracker  # NEW IMPORT
+from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import (
     PromptAnalyzer,
     optimize_reasoning_prompt,
-)  # NEW IMPORT - MODIFIED LINE
+)
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner  # ADDED LINE
+from src.context.context_analyzer import CodebaseScanner
+# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used
 
-# Configure logging for the core module itself
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +73,6 @@ class SocraticDebate:
         "Security_Auditor": CritiqueOutput,
         "DevOps_Engineer": CritiqueOutput,
         "Test_Engineer": CritiqueOutput,
-        # Add _TRUNCATED versions to map to their base schemas
         "Code_Architect_TRUNCATED": CritiqueOutput,
         "Security_Auditor_TRUNCATED": CritiqueOutput,
         "DevOps_Engineer_TRUNCATED": CritiqueOutput,
@@ -102,7 +101,7 @@ class SocraticDebate:
         persona_manager: Optional[PersonaManager] = None,
         content_validator: Optional[
             ContentAlignmentValidator
-        ] = None,  # Added content_validator to __init__
+        ] = None,
         token_tracker: Optional[TokenUsageTracker] = None,
     ):
         """
@@ -122,8 +121,7 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        # Initialize codebase context if this is a self-analysis
-        if is_self_analysis and codebase_context is None:  # MODIFIED BLOCK
+        if is_self_analysis and codebase_context is None:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
@@ -132,7 +130,7 @@ class SocraticDebate:
             self.logger.info(
                 f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
             )
-        else:  # END MODIFIED BLOCK
+        else:
             self.codebase_context = codebase_context or {}
 
         self.domain = domain
@@ -197,7 +195,6 @@ class SocraticDebate:
                 self.persona_manager.prompt_analyzer,
             )
 
-        # Initialize ContextRelevanceAnalyzer after tokenizer is available
         self.context_analyzer = context_analyzer
         if not self.context_analyzer:
             self.logger.warning(
@@ -209,7 +206,6 @@ class SocraticDebate:
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
 
-        # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
         if not self.content_validator:
             self.content_validator = ContentAlignmentValidator(
@@ -217,7 +213,6 @@ class SocraticDebate:
                 debate_domain=self.domain,
             )
 
-        # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context and self.context_analyzer:
             if isinstance(self.codebase_context, dict):
                 try:
@@ -238,7 +233,6 @@ class SocraticDebate:
                     "codebase_context was not a dictionary, skipping embedding computation."
                 )
 
-        # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
 
     def _log_with_context(self, level: str, message: str, **kwargs):
@@ -269,7 +263,8 @@ class SocraticDebate:
         """Determines the token budget ratios for context, debate, and synthesis phases."""
         complexity_score = prompt_analysis["complexity_score"]
 
-        if self.is_self_analysis:
+        # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
+        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
             context_ratio = self.settings.self_analysis_context_ratio
             debate_ratio = self.settings.self_analysis_debate_ratio
             synthesis_ratio = self.settings.self_analysis_synthesis_ratio
@@ -430,7 +425,7 @@ class SocraticDebate:
         """Tracks token usage for a given phase."""
         self.token_tracker.set_current_stage(
             phase
-        )  # NEW: Set the current stage for semantic weighting
+        )
         self.token_tracker.record_usage(tokens, persona=persona_name)
         cost = self.llm_provider.calculate_usd_cost(tokens, 0)
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
@@ -618,7 +613,7 @@ class SocraticDebate:
         persona_name: str,
         parsed_output: Dict[str, Any],
         has_schema_error: bool,
-        is_truncated: bool, # ADDED: is_truncated parameter
+        is_truncated: bool,
     ):
         """Performs content alignment validation and records performance."""
         is_aligned, validation_message, nuanced_feedback = (
@@ -626,11 +621,11 @@ class SocraticDebate:
         )
         self.persona_manager.record_persona_performance(
             persona_name,
-            1, # Turn number is not directly available here, using 1 as placeholder
+            1,
             parsed_output,
             is_aligned and not has_schema_error,
             validation_message,
-            is_truncated=is_truncated, # PASSED: is_truncated
+            is_truncated=is_truncated,
         )
 
         if not is_aligned:
@@ -660,7 +655,6 @@ class SocraticDebate:
     def _execute_llm_turn(
         self,
         persona_name: str,
-        # persona_config: PersonaConfig, # REMOVED: Will get from persona_manager
         prompt_for_llm: str,
         phase: str,
         max_output_tokens_for_turn: int,
@@ -678,7 +672,6 @@ class SocraticDebate:
             phase=phase,
         )
 
-        # MODIFIED: Get persona_config from persona_manager
         persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
         if not persona_config:
             self._log_with_context(
@@ -695,8 +688,8 @@ class SocraticDebate:
         )
 
         current_prompt = prompt_for_llm
-        raw_llm_output = ""  # Initialize for error handling
-        is_truncated = False  # Initialize for error handling
+        raw_llm_output = ""
+        is_truncated = False
 
         for attempt in range(max_retries + 1):
             try:
@@ -728,13 +721,11 @@ class SocraticDebate:
                     persona_name, raw_llm_output, output_schema
                 )
 
-                # Handle content alignment and record performance
-                # PASSED: is_truncated to _handle_content_alignment_check
                 parsed_output = self._handle_content_alignment_check(
                     persona_name, parsed_output, has_schema_error, is_truncated
                 )
 
-                break  # Exit retry loop on success
+                break
 
             except (
                 LLMProviderError,
@@ -804,7 +795,7 @@ class SocraticDebate:
                                 "PROBLEM": f"Failed to produce valid JSON after {max_retries} attempts",
                                 "PROPOSED_SOLUTION": "Review system prompts and validation logic",
                                 "EXPECTED_IMPACT": "Critical failure in self-improvement process",
-                                "CODE_CHANGES_SUGGESTED": [],  # Ensure this field is present
+                                "CODE_CHANGES_SUGGESTED": [],
                             }
                         ],
                     }
@@ -875,7 +866,6 @@ class SocraticDebate:
             )
             return None
 
-        # NEW: Ensure embeddings are computed if codebase_context is present but embeddings are not
         if (
             self.codebase_context
             and self.context_analyzer
@@ -969,7 +959,6 @@ class SocraticDebate:
     def _distribute_debate_persona_budgets(self, persona_sequence: List[str]):
         """
         Distributes the total debate token budget among the actual personas in the sequence.
-        This is called *after* the final persona sequence is determined.
         """
         MIN_PERSONA_TOKENS = 256
 
@@ -999,7 +988,6 @@ class SocraticDebate:
         persona_turn_budgets: Dict[str, int] = {}
 
         for p_name in active_debate_personas:
-            # MODIFIED: Get adjusted persona config here to use its max_tokens
             persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
             allocated = max(
                 MIN_PERSONA_TOKENS,
@@ -1063,7 +1051,6 @@ class SocraticDebate:
             return None
 
         self._log_with_context("info", "Executing Context_Aware_Assistant turn.")
-        # MODIFIED: Get persona_config from persona_manager
         persona_config = self.persona_manager.get_adjusted_persona_config("Context_Aware_Assistant")
         if not persona_config:
             self._log_with_context(
@@ -1093,7 +1080,6 @@ class SocraticDebate:
         try:
             output = self._execute_llm_turn(
                 "Context_Aware_Assistant",
-                # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                 prompt,
                 "debate",
                 max_output_tokens_for_turn,
@@ -1284,22 +1270,6 @@ class SocraticDebate:
                 current_persona_name=persona_name,
             )
 
-            # persona_config = self.persona_manager.get_adjusted_persona_config( # REMOVED: Get inside _execute_llm_turn
-            #     persona_name
-            # )
-            # if not persona_config:
-            #     persona_config = self.all_personas.get(persona_name)
-            #     if not persona_config:
-            #         self._log_with_context(
-            #             "error",
-            #             f"Persona configuration not found for {persona_name}. Skipping turn.",
-            #             persona=persona_name,
-            #         )
-            #         debate_history.append(
-            #             {"persona": persona_name, "error": "Config not found"}
-            #         )
-            #         continue
-
             persona_specific_context_str = self._build_persona_context_string(
                 persona_name, context_persona_turn_results
             )
@@ -1319,12 +1289,10 @@ class SocraticDebate:
                 )
             current_prompt += previous_output_summary_str
 
-            # MODIFIED: max_output_tokens_for_turn will be determined by _execute_llm_turn using adjusted config
-            # For budget check, we can use a heuristic or the base max_tokens from the persona
             base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
             max_output_tokens_for_turn = self.phase_budgets.get(
                 "persona_turn_budgets", {}
-            ).get(persona_name, base_persona_config.max_tokens if base_persona_config else 1024) # Fallback to 1024
+            ).get(persona_name, base_persona_config.max_tokens if base_persona_config else 1024)
 
             estimated_tokens = (
                 self.tokenizer.count_tokens(current_prompt) + max_output_tokens_for_turn
@@ -1334,7 +1302,6 @@ class SocraticDebate:
             try:
                 output = self._execute_llm_turn(
                     persona_name,
-                    # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                     current_prompt,
                     "debate",
                     max_output_tokens_for_turn,
@@ -1374,7 +1341,6 @@ class SocraticDebate:
     ) -> Optional[Dict[str, Any]]:
         """
         Triggers a focused sub-debate to resolve a specific conflict.
-        Returns a resolution summary or None if unresolved.
         """
         self._log_with_context(
             "info", f"Initiating sub-debate for conflict: {conflict_report.summary}"
@@ -1458,9 +1424,6 @@ class SocraticDebate:
                 current_persona_name=persona_name,
             )
 
-            # persona_config = self.persona_manager.get_adjusted_persona_config( # REMOVED: Get inside _execute_llm_turn
-            #     persona_name
-            # )
             base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
 
             max_output_tokens_for_sub_debate_turn = sub_debate_budget // len(
@@ -1474,7 +1437,6 @@ class SocraticDebate:
             try:
                 turn_output = self._execute_llm_turn(
                     persona_name,
-                    # persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
                     sub_debate_prompt,
                     "sub_debate_phase",
                     max_output_tokens_for_sub_debate_turn,
@@ -1514,7 +1476,6 @@ class SocraticDebate:
                 try:
                     final_resolution = self._execute_llm_turn(
                         synthesizer_persona.name,
-                        # synthesizer_persona, # REMOVED: Passed implicitly via get_adjusted_persona_config
                         final_resolution_prompt,
                         "sub_debate_synthesis",
                         synthesizer_persona.max_tokens,
@@ -1650,7 +1611,6 @@ class SocraticDebate:
                             }
                         )
                     else:
-                        # If no issues can be kept, replace with a summary string
                         summarized_metrics["code_quality"][issue_list_key] = (
                             f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
                         )
@@ -1659,7 +1619,6 @@ class SocraticDebate:
                         f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.",
                     )
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
-                    # If there are issues but budget allows none, remove the list and add a summary
                     del summarized_metrics["code_quality"][issue_list_key]
                     self._log_with_context(
                         "debug",
@@ -1670,7 +1629,6 @@ class SocraticDebate:
                 and issue_list_key in summarized_metrics["code_quality"]
                 and not summarized_metrics["code_quality"][issue_list_key]
             ):
-                # If the list is empty, remove the key to save tokens
                 del summarized_metrics["code_quality"][issue_list_key]
         return summarized_metrics
 
@@ -1698,10 +1656,8 @@ class SocraticDebate:
     ) -> Dict[str, Any]:
         """
         Intelligently summarizes the metrics dictionary to fit within a token budget.
-        Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
-        Ensures critical configuration and deployment analysis are preserved.
         """
-        summarized_metrics = json.loads(json.dumps(metrics))  # Deep copy
+        summarized_metrics = json.loads(json.dumps(metrics))
 
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
 
@@ -1726,7 +1682,7 @@ class SocraticDebate:
         if current_tokens > max_tokens:
             return self._create_fallback_metrics_summary_string(
                 metrics, max_tokens
-            )  # Pass original metrics for fallback string
+            )
 
         return summarized_metrics
 
@@ -1735,7 +1691,6 @@ class SocraticDebate:
     ) -> List[Dict[str, Any]]:
         """
         Summarizes the debate history to fit within a token budget.
-        Prioritizes recent turns and concise summaries of each turn's output.
         """
         summarized_history = []
         current_tokens = 0
@@ -1829,14 +1784,14 @@ class SocraticDebate:
         self._log_with_context("info", "Executing final synthesis persona turn.")
 
         synthesis_persona_name = ""
-        if self.is_self_analysis:
+        # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
+        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
             synthesis_persona_name = "Self_Improvement_Analyst"
         elif self.domain == "Software Engineering":
             synthesis_persona_name = "Impartial_Arbitrator"
         else:
             synthesis_persona_name = "General_Synthesizer"
 
-        # MODIFIED: Get persona_config from persona_manager
         synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
         if not synthesis_persona_config:
             self._log_with_context(
@@ -1925,7 +1880,7 @@ class SocraticDebate:
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
 
         final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
-            optimize_reasoning_prompt(final_synthesis_prompt_raw),  # Apply optimization
+            optimize_reasoning_prompt(final_synthesis_prompt_raw),
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )
@@ -1945,7 +1900,6 @@ class SocraticDebate:
 
         synthesis_output = self._execute_llm_turn(
             synthesis_persona_name,
-            # synthesis_persona_config, # REMOVED: Passed implicitly via get_adjusted_persona_config
             final_synthesis_prompt,
             "synthesis",
             max_output_tokens_for_turn,
@@ -2012,18 +1966,15 @@ class SocraticDebate:
 
     def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
-        # Base impact on quality improvement and token savings
         impact = (finding.metrics.expected_quality_improvement or 0) + (
             finding.metrics.token_savings_percent or 0
         )
-        # Effort is inversely proportional to score
         effort_factor = 1.0 / (
             finding.metrics.estimated_effort or 1
-        )  # Avoid division by zero
-        # Return normalized score between 0-1
+        )
         return min(
             1.0, impact * effort_factor * 5
-        )  # Multiplier to normalize to 0-1 range
+        )
 
     def _update_intermediate_steps_with_totals(self):
         """Updates the intermediate steps dictionary with total token usage and estimated cost."""
@@ -2036,7 +1987,6 @@ class SocraticDebate:
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
         """
         Orchestrates the full Socratic debate process.
-        Returns the final synthesized answer and a dictionary of intermediate steps.
         """
         self._initialize_debate_state()
 
@@ -2060,7 +2010,6 @@ class SocraticDebate:
         persona_sequence = self._get_final_persona_sequence(
             self.initial_prompt, context_analysis_results
         )
-        # NEW: Apply token optimization to the persona sequence
         persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
             persona_sequence
         )
@@ -2177,7 +2126,7 @@ class SocraticDebate:
                 LINES=list(set(all_lines_to_remove)),
             )
         elif add_actions:
-            return add_actions[0]  # Take the first ADD action
+            return add_actions[0]
         elif modify_actions:
             original_content = self.codebase_context.get(file_path, "")
             final_content_for_diff = original_content
@@ -2221,8 +2170,7 @@ class SocraticDebate:
                             "suggestion_area": suggestion.get("AREA"),
                         }
                     )
-                    return None  # No effective change
-
+                    return None
             if consolidated_diff_content and consolidated_diff_content.strip():
                 return CodeChange(
                     FILE_PATH=file_path,
@@ -2242,8 +2190,8 @@ class SocraticDebate:
                         "suggestion_area": suggestion.get("AREA"),
                     }
                 )
-                return None  # No effective change
-        return None  # Should not happen if modify_actions is not empty
+                return None
+        return None
 
     def _consolidate_self_improvement_code_changes(
         self, analysis_output: Dict[str, Any]
@@ -2299,44 +2247,3 @@ class SocraticDebate:
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
-
-
-# --- LLM Suggested Functions for src/core.py (Added outside the SocraticDebate class) ---
-# These are example functions provided by the LLM for refactoring demonstration.
-# They are not part of the SocraticDebate class's core logic but illustrate the refactoring pattern.
-
-
-def process_complex_logic(item):
-    # Placeholder for complex logic that contributes to high cyclomatic complexity
-    result = 0
-    if _evaluate_condition1(item):
-        result += 5
-    if _evaluate_condition2(item):
-        result += 10
-    if _evaluate_nested_condition(item):
-        result *= 2
-    return result
-
-
-def _evaluate_condition1(item):
-    return item.get("condition1") and item.get("value", 0) > 10
-
-
-def _evaluate_condition2(item):
-    return item.get("condition2") or item.get("flag")
-
-
-def _evaluate_nested_condition(item):
-    nested = item.get("nested", {})
-    return "deep_condition" in nested and nested.get("deep_condition")
-
-
-def analyze_data(data):
-    # This function might be a candidate for refactoring if it's complex
-    processed_results = []
-    # The original content of analyze_data was not provided in the diff,
-    # so it remains as a placeholder.
-    # For demonstration, let's assume it processes items using process_complex_logic
-    for item in data:
-        processed_results.append(process_complex_logic(item))
-    return processed_results

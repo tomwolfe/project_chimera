@@ -7,18 +7,19 @@ from typing import Dict, Any, List, Tuple, Union, Optional
 from collections import defaultdict
 from pathlib import Path
 import re
-import yaml  # Added for YAML parsing
-import toml  # Added for TOML parsing
-from pydantic import ValidationError  # Added for Pydantic validation in parsing
-from datetime import datetime  # Added for save_improvement_results
+import yaml
+import toml
+from pydantic import ValidationError
+from datetime import datetime
+
+# NEW IMPORT: Get _get_code_snippet from the new code_utils.py
+from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 
 # Import existing validation functions to reuse their logic
-# Ensure _get_code_snippet is imported from src.utils.code_validator
 from src.utils.code_validator import (
     _run_ruff,
     _run_bandit,
     _run_ast_security_checks,
-    _get_code_snippet,
 )
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -31,227 +32,23 @@ from src.models import (
     BanditConfig,
     PydanticSettingsConfig,
     DeploymentAnalysisOutput,
-)  # NEW IMPORTS
-import toml  # Added for TOML parsing
-from pydantic import ValidationError  # Added for Pydantic validation in parsing
-from src.utils.command_executor import execute_command_safely  # Re-import for clarity
-from src.utils.path_utils import PROJECT_ROOT  # Re-import for clarity
+)
+from src.utils.command_executor import execute_command_safely
+from src.utils.path_utils import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-# Placeholder for PEP8 descriptions. In a real scenario, this would be a comprehensive mapping.
-# Keeping this for now, but Ruff's messages are often more descriptive directly.
-PEP8_DESCRIPTIONS = {
-    "E101": "Indentation contains mixed spaces and tabs",
-    "E111": "Indentation is not a multiple of four",
-    "E114": "Indentation is not a multiple of four (comment)",
-    "E117": "Over-indented",
-    "E121": "Continuation line under-indented for hanging indent",
-    "E122": "Continuation line missing indentation or outdented",
-    "E123": "Closing bracket does not match indentation of opening bracket's line",
-    "E124": "Closing bracket does not match visual indentation",
-    "E125": "Continuation line with same indent as next logical line",
-    "E126": "Continuation line over-indented for hanging indent",
-    "E127": "Continuation line over-indented for visual indent",
-    "E128": "Continuation line under-indented for visual indent",
-    "E131": "Continuation line unaligned for hanging indent",
-    "E133": "First argument on line not indented",
-    "E201": "Whitespace after '('",
-    "E202": "Whitespace before ')'",
-    "E203": "Whitespace before ':'",
-    "E211": "Whitespace before '['",
-    "E221": "Multiple spaces before operator",
-    "E222": "Multiple spaces after operator",
-    "E225": "Missing whitespace around operator",
-    "E226": "Missing whitespace around arithmetic operator",
-    "E227": "Missing whitespace around bitwise or shift operator",
-    "E228": "Missing whitespace around modulo operator",
-    "E231": "Missing whitespace after ','",
-    "E251": "Unexpected whitespace around keyword / parameter equals",
-    "E261": "At least two spaces before inline comment",
-    "E262": "Inline comment should start with '# '",
-    "E265": "Block comment should start with '# '",
-    "E266": "Too many leading '#' for block comment",
-    "E271": "Multiple spaces after keyword",
-    "E272": "Multiple spaces before keyword",
-    "E301": "Expected 1 blank line, found 0 (before class/def)",
-    "E302": "Expected 2 blank lines, found 0 (before class/def)",
-    "E303": "Too many blank lines (3 or more)",
-    "E304": "Blank lines found after function decorator",
-    "E305": "Expected 2 blank lines after class or function definition, found 0",
-    "E306": "Expected 1 blank line before nested class or function definition, found 0",
-    "E401": "Multiple imports on one line",
-    "E402": "Module level import not at top of file",
-    "E501": "Line too long",
-    "E502": "The backslash is redundant between brackets",
-    "E701": "Multiple statements on one line (colon)",
-    "E702": "Multiple statements on one line (semicolon)",
-    "E703": "Statement ends with a semicolon",
-    "E711": "Comparison to None should be 'if cond is None:'",
-    "E712": "Comparison to True should be 'if cond is True:' or 'if cond:'",
-    "E713": "Test for membership should be 'not in'",
-    "E714": "Test for object identity should be 'is not'",
-    "E721": "Do not compare types, use isinstance()",
-    "E722": "Do not use bare 'except:'",
-    "E731": "Do not assign a lambda expression, use a def",
-    "E741": "Ambiguous variable name 'l', 'O', or 'I'",
-    "E742": "Ambiguous class name 'l', 'O', or 'I'",
-    "E743": "Ambiguous function name 'l', 'O', or 'I'",
-    "E901": "SyntaxError or IndentationError",
-    "E902": "IOError",
-    "W191": "Visual indentation contains mixed spaces and tabs",
-    "W291": "Trailing whitespace",
-    "W292": "No newline at end of file",
-    "W293": "Blank line contains whitespace",
-    "W391": "Blank line at end of file",
-    "W503": "Line break before binary operator",
-    "W504": "Line break after binary operator",
-    "W601": "Invalid escape sequence 'x'",
-    "W602": "Deprecated form of raising exception",
-    "W603": "Invalid comparison with '== None'",
-    "W604": "Backticks are deprecated",
-    "W605": "Invalid escape sequence 'x'",
-    "W606": "f-string contains backslash",
-    "W607": "Invalid escape sequence 'x'",
-}
+# Placeholder for PEP8 descriptions. This is no longer needed as _run_pycodestyle is removed.
+# PEP8_DESCRIPTIONS = { ... } # REMOVED
 
 
 # --- AST Visitor for detailed code metrics ---
-class ComplexityVisitor(ast.NodeVisitor):
-    """
-    AST visitor to calculate various code metrics for functions and methods,
-    including cyclomatic complexity, lines of code, nesting depth, and code smells.
-    """
-
-    def __init__(self, content_lines: List[str]):
-        self.content_lines = content_lines
-        self.function_metrics = []  # Stores metrics for each function/method
-        self.current_function_name = None
-        self.current_function_start_line = None
-
-    def _calculate_loc(self, node: ast.AST) -> int:
-        """Calculates non-blank, non-comment lines of code within a node's body."""
-        if not hasattr(node, "body") or not node.body:
-            return 0
-
-        if not hasattr(node.body[0], "lineno") or not hasattr(
-            node.body[-1], "end_lineno"
-        ):
-            return 0
-
-        start_line = node.body[0].lineno
-        end_line = node.body[-1].end_lineno
-
-        loc_count = 0
-        for i in range(start_line - 1, end_line):
-            if i < len(self.content_lines):
-                line = self.content_lines[i].strip()
-                if line and not line.startswith("#"):
-                    loc_count += 1
-        return loc_count
-
-    def visit_FunctionDef(self, node: ast.FunctionDef):
-        self._analyze_function(node)
-        self.generic_visit(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-        self._analyze_function(node)
-        self.generic_visit(node)
-
-    def _analyze_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]):
-        function_name = node.name
-        start_line = node.lineno
-        end_line = node.end_lineno
-
-        complexity = 1
-        max_nesting_depth = 0
-        nested_loops_count = 0
-        stack = []
-
-        for sub_node in ast.walk(node):
-            if isinstance(
-                sub_node,
-                (
-                    ast.If,
-                    ast.For,
-                    ast.While,
-                    ast.AsyncFor,
-                    ast.With,
-                    ast.AsyncWith,
-                    ast.ExceptHandler,
-                ),
-            ):
-                complexity += 1
-            elif isinstance(sub_node, ast.BoolOp):
-                complexity += len(sub_node.values) - 1
-            elif isinstance(sub_node, ast.comprehension) and sub_node.ifs:
-                complexity += len(sub_node.ifs)
-
-            if isinstance(
-                sub_node,
-                (
-                    ast.If,
-                    ast.For,
-                    ast.While,
-                    ast.AsyncFor,
-                    ast.With,
-                    ast.AsyncWith,
-                    ast.ExceptHandler,
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                    ast.ClassDef,
-                ),
-            ):
-                if sub_node != node and sub_node not in stack:
-                    stack.append(sub_node)
-                    current_nesting_depth = len(stack)
-                    max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
-
-            if isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor)):
-                if any(
-                    isinstance(s, (ast.For, ast.While, ast.AsyncFor))
-                    for s in stack[:-1]
-                ):
-                    nested_loops_count += 1
-
-        stack.clear()
-        loc = self._calculate_loc(node)
-        num_args = (
-            len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
-        )
-
-        code_smells = 0
-        if loc > 50:
-            code_smells += 1
-        if num_args > 5:
-            code_smells += 1
-        if max_nesting_depth > 3:
-            code_smells += 1
-
-        bottlenecks = 0
-        if nested_loops_count > 0:
-            bottlenecks += 1
-
-        self.function_metrics.append(
-            {
-                "name": function_name,
-                "start_line": start_line,
-                "end_line": end_line,
-                "loc": loc,
-                "cyclomatic_complexity": complexity,
-                "num_arguments": num_args,
-                "max_nesting_depth": max_nesting_depth,
-                "nested_loops_count": nested_loops_count,
-                "code_smells": code_smells,
-                "potential_bottlenecks": bottlenecks,
-            }
-        )
+# This class has been moved to src/utils/code_utils.py
+# class ComplexityVisitor(ast.NodeVisitor): # REMOVED
+#     ...
 
 
-# --- AST Visitor for detailed code metrics ---
-
-
-class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
+class FocusedMetricsCollector:
     """Collects objective metrics for self-improvement analysis."""
 
     CRITICAL_METRICS = {
@@ -293,11 +90,10 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         self.persona_manager = persona_manager
         self.content_validator = content_validator
         self.codebase_path = (
-            PROJECT_ROOT  # Assuming PROJECT_ROOT is the base path for analysis
+            PROJECT_ROOT
         )
         self.metrics = {}
         self.critical_metric = None
-        # Initialize reasoning quality metrics
         self.reasoning_quality_metrics = {
             "argument_strength_score": 0.0,
             "debate_effectiveness": 0.0,
@@ -310,25 +106,22 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 "assumption_challenges": 0,
             },
         }
-        # _collect_core_metrics is called within collect_all_metrics now
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
         """Collect core metrics and identify the single most critical bottleneck."""
-        # Token efficiency calculation
         input_tokens = tokenizer.count_tokens(self.initial_prompt)
         output_tokens = 0
         if self.debate_history and len(self.debate_history) > 0:
             last_response = self.debate_history[-1].get("response", "")
             output_tokens = tokenizer.count_tokens(last_response)
 
-        # Count valid suggestions
         suggestions_count = 0
         try:
             analysis = json.loads(
                 self.debate_history[-1]["output"]
-            )  # Changed from "response" to "output"
+            )
             suggestions_count = len(analysis.get("IMPACTFUL_SUGGESTIONS", []))
-        except Exception as e:  # Catch all exceptions during JSON parsing
+        except Exception as e:
             logger.warning(f"Failed to parse debate history for suggestions count: {e}")
             pass
 
@@ -338,7 +131,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             else output_tokens
         )
 
-        # Identify critical metric
         self._identify_critical_metric()
 
     def _identify_critical_metric(self):
@@ -350,12 +142,9 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             value = self.metrics.get(metric_name, 0)
             threshold = config["threshold"]
 
-            # Calculate how far we are from threshold (higher deviation = more critical)
             if metric_name == "token_efficiency":
-                # Higher is worse for token efficiency
                 deviation = value - threshold
             else:
-                # Higher is better for other metrics
                 deviation = threshold - value
 
             if deviation > max_deviation:
@@ -388,7 +177,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         self, debate_history: List[Dict[str, Any]], analysis_output: Dict[str, Any]
     ):
         """Analyzes the quality of reasoning in the debate process and final output."""
-        # Reset reasoning quality metrics
         self.reasoning_quality_metrics = {
             "argument_strength_score": 0.0,
             "debate_effectiveness": 0.0,
@@ -402,11 +190,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             },
         }
 
-        # Analyze debate history for critical thinking indicators
         for turn in debate_history:
-            # Access output from debate history, assuming it's a dict with a 'general_output' or similar
-            # This needs to be robust to different persona outputs.
-            # For now, a simple heuristic:
             content = ""
             if isinstance(turn.get("output"), dict):
                 content = (
@@ -441,20 +225,17 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 + content_lower.count("challenging the assumption")
             )
 
-        # Check for 80/20 principle adherence in final output
         analysis_text = str(analysis_output).lower()
         self.reasoning_quality_metrics["80_20_adherence_score"] = (
             0.8 if ("80/20" in analysis_text or "pareto" in analysis_text) else 0.3
         )
 
-        # Calculate overall reasoning depth based on critical thinking indicators
         ct_indicators = self.reasoning_quality_metrics["critical_thinking_indicators"]
         total_indicators = sum(ct_indicators.values())
         self.reasoning_quality_metrics["reasoning_depth"] = min(
             5, total_indicators // 3
-        )  # Scale to 0-5
+        )
 
-        # Update main metrics dictionary
         self.metrics["reasoning_quality"] = self.reasoning_quality_metrics
 
     @classmethod
@@ -480,7 +261,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                     ci_config_raw = yaml.safe_load(f)
                 with open(
                     ci_yml_path, "r", encoding="utf-8"
-                ) as f:  # Re-open to read lines
+                ) as f:
                     ci_content_lines = f.readlines()
                     ci_workflow_jobs = {}
                     for job_name, job_details in ci_config_raw.get("jobs", {}).items():
@@ -500,15 +281,12 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                                     if cmd.strip()
                                 ]
                                 summary_item_data["runs_commands"] = commands
-                                # Find the line number for the 'run' block to get a snippet
-                                # This is a heuristic, might need refinement for complex YAML structures
                                 run_line_number = None
                                 for i, line in enumerate(ci_content_lines):
                                     if f'name: "{step_name}"' in line:
-                                        # Look for the 'run:' keyword after the name
                                         for j in range(i, len(ci_content_lines)):
                                             if "run:" in ci_content_lines[j]:
-                                                run_line_number = j + 1  # 1-indexed
+                                                run_line_number = j + 1
                                                 break
                                         break
                                 summary_item_data["code_snippet"] = _get_code_snippet(
@@ -542,7 +320,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                     pre_commit_config_raw = yaml.safe_load(f)
                 with open(
                     pre_commit_path, "r", encoding="utf-8"
-                ) as f:  # Re-open to read lines
+                ) as f:
                     pre_commit_content_lines = f.readlines()
                     for repo_config in pre_commit_config_raw.get("repos", []):
                         repo_url = repo_config.get("repo")
@@ -551,7 +329,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                             hook_id = hook.get("id")
                             hook_args = hook.get("args", [])
 
-                            # Find line number for the hook definition
                             hook_line_number = None
                             for i, line in enumerate(pre_commit_content_lines):
                                 if f"id: {hook_id}" in line:
@@ -591,7 +368,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                     pyproject_config_raw = toml.load(f)
                 with open(
                     pyproject_path, "r", encoding="utf-8"
-                ) as f:  # Re-open to read lines
+                ) as f:
                     pyproject_content_lines = f.readlines()
                     pyproject_toml_data = {}
 
@@ -599,7 +376,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                         "ruff", {}
                     )
                     if ruff_tool_config:
-                        # Heuristic to find line number for ruff config
                         ruff_line_number = None
                         for i, line in enumerate(pyproject_content_lines):
                             if "[tool.ruff]" in line:
@@ -622,7 +398,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                         "bandit", {}
                     )
                     if bandit_tool_config:
-                        # Heuristic to find line number for bandit config
                         bandit_line_number = None
                         for i, line in enumerate(pyproject_content_lines):
                             if "[tool.bandit]" in line:
@@ -927,7 +702,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
         """
         metrics = {
-            "code_quality": {  # Initialize with default values
+            "code_quality": {
                 "ruff_issues_count": 0,
                 "complexity_metrics": {
                     "avg_cyclomatic_complexity": 0.0,
@@ -939,11 +714,11 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 "detailed_issues": [],
                 "ruff_violations": [],
             },
-            "security": {  # Initialize with default values
+            "security": {
                 "bandit_issues_count": 0,
                 "ast_security_issues_count": 0,
             },
-            "performance_efficiency": {  # Initialize with default values
+            "performance_efficiency": {
                 "token_usage_stats": self._collect_token_usage_stats(),
                 "debate_efficiency_summary": self._analyze_debate_efficiency(),
                 "potential_bottlenecks_count": 0,
@@ -966,8 +741,8 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             "deployment_robustness": self._collect_deployment_robustness_metrics(
                 self.codebase_path
             ).model_dump(by_alias=True),
-            "reasoning_quality": self.reasoning_quality_metrics,  # Will be updated by analyze_reasoning_quality
-            "historical_analysis": self.analyze_historical_effectiveness(),  # Corrected call to self.analyze_historical_effectiveness()
+            "reasoning_quality": self.reasoning_quality_metrics,
+            "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
         total_functions_across_codebase = 0
@@ -1058,14 +833,13 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 total_nesting_depth_across_functions / total_functions_across_codebase
             )
 
-        # Call analyze_reasoning_quality here, after intermediate_steps are populated
         self.analyze_reasoning_quality(
             self.debate_history,
             self.intermediate_steps.get("Final_Synthesis_Output", {}),
         )
         metrics["reasoning_quality"] = (
             self.reasoning_quality_metrics
-        )  # Ensure it's updated in the final metrics dict
+        )
 
         return metrics
 
@@ -1087,7 +861,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
-            "persona_token_usage": phase_token_usage,  # Renamed for clarity and consistency with prompt
+            "persona_token_usage": phase_token_usage,
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
@@ -1145,6 +919,7 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         """
         try:
             tree = ast.parse(content)
+            # Use the ComplexityVisitor from code_utils
             visitor = ComplexityVisitor(content_lines)
             visitor.visit(tree)
             return visitor.function_metrics
@@ -1158,8 +933,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             )
             return []
 
-    # --- SUGGESTED METHODS TO ADD (Integrated) ---
-
     def save_improvement_results(
         self,
         suggestions: List[Dict],
@@ -1172,7 +945,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
         import json
         from pathlib import Path
 
-        # Calculate performance changes here as well, for consistency in the record
         performance_changes = {}
         for category, metrics in metrics_after.items():
             if category in metrics_before:
@@ -1214,7 +986,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             "improvement_score": self.intermediate_steps.get("improvement_score", 0.0),
         }
 
-        # Append to historical data
         history_file = Path("data/improvement_history.jsonl")
         history_file.parent.mkdir(exist_ok=True)
 
@@ -1266,14 +1037,12 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 "common_failure_modes": [],
             }
 
-        # Calculate overall success rate
         successful_attempts = sum(1 for h in history if h.get("success", False))
         total_attempts = len(history)
         success_rate = (
             successful_attempts / total_attempts if total_attempts > 0 else 0.0
         )
 
-        # Analyze by improvement area
         area_success = defaultdict(int)
         area_attempts = defaultdict(int)
 
@@ -1285,13 +1054,11 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                 if record.get("success"):
                     area_success[area] += 1
 
-        # Calculate success rates by area
         area_success_rates = {}
         for area, attempts in area_attempts.items():
             successes = area_success.get(area, 0)
             area_success_rates[area] = successes / attempts if attempts > 0 else 0.0
 
-        # Identify top performing areas (minimum 3 attempts to be considered)
         top_areas = [
             area
             for area, rate in sorted(
@@ -1300,7 +1067,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             if area_attempts.get(area, 0) >= 3
         ][:5]
 
-        # Identify common failure modes
         failure_modes = defaultdict(int)
         for record in history:
             if not record.get("success", False):
@@ -1310,17 +1076,12 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
                             isinstance(change_data, dict)
                             and "percent_change" in change_data
                         ):
-                            # Consider negative percent change as a failure mode for "higher is better" metrics
-                            # Or positive percent change for "lower is better" metrics
-                            # This logic needs to be more robust based on metric directionality
-                            # For simplicity, let's assume negative percent_change is bad for most metrics
                             if (
                                 change_data.get("percent_change", 0) < -5
-                            ):  # If metric decreased by more than 5%
+                            ):
                                 key = f"{category}.{metric}"
                                 failure_modes[key] += 1
 
-        # Sort failure modes by frequency
         common_failure_modes = sorted(
             failure_modes.items(), key=lambda x: x[1], reverse=True
         )[:5]
@@ -1348,7 +1109,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
 
         suggestions = []
 
-        # --- NEW: Handle Conflict Resolution first if codebase access is denied ---
         conflict_resolution_summary = self.intermediate_steps.get(
             "Conflict_Resolution_Attempt", {}
         ).get("resolution_summary", {})
@@ -1358,7 +1118,6 @@ class FocusedMetricsCollector:  # Renamed from ImprovementMetricsCollector
             and "cannot be fulfilled due to the absence of the codebase"
             in conflict_resolution_summary.get("RATIONALE", "")
         ):
-            # This is the most impactful immediate action as per the conflict resolution
             suggestions.append(
                 {
                     "AREA": "Maintainability",
@@ -1402,22 +1161,18 @@ This document outlines the refined methodology for identifying and implementing 
                     ],
                 }
             )
-            # If codebase access is the primary blocker, other code changes are secondary or conceptual.
-            # We return here to ensure this is the ONLY suggestion if the codebase is missing.
             return suggestions
 
-        # --- Extract top Ruff and Bandit issues for snippets ---
         top_ruff_issues_snippets = []
         top_bandit_issues_snippets = []
 
-        # Filter and collect snippets for Ruff issues
         ruff_detailed_issues = [
             issue
             for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
             if issue.get("source") == "ruff_lint"
             or issue.get("source") == "ruff_format"
         ]
-        for issue in ruff_detailed_issues[:3]:  # Take top 3
+        for issue in ruff_detailed_issues[:3]:
             snippet = issue.get("code_snippet")
             if snippet:
                 top_ruff_issues_snippets.append(
@@ -1428,13 +1183,12 @@ This document outlines the refined methodology for identifying and implementing 
                     f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
                 )
 
-        # Filter and collect snippets for Bandit issues
         bandit_detailed_issues = [
             issue
             for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
             if issue.get("source") == "bandit"
         ]
-        for issue in bandit_detailed_issues[:3]:  # Take top 3
+        for issue in bandit_detailed_issues[:3]:
             snippet = issue.get("code_snippet")
             if snippet:
                 top_bandit_issues_snippets.append(
@@ -1444,17 +1198,11 @@ This document outlines the refined methodology for identifying and implementing 
                 top_bandit_issues_snippets.append(
                     f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
                 )
-        # --- End snippet extraction ---
 
-        # --- MODIFIED LOGIC FOR PARETO PRINCIPLE AND CLARITY ---
-        # Focus on the top 3 highest impact areas based on metrics (Pareto principle).
-        # Prioritize Security, Maintainability, and Robustness.
-
-        # Maintainability (Linting Issues)
         ruff_issues_count = self.metrics.get("code_quality", {}).get(
             "ruff_issues_count", 0
         )
-        if ruff_issues_count > 100:  # Threshold for significant linting issues
+        if ruff_issues_count > 100:
             suggestions.append(
                 {
                     "AREA": "Maintainability",
@@ -1520,7 +1268,6 @@ This document outlines the refined methodology for identifying and implementing 
                 }
             )
 
-        # Security
         bandit_issues_count = self.metrics.get("security", {}).get(
             "bandit_issues_count", 0
         )
@@ -1533,7 +1280,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         if (
             bandit_issues_count > 0 or pyproject_config_error
-        ):  # Trigger if issues or config error
+        ):
             problem_description = f"Bandit security scans are failing with configuration errors (`Bandit failed with exit code 2: [config] ERROR Invalid value (at line 33, column 15) [main] ERROR /Users/tom/Documents/apps/project_chimera/pyproject.toml : Error parsing file.`). This indicates a misconfiguration in `pyproject.toml` for Bandit, preventing security vulnerabilities from being detected. The `pyproject.toml` file itself has a `PYPROJECT_CONFIG_PARSE_ERROR` related to `ruff` configuration."
             if bandit_issues_count > 0:
                 problem_description += (
@@ -1594,7 +1341,6 @@ This document outlines the refined methodology for identifying and implementing 
                 }
             )
 
-        # Maintainability (Testing)
         zero_test_coverage = (
             self.metrics.get("maintainability", {})
             .get("test_coverage_summary", {})
@@ -1720,7 +1466,6 @@ def test_create_task_prompt_with_specific_instructions():
                 }
             )
 
-        # Efficiency (Token Usage)
         high_token_personas = (
             self.metrics.get("performance_efficiency", {})
             .get("debate_efficiency_summary", {})
@@ -1737,18 +1482,14 @@ def test_create_task_prompt_with_specific_instructions():
                     "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
                     "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
                     "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        # Example code changes are provided in the main analysis output, not here.
-                        # This section would typically be populated by a more detailed analysis.
-                    ],
+                    "CODE_CHANGES_SUGGESTED": [],
                 }
             )
 
-        # Reasoning Quality (Content Misalignment)
         content_misalignment_warnings = self.metrics.get("reasoning_quality", {}).get(
             "content_misalignment_warnings", 0
         )
-        if content_misalignment_warnings > 3:  # Threshold for multiple warnings
+        if content_misalignment_warnings > 3:
             suggestions.append(
                 {
                     "AREA": "Reasoning Quality",
@@ -1759,7 +1500,6 @@ def test_create_task_prompt_with_specific_instructions():
                 }
             )
 
-        # Apply Pareto Principle: Limit to top 3 suggestions
         final_suggestions = suggestions[:3]
 
         logger.info(
@@ -1768,7 +1508,6 @@ def test_create_task_prompt_with_specific_instructions():
 
         return final_suggestions
 
-    # --- Placeholder methods for other potential analyses ---
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")
         return {"summary": "Codebase structure analysis is a placeholder."}

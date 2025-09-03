@@ -7,8 +7,6 @@ and circuit breaker protection.
 
 from pathlib import Path
 import time
-from collections import defaultdict
-import streamlit as st
 import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type
@@ -18,7 +16,7 @@ from google.genai.errors import APIError
 import hashlib
 import random
 import socket
-import json  # Added for structured logging helper
+import json
 
 from rich.console import Console
 
@@ -39,7 +37,7 @@ from src.exceptions import (
     TokenBudgetExceededError,
     CircuitBreakerError,
     SchemaValidationError,
-)  # Corrected import, added LLMProviderError, CircuitBreakerError, and SchemaValidationError
+)
 
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
 from src.resilience.circuit_breaker import CircuitBreaker
@@ -51,13 +49,17 @@ from src.utils.error_handler import handle_errors
 
 from src.config.settings import ChimeraSettings
 
+# NEW IMPORTS: From src/utils/file_operations.py
+from src.utils.file_operations import _create_file_backup, _apply_code_change
+
+
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
-    "gemini-1.5-flash": {  # Used for "gemini-2.5-flash-lite" and "gemini-2.5-flash"
+    "gemini-1.5-flash": {
         "input": 0.00008,
         "output": 0.00024,
     },
-    "gemini-1.5-pro": {  # Used for "gemini-2.5-pro"
+    "gemini-1.5-pro": {
         "input": 0.0005,
         "output": 0.0015,
     },
@@ -70,7 +72,6 @@ class GeminiProvider:
     MAX_RETRIES = 10
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
-    # MAX_BACKOFF_SECONDS = 60  # Will be set from settings - MODIFIED LINE
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -78,36 +79,34 @@ class GeminiProvider:
         self,
         api_key: str,
         model_name: str = "gemini-2.5-flash-lite",
-        max_retries: int = None,  # MODIFIED PARAMETER
-        max_backoff_seconds: int = None,  # MODIFIED PARAMETER
+        max_retries: int = None,
+        max_backoff_seconds: int = None,
         tokenizer: Tokenizer = None,
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
-        settings: Optional[Any] = None,  # Added settings parameter
-    ):  # ADD request_id parameter and settings
+        settings: Optional[Any] = None,
+    ):
         self._api_key = api_key
         self.model_name = model_name
         self.rich_console = rich_console or Console(stderr=True)
-        self.request_id = request_id  # Store request_id
+        self.request_id = request_id
         self._log_extra = {
             "request_id": self.request_id or "N/A"
-        }  # Prepare log extra data for this instance
-        self.settings = settings or ChimeraSettings()  # MODIFIED: Initialize settings
+        }
+        self.settings = settings or ChimeraSettings()
 
         try:
             self.client = genai.Client(api_key=self._api_key)
-        # --- MODIFICATION START ---
-        # Catch specific errors related to API key initialization
         except (
             APIError,
             ValueError,
-        ) as e:  # Catch APIError for network/auth issues, ValueError for client-side validation
+        ) as e:
             error_msg = str(e)
             self._log_with_context(
                 "error",
                 f"Failed to initialize genai.Client: {error_msg}",
                 exc_info=True,
-            )  # Use _log_with_context
+            )
             error_msg_lower = error_msg.lower()
             if (
                 "api key not valid" in error_msg_lower
@@ -118,13 +117,13 @@ class GeminiProvider:
                     f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.",
                     provider_error_code="INVALID_API_KEY",
                     original_exception=e,
-                ) from e  # Pass original_exception
+                ) from e
             else:
                 raise LLMProviderError(
                     f"Failed to initialize Gemini client: {error_msg}",
                     original_exception=e,
-                ) from e  # Pass original_exception
-        except Exception as e:  # Catch any other unexpected errors
+                ) from e
+        except Exception as e:
             self._log_with_context(
                 "error",
                 f"An unexpected error occurred during genai.Client initialization: {e}",
@@ -133,40 +132,6 @@ class GeminiProvider:
             raise LLMProviderError(
                 f"Failed to initialize Gemini client unexpectedly: {e}",
                 original_exception=e,
-            ) from e  # Pass original_exception
-        # --- MODIFICATION END ---
-
-        try:
-            self.tokenizer = tokenizer or GeminiTokenizer(
-                model_name=self.model_name, genai_client=self.client
-            )
-        except Exception as e:
-            self._log_with_context(
-                "error", f"Failed to initialize GeminiTokenizer: {e}", exc_info=True
-            )  # Use _log_with_context
-            raise LLMProviderError(
-                f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
-            ) from e  # Pass original_exception
-
-        # MODIFIED: Use settings or provided values for retry parameters
-        self.MAX_RETRIES = (
-            max_retries if max_retries is not None else self.settings.max_retries
-        )
-        self.MAX_BACKOFF_SECONDS = (
-            max_backoff_seconds
-            if max_backoff_seconds is not None
-            else self.settings.max_backoff_seconds
-        )
-
-        # Initialize API client
-        try:
-            self.client = genai.Client(api_key=api_key)
-        except Exception as e:
-            self._log_with_context(
-                "error", f"Failed to initialize Gemini client: {e}", exc_info=True
-            )
-            raise LLMProviderError(
-                f"Failed to initialize Gemini client: {e}", original_exception=e
             ) from e
 
         try:
@@ -181,7 +146,6 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        # MODIFIED: Use settings or provided values for retry parameters
         self.MAX_RETRIES = (
             max_retries if max_retries is not None else self.settings.max_retries
         )
@@ -214,14 +178,13 @@ class GeminiProvider:
         """Helper to add request context to all logs from this instance."""
         exc_info = kwargs.pop("exc_info", None)
         log_data = {**self._log_extra, **kwargs}
-        # Convert non-serializable objects to strings for logging to prevent errors
         for k, v in log_data.items():
             try:
                 json.dumps({k: v})
             except TypeError:
                 log_data[k] = str(v)
 
-        logger_method = getattr(logger, level)  # Use the module-level logger
+        logger_method = getattr(logger, level)
         if exc_info is not None:
             logger_method(message, exc_info=exc_info, extra=log_data)
         else:
@@ -248,19 +211,17 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    # ---CIRCUIT BREAKER APPLIED HERE---
-    @handle_errors(log_level="ERROR")  # Apply the decorator here
+    @handle_errors(log_level="ERROR")
     @CircuitBreaker(
         failure_threshold=3,
-        recovery_timeout=60,  # Wait 60 seconds before trying again
-        # Count API errors, circuit breaker rejections, and schema validation errors as failures
+        recovery_timeout=60,
         expected_exception=(
             APIError,
             CircuitBreakerError,
             SchemaValidationError,
             LLMUnexpectedError,
             GeminiAPIError,
-        ),  # Include custom exceptions
+        ),
     )
     def generate(
         self,
@@ -274,10 +235,6 @@ class GeminiProvider:
     ) -> tuple[str, int, int]:
         """
         Generates content using the Gemini API, protected by a circuit breaker.
-
-        If the circuit breaker is OPEN, this method will raise CircuitBreakerError
-        before the actual API call is made. If HALF-OPEN, it allows one attempt.
-        If CLOSED, it proceeds with the API call.
         """
 
         final_model_to_use = requested_model_name
@@ -305,7 +262,6 @@ class GeminiProvider:
                         f"Failed to re-initialize tokenizer for model '{final_model_to_use}': {e}",
                         exc_info=True,
                     )
-                    # Fallback to the original model's tokenizer if re-initialization fails
                     self.tokenizer = GeminiTokenizer(
                         model_name=self.model_name, genai_client=self.client
                     )
@@ -324,12 +280,9 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
-        # This is the actual call that might fail and trigger the circuit breaker
         return self._generate_with_retry(
             prompt, system_prompt, config, current_model_name
         )
-
-    # --- END CIRCUIT BREAKER APPLIED HERE ---
 
     def _generate_with_retry(
         self,
@@ -341,16 +294,13 @@ class GeminiProvider:
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                # Construct the full prompt including system instruction if provided
                 prompt_with_system = (
                     f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
                 )
                 input_tokens = self.tokenizer.count_tokens(
                     prompt_with_system
-                )  # USE self.tokenizer.count_tokens
+                )
 
-                # --- NEW: Log LLM Input ---
-                # Log a snippet of the prompt for quick overview
                 self._log_with_context(
                     "debug",
                     "LLM Prompt Snippet",
@@ -360,7 +310,6 @@ class GeminiProvider:
                     if len(prompt_with_system) > 500
                     else prompt_with_system,
                 )
-                # Log the full system prompt and user prompt for detailed debugging if needed
                 self._log_with_context(
                     "info",
                     "LLM Prompt Sent",
@@ -371,9 +320,7 @@ class GeminiProvider:
                     full_user_prompt=prompt,
                     input_tokens=input_tokens,
                 )
-                # --- END NEW ---
 
-                # Make the actual API call
                 response = self.client.models.generate_content(
                     model=model_name_to_use or self.model_name,
                     contents=prompt,
@@ -388,14 +335,12 @@ class GeminiProvider:
 
                 output_tokens = self.tokenizer.count_tokens(
                     generated_text
-                )  # USE self.tokenizer.count_tokens
+                )
                 self._log_with_context(
                     "debug",
                     f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)",
                 )
 
-                # --- NEW: Log LLM Output ---
-                # Log a snippet of the generated text for quick overview
                 self._log_with_context(
                     "debug",
                     "LLM Response Snippet",
@@ -405,7 +350,6 @@ class GeminiProvider:
                     if len(generated_text) > 500
                     else generated_text,
                 )
-                # Log the full generated text for detailed analysis
                 self._log_with_context(
                     "info",
                     "LLM Response Received",
@@ -413,42 +357,37 @@ class GeminiProvider:
                     output_tokens=output_tokens,
                     full_generated_text=generated_text,
                 )
-                # --- END NEW ---
 
                 return generated_text, input_tokens, output_tokens
 
             except Exception as e:
-                # Capture error message, replacing potentially problematic characters for logging
                 error_msg = str(e).encode("utf-8", "replace").decode("utf-8")
 
                 should_retry = False
-                error_details = {}  # NEW: Dictionary to hold specific error details for logging
+                error_details = {}
 
                 if isinstance(e, APIError):
                     error_details["api_error_code"] = getattr(e, "code", None)
-                    # Check for specific API error codes that indicate transient issues
                     if e.code in self.RETRYABLE_ERROR_CODES:
                         should_retry = True
-                    # Check for retryable HTTP status codes from the response object
                     http_status_code = getattr(e, "response", None)
                     if http_status_code:
                         error_details["http_status_code"] = http_status_code.status_code
                         if http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
                             should_retry = True
-                elif isinstance(e, socket.gaierror):  # Network-related errors
+                elif isinstance(e, socket.gaierror):
                     should_retry = True
                     error_details["network_error"] = "socket.gaierror"
                 elif (
                     "access denied" in error_msg.lower()
                     or "permission" in error_msg.lower()
-                ):  # Permission issues might be transient
+                ):
                     self._log_with_context(
                         "warning",
                         f"Access denied or permission error encountered: {error_msg}",
                         **error_details,
                     )
                     should_retry = True
-                # NEW: Add check for context window exceeded or similar errors
                 elif (
                     "context window exceeded" in error_msg.lower()
                     or "prompt too large" in error_msg.lower()
@@ -459,14 +398,12 @@ class GeminiProvider:
                         f"LLM context window exceeded: {error_msg}",
                         **error_details,
                     )
-                    # This is typically not retryable with the same prompt, so we should break
                     raise LLMUnexpectedError(
                         f"LLM context window exceeded: {error_msg}",
                         original_exception=e,
                     ) from e
 
                 if should_retry and attempt < self.MAX_RETRIES:
-                    # Calculate backoff time with jitter
                     backoff_time = min(
                         self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
                         self.MAX_BACKOFF_SECONDS,
@@ -488,10 +425,9 @@ class GeminiProvider:
                     else:
                         self._log_with_context(
                             "warning", log_message, **error_details
-                        )  # Use _log_with_context and include error_details
+                        )
                     time.sleep(sleep_time)
                 else:
-                    # If not retrying or max retries reached, raise a specific error
                     if isinstance(e, APIError):
                         raise GeminiAPIError(
                             error_msg, getattr(e, "code", None), original_exception=e
@@ -499,7 +435,6 @@ class GeminiProvider:
                     else:
                         raise LLMUnexpectedError(error_msg, original_exception=e) from e
 
-            # If loop finishes without returning or raising, it means max retries were exceeded
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
 
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
@@ -507,102 +442,9 @@ class GeminiProvider:
         combined_text = f"{context_str}\n\n{prompt}"
         return self.tokenizer.count_tokens(combined_text)
 
-
 # --- Placeholder methods for other potential analyses ---
-# These are not directly modified by the suggestions but are part of the class structure.
-# They are included here for completeness of the file context.
-
-
-def _create_file_backup(file_path: Path) -> Optional[Path]:
-    """Creates a timestamped backup of a file."""
-    if not file_path.exists():
-        return None
-    backup_dir = file_path.parent / ".chimera_backups"
-    backup_dir.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    backup_path = backup_dir / f"{file_path.name}.{timestamp}.bak"
-    try:
-        shutil.copy(file_path, backup_path)
-        logger.info(f"Created backup of {file_path} at {backup_path}")
-        return backup_path
-    except Exception as e:
-        logger.error(f"Failed to create backup for {file_path}: {e}")
-        return None
-
-
-def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
-    """Applies a single code change (ADD, MODIFY, REMOVE)."""
-    file_path = codebase_path / change["FILE_PATH"]
-    action = change["ACTION"]
-
-    if action == "ADD":
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(change["FULL_CONTENT"])
-        logger.info(f"Added file: {file_path}")
-    elif action == "MODIFY":
-        if file_path.exists():
-            _create_file_backup(file_path)
-            if change.get("FULL_CONTENT") is not None:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(change["FULL_CONTENT"])
-                logger.info(f"Modified file: {file_path} with FULL_CONTENT.")
-            elif change.get("DIFF_CONTENT"):
-                original_content = file_path.read_text()
-                # Simplified diff application - assumes a library or external tool would handle complex diffs
-                # For this example, we'll just overwrite if DIFF_CONTENT is provided but FULL_CONTENT isn't
-                # A real implementation would need a patch utility.
-                if change["DIFF_CONTENT"].strip():  # Only apply if diff content exists
-                    # Placeholder for applying diff - requires a patch library or subprocess call
-                    # For now, we'll just log that it would be applied
-                    logger.info(
-                        f"Applying diff content to file: {file_path} (implementation needed)"
-                    )
-                    # Example: patched_content = apply_diff(original_content, change["DIFF_CONTENT"])
-                    # with open(file_path, "w", encoding="utf-8") as f:
-                    #     f.write(patched_content)
-            else:
-                logger.warning(
-                    f"Modify action for {file_path} provided neither FULL_CONTENT nor DIFF_CONTENT."
-                )
-        else:
-            logger.warning(f"Attempted to modify non-existent file: {file_path}")
-    elif action == "REMOVE":
-        if file_path.exists():
-            _create_file_backup(file_path)
-            file_path.unlink()
-            logger.info(f"Removed file: {file_path}")
-        else:
-            logger.warning(f"Attempted to remove non-existent file: {file_path}")
-
-
-# --- Placeholder for token counting fallback logic ---
-# This logic is now integrated within the GeminiTokenizer's count_tokens method
-# when an exception occurs. The GeminiProvider itself doesn't directly implement
-# the fallback logic anymore, but relies on the tokenizer's error handling.
-# The original code snippet for fallback logic is commented out here as it's
-# now handled within the tokenizer's exception block.
-
-# def _count_tokens_fallback(text: str) -> int:
-#     """Fallback token counting using character heuristics."""
-#     logger.warning("Using fallback token counting due to error.")
-#     # Improved fallback based on content type heuristic
-#     content_type = "text"
-#     # Check for common code indicators in the first 200 characters
-#     if len(text) > 200 and any(indicator in text[:200] for indicator in ["def ", "class ", "import ", "{", "}", "func", "var ", "const "]):
-#         content_type = "code"
-#         # Use historical accuracy data for better estimation (if available)
-#         # This part requires tracking history, which is not fully implemented here.
-#         # For now, use a fixed ratio for code.
-#         avg_ratio = 3.5 # ~3.5 characters per token for code
-#         approx_tokens = max(1, int(len(text) / avg_ratio))
-#     else:
-#         # Standard text content - use ~4.2 characters per token
-#         avg_ratio = 4.2 # ~4.2 characters per token for text
-#         approx_tokens = max(1, int(len(text) / avg_ratio))
-
-#     # Track for future accuracy improvements (placeholder)
-#     # self._track_token_estimation(len(text), approx_tokens, content_type) # Requires self context
-
-#     logger.warning(f"Falling back to improved token approximation ({approx_tokens}) due to error.")
-#     return approx_tokens
+# These functions have been moved to src/utils/file_operations.py
+# def _create_file_backup(file_path: Path) -> Optional[Path]: # REMOVED
+#     ...
+# def _apply_code_change(change: Dict[str, Any], codebase_path: Path): # REMOVED
+#     ...

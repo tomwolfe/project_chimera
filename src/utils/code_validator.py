@@ -1,16 +1,12 @@
 # src/utils/code_validator.py
-import io
-from typing import List, Tuple, Dict, Any, Optional, Union
 import subprocess
-import sys
+from typing import List, Tuple, Dict, Any, Optional, Union
 import os
 import tempfile
 import hashlib
 import re
-import contextlib
 import logging
 from pathlib import Path
-import pycodestyle
 import ast
 import json
 import yaml
@@ -25,7 +21,9 @@ from src.utils.path_utils import (
 )
 from src.models import (
     CodeChange,
-)  # Assuming CodeChange model is defined here or imported
+)
+# NEW IMPORT: Get _get_code_snippet from the new code_utils.py
+from src.utils.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -34,31 +32,6 @@ class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
 
     pass
-
-
-# Helper to get a snippet around a line number
-def _get_code_snippet(
-    content_lines: List[str], line_number: Optional[int], context_lines: int = 2
-) -> Optional[str]:
-    """Retrieves a snippet of code around a specific line number."""
-    if line_number is None or not content_lines:
-        return None
-
-    # Adjust line_number to be 0-indexed for list access
-    actual_line_idx = line_number - 1
-
-    start_idx = max(0, actual_line_idx - context_lines)
-    end_idx = min(
-        len(content_lines), actual_line_idx + context_lines + 1
-    )  # +1 to include the end line
-
-    snippet_lines = []
-    for i in range(start_idx, end_idx):
-        # Add 1 to i to display 1-indexed line numbers
-        snippet_lines.append(
-            f"{i + 1}: {content_lines[i].rstrip()}"
-        )  # rstrip to remove trailing newlines
-    return "\n".join(snippet_lines)
 
 
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -76,7 +49,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
 
             # 1. Run Ruff Linter
             lint_command = [
-                sys.executable,
+                "python", # Explicitly use python executable
                 "-m",
                 "ruff",
                 "check",
@@ -86,13 +59,12 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path),
             ]
 
-            # MODIFIED: Added try-except block and check=True as per AI's suggestion 7
             try:
                 process = subprocess.run(
                     lint_command,
                     capture_output=True,
                     text=True,
-                    check=True,  # Changed from False to True
+                    check=True,
                     shell=False,
                     timeout=30,
                 )
@@ -132,26 +104,25 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                         )
             except subprocess.CalledProcessError as e:
                 logging.error(f"Ruff check failed: {e}")
-                # Return a structured error for the UI/metrics collector
                 issues.append(
                     {
                         "type": "Ruff Linting Issue",
                         "message": f"Ruff command failed: {e.stderr}",
                     }
                 )
-                stdout_lint = ""  # Clear stdout as it's an error
-                stderr_lint = e.stderr  # Capture stderr from the exception
+                stdout_lint = ""
+                stderr_lint = e.stderr
 
             if stderr_lint:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
 
             # 2. Run Ruff Formatter Check
             format_command = [
-                sys.executable,
+                "python", # Explicitly use python executable
                 "-m",
                 "ruff",
                 "format",
-                "--check",  # Only check, don't fix
+                "--check",
                 "--isolated",
                 "--force-exclude",
                 str(tmp_file_path),
@@ -160,10 +131,10 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code_format, stdout_format, stderr_format = execute_command_safely(
                 format_command,
                 timeout=30,
-                check=False,  # Ruff format --check returns non-zero for issues
+                check=False,
             )
 
-            if return_code_format != 0:  # If formatting issues were found
+            if return_code_format != 0:
                 issues.append(
                     {
                         "type": "Ruff Formatting Issue",
@@ -236,7 +207,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 config_args = ["-c", str(bandit_config_path)]
 
             command = [
-                sys.executable,
+                "python", # Explicitly use python executable
                 "-m",
                 "bandit",
                 "-q",
@@ -248,12 +219,12 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=True,  # Changed from False to True as per AI's suggestion 1
+                check=True,
             )
 
             if (
                 return_code not in (0, 1)
-            ):  # This check might be redundant if check=True is used in execute_command_safely
+            ):
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )
@@ -270,10 +241,6 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                     if bandit_results:
                         data = json.loads(bandit_results)
                         for issue in data.get("results", []):
-                            # Bandit's JSON output uses 'issue_severity' and 'issue_confidence', not 'level'.
-                            # The pyproject.toml configuration already handles severity/confidence filtering.
-                            # So, we should just collect all issues reported by Bandit.
-                            # Removed the problematic 'if issue['level'] != 'info':' line.
                             line_num = issue.get("line_number")
                             issues.append(
                                 {
@@ -290,7 +257,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                             )
                     if (
                         not bandit_results and stderr
-                    ):  # Handle cases where Bandit might output errors to stderr
+                    ):
                         logger.error(
                             f"Bandit produced no JSON output but had stderr: {stderr}"
                         )
@@ -348,7 +315,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
         )
     except (
         subprocess.CalledProcessError
-    ) as e:  # execute_command_safely might raise this if check=True
+    ) as e:
         logger.error(
             f"Bandit execution failed with non-zero exit code: {e.returncode}. Stderr: {e.stderr.strip()}"
         )
@@ -578,7 +545,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                 "code_snippet": snippet,
                             }
                         )
-                    else:  # Check for shell metacharacters in string arguments if shell=True is not explicit
+                    else:
                         for arg in node.args:
                             if isinstance(arg, ast.Constant) and isinstance(
                                 arg.value, str
@@ -629,7 +596,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                     return any(
                         keyword in arg_name.lower() for keyword in untrusted_keywords
                     )
-                return True  # Assume untrusted if we can't determine
+                return True
 
             def _has_safe_loader_parameter(self, node) -> bool:
                 """Check if yaml.load call has a safe Loader parameter."""

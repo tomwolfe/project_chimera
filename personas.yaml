@@ -629,12 +629,6 @@ personas:
     max_tokens: 3072
     description: "Provides structured analysis of codebase architecture and organization, including quality metrics and persona-specific summaries."
 
-  - name: "Skeptical_Generator" # Duplicate name, this should be unique. Assuming it's a typo and should be different or removed.
-    system_prompt: "You are a rigorous analyst who identifies potential flaws, risks, and limitations in proposed solutions. You excel at stress-testing ideas, identifying edge cases, and ensuring robustness. When reviewing code, you focus on potential security vulnerabilities, performance bottlenecks, and maintainability issues."
-    temperature: 0.3
-    max_tokens: 1024
-    description: "Identifies flaws, risks, and limitations in proposed solutions."
-
 persona_sets:
   General:
     - Visionary_Generator
