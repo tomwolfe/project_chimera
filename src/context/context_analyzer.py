@@ -2,10 +2,17 @@
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Optional
+from sentence_transformers import SentenceTransformer # Needed for embeddings
+import re # For keyword matching
+import json # For potential JSON handling
+import numpy as np # Needed for semantic similarity calculation
+
+# Assuming SentenceTransformer is available and cache_dir is used for it.
 
 logger = logging.getLogger(__name__)
 
+# --- CodebaseScanner Class (as provided in the dump) ---
 class CodebaseScanner:
     """Scans and analyzes the project's codebase to provide context for self-improvement."""
     
@@ -171,3 +178,188 @@ class CodebaseScanner:
             "untested_files": ["src/utils/legacy_helper.py"],
             "critical_paths_uncovered": [],
         }
+
+# --- ContextRelevanceAnalyzer Class ---
+# This class is expected by core.py and app.py.
+# It likely uses CodebaseScanner internally or for specific tasks.
+class ContextRelevanceAnalyzer:
+    """
+    Analyzes the relevance of codebase context to the prompt and personas,
+    using semantic search and keyword matching.
+    """
+    def __init__(self, cache_dir: str, codebase_context: Optional[Dict[str, str]] = None):
+        """
+        Initializes the analyzer.
+
+        Args:
+            cache_dir: Directory for caching SentenceTransformer models.
+            codebase_context: Pre-loaded codebase context (e.g., from files).
+        """
+        self.cache_dir = cache_dir
+        self.codebase_context = codebase_context if codebase_context is not None else {}
+        self.logger = logger
+        self.persona_router = None # Will be set by set_persona_router
+
+        # Initialize SentenceTransformer model
+        try:
+            # Ensure the cache directory exists
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+            self.model = SentenceTransformer(
+                'all-MiniLM-L6-v2', # Standard model for semantic similarity
+                cache_folder=self.cache_dir
+            )
+            self.logger.info(f"SentenceTransformer model loaded from {self.cache_dir}")
+        except Exception as e:
+            self.logger.error(f"Failed to load SentenceTransformer model: {e}", exc_info=True)
+            # Raise a more specific error or handle gracefully if SentenceTransformer is critical
+            raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
+
+        # Compute embeddings if context is provided
+        if self.codebase_context:
+            self.file_embeddings = self._compute_file_embeddings(self.codebase_context)
+        else:
+            self.file_embeddings = {}
+
+    def set_persona_router(self, persona_router: Any):
+        """Sets the persona router for context relevance scoring."""
+        self.persona_router = persona_router
+        self.logger.info("Persona router set for context relevance analysis.")
+
+    def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+        """Computes embeddings for files in the codebase context."""
+        if not context:
+            return {}
+        
+        embeddings = {}
+        try:
+            # Process only files with content
+            files_with_content = {k: v for k, v in context.items() if v}
+            if not files_with_content:
+                self.logger.warning("No file content found in context for embedding.")
+                return {}
+
+            # Encode file contents
+            # SentenceTransformer expects a list of strings
+            file_paths = list(files_with_content.keys())
+            file_contents = list(files_with_content.values())
+            
+            self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
+            # Ensure the model is loaded before encoding
+            if not hasattr(self, 'model') or self.model is None:
+                 raise RuntimeError("SentenceTransformer model not loaded.")
+            
+            file_embeddings_list = self.model.encode(file_contents)
+            
+            # Map embeddings back to file paths
+            embeddings = dict(zip(file_paths, file_embeddings_list))
+            self.logger.info(f"Computed embeddings for {len(embeddings)} files.")
+            
+        except Exception as e:
+            self.logger.error(f"Error computing file embeddings: {e}", exc_info=True)
+            # Return empty dict or raise error depending on desired behavior
+            return {}
+        return embeddings
+
+    def find_relevant_files(
+        self,
+        prompt: str,
+        max_context_tokens: int,
+        active_personas: List[str] = [],
+    ) -> List[Tuple[str, float]]:
+        """
+        Finds relevant files based on prompt and persona relevance using semantic search.
+        Returns a list of (file_path, relevance_score) tuples.
+        """
+        if not self.file_embeddings:
+            self.logger.warning("No file embeddings available. Cannot perform semantic search.")
+            return []
+
+        try:
+            prompt_embedding = self.model.encode([prompt])[0]
+        except Exception as e:
+            self.logger.error(f"Failed to encode prompt for semantic search: {e}", exc_info=True)
+            return []
+
+        relevance_scores = {}
+
+        # Calculate semantic similarity between prompt and file embeddings
+        for file_path, embedding in self.file_embeddings.items():
+            # Cosine similarity calculation
+            # Ensure embeddings are numpy arrays for dot product and norm
+            try:
+                similarity = np.dot(prompt_embedding, embedding) / (
+                    np.linalg.norm(prompt_embedding) * np.linalg.norm(embedding)
+                )
+                relevance_scores[file_path] = similarity
+            except Exception as e:
+                self.logger.warning(f"Could not calculate similarity for {file_path}: {e}")
+                relevance_scores[file_path] = -1.0 # Assign low score on error
+
+        # Sort files by relevance score
+        sorted_files = sorted(
+            relevance_scores.items(), key=lambda item: item[1], reverse=True
+        )
+
+        # Filter based on relevance score and token budget (simplified)
+        relevant_files = []
+        current_tokens = 0
+        # Placeholder token estimation - replace with actual tokenizer if available
+        # For now, assume average file size or use a simple heuristic
+        avg_file_tokens = 500 # Rough estimate, adjust as needed
+
+        for file_path, score in sorted_files:
+            if score < 0: # Skip files that failed embedding calculation
+                continue
+            file_tokens = avg_file_tokens # Use estimated tokens
+            if current_tokens + file_tokens <= max_context_tokens:
+                relevant_files.append((file_path, score))
+                current_tokens += file_tokens
+            else:
+                break # Stop if token budget is exceeded
+
+        self.logger.info(f"Found {len(relevant_files)} relevant files within token budget.")
+        return relevant_files
+
+    def generate_context_summary(
+        self,
+        relevant_files: List[str],
+        max_tokens: int,
+        prompt: str = "",
+    ) -> str:
+        """
+        Generates a concise summary of the relevant codebase context.
+        This is a placeholder; a real implementation would summarize file contents.
+        """
+        summary = f"Context Summary for prompt: '{prompt[:100]}...'\n\n"
+        summary += f"Relevant files ({len(relevant_files)}):\n"
+        for file_path in relevant_files:
+            summary += f"- {file_path}\n"
+
+        # Add snippets of critical files if available from CodebaseScanner
+        if self.codebase_context and "critical_files_preview" in self.codebase_context:
+            summary += "\nCritical Files Preview:\n"
+            for filename, snippet in self.codebase_context["critical_files_preview"].items():
+                summary += f"\n--- {filename} ---\n{snippet}\n--------------------\n"
+
+        # Placeholder for actual content summarization logic
+        # This would involve reading files and summarizing them, potentially using another LLM call
+        # or a summarization model.
+        # For now, we return a basic summary.
+        summary += "\n(Detailed content summarization is a placeholder.)"
+
+        # Trim summary to fit max_tokens (using a simple character-based heuristic if tokenizer is not available)
+        # In a real scenario, use the provided tokenizer.
+        # Estimate characters per token (e.g., 4 chars/token)
+        chars_per_token_estimate = 4
+        if len(summary) > max_tokens * chars_per_token_estimate:
+            summary = summary[:max_tokens * chars_per_token_estimate] + "..."
+
+        return summary
+
+    def get_context_summary(self) -> str:
+        """Returns the pre-computed or scanned context summary."""
+        # This method might return a summary generated during __init__ or via scan_codebase
+        # For now, it returns a simple indicator if context is available.
+        if self.codebase_context:
+            return f"Codebase context available ({len(self.codebase_context)} files). See details in intermediate steps."
+        return "No codebase context provided or scanned."
