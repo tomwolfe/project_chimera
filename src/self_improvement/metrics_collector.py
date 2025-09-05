@@ -450,13 +450,16 @@ class FocusedMetricsCollector:
                                     ruff_line_number = i + 1
                                     break
 
+                            # Define lint_section_data as a local variable here
+                            lint_section_data = ruff_tool_config.get("lint")
+                            if not isinstance(lint_section_data, dict):
+                                lint_section_data = {} # Default to empty dict if not a dict or None
+
                             pyproject_toml_data["ruff"] = RuffConfig(
                                 line_length=ruff_tool_config.get("line-length"),
                                 target_version=ruff_tool_config.get("target-version"),
-                                lint_section = ruff_tool_config.get("lint")
-                                if isinstance(ruff_tool_config.get("lint"), dict) else {}, # NEW: Defensive access
-                                lint_select=lint_section.get("select"),
-                                lint_ignore=lint_section.get("ignore"),
+                                lint_select=lint_section_data.get("select"), # Use the defined variable
+                                lint_ignore=lint_section_data.get("ignore"), # Use the defined variable
                                 format_settings=ruff_tool_config.get("format"),
                                 config_snippet=_get_code_snippet(
                                     pyproject_content_lines,
@@ -1437,7 +1440,7 @@ class MockLLMClient:
         if "summarize" in prompt.lower():
             return "This is a simulated summary."
         elif "analyze" in prompt.lower():
-            return "This is a simulated analysis."
+            return "this is a simulated analysis."
         else:
             return "This is a simulated default response."
 
@@ -1461,7 +1464,7 @@ def test_llm_provider_generate_content_analysis(llm_provider):
     \"\"\"Test content generation for an analysis prompt.\"\"\"
     prompt = "Analyze the provided data: ..."
     response = llm_provider.generate_content(prompt)
-    assert response == "This is a simulated analysis."
+    assert response == "this is a simulated analysis."
 
 def test_llm_provider_generate_content_default(llm_provider):
     \"\"\"Test content generation for a general prompt.\"\"\"
