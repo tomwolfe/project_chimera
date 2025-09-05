@@ -130,7 +130,7 @@ class GeminiTokenizer(Tokenizer):
         combined_text = f"{context_str}\n\n{prompt}"
         return self.count_tokens(combined_text)
 
-    def trim_text_to_tokens(
+    def truncate_to_token_limit( # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
         """
@@ -146,12 +146,10 @@ class GeminiTokenizer(Tokenizer):
             return text
 
         # Adjust max_tokens for the truncation indicator if it's used
-        effective_max_tokens = max_tokens
+        effective_max_tokens = max(1, max_tokens) # Ensure at least 1 token for content
         if truncation_indicator:
             indicator_tokens = self.count_tokens(truncation_indicator)
-            effective_max_tokens = max(
-                1, max_tokens - indicator_tokens
-            )  # Ensure at least 1 token for content
+            effective_max_tokens = max(1, max_tokens - indicator_tokens)
 
         # Use binary search to find the longest prefix that fits within effective_max_tokens
         low = 0

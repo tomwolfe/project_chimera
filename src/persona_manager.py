@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import ValidationError
 # REMOVED: import streamlit as st # Not directly used in this file
-# REMOVED: import copy # Not directly used in this file
+import copy # Re-added copy import as it's used here
 import time
 
 from src.persona.routing import PersonaRouter
@@ -16,6 +16,7 @@ from src.models import PersonaConfig, ReasoningFrameworkConfig
 from src.config.persistence import ConfigPersistence
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
+from src.exceptions import SchemaValidationError # NEW: Import SchemaValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -506,11 +507,6 @@ class PersonaManager:
         Also handles `_TRUNCATED` persona names by adjusting max_tokens and system_prompt.
         Returns a deep copy to prevent direct modification of cached objects.
         """
-        # Using copy.deepcopy here to ensure the returned config is mutable and independent
-        # from the internal all_personas dictionary, which is important if the caller
-        # modifies the config (e.g., for a single turn).
-        import copy # Re-added copy import as it's used here
-
         base_persona_name = persona_name.replace("_TRUNCATED", "")
         base_config = self.all_personas.get(base_persona_name)
         if not base_config:
@@ -674,3 +670,39 @@ class PersonaManager:
     def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
         return self.prompt_analyzer.analyze_complexity(prompt)
+
+    def parse_raw_llm_output(
+        self, raw_llm_output: str, persona_name: str, schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Parses raw LLM output, attempts JSON decoding, and validates against a schema.
+        This method is intended for internal use by the SocraticDebate class.
+        """
+        try:
+            # Attempt to parse as JSON first
+            raw_output = json.loads(raw_llm_output)
+            
+            # Use Pydantic for validation where appropriate
+            if persona_name == "Self_Improvement_Analyst":
+                try:
+                    # Use the actual model defined in the codebase
+                    from src.models import SelfImprovementAnalysisOutput
+                    validated = SelfImprovementAnalysisOutput(**raw_output)
+                    return validated.model_dump(by_alias=True) # Use model_dump for Pydantic v2
+                except ValidationError as ve:
+                    logger.error(f"Pydantic validation failed for {persona_name}: {ve}")
+                    # Extract specific field errors for better diagnostics
+                    error_details = [{"field": err["loc"][0], "error": err["msg"]} 
+                                    for err in ve.errors()]
+                    raise SchemaValidationError(
+                        f"Validation failed: {str(ve)}", 
+                        error_details
+                    ) from None
+            
+            return raw_output
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decoding failed for {persona_name}: {e}")
+            raise SchemaValidationError(f"Invalid JSON: {str(e)}") from None
+        except Exception as e: # Catch any other parsing/validation errors
+            logger.error(f"An unexpected error occurred during parsing/validation for {persona_name}: {e}")
+            raise SchemaValidationError(f"Parsing/validation failed: {str(e)}") from None

@@ -1,6 +1,6 @@
 # src/config/settings.py
 from pydantic import BaseModel, Field, validator, model_validator
-from typing import Self  # Import Self for Python 3.11+ type hinting
+from typing import Self, Dict # Import Self for Python 3.11+ type hinting, Dict for new fields
 
 
 class ChimeraSettings(BaseModel):
@@ -71,6 +71,21 @@ class ChimeraSettings(BaseModel):
         ge=1000,
         le=2000000,  # MODIFIED CONSTRAINT
         description="Maximum total tokens allowed for a single Socratic debate run.",
+    )
+    
+    # NEW: Persona-specific maximum input token limits for prompt optimization
+    # These values are heuristics and can be tuned based on observed persona verbosity
+    default_max_input_tokens_per_persona: int = Field(
+        default=4000,
+        ge=500,
+        le=10000,
+        description="Default maximum input tokens for a persona's prompt if not specified.",
+    )
+    max_tokens_per_persona: Dict[str, int] = Field(
+        default_factory=lambda: {
+            "Self_Improvement_Analyst": 4000, "Security_Auditor": 3800, "Code_Architect": 3500, "Test_Engineer": 3000, "DevOps_Engineer": 3000, "Devils_Advocate": 3500, "Generalist_Assistant": 3000, "Constructive_Critic": 3500, "Impartial_Arbitrator": 4000
+        },
+        description="Specific maximum input tokens for individual personas.",
     )
 
     @model_validator(mode="after")

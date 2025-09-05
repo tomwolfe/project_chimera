@@ -51,7 +51,7 @@ from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import (
     PromptAnalyzer,
-    optimize_reasoning_prompt,
+    # REMOVED: optimize_reasoning_prompt,
 )
 
 # NEW IMPORT FOR CODEBASE SCANNING
@@ -59,6 +59,7 @@ from src.context.context_analyzer import CodebaseScanner
 # REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # is_self_analysis_prompt is now via PersonaManager.prompt_analyzer
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used in PersonaRouter fallback
 
+from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
 logger = logging.getLogger(__name__)
 
 
@@ -216,6 +217,10 @@ class SocraticDebate:
             self.content_validator = ContentAlignmentValidator(
                 original_prompt=self.initial_prompt,
                 debate_domain=self.domain,
+            )
+        
+        self.prompt_optimizer = PromptOptimizer( # NEW: Initialize PromptOptimizer
+            tokenizer=self.tokenizer, settings=self.settings
             )
 
         # Compute embeddings if codebase_context is present but embeddings are not
@@ -695,6 +700,10 @@ class SocraticDebate:
         )
 
         current_prompt = prompt_for_llm
+        # NEW: Optimize prompt content before sending to LLM
+        current_prompt = self.prompt_optimizer.optimize_prompt(
+            current_prompt, persona_name, max_output_tokens_for_turn
+        )
         raw_llm_output = ""
         is_truncated = False
 
@@ -1476,7 +1485,7 @@ class SocraticDebate:
             Provide a final resolution and its rationale.
             """
             sub_debate_synthesis_budget = max(500, int(sub_debate_budget * 0.3))
-            final_resolution_prompt = self.tokenizer.trim_text_to_tokens(
+            final_resolution_prompt = self.tokenizer.truncate_to_token_limit( # Renamed from trim_text_to_tokens
                 final_resolution_prompt_base, sub_debate_synthesis_budget
             )
 
@@ -1660,7 +1669,7 @@ class SocraticDebate:
             f"Tokens: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']}, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. "
             f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}."
         )
-        trimmed_summary_str = self.tokenizer.trim_text_to_tokens(
+        trimmed_summary_str = self.tokenizer.truncate_to_token_limit( # Renamed from trim_text_to_tokens
             summary_str, max(100, int(max_tokens * 0.5))
         )
         return {"summary_string": trimmed_summary_str}
@@ -1896,8 +1905,9 @@ class SocraticDebate:
 
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
 
-        final_synthesis_prompt = self.tokenizer.trim_text_to_tokens(
-            optimize_reasoning_prompt(final_synthesis_prompt_raw),
+        final_synthesis_prompt = self.tokenizer.truncate_to_token_limit( # Renamed from trim_text_to_tokens
+            # REMOVED: optimize_reasoning_prompt(final_synthesis_prompt_raw),
+            final_synthesis_prompt_raw, # Use raw prompt, optimization handled by PromptOptimizer
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )

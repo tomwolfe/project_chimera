@@ -59,15 +59,18 @@ class CodebaseScanner:
             return {"error": str(e)}
 
     def load_own_codebase_context(self) -> Dict[str, Any]:
-        """Scan and load the current project's codebase context for self-analysis."""
+        """Loads Project Chimera's own codebase context for self-analysis."""
         project_root = self._find_project_root()
-
         if not project_root:
-            logger.error("Could not determine project root for self-analysis")
-            return {}
-
-        self.codebase_path = project_root
-
+            logger.error("Could not locate Project Chimera root directory for self-analysis")
+            raise RuntimeError(
+                "Project root not found. Self-analysis requires access to the codebase. "
+                "Ensure the application is running from within the Project Chimera directory."
+            )
+        
+        self._validate_project_structure(project_root)
+        
+        # Collect context from relevant directories
         context = {
             "project_root": str(project_root),
             "file_structure": self._scan_file_structure(),
@@ -91,6 +94,24 @@ class CodebaseScanner:
 
         return None
 
+    @staticmethod
+    def _validate_project_structure(project_root: Path) -> None:
+        """Validates critical project structure elements for self-analysis."""
+        required_files = [
+            "pyproject.toml",
+            "personas.yaml",
+            "src/__init__.py",
+            "src/core.py"
+        ]
+        
+        missing = []
+        for file in required_files:
+            if not (project_root / file).exists():
+                missing.append(file)
+        
+        if missing:
+            logger.warning(f"Missing critical files for self-analysis: {', '.join(missing)}")
+    
     def _gather_dependencies(self) -> Dict[str, Any]:
         """Placeholder to gather project dependencies."""
         logger.info("Gathering dependencies (placeholder).")

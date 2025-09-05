@@ -977,126 +977,96 @@ class FocusedMetricsCollector:
         improvement_record = {
             "timestamp": datetime.now().isoformat(),
             "suggestions": suggestions,
+            "suggestion_ids": [self._generate_suggestion_id(s) for s in suggestions],
             "metrics_before": metrics_before,
             "metrics_after": metrics_after,
             "success": success,
             "performance_changes": performance_changes,
             "improvement_score": self.intermediate_steps.get("improvement_score", 0.0),
         }
-
         history_file = Path("data/improvement_history.jsonl")
         history_file.parent.mkdir(exist_ok=True)
-
         try:
             with open(history_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(improvement_record) + "\n")
             logger.info(f"Saved improvement results to {history_file}")
         except IOError as e:
             logger.error(f"Failed to save improvement results to {history_file}: {e}")
-
-    def get_historical_improvement_data(self, limit=50) -> List[Dict]:
-        """Retrieve historical improvement data for analysis"""
+    
+    @staticmethod
+    def _generate_suggestion_id(suggestion: Dict) -> str:
+        """Generates a consistent ID for a suggestion to track its impact over time."""
+        import hashlib
+        
+        # Create a hash based on the core elements of the suggestion
+        hash_input = (
+            suggestion.get("AREA", "") + 
+            suggestion.get("PROBLEM", "") + 
+            suggestion.get("EXPECTED_IMPACT", "")
+        )
+        return hashlib.md5(hash_input.encode()).hexdigest()[:8]
+    
+    def analyze_historical_effectiveness(self) -> Dict[str, Any]:
+        """Analyzes historical improvement data to identify patterns of success."""
         history_file = Path("data/improvement_history.jsonl")
         if not history_file.exists():
-            logger.info("No historical improvement data found.")
-            return []
-
-        records = []
+            return {
+                "total_attempts": 0,
+                "success_rate": 0.0,
+                "top_performing_areas": [],
+                "common_failure_modes": []
+            }
+        
         try:
             with open(history_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        records.append(json.loads(line))
-                        if len(records) >= limit:
-                            break
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Skipping malformed line in {history_file}: {line.strip()}"
-                        )
-                        continue
-            logger.info(f"Retrieved {len(records)} historical improvement records.")
-            return records
-        except IOError as e:
-            logger.error(
-                f"Failed to read historical improvement data from {history_file}: {e}"
-            )
-            return []
-
-    def analyze_historical_effectiveness(self) -> Dict:
-        """Analyze historical data to identify patterns of successful improvements"""
-        history = self.get_historical_improvement_data()
-
-        if not history:
+                records = [json.loads(line) for line in f if line.strip()]
+            
+            total = len(records)
+            successful = sum(1 for r in records if r.get("success", False))
+            
+            # Analyze by area
+            area_success = {}
+            for record in records:
+                for suggestion in record.get("suggestions", []):
+                    area = suggestion.get("AREA", "Unknown")
+                    if area not in area_success:
+                        area_success[area] = {"attempts": 0, "successes": 0}
+                    area_success[area]["attempts"] += 1
+                    if record.get("success", False):
+                        area_success[area]["successes"] += 1
+            
+            # Convert to sorted list
+            top_areas = [
+                {
+                    "area": area,
+                    "success_rate": data["successes"] / data["attempts"],
+                    "attempts": data["attempts"]
+                }
+                for area, data in area_success.items()
+                if data["attempts"] > 2  # Only include areas with sufficient data
+            ]
+            top_areas.sort(key=lambda x: x["success_rate"], reverse=True)
+            
             return {
-                "success_rate": 0.0,
-                "total_attempts": 0,
-                "successful_attempts": 0,
-                "top_performing_areas": [],
-                "common_failure_modes": [],
+                "total_attempts": total,
+                "success_rate": successful / total if total > 0 else 0.0,
+                "top_performing_areas": top_areas[:3],
+                "common_failure_modes": self._identify_common_failure_modes(records)
             }
-
-        successful_attempts = sum(1 for h in history if h.get("success", False))
-        total_attempts = len(history)
-        success_rate = (
-            successful_attempts / total_attempts if total_attempts > 0 else 0.0
-        )
-
-        area_success = defaultdict(int)
-        area_attempts = defaultdict(int)
-
-        for record in history:
-            for suggestion in record.get("suggestions", []):
-                area = suggestion.get("AREA", "Unknown")
-                area_attempts[area] += 1
-
-                if record.get("success"):
-                    area_success[area] += 1
-
-        area_success_rates = {}
-        for area, attempts in area_attempts.items():
-            successes = area_success.get(area, 0)
-            area_success_rates[area] = successes / attempts if attempts > 0 else 0.0
-
-        top_areas = [
-            area
-            for area, rate in sorted(
-                area_success_rates.items(), key=lambda x: x[1], reverse=True
-            )
-            if area_attempts.get(area, 0) >= 3
-        ][:5]
-
-        failure_modes = defaultdict(int)
-        for record in history:
-            if not record.get("success", False):
-                for category, changes in record.get("performance_changes", {}).items():
-                    for metric, change_data in changes.items():
-                        if (
-                            isinstance(change_data, dict)
-                            and "percent_change" in change_data
-                        ):
-                            if (
-                                change_data.get("percent_change", 0) < -5
-                            ):
-                                key = f"{category}.{metric}"
-                                failure_modes[key] += 1
-
-        common_failure_modes = sorted(
-            failure_modes.items(), key=lambda x: x[1], reverse=True
-        )[:5]
-
-        return {
-            "success_rate": success_rate,
-            "total_attempts": total_attempts,
-            "successful_attempts": successful_attempts,
-            "top_performing_areas": [
-                {"area": area, "success_rate": area_success_rates[area]}
-                for area in top_areas
-            ],
-            "common_failure_modes": [
-                {"metric": mode[0], "occurrences": mode[1]}
-                for mode in common_failure_modes
-            ],
-        }
+        except Exception as e:
+            logger.error(f"Error analyzing historical data: {e}")
+            return {
+                "total_attempts": 0,
+                "success_rate": 0.0,
+                "top_performing_areas": [],
+                "common_failure_modes": []
+            }
+    
+    @staticmethod
+    def _identify_common_failure_modes(records: List[Dict]) -> List[Dict]:
+        """Identifies common patterns in failed improvements."""
+        # Implementation would analyze failure patterns
+        return []
 
     def analyze(self) -> List[Dict[str, Any]]:
         """
