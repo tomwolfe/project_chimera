@@ -1,4 +1,3 @@
-# src/utils/code_validator.py
 import subprocess # Used for subprocess.run
 from typing import List, Tuple, Dict, Any, Optional, Union
 import os # NEW: Import os for os.unlink
@@ -70,7 +69,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                     lint_command,
                     capture_output=True,
                     text=True,
-                    check=True,
+                    check=False, # Changed to False to prevent CalledProcessError on linting issues
                     shell=False,
                     timeout=30,
                 )
@@ -78,37 +77,50 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 stderr_lint = process.stderr
 
                 if stdout_lint:
-                    try:
-                        lint_results = json.loads(stdout_lint)
-                        for issue in lint_results:
-                            line_num = issue.get("location", {}).get("row")
+                    if process.returncode == 0 or process.returncode == 1: # Ruff returns 1 for issues found
+                        try:
+                            lint_results = json.loads(stdout_lint)
+                            for issue in lint_results:
+                                line_num = issue.get("location", {}).get("row")
+                                issues.append(
+                                    {
+                                        "type": "Ruff Linting Issue",
+                                        "file": filename,
+                                        "line": line_num,
+                                        "column": issue.get("location", {}).get("column"),
+                                        "code": issue.get("code"),
+                                        "message": issue.get("message"),
+                                        "source": "ruff_lint",
+                                        "code_snippet": _get_code_snippet(
+                                            content_lines, line_num
+                                        ),
+                                    }
+                                )
+                        except json.JSONDecodeError as jde:
+                            logger.error(
+                                f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}",
+                                exc_info=True,
+                            )
                             issues.append(
                                 {
-                                    "type": "Ruff Linting Issue",
+                                    "type": "Validation Tool Error",
                                     "file": filename,
-                                    "line": line_num,
-                                    "column": issue.get("location", {}).get("column"),
-                                    "code": issue.get("code"),
-                                    "message": issue.get("message"),
-                                    "source": "ruff_lint",
-                                    "code_snippet": _get_code_snippet(
-                                        content_lines, line_num
-                                    ),
+                                    "message": f"Failed to parse Ruff lint output: {jde}",
                                 }
                             )
-                    except json.JSONDecodeError as jde:
+                    else: # Ruff returned an unexpected non-zero exit code (not 0 or 1)
                         logger.error(
-                            f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}",
-                            exc_info=True,
+                            f"Ruff lint execution failed for {filename} with return code {process.returncode}. Stderr: {stderr_lint}"
                         )
                         issues.append(
                             {
                                 "type": "Validation Tool Error",
                                 "file": filename,
-                                "message": f"Failed to parse Ruff lint output: {jde}",
+                                "message": f"Ruff lint command failed with unexpected exit code {process.returncode}: {stderr_lint}",
                             }
                         )
-            except subprocess.CalledProcessError as e:
+
+            except subprocess.CalledProcessError as e: # This block is now less likely to be hit for linting issues
                 logging.error(f"Ruff check failed: {e}")
                 issues.append(
                     {
@@ -225,12 +237,12 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=True,
+                check=False, # Changed to False to prevent CalledProcessError on security issues
             )
 
             if (
                 return_code not in (0, 1)
-            ):
+            ): # Bandit returns 1 for issues found, 0 for no issues
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )
@@ -263,7 +275,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                             )
                     if (
                         not bandit_results and stderr
-                    ):
+                    ): # If no JSON output but there was stderr, it's an error
                         logger.error(
                             f"Bandit produced no JSON output but had stderr: {stderr}"
                         )
@@ -321,7 +333,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
         )
     except (
         subprocess.CalledProcessError
-    ) as e:
+    ) as e: # This block will now only catch true failures (e.g., bad config, not just issues found)
         logger.error(
             f"Bandit execution failed with non-zero exit code: {e.returncode}. Stderr: {e.stderr.strip()}"
         )
