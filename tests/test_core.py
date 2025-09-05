@@ -1,4 +1,5 @@
 # tests/test_core.py
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ from src.persona_manager import PersonaManager
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager # NEW: Import ConflictResolutionManager
+from src.utils.output_parser import LLMOutputParser # Import LLMOutputParser for mocking
 
 # Mock necessary dependencies
 @pytest.fixture
@@ -147,9 +149,9 @@ def test_socratic_debate_run_debate_basic_flow(socratic_debate_instance, mock_ge
     # Mock the parser to return valid output for each turn
     with patch('src.utils.output_parser.LLMOutputParser.parse_and_validate') as mock_parse:
         mock_parse.side_effect = [
-            ({'general_output': 'Visionary idea', 'malformed_blocks': []}, False),
-            ({'general_output': 'Skeptical critique', 'malformed_blocks': []}, False),
-            ({'general_output': 'Final synthesis', 'malformed_blocks': []}, False),
+            ({'general_output': 'Visionary idea', 'malformed_blocks': []}),
+            ({'general_output': 'Skeptical critique', 'malformed_blocks': []}),
+            ({'general_output': 'Final synthesis', 'malformed_blocks': []}),
         ]
 
         final_answer, intermediate_steps = socratic_debate_instance.run_debate()
@@ -179,9 +181,9 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(socratic_deb
     # Mock the parser to return malformed_blocks for the bad output
     with patch('src.utils.output_parser.LLMOutputParser.parse_and_validate') as mock_parse:
         mock_parse.side_effect = [
-            ({'general_output': 'Visionary idea', 'malformed_blocks': []}, False), # Valid output
-            ({'malformed_blocks': [{'type': 'JSON_DECODE_ERROR', 'message': 'Invalid JSON'}]}, True), # Malformed output
-            ({'general_output': 'Final synthesis', 'malformed_blocks': []}, False), # Valid output
+            ({'general_output': 'Visionary idea', 'malformed_blocks': []}), # Valid output
+            ({'malformed_blocks': [{'type': 'JSON_DECODE_ERROR', 'message': 'Invalid JSON'}]}), # Malformed output
+            ({'general_output': 'Final synthesis', 'malformed_blocks': []}), # Valid output
         ]
 
         # Configure the mock conflict manager to return a successful resolution
@@ -231,8 +233,8 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
     # Mock the parser to return valid output for each turn
     with patch('src.utils.output_parser.LLMOutputParser.parse_and_validate') as mock_parse:
         mock_parse.side_effect = [
-            ({'general_output': 'Visionary idea', 'malformed_blocks': []}, False),
-            ({'general_output': 'Skeptical critique', 'malformed_blocks': []}, False),
+            ({'general_output': 'Visionary idea', 'malformed_blocks': []}),
+            ({'general_output': 'Skeptical critique', 'malformed_blocks': []}),
         ]
 
         # Expecting a TokenBudgetExceededError to be raised
@@ -249,10 +251,3 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
 
     # Ensure the generate call was made for the second turn before the exception
     assert mock_gemini_provider.generate.call_count == 2
-
-
-# Add more tests for other SocraticDebate functionalities:
-# - Handling of different domains and persona sequences
-# - Correctness of context analysis integration
-# - Proper functioning of synthesis and final answer generation
-# - Error handling for other exception types (e.g., SchemaValidationError, LLMProviderError)

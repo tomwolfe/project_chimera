@@ -7,7 +7,7 @@ ENV HF_HOME=/tmp/hf_cache
 ENV TRANSFORMERS_CACHE=/tmp/hf_cache/transformers
 ENV SENTENCE_TRANSFORMERS_HOME=/tmp/hf_cache/sentence_transformers
 # NEW: Explicitly disable tokenizers parallelism to avoid deadlocks on fork
-ENV TOKENIZERS_PARALLELISM=false 
+ENV TOKENIZERS_PARALLELEM=false
 
 # Create cache directories
 RUN mkdir -p ${HF_HOME}/transformers && \

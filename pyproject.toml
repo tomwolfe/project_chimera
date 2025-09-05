@@ -30,14 +30,13 @@ skip-magic-trailing-comma = false
 # Ensure all relevant security checks are enabled by default or explicitly configured.
 # The CI workflow already uses these flags, ensuring consistency.
 conf_file = "pyproject.toml"
-level = "info" # Equivalent to -ll, includes low severity issues
-# Optionally, you can specify exclude directories here as well, though the CI command handles it.
-# exclude = [
-#         "venv",
-#         ".git",
-#         "__pycache__",
-#         "tests", # Explicitly exclude tests if desired, though often useful to scan them too
-# ]
+# level = "info" # Equivalent to -ll, includes low severity issues - REMOVED: Redundant with CI workflow flags
+# Use pyproject.toml as the configuration file.
+# Set severity and confidence levels to catch critical issues.
+# '-ll' includes low severity issues, which is good for comprehensive scanning.
+severity_level = "MEDIUM" # Fail on Medium and High severity issues
+confidence_level = "B" # Fail on B (Best) confidence level issues
+
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
 
