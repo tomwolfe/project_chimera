@@ -5,7 +5,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310" # Adjusted target version for broader compatibility if needed
+target-version = "py311" # Explicitly set target Python version
 
 [tool.ruff.lint]
 select = [
@@ -45,8 +45,9 @@ exclude = [
 # Configure Bandit severity and confidence levels for CI/pre-commit hooks
 # These levels are used by the CI workflow and pre-commit hooks if not overridden there.
 # Setting them here provides a baseline configuration.
-severity_level = "MEDIUM" # Scan for Medium and High severity issues
-confidence_level = "HIGH" # Scan for High confidence issues
+severity_level = "LOW" # Scan for Low, Medium, and High severity issues
+confidence_level = "LOW" # Scan for Low, Medium, and High confidence issues
+level = "info" # Add level for Bandit configuration
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
 

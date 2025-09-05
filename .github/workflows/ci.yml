@@ -16,9 +16,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Explicitly install Ruff and coverage for CI to ensure they are available and correct versions
+        # Explicitly install Ruff, coverage, and Bandit for CI to ensure they are available and correct versions
         pip install ruff
         pip install pytest-cov
+        pip install bandit # Ensure bandit is installed before running
 
     - name: Run Ruff (Linter Check) - Fail on Violation
       # Ruff can act as both linter (flake8 replacement) and formatter (black replacement)
@@ -33,19 +34,13 @@ jobs:
     - name: Run Bandit Security Scan (Enhanced)
       # Configure Bandit to fail on medium/high severity issues with high confidence
       # Use -c for config file; pyproject.toml is the standard location
-      run: bandit -r . --config pyproject.toml --severity-level MEDIUM --confidence-level HIGH --exit-on-error
+      run: bandit -r . --config pyproject.toml --severity-level LOW --confidence-level LOW --exit-on-error # Use stricter levels
       # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
-
-      # Add a step to explicitly install Bandit if it's not covered by requirements.txt
-      # This ensures the Bandit tool is available for the security scan.
-      # Example: pip install bandit
-      # If Bandit is already in requirements.txt, this step might be redundant but ensures availability.
-      # Consider adding 'bandit' to requirements.txt if not already present.
 
     - name: Run Unit and Integration Tests with Coverage
       # Ensure all tests pass and coverage meets the threshold
       # Run pytest and generate coverage report, enforcing the 80% threshold
-      run: pytest tests/ --cov=src --cov-report=xml --junitxml=report.xml
+      run: pytest tests/ --cov=src --cov-report=xml --junitxml=report.xml --cov-fail-under=80 # Fail if coverage is below 80%
       # You might want to add integration tests here if applicable:
       # pytest tests/integration/ --junitxml=report.xml
     

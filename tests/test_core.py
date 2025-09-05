@@ -1,9 +1,5 @@
-# tests/test_core.py
-
 import pytest
 from unittest.mock import MagicMock, patch
-
-# Assuming SocraticDebate is in core.py
 from core import SocraticDebate
 from src.models import PersonaConfig
 from src.config.settings import ChimeraSettings
@@ -11,8 +7,9 @@ from src.token_tracker import TokenUsageTracker
 from src.persona_manager import PersonaManager
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.llm_provider import GeminiProvider
-from src.conflict_resolution import ConflictResolutionManager # NEW: Import ConflictResolutionManager
-from src.utils.output_parser import LLMOutputParser # Import LLMOutputParser for mocking
+from src.conflict_resolution import ConflictResolutionManager
+from src.utils.output_parser import LLMOutputParser
+from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer for mocking
 
 # Mock necessary dependencies
 @pytest.fixture
@@ -93,12 +90,20 @@ def mock_conflict_manager():
     return cm
 
 @pytest.fixture
+def mock_prompt_optimizer():
+    """Provides a mock PromptOptimizer instance."""
+    po = MagicMock(spec=PromptOptimizer)
+    po.optimize_prompt.side_effect = lambda prompt, persona_name, max_output_tokens_for_turn: prompt # Return prompt as is for simplicity
+    return po
+
+@pytest.fixture
 def socratic_debate_instance(
     mock_persona_manager,
     mock_gemini_provider,
     mock_context_analyzer,
     mock_token_tracker,
     mock_conflict_manager,
+    mock_prompt_optimizer, # Add mock_prompt_optimizer
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     # Patch the constructors of dependencies to return our mocks
@@ -106,7 +111,8 @@ def socratic_debate_instance(
          patch('core.PersonaManager', return_value=mock_persona_manager), \
          patch('core.ContextRelevanceAnalyzer', return_value=mock_context_analyzer), \
          patch('core.TokenUsageTracker', return_value=mock_token_tracker), \
-         patch('core.ConflictResolutionManager', return_value=mock_conflict_manager): # Patch the new manager
+         patch('core.ConflictResolutionManager', return_value=mock_conflict_manager), \
+         patch('core.PromptOptimizer', return_value=mock_prompt_optimizer): # Patch the new PromptOptimizer
         
         settings = ChimeraSettings(total_budget=100000)
         debate = SocraticDebate(
@@ -121,6 +127,8 @@ def socratic_debate_instance(
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager
+        # Ensure the prompt optimizer mock is assigned to the instance
+        debate.prompt_optimizer = mock_prompt_optimizer
         return debate
 
 def test_socratic_debate_initialization(socratic_debate_instance):
@@ -130,6 +138,7 @@ def test_socratic_debate_initialization(socratic_debate_instance):
     assert socratic_debate_instance.max_total_tokens_budget == 100000
     assert socratic_debate_instance.token_tracker.current_usage == 0
     assert isinstance(socratic_debate_instance.conflict_manager, MagicMock)
+    assert isinstance(socratic_debate_instance.prompt_optimizer, MagicMock)
     assert socratic_debate_instance.persona_manager.get_adjusted_persona_config.call_count == 0 # Should not be called during init unless explicitly needed
 
 def test_socratic_debate_run_debate_basic_flow(socratic_debate_instance, mock_gemini_provider, mock_token_tracker):
@@ -251,3 +260,6 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
 
     # Ensure the generate call was made for the second turn before the exception
     assert mock_gemini_provider.generate.call_count == 2
+
+# Note: Additional tests for other SocraticDebate functionalities (like context analysis,
+# different persona sequences, specific error handling) would be beneficial for comprehensive coverage.

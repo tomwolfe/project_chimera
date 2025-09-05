@@ -225,6 +225,10 @@ class SocraticDebate:
             tokenizer=self.tokenizer, settings=self.settings
             )
 
+        # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
+        self._calculate_token_budgets()
+        self.conflict_manager = ConflictResolutionManager() # NEW: Initialize ConflictResolutionManager
+
         # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context and self.context_analyzer:
             if isinstance(self.codebase_context, dict):
@@ -245,10 +249,6 @@ class SocraticDebate:
                 self.logger.warning(
                     "codebase_context was not a dictionary, skipping embedding computation."
                 )
-
-        # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
-        self._calculate_token_budgets()
-        self.conflict_manager = ConflictResolutionManager() # NEW: Initialize ConflictResolutionManager
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -1203,6 +1203,8 @@ class SocraticDebate:
                     summary += f"Summary of previous analysis: {previous_output_for_llm['ANALYSIS_SUMMARY']}"
                 elif previous_output_for_llm.get("general_output"):
                     summary += f"Summary of previous general output: {previous_output_for_llm['general_output'][:200]}..."
+                elif previous_output_for_llm.get("summary"): # For ConflictReport
+                    summary += f"Summary of previous conflict report: {previous_output_for_llm['summary']}"
                 else:
                     summary += "Details in malformed_blocks."
             else:
@@ -1216,6 +1218,8 @@ class SocraticDebate:
                     return f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2)}\n\n"
                 elif previous_output_for_llm.get("general_output"):
                     return f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2)}\n\n"
+                elif previous_output_for_llm.get("summary"): # For ConflictReport
+                    return f"Previous Debate Output:\n{json.dumps({'summary': previous_output_for_llm['summary'], 'conflict_found': previous_output_for_llm.get('conflict_found')}, indent=2)}\n\n"
                 else:
                     return f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2)}\n\n"
             else:
@@ -1225,32 +1229,23 @@ class SocraticDebate:
         self,
         persona_name: str,
         output: Dict[str, Any],
-        debate_history: List[Dict[str, Any]],
+        debate_history_so_far: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Handles the specific logic for the Devils_Advocate persona's output."""
+        """
+        Handles the specific logic for the Devils_Advocate persona's output.
+        If a conflict is found, it returns the ConflictReport for the main loop to handle resolution.
+        """
         try:
             conflict_report = ConflictReport.model_validate(output)
             if conflict_report.conflict_found:
-                resolution_result = self._trigger_conflict_sub_debate(
-                    conflict_report, debate_history
+                self._log_with_context(
+                    "info",
+                    f"Devils_Advocate reported conflict: {conflict_report.summary}. Main loop will trigger ConflictResolutionManager.",
+                    conflict_report=conflict_report.model_dump(),
                 )
-                if resolution_result and resolution_result.get("conflict_resolved"):
-                    self.intermediate_steps["Conflict_Resolution_Attempt"] = (
-                        resolution_result
-                    )
-                    self.intermediate_steps["Unresolved_Conflict"] = None
-                    return {
-                        "status": "conflict_resolved",
-                        "resolution": resolution_result["resolution_summary"],
-                    }
-                else:
-                    self.intermediate_steps["Unresolved_Conflict"] = (
-                        conflict_report.model_dump()
-                    )
-                    return {
-                        "status": "conflict_unresolved",
-                        "conflict_report": conflict_report.model_dump(),
-                    }
+                # Return the conflict report itself. The main loop will detect `_is_problematic_output`
+                # and call the `conflict_manager.resolve_conflict`.
+                return output
             else:
                 self._log_with_context(
                     "info",
@@ -1284,6 +1279,7 @@ class SocraticDebate:
         """
         debate_history = []
 
+        # Initialize previous_output_for_llm with initial prompt and context
         previous_output_for_llm: Union[str, Dict[str, Any]]
         if context_persona_turn_results:
             previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}\n\nStructured Context Analysis:\n{json.dumps(context_persona_turn_results, indent=2)}"
@@ -1302,6 +1298,7 @@ class SocraticDebate:
             ]
         ]
 
+        # Ensure Devils_Advocate is positioned correctly if present
         if (
             "Devils_Advocate" in persona_sequence
             and "Devils_Advocate" not in personas_for_debate
@@ -1342,6 +1339,10 @@ class SocraticDebate:
                 and (
                     previous_output_for_llm.get("malformed_blocks")
                     or previous_output_for_llm.get("content_misalignment_warning")
+                    or (
+                        "conflict_found" in previous_output_for_llm
+                        and previous_output_for_llm["conflict_found"] is True
+                    )
                 ),
             )
 
@@ -1362,29 +1363,62 @@ class SocraticDebate:
             )
             self.check_budget("debate", estimated_tokens, persona_name)
 
+            turn_output = None
             try:
-                output = self._execute_llm_turn(
+                turn_output = self._execute_llm_turn(
                     persona_name,
                     current_prompt,
                     "debate",
                     max_output_tokens_for_turn,
                 )
-
-                if persona_name == "Devils_Advocate" and isinstance(output, dict):
-                    previous_output_for_llm = self._handle_devils_advocate_turn(
-                        persona_name, output, debate_history
+                # If Devils_Advocate, process its specific logic
+                if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
+                    turn_output = self._handle_devils_advocate_turn(
+                        persona_name, turn_output, debate_history # Pass current history
                     )
+                
+                # Append the output to the debate history
+                debate_history.append({"persona": persona_name, "output": turn_output})
+
+                # Check if the output is problematic (either from LLM or DA processing)
+                if self._is_problematic_output(turn_output):
+                    self._log_with_context(
+                        "warning",
+                        f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
+                        persona=persona_name,
+                        output_snippet=str(turn_output)[:200],
+                    )
+                    resolved_output_from_manager = self.conflict_manager.resolve_conflict(debate_history)
+                    if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
+                        debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
+                        previous_output_for_llm = resolved_output_from_manager["resolved_output"]
+                        # Update intermediate steps with conflict resolution info
+                        self.intermediate_steps["Conflict_Resolution_Attempt"] = {
+                            "conflict_resolved": True,
+                            "resolution_summary": resolved_output_from_manager["resolution_summary"],
+                            "resolved_output": resolved_output_from_manager["resolved_output"]
+                        }
+                        self.intermediate_steps["Unresolved_Conflict"] = None
+                    else:
+                        # If manager couldn't resolve, use the problematic output for next turn's context
+                        previous_output_for_llm = turn_output
+                        self.intermediate_steps["Unresolved_Conflict"] = turn_output # Store the problematic output
+                        self.intermediate_steps["Conflict_Resolution_Attempt"] = None
                 else:
-                    previous_output_for_llm = output
-                debate_history.append({"persona": persona_name, "output": output})
+                    previous_output_for_llm = turn_output
+                    self.intermediate_steps["Unresolved_Conflict"] = None
+                    self.intermediate_steps["Conflict_Resolution_Attempt"] = None
+
+
             except Exception as e:
-                # If an error occurs, record it and attempt to resolve it via conflict manager
+                # If an error occurs during LLM turn execution
                 error_output = {
                     "error": f"Turn failed for {persona_name}: {str(e)}",
                     "malformed_blocks": [
                         {"type": "DEBATE_TURN_ERROR", "message": str(e)}
                     ],
                 }
+                # Append the error output to history
                 debate_history.append({"persona": persona_name, "output": error_output})
                 self._log_with_context(
                     "error",
@@ -1393,14 +1427,21 @@ class SocraticDebate:
                     exc_info=True,
                     original_exception=e,
                 )
-                resolved_output = self.conflict_manager.resolve_conflict(debate_history)
-                if resolved_output:
-                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output})
-                    previous_output_for_llm = resolved_output
+                resolved_output_from_manager = self.conflict_manager.resolve_conflict(debate_history)
+                if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
+                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
+                    previous_output_for_llm = resolved_output_from_manager["resolved_output"]
+                    # Update intermediate steps with conflict resolution info
+                    self.intermediate_steps["Conflict_Resolution_Attempt"] = {
+                        "conflict_resolved": True,
+                        "resolution_summary": resolved_output_from_manager["resolution_summary"],
+                        "resolved_output": resolved_output_from_manager["resolved_output"]
+                    }
+                    self.intermediate_steps["Unresolved_Conflict"] = None
                 else:
                     self._log_with_context(
                         "error",
-                        f"Error during {persona_name} turn: {e}",
+                        f"Conflict resolution failed for {persona_name} error: {e}",
                         persona=persona_name,
                         exc_info=True,
                         original_exception=e,
@@ -1408,198 +1449,15 @@ class SocraticDebate:
                     self.rich_console.print(
                         f"[red]Error during {persona_name} turn: {e}[/red]"
                     )
-                    previous_output_for_llm = {
-                        "error": f"Turn failed for {persona_name}: {str(e)}",
-                        "malformed_blocks": [
-                            {"type": "DEBATE_TURN_ERROR", "message": str(e)}
-                        ],
-                    }
-                continue
-
-            # After each turn, check if the output is problematic and attempt to resolve it
-            if self._is_problematic_output(output):
-                self._log_with_context(
-                    "warning",
-                    f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
-                    persona=persona_name,
-                    output_snippet=str(output)[:200],
-                )
-                resolved_output = self.conflict_manager.resolve_conflict(debate_history)
-                if resolved_output:
-                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output})
-                    previous_output_for_llm = resolved_output # Use resolved output for next turn
+                    previous_output_for_llm = error_output # Use the error output for next turn's context
+                    self.intermediate_steps["Unresolved_Conflict"] = error_output # Store the problematic output
+                    self.intermediate_steps["Conflict_Resolution_Attempt"] = None
+                continue # Continue to next persona turn
 
         self._log_with_context("info", "All debate turns completed.")
         return debate_history
 
-    def _trigger_conflict_sub_debate(
-        self, conflict_report: ConflictReport, debate_history: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Triggers a focused sub-debate to resolve a specific conflict.
-        Returns a resolution summary or None if unresolved.
-        """
-        self._log_with_context(
-            "info", f"Initiating sub-debate for conflict: {conflict_report.summary}"
-        )
-
-        sub_debate_personas_set = set(conflict_report.involved_personas)
-
-        if conflict_report.conflict_type in [
-            "LOGICAL_INCONSISTENCY",
-            "DATA_DISCREPANCY",
-            "METHODOLOGY_DISAGREEMENT",
-        ]:
-            if "Constructive_Critic" in self.all_personas:
-                sub_debate_personas_set.add("Constructive_Critic")
-
-        main_synthesis_persona = (
-            "Self_Improvement_Analyst"
-            if self.is_self_analysis
-            else (
-                "Impartial_Arbitrator"
-                if self.domain == "Software Engineering"
-                else "General_Synthesizer"
-            )
-        )
-        if (
-            main_synthesis_persona in self.all_personas
-            and main_synthesis_persona not in sub_debate_personas_set
-        ):
-            sub_debate_personas_set.add(main_synthesis_persona)
-
-        sub_debate_personas = [
-            p for p in list(sub_debate_personas_set) if p in self.all_personas
-        ]
-
-        if not sub_debate_personas:
-            self._log_with_context(
-                "warning",
-                "No relevant personas found for conflict sub-debate. Skipping resolution.",
-            )
-            return None
-
-        remaining_tokens = (
-            self.max_total_tokens_budget - self.token_tracker.current_usage
-        )
-        sub_debate_budget = max(1000, min(5000, int(remaining_tokens * 0.1)))
-
-        if sub_debate_budget < 1000:
-            self._log_with_context(
-                "warning",
-                "Insufficient tokens for sub-debate, skipping conflict resolution.",
-            )
-            return None
-
-        sub_debate_prompt = f"""
-        CRITICAL CONFLICT RESOLUTION REQUIRED:
-
-        The following conflict has been identified in the main debate:
-        Conflict Type: {conflict_report.conflict_type}
-        Summary: {conflict_report.summary}
-        Involved Personas: {", ".join(conflict_report.involved_personas)}
-        Conflicting Outputs Snippet: {conflict_report.conflicting_outputs_snippet}
-        Proposed Resolution Paths: {"; ".join(conflict_report.proposed_resolution_paths) if conflict_report.proposed_resolution_paths else "None provided."}
-
-        Your task is to:
-        1.  Analyze the conflicting perspectives from the debate history.
-        2.  Identify the root cause of the disagreement.
-        3.  Propose a definitive resolution or a clear compromise.
-        4.  Provide a concise rationale for your resolution.
-
-        Focus ONLY on resolving this specific conflict. Output a clear resolution summary.
-        """
-
-        resolution_attempts = []
-        for persona_name in sub_debate_personas:
-            self.status_callback(
-                message=f"Sub-Debate: [bold]{persona_name.replace('_', ' ')}[/bold] resolving conflict...",
-                state="running",
-                current_total_tokens=self.token_tracker.current_usage,
-                current_total_cost=self.get_total_estimated_cost(),
-                progress_pct=self.get_progress_pct("debate"),
-                current_persona_name=persona_name,
-            )
-
-            base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
-
-            max_output_tokens_for_sub_debate_turn = sub_debate_budget // len(
-                sub_debate_personas
-            )
-            max_output_tokens_for_sub_debate_turn = max(
-                250,
-                min(max_output_tokens_for_sub_debate_turn, base_persona_config.max_tokens if base_persona_config else 1024),
-            )
-
-            try:
-                turn_output = self._execute_llm_turn(
-                    persona_name,
-                    sub_debate_prompt,
-                    "sub_debate_phase",
-                    max_output_tokens_for_sub_debate_turn,
-                )
-                resolution_attempts.append(
-                    {"persona": persona_name, "output": turn_output}
-                )
-            except Exception as e:
-                self._log_with_context(
-                    "error",
-                    f"Sub-debate turn for {persona_name} failed: {e}",
-                    exc_info=True,
-                )
-                self.rich_console.print(
-                    f"[red]Error during sub-debate turn for {persona_name}: {e}[/red]"
-                )
-            finally:
-                pass
-
-        if resolution_attempts:
-            final_resolution_prompt_base = f"""
-            Synthesize the following sub-debate attempts to resolve a conflict into a single, clear resolution.
-            Conflict: {conflict_report.summary}
-            Sub-debate results: {json.dumps(resolution_attempts, indent=2)}
-
-            Provide a final resolution and its rationale.
-            """
-            sub_debate_synthesis_budget = max(500, int(sub_debate_budget * 0.3))
-            final_resolution_prompt = self.tokenizer.truncate_to_token_limit( # Renamed from trim_text_to_tokens
-                final_resolution_prompt_base, sub_debate_synthesis_budget
-            )
-
-            synthesizer_persona = self.all_personas.get(
-                "Impartial_Arbitrator"
-            ) or self.all_personas.get("General_Synthesizer")
-            if synthesizer_persona:
-                try:
-                    final_resolution = self._execute_llm_turn(
-                        synthesizer_persona.name,
-                        final_resolution_prompt,
-                        "sub_debate_synthesis",
-                        synthesizer_persona.max_tokens,
-                    )
-                    self._log_with_context(
-                        "info",
-                        "Conflict successfully resolved.",
-                        resolution_summary=final_resolution,
-                    )
-                    return {
-                        "conflict_resolved": True,
-                        "resolution_summary": final_resolution,
-                    }
-                except Exception as e:
-                    self._log_with_context(
-                        "error",
-                        f"Failed to synthesize conflict resolution: {e}",
-                        exc_info=True,
-                    )
-                    self.rich_console.print(
-                        f"[red]Failed to synthesize conflict resolution: {e}[/red]"
-                    )
-
-        self._log_with_context(
-            "warning", "Conflict could not be resolved in sub-debate."
-        )
-        return None
+    # Removed _trigger_conflict_sub_debate as its functionality is now handled by ConflictResolutionManager
 
     def _summarize_critical_config_deployment(
         self, summarized_metrics: Dict[str, Any], max_tokens: int
@@ -2064,16 +1922,19 @@ class SocraticDebate:
         elif self.intermediate_steps.get("Unresolved_Conflict"):
             final_answer["UNRESOLVED_CONFLICT"] = self.intermediate_steps[
                 "Unresolved_Conflict"
-            ]["summary"]
+            ]["summary"] if isinstance(self.intermediate_steps["Unresolved_Conflict"], dict) and "summary" in self.intermediate_steps["Unresolved_Conflict"] else str(self.intermediate_steps["Unresolved_Conflict"])
             final_answer["CONFLICT_RESOLUTION"] = None
 
         return final_answer, self.intermediate_steps
 
     def _is_problematic_output(self, output: Dict[str, Any]) -> bool:
-        """Checks if a persona's output is malformed or indicates content misalignment."""
+        """Checks if a persona's output is malformed, indicates content misalignment, or reports a conflict."""
         if not isinstance(output, dict):
             return True
         if output.get("malformed_blocks") or output.get("content_misalignment_warning"):
+            return True
+        # NEW: Check for ConflictReport indicating a conflict
+        if "conflict_found" in output and output["conflict_found"] is True:
             return True
         return False
 

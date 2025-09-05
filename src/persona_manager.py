@@ -525,7 +525,7 @@ class PersonaManager:
             adjusted_config.max_tokens = max(
                 512, int(original_max_tokens * 0.75)
             )  # Reduce by 25%, min 512
-            adjusted_config.system_prompt += "\n\nCRITICAL: Be extremely concise and focus only on the most essential information due to token constraints. Prioritize brevity."
+            adjusted_config.system_prompt += "\n\nCRITICAL: Be extremely concise and focus only on the most essential information due to token constraints. Prioritize brevity. Your output MUST be shorter than usual."
             logger.info(
                 f"Applied truncation to '{persona_name}': max_tokens reduced from {original_max_tokens} to {adjusted_config.max_tokens}."
             )
