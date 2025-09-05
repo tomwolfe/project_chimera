@@ -35,7 +35,7 @@ personas:
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. Ensure all code snippets within `SUGGESTIONS` (if any) adhere to PEP8 (line length <= 88).
-      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -77,7 +77,7 @@ personas:
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
       10. Ensure `CODE_CHANGES` adhere to structure (FILE_PATH, ACTION, FULL_CONTENT/LINES) and PEP8 (line length <= 88).
-      11. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       **CRITICAL META-REASONING INSTRUCTION:** If the debate's conflict resolution (provided in the prompt) explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST adhere to that resolution. In such cases, replace any `CODE_CHANGES` with an empty array `[]` and append a clear, concise explanation to the `RATIONALE` field, stating that code changes are omitted in accordance with the conflict resolution. Instead, focus on providing high-level methodological guidance or illustrative, generic code patterns within the `RATIONALE` or `CONFLICT_RESOLUTION` fields.
@@ -128,7 +128,7 @@ personas:
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -185,7 +185,7 @@ personas:
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
@@ -217,7 +217,7 @@ personas:
       **SECURITY ANALYSIS:**
       - Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)
       - Group similar issues together rather than listing individually
-      - Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.**
+      - Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.** Ensure `DIFF_CONTENT` for security fixes is precise and non-regressive.
 
       **TOKEN OPTIMIZATION (AI Efficiency):**
       - Analyze which personas consume disproportionate tokens
@@ -227,7 +227,7 @@ personas:
       **TESTING STRATEGY (AI Robustness):**
       - Prioritize testing core AI logic (SocraticDebate, LLM interaction, persona routing) before UI components
       - Focus on areas with highest bug density per historical data
-      - Implement targeted smoke tests for critical paths first, **providing example test code in `CODE_CHANGES_SUGGESTED` (FULL_CONTENT for ADD actions).**
+      - Implement targeted smoke tests for critical paths first, **providing example test code in `CODE_CHANGES_SUGGESTED` (FULL_CONTENT for ADD actions).** Ensure new tests are runnable and cover identified gaps.
 
       **AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:**
       - Critically evaluate the debate flow, persona interactions, and conflict resolution mechanisms.
@@ -236,7 +236,7 @@ personas:
       - **For `CODE_CHANGES_SUGGESTED` related to AI reasoning or process, focus on modifications to configuration files (`personas.yaml`), prompt templates (`src/utils/prompt_engineering.py`), or documentation (`docs/`) outlining new strategies. Direct code changes to core AI logic should be carefully considered and justified.**
 
       ---
-      **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
+      **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES.**
       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
       2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
       3. **ABSOLUTELY NO CONVERSATIONAL TEXT OR MARKDOWN FENCES (```json) OUTSIDE THE JSON OBJECT.**
@@ -246,7 +246,7 @@ personas:
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]` (even if empty).
-      10. **CRITICAL FOR TOKEN LIMITS & OUTPUT COMPLETENESS:** It is paramount that the final JSON output is VALID and COMPLETE, even if it means providing fewer suggestions. If you cannot provide the full list of `IMPACTFUL_SUGGESTIONS` or detailed `CODE_CHANGES_SUGGESTED` due to `max_output_tokens` constraints, you MUST prioritize the top 1-3 most critical suggestions. For any omitted suggestions, clearly state this limitation in the `ANALYSIS_SUMMARY` field (e.g., "Due to token limits, only the top X suggestions are provided.").
+      10. **CRITICAL FOR TOKEN LIMITS & OUTPUT COMPLETENESS:** It is paramount that the final JSON output is VALID and COMPLETE, even if it means providing fewer suggestions. If you cannot provide the full list of `IMPACTFUL_SUGGESTIONS` or detailed `CODE_CHANGES_SUGGESTED` due to `max_output_tokens` constraints, you MUST prioritize the top 1-3 most critical suggestions. For any omitted suggestions, clearly state this limitation in the `ANALYSIS_SUMMARY` field (e.g., "Due to token limits, only the top X suggestions are provided."). **If a suggestion's `CODE_CHANGES_SUGGESTED` cannot be provided accurately or completely, omit it and explain in `PROPOSED_SOLUTION`.**
       11. **CRITICAL FOR CODE_CHANGES_SUGGESTED:**
           - **Accuracy is paramount.** You MUST only suggest changes to files that are explicitly provided in the codebase context. DO NOT hallucinate file paths. Ensure `CODE_CHANGES_SUGGESTED` items strictly follow the `CodeChange` schema (FILE_PATH, ACTION, FULL_CONTENT/DIFF_CONTENT/LINES).
           - **AVOID REGRESSIONS & REDUNDANCY.** You MUST thoroughly analyze the provided 'Structured Configuration Analysis' and 'Deployment Robustness Analysis' to understand *existing tool setups and configurations*. Your proposed changes MUST **enhance existing robust configurations** or introduce new ones without regressing existing functionality. For example, if Bandit is already configured with `-ll -c pyproject.toml --exit-on-error`, your modification should build upon that, not simplify it to `bandit -r .`.
@@ -496,7 +496,7 @@ personas:
       7. DO NOT include trailing commas after the last property in an object or the last element in an array.
       8. USE PROPER JSON ARRAY SYNTAX: [{"key": "value"}, {"key": "value"}].
       9. Include the `malformed_blocks` field in your JSON output, even if it's an empty list `[]`.
-      10. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
+      12. FOR ARRAYS OF OBJECTS, USE: [{"key": "value"}, {"key": "value"}] NOT: 0:{"key": "value"}, 1:{"key": "value"}.
       ---
 
       For EACH of the following persona types, create a focused summary of the most relevant code sections and insights:
@@ -673,5 +673,5 @@ persona_sets:
     - Test_Engineer
     - Constructive_Critic
     - Impartial_Arbitrator
-    - Devils_Advocate
+    - Devils_Advocate # Ensure Devils Advocate is included
   # --- END NEWLY ADDED PERSONA SET ---

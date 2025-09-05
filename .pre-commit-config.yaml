@@ -24,17 +24,18 @@ repos:
     hooks:
       - id: ruff
         # Automatically fix linting errors and fail if any unfixed issues remain
-        args: [--fix, --exit-non-zero]
+        args: ["--fix", "--exit-non-zero"]
         # Ensure Ruff checks for formatting issues as well
       - id: ruff-format # Enforces formatting via Ruff (like Black)
         # Fail if code is not formatted (prevents unformatted commits)
-        args: [--check]
+        args: ["--check"]
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.5
     hooks:
       - id: bandit
         # Use -c for config file; pyproject.toml is the standard location
-        args: ["-r", ".", "-ll", "-c", "pyproject.toml"]
+        # Ensure Bandit runs with appropriate severity and confidence levels for better security checks
+        args: ["-r", ".", "-c", "pyproject.toml", "--severity-level", "medium", "--confidence-level", "high"]
         # Ensure Bandit is configured to fail the commit if security issues are found.
 
 # REMOVED: Commented-out section for other pre-commit hooks

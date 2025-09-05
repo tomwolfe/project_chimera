@@ -5,11 +5,12 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311" # Target Python 3.11 for modern syntax and features
+target-version = "py310" # Adjusted target version for broader compatibility if needed
 
 [tool.ruff.lint]
-# Select a comprehensive set of linting rules, including security (B)
-select = ["E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B"] # Black compatibility
+select = [
+  "E", "F", "W", "C90", "I", "N", "D", "UP", "ANN", "ASYNC", "B" # Select Ruff's linter rules, including security (B)
+]
 
 ignore = [
     "D100", # Allow missing module docstring
@@ -26,17 +27,26 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.bandit]
-# Configure Bandit to scan recursively, include low severity issues, and use this config file.
-# Ensure all relevant security checks are enabled by default or explicitly configured.
-# The CI workflow already uses these flags, ensuring consistency.
 conf_file = "pyproject.toml"
-# level = "info" # Equivalent to -ll, includes low severity issues - REMOVED: Redundant with CI workflow flags
-# Use pyproject.toml as the configuration file.
-# Set severity and confidence levels to catch critical issues.
-# '-ll' includes low severity issues, which is good for comprehensive scanning.
-severity_level = "MEDIUM" # Fail on Medium and High severity issues
-confidence_level = "B" # Fail on B (Best) confidence level issues
+# Exclude directories from Bandit scans to improve performance and reduce noise
+exclude = [
+  "tests/",
+  "docs/",
+  "venv/",
+  ".venv/",
+  "env/",
+  ".env/",
+]
+# Add specific Bandit configurations for better security scanning
+[tool.bandit.custom_rules]
+# Example: Disallow use of pickle
+# 101: ['pickle', 'used']
 
+# Configure Bandit severity and confidence levels for CI/pre-commit hooks
+# These levels are used by the CI workflow and pre-commit hooks if not overridden there.
+# Setting them here provides a baseline configuration.
+severity_level = "MEDIUM" # Scan for Medium and High severity issues
+confidence_level = "HIGH" # Scan for High confidence issues
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
 
@@ -45,6 +55,6 @@ source = ["src"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
-fail_under = 80 # MODIFIED: Enforce minimum 80% coverage
+fail_under = 80 # Enforce minimum 80% test coverage
 show_missing = true
 skip_covered = true

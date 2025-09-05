@@ -1,14 +1,18 @@
-import subprocess # Used for subprocess.run
+# src/utils/code_validator.py
+import io
 from typing import List, Tuple, Dict, Any, Optional, Union
-import os # NEW: Import os for os.unlink
-import tempfile # Used for NamedTemporaryFile
-import hashlib # Used for hashlib.sha256
-import re # Used for regex in _run_ast_security_checks
-import logging # Used for logger
-from pathlib import Path # Used for Path objects
-import ast # Used for AST parsing in _run_ast_security_checks
-import json # Used for JSON parsing of Ruff/Bandit output
-# REMOVED: import yaml # Not used in this file
+import subprocess
+import sys
+import os
+import tempfile
+import hashlib
+import re
+import contextlib
+import logging
+from pathlib import Path
+import pycodestyle
+import ast
+import json  # Added for Bandit output parsing
 from collections import defaultdict # Used in validate_code_output_batch
 
 # Import necessary utilities and models
@@ -21,8 +25,7 @@ from src.utils.path_utils import (
 from src.models import (
     CodeChange,
 )
-# NEW IMPORT: Get _get_code_snippet from the new code_utils.py
-from src.utils.code_utils import _get_code_snippet
+from src.utils.code_utils import _get_code_snippet # NEW: Import for code snippets
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +34,6 @@ class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
 
     pass
-
-
-# REMOVED: _run_pycodestyle function as Ruff is the primary linter/formatter.
-# def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
-#     """Runs pycodestyle on the given content using its library API."""
-#     ...
 
 
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -485,7 +482,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                         if (
                             keyword.arg == "parser"
                             and isinstance(keyword.value, ast.Constant)
-                            and keyword.value.value is None
+                            and keyword.value.value is True
                         ):
                             has_parser_none = True
                             break
@@ -524,7 +521,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                     if (
                         node.func.value.id == "yaml"
                         and node.func.attr == "load"
-                        and self._has_safe_loader_parameter(node)
+                        and not self._has_safe_loader_parameter(node)
                     ):
                         self.issues.append(
                             {
@@ -570,19 +567,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             ):
                                 if any(
                                     char in arg.value
-                                    for char in [
-                                        ";",
-                                        "|",
-                                        "&",
-                                        "$",
-                                        "`",
-                                        ">",
-                                        "<",
-                                        "(",
-                                        ")",
-                                        "#",
-                                        "*",
-                                    ]
+                                    for char in [";", "|", "&", "$", "`", ">", "<", "(", ")", "#", "*"]
                                 ):
                                     self.issues.append(
                                         {
@@ -600,34 +585,17 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 """Heuristic to check if function argument might be untrusted input."""
                 if node.args and isinstance(node.args[0], ast.Name):
                     arg_name = node.args[0].id
-                    untrusted_keywords = [
-                        "input",
-                        "user",
-                        "request",
-                        "param",
-                        "data",
-                        "body",
-                        "query",
-                        "json",
-                        "raw",
-                    ]
-                    return any(
-                        keyword in arg_name.lower() for keyword in untrusted_keywords
-                    )
+                    untrusted_keywords = ["input", "user", "request", "param", "data", "body", "query", "json", "raw"]
+                    return any(keyword in arg_name.lower() for keyword in untrusted_keywords)
                 return True
 
             def _has_safe_loader_parameter(self, node) -> bool:
                 """Check if yaml.load call has a safe Loader parameter."""
                 for keyword in node.keywords:
                     if keyword.arg == "Loader":
-                        if isinstance(
-                            keyword.value, ast.Attribute
-                        ) and keyword.value.attr in ["SafeLoader", "CSafeLoader"]:
+                        if isinstance(keyword.value, ast.Attribute) and keyword.value.attr in ["SafeLoader", "CSafeLoader"]:
                             return True
-                        if isinstance(keyword.value, ast.Name) and keyword.value.id in [
-                            "SafeLoader",
-                            "CSafeLoader",
-                        ]:
+                        if isinstance(keyword.value, ast.Name) and keyword.value.id in ["SafeLoader", "CSafeLoader"]:
                             return True
                 return False
 

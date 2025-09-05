@@ -30,11 +30,10 @@ jobs:
       # Enforce formatting and fail if not compliant
       run: ruff format --check --diff --exit-non-zero-on-fix
 
-    - name: Run Bandit Security Scan
-      # Configure Bandit to fail on high/medium severity issues
+    - name: Run Bandit Security Scan (Enhanced)
+      # Configure Bandit to fail on medium/high severity issues with high confidence
       # Use -c for config file; pyproject.toml is the standard location
-      # Added --severity-level HIGH and --confidence-level B as per AI suggestion for stricter checks
-      run: bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level B --exit-on-error
+      run: bandit -r . --config pyproject.toml --severity-level MEDIUM --confidence-level HIGH --exit-on-error
       # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
 
       # Add a step to explicitly install Bandit if it's not covered by requirements.txt
@@ -43,16 +42,19 @@ jobs:
       # If Bandit is already in requirements.txt, this step might be redundant but ensures availability.
       # Consider adding 'bandit' to requirements.txt if not already present.
 
-    - name: Run Tests with Coverage
+    - name: Run Unit and Integration Tests with Coverage
       # Ensure all tests pass and coverage meets the threshold
       # Run pytest and generate coverage report, enforcing the 80% threshold
-      run: |
-        pytest tests/ --junitxml=report.xml # Added --junitxml for artifact upload
-        # Run Integration Tests (if applicable)
-        # pytest tests/integration/ --junitxml=report.xml
+      run: pytest tests/ --cov=src --cov-report=xml --junitxml=report.xml
+      # You might want to add integration tests here if applicable:
+      # pytest tests/integration/ --junitxml=report.xml
     
-    - name: Upload Test Results # NEW: Step to upload test artifacts
+    - name: Upload Test Results
       uses: actions/upload-artifact@v3
-      with: { name: test-reports, path: ./**/*.xml }
+      with:
+        name: test-results
+        path: |
+          report.xml
+          coverage.xml
 
     # You could add more steps here, e.g., for deployment, etc.
