@@ -25,11 +25,14 @@ class ContentAlignmentValidator:
         # Define default focus areas if not explicitly provided, based on self-improvement context
         if focus_areas is None:
             if self.debate_domain == "self-improvement":
-                self.base_focus_areas = [  # Renamed to base_focus_areas
+                # Expanded base focus areas for self-improvement to include broader goals
+                self.base_focus_areas = [
                     "reasoning quality",
                     "robustness",
                     "efficiency",
                     "maintainability",
+                    "security", # Added security as a core self-improvement focus
+                    "test coverage", # Added test coverage as a core self-improvement focus
                     "code changes",
                     "process adjustments",
                     "project chimera codebase",
@@ -39,14 +42,13 @@ class ContentAlignmentValidator:
                     "token usage",
                     "schema validation",
                     "conflict resolution",
-                    "test coverage",
                     "deployment",
                     "dockerfile",
                     "requirements-prod.txt",
-                    "ci/cd",  # NEW: Added deployment keywords
+                    "ci/cd",
                 ]
             elif self.debate_domain == "software engineering":
-                self.base_focus_areas = [  # Renamed to base_focus_areas
+                self.base_focus_areas = [
                     "code",
                     "implement",
                     "refactor",
@@ -199,6 +201,15 @@ class ContentAlignmentValidator:
                 output_text = persona_output["ANALYSIS_SUMMARY"]
             elif "general_output" in persona_output:
                 output_text = persona_output["general_output"]
+            elif "analysisTitle" in persona_output: # For DevOps_Engineer output
+                output_text = persona_output["analysisTitle"] + " " + persona_output.get("introduction", "")
+                if "recommendations" in persona_output and isinstance(persona_output["recommendations"], list):
+                    for rec in persona_output["recommendations"]:
+                        output_text += " " + rec.get("title", "") + " " + rec.get("description", "")
+            elif "architectural_analysis" in persona_output: # For Code_Architect output
+                output_text = json.dumps(persona_output["architectural_analysis"])
+            elif "security_analysis" in persona_output: # For Security_Auditor output
+                output_text = json.dumps(persona_output["security_analysis"])
             else:
                 # Fallback: convert dict to string for general keyword search
                 output_text = json.dumps(persona_output)
@@ -230,6 +241,8 @@ class ContentAlignmentValidator:
                     "maintainability",
                     "technical debt",
                     "design patterns",
+                    "reasoning flow", # Added for self-improvement context
+                    "codebase structure", # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "Security_Auditor"
@@ -242,6 +255,8 @@ class ContentAlignmentValidator:
                     "authentication",
                     "authorization",
                     "api key management",
+                    "attack vectors", # Added for self-improvement context
+                    "compliance", # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "DevOps_Engineer"
@@ -254,6 +269,9 @@ class ContentAlignmentValidator:
                     "reliability",
                     "efficiency",
                     "token usage",
+                    "scalability", # Added for self-improvement context
+                    "automation", # Added for self-improvement context
+                    "cost management", # Added for self-improvement context
                 ]
             elif persona_name.startswith("Test_Engineer"):  # Handle _TRUNCATED versions
                 effective_focus_areas = [
@@ -263,6 +281,8 @@ class ContentAlignmentValidator:
                     "robustness",
                     "testability",
                     "edge cases",
+                    "error conditions", # Added for self-improvement context
+                    "validation logic", # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "Constructive_Critic"
@@ -274,6 +294,9 @@ class ContentAlignmentValidator:
                     "testability deficiencies",
                     "operational concerns",
                     "maintainability issues",
+                    "reasoning quality", # Added as per prompt
+                    "robustness", # Added as per prompt
+                    "efficiency", # Added as per prompt
                 ]
             elif persona_name.startswith(
                 "Devils_Advocate"
@@ -287,6 +310,8 @@ class ContentAlignmentValidator:
                     "effectiveness",
                     "edge cases",
                     "conflict",
+                    "relevance to initial prompt", # Added as per prompt
+                    "over-correction", # Added as per prompt
                 ]
             # For other personas, use the base_focus_areas or a more general set.
 
@@ -315,9 +340,10 @@ class ContentAlignmentValidator:
 
         # Threshold for alignment
         # Adjusted threshold for individual personas, as they have a narrower focus
+        # Increased threshold slightly for better detection of misalignment
         alignment_threshold = (
-            0.2 if persona_name != "Self_Improvement_Analyst" else 0.3
-        )  # Lower threshold for individual critics
+            0.3 if persona_name != "Self_Improvement_Analyst" else 0.4
+        )
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False

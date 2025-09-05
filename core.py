@@ -52,12 +52,10 @@ from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import (
     PromptAnalyzer,
-    # REMOVED: optimize_reasoning_prompt, # Optimization now handled by PromptOptimizer
 )
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS, is_self_analysis_prompt # is_self_analysis_prompt is now via PersonaManager.prompt_analyzer
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used in PersonaRouter fallback
 
 from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
@@ -644,6 +642,8 @@ class SocraticDebate:
             is_aligned and not has_schema_error,
             validation_message,
             is_truncated=is_truncated,
+            schema_validation_failed=has_schema_error, # NEW: Pass schema_validation_failed
+            token_budget_exceeded=False, # Assume not exceeded here, handled by exception
         )
 
         if not is_aligned:
@@ -751,7 +751,6 @@ class SocraticDebate:
 
             except (
                 LLMProviderError,
-                TokenBudgetExceededError,
                 CircuitBreakerError,
                 ChimeraError,
             ) as e:
@@ -771,6 +770,30 @@ class SocraticDebate:
                         False,
                         f"Non-retryable error: {type(e).__name__}",
                         is_truncated=is_truncated,
+                        schema_validation_failed=isinstance(e, SchemaValidationError),
+                        token_budget_exceeded=isinstance(e, TokenBudgetExceededError),
+                    )
+                raise e
+
+            except TokenBudgetExceededError as e:
+                self._log_with_context(
+                    "error",
+                    f"Token budget exceeded during LLM turn for {persona_name}: {e}",
+                    persona=persona_name,
+                    phase=phase,
+                    exc_info=True,
+                    original_exception=e,
+                )
+                if self.persona_manager:
+                    self.persona_manager.record_persona_performance(
+                        persona_name,
+                        attempt + 1,
+                        raw_llm_output,
+                        False,
+                        f"Token budget exceeded: {str(e)}",
+                        is_truncated=is_truncated,
+                        schema_validation_failed=False,
+                        token_budget_exceeded=True,
                     )
                 raise e
 
@@ -793,6 +816,17 @@ class SocraticDebate:
                             "persona": persona_name,
                         }
                     )
+                    if self.persona_manager:
+                        self.persona_manager.record_persona_performance(
+                            persona_name,
+                            attempt + 1,
+                            raw_llm_output,
+                            False,
+                            f"Schema validation failed: {str(e)}",
+                            is_truncated=is_truncated,
+                            schema_validation_failed=True,
+                            token_budget_exceeded=False,
+                        )
                     continue
                 else:
                     self._log_with_context(
@@ -808,6 +842,8 @@ class SocraticDebate:
                             False,
                             "Schema validation failed after multiple attempts",
                             is_truncated=is_truncated,
+                            schema_validation_failed=True,
+                            token_budget_exceeded=False,
                         )
                     return {
                         "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
@@ -839,6 +875,8 @@ class SocraticDebate:
                         False,
                         f"Unexpected error: {type(e).__name__}",
                         is_truncated=is_truncated,
+                        schema_validation_failed=False,
+                        token_budget_exceeded=False,
                     )
                 raise ChimeraError(
                     f"Unexpected error in LLM turn for {persona_name}: {e}",
@@ -1945,16 +1983,17 @@ class SocraticDebate:
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
 
         final_synthesis_prompt = self.tokenizer.truncate_to_token_limit( # Renamed from trim_text_to_tokens
-            # REMOVED: optimize_reasoning_prompt(final_synthesis_prompt_raw), # Optimization now handled by PromptOptimizer
             final_synthesis_prompt_raw, # Use raw prompt, optimization handled by PromptOptimizer
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )
 
+        # MODIFIED: Ensure max_output_tokens_for_turn respects the persona's configured max_tokens
         max_output_tokens_for_turn = self.phase_budgets[
             "synthesis"
         ] - self.tokenizer.count_tokens(final_synthesis_prompt)
-        max_output_tokens_for_turn = max(500, max_output_tokens_for_turn)
+        max_output_tokens_for_turn = max(500, min(max_output_tokens_for_turn, synthesis_persona_config.max_tokens))
+
 
         estimated_tokens_for_turn = (
             self.tokenizer.count_tokens(final_synthesis_prompt)
@@ -2322,6 +2361,3 @@ class SocraticDebate:
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
-
-# REMOVED: LLM Suggested Functions for src/core.py (process_complex_logic, _evaluate_condition1, etc.)
-# These were example functions for refactoring demonstration and are not part of the core logic.

@@ -8,8 +8,6 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Set, Optional, Any, Tuple
 import re
-# REMOVED: import json # Not directly used in this file
-# REMOVED: from pathlib import Path # Not directly used in this file
 import logging
 from functools import lru_cache
 
@@ -148,9 +146,14 @@ class PersonaRouter:
         return embeddings
 
     def _should_include_test_engineer(
-        self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]]
+        self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]], domain: str
     ) -> bool:
-        """Determine if Test_Engineer persona is needed based on prompt and context."""
+        """
+        Determine if Test_Engineer persona is needed based on prompt, context, and domain.
+        For 'Self-Improvement' domain, Test_Engineer is always relevant.
+        """
+        if domain == "self-improvement":
+            return True # Test_Engineer is always relevant for self-improvement
 
         testing_keywords = [
             "test",
@@ -170,6 +173,8 @@ class PersonaRouter:
             "test suite",
             "pytest",
             "unittest",
+            "robustness", # Added for broader relevance
+            "maintainability", # Added for broader relevance
         ]
         if any(keyword in prompt_lower for keyword in testing_keywords):
             return True
@@ -281,10 +286,11 @@ class PersonaRouter:
         if (
             domain == "Software Engineering" or domain == "Self-Improvement"
         ):
+            # MODIFIED: Pass domain to _should_include_test_engineer
             if (
                 "Test_Engineer" in adjusted_sequence
                 and not self._should_include_test_engineer(
-                    prompt_lower, context_analysis_results
+                    prompt_lower, context_analysis_results, domain
                 )
             ):
                 adjusted_sequence.remove("Test_Engineer")
@@ -294,7 +300,7 @@ class PersonaRouter:
             elif (
                 "Test_Engineer" not in adjusted_sequence
                 and self._should_include_test_engineer(
-                    prompt_lower, context_analysis_results
+                    prompt_lower, context_analysis_results, domain
                 )
             ):
                 self._insert_persona_before_arbitrator(

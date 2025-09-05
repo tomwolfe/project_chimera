@@ -157,7 +157,8 @@ class LLMOutputParser:
         """
         self.logger.debug("Attempting to extract JSON from markdown code blocks...")
 
-        markdown_block_pattern = r"```(?:json|python|text|)\s*(.*?)(?:```|\Z)"
+        # Pattern to match any code block, optionally with a language specifier
+        markdown_block_pattern = r"```(?:json|python|text|yaml|)\s*(.*?)(?:```|\Z)"
 
         matches = list(
             re.finditer(markdown_block_pattern, text, re.DOTALL | re.MULTILINE)
@@ -416,26 +417,30 @@ class LLMOutputParser:
         cleaned = raw_output
 
         # Remove Markdown code blocks (```json, ```python, ```, etc.)
+        # This pattern is more robust to variations in language specifier and leading/trailing whitespace
         cleaned = re.sub(
-            r"^\s*```(?:json|python|text|)\s*\n", "", cleaned, flags=re.MULTILINE
+            r"^\s*```(?:json|python|text|yaml|)\s*\n(.*?)\n\s*```\s*$",
+            r"\1",
+            cleaned,
+            flags=re.DOTALL | re.MULTILINE | re.IGNORECASE,
         )
-        cleaned = re.sub(r"\n\s*```\s*$", "", cleaned, flags=re.MULTILINE)
-
-        # Remove common leading/trailing conversational filler
+        
+        # Remove common conversational filler that might precede or follow JSON
         cleaned = re.sub(
-            r"^(?:Here is the JSON output|```json|```|```python|```text|```).*?\n",
+            r"^(?:Here is the JSON output|```json|```|```python|```text|```|As a [^:]+?:|```yaml|```yml).*?\n",
             "",
             cleaned,
             flags=re.DOTALL | re.IGNORECASE,
         )
         cleaned = re.sub(
-            r"\n(?:```|```json|```python|```text|```).*?$",
+            r"\n(?:```|```json|```python|```text|```|```yaml|```yml).*?$",
             "",
             cleaned,
             flags=re.DOTALL | re.IGNORECASE,
         )
 
         # Attempt to find the outermost JSON structure and trim anything outside it
+        # This is a fallback if markdown block removal or conversational filler removal wasn't perfect.
         json_start = -1
         json_end = -1
 
@@ -470,6 +475,8 @@ class LLMOutputParser:
 
         if area_match and problem_match and proposed_solution_match:
             try:
+                # Find the start of the outermost object that contains these fields
+                # This is a heuristic and might need refinement.
                 start_idx = text.rfind("{", 0, area_match.start())
                 if start_idx >= 0:
                     brace_count = 1
@@ -480,6 +487,7 @@ class LLMOutputParser:
                             brace_count -= 1
                             if brace_count == 0:
                                 obj_str = text[start_idx : i + 1]
+                                # Attempt to load to ensure it's valid JSON
                                 return json.loads(obj_str)
             except Exception as e:
                 self.logger.debug(f"Error extracting potential suggestion item: {e}")
@@ -546,11 +554,12 @@ class LLMOutputParser:
                 parsed_data = json.loads(cleaned_raw_output)
                 extracted_json_str = cleaned_raw_output
             except json.JSONDecodeError:
-                # No markdown blocks, try robust extraction on the whole cleaned_raw_output
+                # No direct JSON, try markdown blocks
                 extracted_json_str = self._extract_json_from_markdown(
                     cleaned_raw_output
                 )
                 if not extracted_json_str:
+                    # If no markdown blocks, try robust extraction on the whole cleaned_raw_output
                     extracted_json_str = self._extract_first_outermost_json(
                         cleaned_raw_output
                     )
