@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # core.py
 import json
 import logging
@@ -60,6 +61,7 @@ from src.context.context_analyzer import CodebaseScanner
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used in PersonaRouter fallback
 
 from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
+from src.conflict_resolution import ConflictResolutionManager # NEW: Import ConflictResolutionManager
 logger = logging.getLogger(__name__)
 
 
@@ -149,6 +151,7 @@ class SocraticDebate:
                 model_name=self.model_name,
                 rich_console=self.rich_console,
                 request_id=self.request_id,
+                settings=self.settings, # Pass settings to provider
             )
         except LLMProviderError as e:
             self._log_with_context(
@@ -206,7 +209,8 @@ class SocraticDebate:
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
-                codebase_context=self.codebase_context
+                codebase_context=self.codebase_context,
+                cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers") # Use a default cache dir
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
@@ -246,6 +250,7 @@ class SocraticDebate:
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
+        self.conflict_manager = ConflictResolutionManager() # NEW: Initialize ConflictResolutionManager
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -511,6 +516,7 @@ class SocraticDebate:
                 and k != "Debate_History"
                 and k != "Conflict_Resolution_Attempt"
                 and k != "Unresolved_Conflict"
+                and k != "Context_Aware_Assistant_Output" # Exclude context assistant if it ran separately
             )
 
             if total_debate_personas > 0:
@@ -1334,23 +1340,56 @@ class SocraticDebate:
                     previous_output_for_llm = output
                 debate_history.append({"persona": persona_name, "output": output})
             except Exception as e:
-                self._log_with_context(
-                    "error",
-                    f"Error during {persona_name} turn: {e}",
-                    persona=persona_name,
-                    exc_info=True,
-                    original_exception=e,
-                )
-                self.rich_console.print(
-                    f"[red]Error during {persona_name} turn: {e}[/red]"
-                )
-                previous_output_for_llm = {
+                # If an error occurs, record it and attempt to resolve it via conflict manager
+                error_output = {
                     "error": f"Turn failed for {persona_name}: {str(e)}",
                     "malformed_blocks": [
                         {"type": "DEBATE_TURN_ERROR", "message": str(e)}
                     ],
                 }
+                debate_history.append({"persona": persona_name, "output": error_output})
+                self._log_with_context(
+                    "error",
+                    f"Error during {persona_name} turn: {e}. Attempting conflict resolution.",
+                    persona=persona_name,
+                    exc_info=True,
+                    original_exception=e,
+                )
+                resolved_output = self.conflict_manager.resolve_conflict(debate_history)
+                if resolved_output:
+                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output})
+                    previous_output_for_llm = resolved_output
+                else:
+                    self._log_with_context(
+                        "error",
+                        f"Error during {persona_name} turn: {e}",
+                        persona=persona_name,
+                        exc_info=True,
+                        original_exception=e,
+                    )
+                    self.rich_console.print(
+                        f"[red]Error during {persona_name} turn: {e}[/red]"
+                    )
+                    previous_output_for_llm = {
+                        "error": f"Turn failed for {persona_name}: {str(e)}",
+                        "malformed_blocks": [
+                            {"type": "DEBATE_TURN_ERROR", "message": str(e)}
+                        ],
+                    }
                 continue
+
+            # After each turn, check if the output is problematic and attempt to resolve it
+            if self._is_problematic_output(output):
+                self._log_with_context(
+                    "warning",
+                    f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
+                    persona=persona_name,
+                    output_snippet=str(output)[:200],
+                )
+                resolved_output = self.conflict_manager.resolve_conflict(debate_history)
+                if resolved_output:
+                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output})
+                    previous_output_for_llm = resolved_output # Use resolved output for next turn
 
         self._log_with_context("info", "All debate turns completed.")
         return debate_history
@@ -1990,6 +2029,14 @@ class SocraticDebate:
             final_answer["CONFLICT_RESOLUTION"] = None
 
         return final_answer, self.intermediate_steps
+
+    def _is_problematic_output(self, output: Dict[str, Any]) -> bool:
+        """Checks if a persona's output is malformed or indicates content misalignment."""
+        if not isinstance(output, dict):
+            return True
+        if output.get("malformed_blocks") or output.get("content_misalignment_warning"):
+            return True
+        return False
 
     def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
