@@ -256,7 +256,7 @@ class FocusedMetricsCollector:
         if ci_yml_path.exists():
             try:
                 with open(ci_yml_path, "r", encoding="utf-8") as f:
-                    ci_config_raw = yaml.safe_load(f)
+                    ci_config_raw = yaml.safe_load(f) or {} # Ensure it's a dict even if file is empty
                 with open(
                     ci_yml_path, "r", encoding="utf-8"
                 ) as f:
@@ -315,7 +315,7 @@ class FocusedMetricsCollector:
         if pre_commit_path.exists():
             try:
                 with open(pre_commit_path, "r", encoding="utf-8") as f:
-                    pre_commit_config_raw = yaml.safe_load(f)
+                    pre_commit_config_raw = yaml.safe_load(f) or {} # Ensure it's a dict even if file is empty
                 with open(
                     pre_commit_path, "r", encoding="utf-8"
                 ) as f:
@@ -363,7 +363,7 @@ class FocusedMetricsCollector:
         if pyproject_path.exists():
             try:
                 with open(pyproject_path, "r", encoding="utf-8") as f:
-                    pyproject_config_raw = toml.load(f)
+                    pyproject_config_raw = toml.load(f) or {} # Ensure it's a dict even if file is empty
                 with open(
                     pyproject_path, "r", encoding="utf-8"
                 ) as f:
