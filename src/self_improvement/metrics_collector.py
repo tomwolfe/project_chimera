@@ -1,4 +1,4 @@
-import os
+import os # NEW: Added os import
 import json
 # REMOVED: import subprocess # Not directly used, execute_command_safely is used
 import ast # Used for ast.parse
@@ -820,7 +820,7 @@ class FocusedMetricsCollector:
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"][
                 "avg_cyclomatic_complexity"
-            ] = total_complexity_across_functions / total_functions_across_codebase
+            ] = total_complexity_across_codebase / total_functions_across_codebase
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
                 total_loc_across_functions / total_functions_across_codebase
             )
@@ -1267,7 +1267,7 @@ This document outlines the refined methodology for identifying and implementing 
                             "FILE_PATH": "pyproject.toml",
                             "ACTION": "MODIFY",
                             "DIFF_CONTENT": """--- a/pyproject.toml
-+++ b/pyproject.toml
++++ b/src/config/settings.py
 @@ -30,7 +30,7 @@
  
  [tool.ruff]

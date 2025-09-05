@@ -1,9 +1,9 @@
 # src/utils/code_validator.py
 import subprocess # Used for subprocess.run
 from typing import List, Tuple, Dict, Any, Optional, Union
-# REMOVED: import os # Not directly used after tempfile handling and path_utils
+import os # NEW: Import os for os.unlink
 import tempfile # Used for NamedTemporaryFile
-# REMOVED: import hashlib # Not directly used after content integrity checks were simplified or moved
+import hashlib # Used for hashlib.sha256
 import re # Used for regex in _run_ast_security_checks
 import logging # Used for logger
 from pathlib import Path # Used for Path objects

@@ -21,7 +21,7 @@ class GeminiTokenizer(Tokenizer):
     # These are generally accepted values.
     MODEL_MAX_OUTPUT_TOKENS = {
         # Gemini 2.5 models (explicitly listed as per app's selectbox)
-        "gemini-2.5-flash-lite": 65536,
+        "gemini-2.5-flash-lite": 65538, # MODIFIED: Increased to prevent 1-token truncation issues
         "gemini-2.5-flash": 65536,
         "gemini-2.5-pro": 65536,
         # Default fallback for any other models or versions
