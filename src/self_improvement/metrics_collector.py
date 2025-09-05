@@ -1,27 +1,23 @@
-import os # NEW: Added os import
+import os
 import json
-# REMOVED: import subprocess # Not directly used, execute_command_safely is used
-import ast # Used for ast.parse
-import logging # Used for logger
+import ast
+import logging
 from typing import Dict, Any, List, Tuple, Union, Optional
-from collections import defaultdict # Used for defaultdict
-from pathlib import Path # Used for Path objects
-import re # Used for regex in _collect_deployment_robustness_metrics
-import yaml # Used for yaml.safe_load in _collect_configuration_analysis
-import toml # Used for toml.load in _collect_configuration_analysis
-from pydantic import ValidationError # Used for ValidationError in _collect_configuration_analysis, _collect_deployment_robustness_metrics
-from datetime import datetime # Used for datetime.now
+from collections import defaultdict
+from pathlib import Path
+import re
+import yaml
+import toml
+from pydantic import ValidationError
+from datetime import datetime
 
-# NEW IMPORT: Get _get_code_snippet and ComplexityVisitor from the new code_utils.py
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
-
-# Import existing validation functions to reuse their logic
 from src.utils.code_validator import (
     _run_ruff,
     _run_bandit,
     _run_ast_security_checks,
 )
-from src.models import ( # All these are used for type hints or schema validation
+from src.models import (
     ConfigurationAnalysisOutput,
     CiWorkflowConfig,
     CiWorkflowJob,
@@ -33,17 +29,10 @@ from src.models import ( # All these are used for type hints or schema validatio
     PydanticSettingsConfig,
     DeploymentAnalysisOutput,
 )
-from src.utils.command_executor import execute_command_safely # Used for execute_command_safely
-from src.utils.path_utils import PROJECT_ROOT # Used for PROJECT_ROOT
+from src.utils.command_executor import execute_command_safely
+from src.utils.path_utils import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
-
-# REMOVED: Placeholder for PEP8 descriptions. This is no longer needed as _run_pycodestyle is removed.
-# PEP8_DESCRIPTIONS = { ... }
-
-
-# REMOVED: AST Visitor for detailed code metrics (ComplexityVisitor)
-# This class has been moved to src/utils/code_utils.py
 
 
 class FocusedMetricsCollector:
@@ -262,38 +251,78 @@ class FocusedMetricsCollector:
                 ) as f:
                     ci_content_lines = f.readlines()
                     ci_workflow_jobs = {}
-                    for job_name, job_details in ci_config_raw.get("jobs", {}).items():
-                        steps_summary = []
-                        for step in job_details.get("steps", []):
-                            step_name = step.get("name", "Unnamed Step")
-                            step_run = step.get("run")
-                            step_uses = step.get("uses")
+                    
+                    jobs_section = ci_config_raw.get("jobs")
+                    if isinstance(jobs_section, dict): # NEW: Check if 'jobs' section is a dictionary
+                        for job_name, job_details in jobs_section.items():
+                            if not isinstance(job_details, dict): # NEW: Check if individual job_details is a dictionary
+                                logger.warning(f"Job '{job_name}' in CI workflow is malformed (not a dictionary). Skipping.")
+                                malformed_blocks.append({
+                                    "type": "CI_JOB_MALFORMED",
+                                    "message": f"Job '{job_name}' is not a dictionary.",
+                                    "file": str(ci_yml_path),
+                                    "job_name": job_name
+                                })
+                                continue
 
-                            summary_item_data = {"name": step_name}
-                            if step_uses:
-                                summary_item_data["uses"] = step_uses
-                            if step_run:
-                                commands = [
-                                    cmd.strip()
-                                    for cmd in step_run.split("\n")
-                                    if cmd.strip()
-                                ]
-                                summary_item_data["runs_commands"] = commands
-                                run_line_number = None
-                                for i, line in enumerate(ci_content_lines):
-                                    if f'name: "{step_name}"' in line:
-                                        for j in range(i, len(ci_content_lines)):
-                                            if "run:" in ci_content_lines[j]:
-                                                run_line_number = j + 1
+                            steps_summary = []
+                            steps_section = job_details.get("steps")
+                            if isinstance(steps_section, list): # NEW: Check if 'steps' section is a list
+                                for step in steps_section:
+                                    if not isinstance(step, dict): # NEW: Check if individual step is a dictionary
+                                        logger.warning(f"Step in job '{job_name}' in CI workflow is malformed (not a dictionary). Skipping.")
+                                        malformed_blocks.append({
+                                            "type": "CI_STEP_MALFORMED",
+                                            "message": f"Step in job '{job_name}' is not a dictionary.",
+                                            "file": str(ci_yml_path),
+                                            "job_name": job_name
+                                        })
+                                        continue
+
+                                    step_name = step.get("name", "Unnamed Step")
+                                    step_run = step.get("run")
+                                    step_uses = step.get("uses")
+
+                                    summary_item_data = {"name": step_name}
+                                    if step_uses:
+                                        summary_item_data["uses"] = step_uses
+                                    if step_run:
+                                        commands = [
+                                            cmd.strip()
+                                            for cmd in step_run.split("\n")
+                                            if cmd.strip()
+                                        ]
+                                        summary_item_data["runs_commands"] = commands
+                                        run_line_number = None
+                                        for i, line in enumerate(ci_content_lines):
+                                            if f'name: "{step_name}"' in line:
+                                                for j in range(i, len(ci_content_lines)):
+                                                    if "run:" in ci_content_lines[j]:
+                                                        run_line_number = j + 1
+                                                        break
                                                 break
-                                        break
-                                summary_item_data["code_snippet"] = _get_code_snippet(
-                                    ci_content_lines, run_line_number, context_lines=3
-                                )
-                            steps_summary.append(CiWorkflowStep(**summary_item_data))
-                        ci_workflow_jobs[job_name] = CiWorkflowJob(
-                            steps_summary=steps_summary
-                        )
+                                        summary_item_data["code_snippet"] = _get_code_snippet(
+                                            ci_content_lines, run_line_number, context_lines=3
+                                        )
+                                    steps_summary.append(CiWorkflowStep(**summary_item_data))
+                            else: # NEW: Handle malformed 'steps' section
+                                logger.warning(f"Steps section for job '{job_name}' in CI workflow is malformed (not a list). Skipping steps processing.")
+                                malformed_blocks.append({
+                                    "type": "CI_STEPS_SECTION_MALFORMED",
+                                    "message": f"Steps section for job '{job_name}' is not a list.",
+                                    "file": str(ci_yml_path),
+                                    "job_name": job_name
+                                })
+                            ci_workflow_jobs[job_name] = CiWorkflowJob(
+                                steps_summary=steps_summary
+                            )
+                    else: # NEW: Handle malformed 'jobs' section
+                        logger.warning(f"Jobs section in CI workflow is malformed (not a dictionary). Skipping jobs processing.")
+                        malformed_blocks.append({
+                            "type": "CI_JOBS_SECTION_MALFORMED",
+                            "message": "Jobs section is not a dictionary.",
+                            "file": str(ci_yml_path)
+                        })
 
                     config_analysis_data["ci_workflow"] = CiWorkflowConfig(
                         name=ci_config_raw.get("name"),
@@ -320,32 +349,73 @@ class FocusedMetricsCollector:
                     pre_commit_path, "r", encoding="utf-8"
                 ) as f:
                     pre_commit_content_lines = f.readlines()
-                    for repo_config in pre_commit_config_raw.get("repos", []):
-                        repo_url = repo_config.get("repo")
-                        repo_rev = repo_config.get("rev")
-                        for hook in repo_config.get("hooks", []):
-                            hook_id = hook.get("id")
-                            hook_args = hook.get("args", [])
+                    
+                    repos_section = pre_commit_config_raw.get("repos")
+                    if isinstance(repos_section, list): # NEW: Check if 'repos' section is a list
+                        for repo_config in repos_section:
+                            if not isinstance(repo_config, dict): # NEW: Check if individual repo_config is a dictionary
+                                logger.warning(f"Repo config in pre-commit is malformed (not a dictionary). Skipping.")
+                                malformed_blocks.append({
+                                    "type": "PRE_COMMIT_REPO_MALFORMED",
+                                    "message": "Repo config is not a dictionary.",
+                                    "file": str(pre_commit_path)
+                                })
+                                continue
 
-                            hook_line_number = None
-                            for i, line in enumerate(pre_commit_content_lines):
-                                if f"id: {hook_id}" in line:
-                                    hook_line_number = i + 1
-                                    break
+                            repo_url = repo_config.get("repo")
+                            repo_rev = repo_config.get("rev")
+                            
+                            hooks_section = repo_config.get("hooks")
+                            if isinstance(hooks_section, list): # NEW: Check if 'hooks' section is a list
+                                for hook in hooks_section:
+                                    if not isinstance(hook, dict): # NEW: Check if individual hook is a dictionary
+                                        logger.warning(f"Hook config in pre-commit repo '{repo_url}' is malformed (not a dictionary). Skipping.")
+                                        malformed_blocks.append({
+                                            "type": "PRE_COMMIT_HOOK_MALFORMED",
+                                            "message": f"Hook in repo '{repo_url}' is not a dictionary.",
+                                            "file": str(pre_commit_path),
+                                            "repo": repo_url
+                                        })
+                                        continue
 
-                            config_analysis_data["pre_commit_hooks"].append(
-                                PreCommitHook(
-                                    repo=repo_url,
-                                    rev=repo_rev,
-                                    id=hook_id,
-                                    args=hook_args,
-                                    code_snippet=_get_code_snippet(
-                                        pre_commit_content_lines,
-                                        hook_line_number,
-                                        context_lines=3,
-                                    ),
-                                )
-                            )
+                                    hook_id = hook.get("id")
+                                    hook_args = hook.get("args", [])
+
+                                    hook_line_number = None
+                                    for i, line in enumerate(pre_commit_content_lines):
+                                        if f"id: {hook_id}" in line:
+                                            hook_line_number = i + 1
+                                            break
+
+                                    config_analysis_data["pre_commit_hooks"].append(
+                                        PreCommitHook(
+                                            repo=repo_url,
+                                            rev=repo_rev,
+                                            id=hook_id,
+                                            args=hook_args,
+                                            code_snippet=_get_code_snippet(
+                                                pre_commit_content_lines,
+                                                hook_line_number,
+                                                context_lines=3,
+                                            ),
+                                        )
+                                    )
+                            else: # NEW: Handle malformed 'hooks' section
+                                logger.warning(f"Hooks section for repo '{repo_url}' in pre-commit is malformed (not a list). Skipping hooks processing.")
+                                malformed_blocks.append({
+                                    "type": "PRE_COMMIT_HOOKS_SECTION_MALFORMED",
+                                    "message": f"Hooks section for repo '{repo_url}' is not a list.",
+                                    "file": str(pre_commit_path),
+                                    "repo": repo_url
+                                })
+                    else: # NEW: Handle malformed 'repos' section
+                        logger.warning(f"Repos section in pre-commit is malformed (not a list). Skipping repos processing.")
+                        malformed_blocks.append({
+                            "type": "PRE_COMMIT_REPOS_SECTION_MALFORMED",
+                            "message": "Repos section is not a list.",
+                            "file": str(pre_commit_path)
+                        })
+
             except (yaml.YAMLError, OSError, ValidationError) as e:
                 logger.error(
                     f"Error parsing pre-commit config file {pre_commit_path}: {e}"
@@ -370,56 +440,84 @@ class FocusedMetricsCollector:
                     pyproject_content_lines = f.readlines()
                     pyproject_toml_data = {}
 
-                    ruff_tool_config = pyproject_config_raw.get("tool", {}).get(
-                        "ruff", {}
-                    )
-                    if ruff_tool_config:
-                        ruff_line_number = None
-                        for i, line in enumerate(pyproject_content_lines):
-                            if "[tool.ruff]" in line:
-                                ruff_line_number = i + 1
-                                break
+                    tool_section = pyproject_config_raw.get("tool")
+                    if isinstance(tool_section, dict): # NEW: Check if 'tool' section is a dictionary
+                        ruff_tool_config = tool_section.get("ruff")
+                        if isinstance(ruff_tool_config, dict): # NEW: Check if 'ruff' config is a dictionary
+                            ruff_line_number = None
+                            for i, line in enumerate(pyproject_content_lines):
+                                if "[tool.ruff]" in line:
+                                    ruff_line_number = i + 1
+                                    break
 
-                        pyproject_toml_data["ruff"] = RuffConfig(
-                            line_length=ruff_tool_config.get("line-length"),
-                            target_version=ruff_tool_config.get("target-version"),
-                            lint_select=ruff_tool_config.get("lint", {}).get("select"),
-                            lint_ignore=ruff_tool_config.get("lint", {}).get("ignore"),
-                            format_settings=ruff_tool_config.get("format"),
-                            config_snippet=_get_code_snippet(
-                                pyproject_content_lines,
-                                ruff_line_number,
-                                context_lines=5,
-                            ),
-                        )
-                    bandit_tool_config = pyproject_config_raw.get("tool", {}).get(
-                        "bandit", {}
-                    )
-                    if bandit_tool_config:
-                        bandit_line_number = None
-                        for i, line in enumerate(pyproject_content_lines):
-                            if "[tool.bandit]" in line:
-                                bandit_line_number = i + 1
-                                break
+                            pyproject_toml_data["ruff"] = RuffConfig(
+                                line_length=ruff_tool_config.get("line-length"),
+                                target_version=ruff_tool_config.get("target-version"),
+                                lint_section = ruff_tool_config.get("lint")
+                                if isinstance(ruff_tool_config.get("lint"), dict) else {}, # NEW: Defensive access
+                                lint_select=lint_section.get("select"),
+                                lint_ignore=lint_section.get("ignore"),
+                                format_settings=ruff_tool_config.get("format"),
+                                config_snippet=_get_code_snippet(
+                                    pyproject_content_lines,
+                                    ruff_line_number,
+                                    context_lines=5,
+                                ),
+                            )
+                        elif ruff_tool_config is not None: # NEW: Handle malformed 'ruff' config
+                            logger.warning(f"Ruff config in pyproject.toml is malformed (not a dictionary). Skipping.")
+                            malformed_blocks.append({
+                                "type": "PYPROJECT_RUFF_MALFORMED",
+                                "message": "Ruff config is not a dictionary.",
+                                "file": str(pyproject_path)
+                            })
 
-                        pyproject_toml_data["bandit"] = BanditConfig(
-                            exclude_dirs=bandit_tool_config.get("exclude_dirs"),
-                            severity_level=bandit_tool_config.get("severity_level"),
-                            confidence_level=bandit_tool_config.get("confidence_level"),
-                            skip_checks=bandit_tool_config.get("skip_checks"),
-                            config_snippet=_get_code_snippet(
-                                pyproject_content_lines,
-                                bandit_line_number,
-                                context_lines=5,
-                            ),
-                        )
-                    pydantic_settings_config = pyproject_config_raw.get("tool", {}).get(
-                        "pydantic-settings", {}
-                    )
-                    if pydantic_settings_config:
-                        pyproject_toml_data["pydantic_settings"] = (
-                            PydanticSettingsConfig(**pydantic_settings_config)
-                        )
+                        bandit_tool_config = tool_section.get("bandit")
+                        if isinstance(bandit_tool_config, dict): # NEW: Check if 'bandit' config is a dictionary
+                            bandit_line_number = None
+                            for i, line in enumerate(pyproject_content_lines):
+                                if "[tool.bandit]" in line:
+                                    bandit_line_number = i + 1
+                                    break
+
+                            pyproject_toml_data["bandit"] = BanditConfig(
+                                exclude_dirs=bandit_tool_config.get("exclude_dirs"),
+                                severity_level=bandit_tool_config.get("severity_level"),
+                                confidence_level=bandit_tool_config.get("confidence_level"),
+                                skip_checks=bandit_tool_config.get("skip_checks"),
+                                config_snippet=_get_code_snippet(
+                                    pyproject_content_lines,
+                                    bandit_line_number,
+                                    context_lines=5,
+                                ),
+                            )
+                        elif bandit_tool_config is not None: # NEW: Handle malformed 'bandit' config
+                            logger.warning(f"Bandit config in pyproject.toml is malformed (not a dictionary). Skipping.")
+                            malformed_blocks.append({
+                                "type": "PYPROJECT_BANDIT_MALFORMED",
+                                "message": "Bandit config is not a dictionary.",
+                                "file": str(pyproject_path)
+                            })
+
+                        pydantic_settings_config = tool_section.get("pydantic-settings")
+                        if isinstance(pydantic_settings_config, dict): # NEW: Check if 'pydantic-settings' config is a dictionary
+                            pyproject_toml_data["pydantic_settings"] = (
+                                PydanticSettingsConfig(**pydantic_settings_config)
+                            )
+                        elif pydantic_settings_config is not None: # NEW: Handle malformed 'pydantic-settings' config
+                            logger.warning(f"Pydantic-settings config in pyproject.toml is malformed (not a dictionary). Skipping.")
+                            malformed_blocks.append({
+                                "type": "PYPROJECT_PYDANTIC_SETTINGS_MALFORMED",
+                                "message": "Pydantic-settings config is not a dictionary.",
+                                "file": str(pyproject_path)
+                            })
+                    else: # NEW: Handle malformed 'tool' section
+                        logger.warning(f"Tool section in pyproject.toml is malformed (not a dictionary). Skipping tool processing.")
+                        malformed_blocks.append({
+                            "type": "PYPROJECT_TOOL_SECTION_MALFORMED",
+                            "message": "Tool section is not a dictionary.",
+                            "file": str(pyproject_path)
+                        })
 
                     config_analysis_data["pyproject_toml"] = PyprojectTomlConfig(
                         **pyproject_toml_data
