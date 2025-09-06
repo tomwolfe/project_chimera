@@ -1,3 +1,5 @@
+# tests/test_core.py
+
 import pytest
 from unittest.mock import MagicMock, patch
 from core import SocraticDebate
@@ -10,6 +12,7 @@ from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager
 from src.utils.output_parser import LLMOutputParser
 from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer for mocking
+from src.self_improvement.auto_remediator import AutoRemediator # Import AutoRemediator for mocking
 
 # Mock necessary dependencies
 @pytest.fixture
@@ -97,13 +100,21 @@ def mock_prompt_optimizer():
     return po
 
 @pytest.fixture
+def mock_auto_remediator():
+    """Provides a mock AutoRemediator instance."""
+    ar = MagicMock(spec=AutoRemediator)
+    ar.apply_and_validate_changes.return_value = (True, [], {}) # Default to success, no changes, no issues
+    return ar
+
+@pytest.fixture
 def socratic_debate_instance(
     mock_persona_manager,
     mock_gemini_provider,
     mock_context_analyzer,
     mock_token_tracker,
     mock_conflict_manager,
-    mock_prompt_optimizer, # Add mock_prompt_optimizer
+    mock_prompt_optimizer,
+    mock_auto_remediator, # Add mock_auto_remediator
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     # Patch the constructors of dependencies to return our mocks
@@ -112,7 +123,8 @@ def socratic_debate_instance(
          patch('core.ContextRelevanceAnalyzer', return_value=mock_context_analyzer), \
          patch('core.TokenUsageTracker', return_value=mock_token_tracker), \
          patch('core.ConflictResolutionManager', return_value=mock_conflict_manager), \
-         patch('core.PromptOptimizer', return_value=mock_prompt_optimizer): # Patch the new PromptOptimizer
+         patch('core.PromptOptimizer', return_value=mock_prompt_optimizer), \
+         patch('core.AutoRemediator', return_value=mock_auto_remediator): # Patch the new AutoRemediator
         
         settings = ChimeraSettings(total_budget=100000)
         debate = SocraticDebate(
@@ -129,6 +141,8 @@ def socratic_debate_instance(
         debate.conflict_manager = mock_conflict_manager
         # Ensure the prompt optimizer mock is assigned to the instance
         debate.prompt_optimizer = mock_prompt_optimizer
+        # Ensure the auto remediator mock is assigned to the instance
+        debate.auto_remediator = mock_auto_remediator
         return debate
 
 def test_socratic_debate_initialization(socratic_debate_instance):
@@ -139,6 +153,7 @@ def test_socratic_debate_initialization(socratic_debate_instance):
     assert socratic_debate_instance.token_tracker.current_usage == 0
     assert isinstance(socratic_debate_instance.conflict_manager, MagicMock)
     assert isinstance(socratic_debate_instance.prompt_optimizer, MagicMock)
+    assert isinstance(socratic_debate_instance.auto_remediator, MagicMock)
     assert socratic_debate_instance.persona_manager.get_adjusted_persona_config.call_count == 0 # Should not be called during init unless explicitly needed
 
 def test_socratic_debate_run_debate_basic_flow(socratic_debate_instance, mock_gemini_provider, mock_token_tracker):
@@ -261,5 +276,44 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
     # Ensure the generate call was made for the second turn before the exception
     assert mock_gemini_provider.generate.call_count == 2
 
-# Note: Additional tests for other SocraticDebate functionalities (like context analysis,
-# different persona sequences, specific error handling) would be beneficial for comprehensive coverage.
+def test_socratic_debate_post_synthesis_remediation_called_for_self_analysis(socratic_debate_instance, mock_auto_remediator):
+    """Tests that post-synthesis remediation is called when is_self_analysis is True."""
+    socratic_debate_instance.is_self_analysis = True
+    socratic_debate_instance.persona_router.determine_persona_sequence.return_value = ["Self_Improvement_Analyst"]
+    
+    # Mock the synthesis output to contain suggestions
+    mock_synthesis_output = {
+        "ANALYSIS_SUMMARY": "Mock analysis",
+        "IMPACTFUL_SUGGESTIONS": [
+            {"AREA": "Robustness", "PROBLEM": "Test problem", "PROPOSED_SOLUTION": "Test solution", "EXPECTED_IMPACT": "High", "CODE_CHANGES_SUGGESTED": [{"FILE_PATH": "test.py", "ACTION": "ADD", "FULL_CONTENT": "print('hello')"}]}
+        ]
+    }
+    
+    # Mock the synthesis persona turn to return this output
+    socratic_debate_instance._perform_synthesis_persona_turn = MagicMock(return_value=mock_synthesis_output)
+    
+    # Mock the finalization to ensure it processes the output
+    with patch('core.SocraticDebate._finalize_debate_results', wraps=socratic_debate_instance._finalize_debate_results) as mock_finalize:
+        final_answer, intermediate_steps = socratic_debate_instance.run_debate()
+        
+        # Assert that auto_remediator.apply_and_validate_changes was called
+        mock_auto_remediator.apply_and_validate_changes.assert_called_once()
+        
+        # Assert that the remediation attempt is in the final answer
+        assert "remediation_attempt" in final_answer
+        assert final_answer["remediation_attempt"]["success"] is True
+
+def test_socratic_debate_post_synthesis_remediation_not_called_for_non_self_analysis(socratic_debate_instance, mock_auto_remediator):
+    """Tests that post-synthesis remediation is NOT called when is_self_analysis is False."""
+    socratic_debate_instance.is_self_analysis = False
+    socratic_debate_instance.persona_router.determine_persona_sequence.return_value = ["Impartial_Arbitrator"]
+    
+    # Mock the synthesis output
+    mock_synthesis_output = {"general_output": "Regular synthesis"}
+    socratic_debate_instance._perform_synthesis_persona_turn = MagicMock(return_value=mock_synthesis_output)
+    
+    final_answer, intermediate_steps = socratic_debate_instance.run_debate()
+    
+    # Assert that auto_remediator.apply_and_validate_changes was NOT called
+    mock_auto_remediator.apply_and_validate_changes.assert_not_called()
+    assert "remediation_attempt" not in final_answer

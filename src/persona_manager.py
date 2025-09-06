@@ -67,7 +67,7 @@ class PersonaManager:
         # Initialize PersonaRouter with all loaded personas and persona_sets, and the prompt_analyzer
         # This ensures the router always has the correct prompt_analyzer instance.
         self.persona_router: Optional[PersonaRouter] = PersonaRouter(
-            self.all_personas, self.persona_sets, self.prompt_analyzer
+            self.all_personas, self.persona_sets, self.prompt_analyzer, persona_manager=self # Pass self
         )
 
         # Initialize performance metrics after all personas are loaded
