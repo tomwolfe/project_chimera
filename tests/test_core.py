@@ -1,5 +1,3 @@
-# tests/test_core.py
-
 import pytest
 from unittest.mock import MagicMock, patch
 from core import SocraticDebate
@@ -11,8 +9,8 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager
 from src.utils.output_parser import LLMOutputParser
-from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer for mocking
-from src.self_improvement.auto_remediator import AutoRemediator # Import AutoRemediator for mocking
+from src.utils.prompt_optimizer import PromptOptimizer
+from src.self_improvement.auto_remediator import AutoRemediator
 
 # Mock necessary dependencies
 @pytest.fixture
@@ -317,3 +315,6 @@ def test_socratic_debate_post_synthesis_remediation_not_called_for_non_self_anal
     # Assert that auto_remediator.apply_and_validate_changes was NOT called
     mock_auto_remediator.apply_and_validate_changes.assert_not_called()
     assert "remediation_attempt" not in final_answer
+
+# Add more tests for other SocraticDebate functionalities (like context analysis,
+# different persona sequences, specific error handling) for comprehensive coverage.

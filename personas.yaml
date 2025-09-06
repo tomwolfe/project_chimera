@@ -273,16 +273,16 @@ personas:
                   --- a/pyproject.toml
                   +++ b/pyproject.toml
                   @@ -30,7 +30,7 @@
-
+ 
                    [tool.ruff]
                    line-length = 88
                   -target-version = "null"
                   +target-version = "py311"
-
+ 
                    [tool.ruff.lint]
                    ignore = [
                   @@ -310,7 +310,7 @@
-
+ 
                    [tool.bandit]
                    conf_file = "pyproject.toml"
                   -level = "null"
@@ -342,7 +342,7 @@ personas:
                   @@ -24,7 +24,7 @@
                            id: ruff-format
                            args: []
-
+ 
                   -      - repo: local # Should be https://github.com/PyCQA/bandit
                   -        rev: 1.7.5
                   -        id: bandit

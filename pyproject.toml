@@ -37,17 +37,13 @@ exclude = [
   "env/",
   ".env/",
 ]
-# Add specific Bandit configurations for better security scanning
-[tool.bandit.custom_rules]
-# Example: Disallow use of pickle
-# 101: ['pickle', 'used']
 
 # Configure Bandit severity and confidence levels for CI/pre-commit hooks
 # These levels are used by the CI workflow and pre-commit hooks if not overridden there.
 # Setting them here provides a baseline configuration.
-severity_level = "HIGH" # Scan for Low, Medium, and High severity issues
-confidence_level = "HIGH" # Scan for Low, Medium, and High confidence issues
-level = "info" # Add level for Bandit configuration
+severity_level = "MEDIUM" # Scan for Medium and High severity issues
+confidence_level = "LOW" # Scan for Low, Medium, and High confidence issues
+level = "info"
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
 

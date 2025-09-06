@@ -5,6 +5,7 @@ from src.models import PersonaConfig
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.config.persistence import ConfigPersistence
+import time # Import time for timestamp mocking
 
 @pytest.fixture
 def mock_token_tracker():
@@ -177,6 +178,7 @@ def test_export_framework_for_sharing(persona_manager_instance, mock_config_pers
 def test_import_framework(persona_manager_instance, mock_config_persistence):
     """Tests importing a framework."""
     # The mock_config_persistence is already set to return success for import_framework_from_file
+    mock_config_persistence.import_framework_from_file.return_value = (True, "Framework imported.", {"framework_name": "ImportedFramework", "personas": {}, "persona_sets": {"ImportedFramework": []}})
     success, message = persona_manager_instance.import_framework("file_content", "test.yaml")
     assert success
     assert "imported and saved successfully" in message
@@ -187,7 +189,6 @@ def test_import_framework(persona_manager_instance, mock_config_persistence):
 
 def test_get_adjusted_persona_config_truncated(persona_manager_instance):
     """Tests getting a truncated persona config."""
-    # Get the adjusted config for a persona ending in _TRUNCATED
     truncated_config = persona_manager_instance.get_adjusted_persona_config("Visionary_Generator_TRUNCATED")
     
     # Assert that the base persona name is used correctly
@@ -246,3 +247,36 @@ def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(person
     # Expect only Visionary_Generator to be truncated
     assert "Visionary_Generator_TRUNCATED" in optimized_sequence
     assert "Skeptical_Generator" in optimized_sequence # Skeptical_Generator should remain as is
+
+def test_dynamic_reordering_based_on_performance(persona_router_instance, mock_persona_manager):
+    """Tests dynamic re-ordering of personas based on performance metrics."""
+    prompt = "Analyze and improve the system."
+    domain = "Software Engineering"
+
+    # Simulate Skeptical_Generator having bad performance (high schema failures)
+    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["schema_failures"] = 8
+    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["total_turns"] = 10
+    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["last_adjustment_timestamp"] = time.time() - 600 # Not in cooldown
+
+    # Simulate Visionary_Generator having good performance
+    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["schema_failures"] = 0
+    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["total_turns"] = 10
+    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["last_adjustment_timestamp"] = time.time() - 600 # Not in cooldown
+
+    persona_router_instance.prompt_analyzer.is_self_analysis_prompt.return_value = False
+    persona_router_instance.prompt_analyzer.recommend_domain_from_keywords.return_value = "Software Engineering"
+
+    # Get the initial sequence (should contain both Visionary and Skeptical)
+    initial_sequence = persona_router_instance.persona_sets["Software Engineering"].copy()
+    
+    # Determine the dynamically adjusted sequence
+    adjusted_sequence = persona_router_instance.determine_persona_sequence(prompt, domain)
+
+    # Expect Visionary_Generator to be prioritized over Skeptical_Generator
+    assert adjusted_sequence.index("Visionary_Generator") < adjusted_sequence.index("Skeptical_Generator")
+    
+    # Ensure synthesis personas remain at the end
+    assert adjusted_sequence[-1] == "Impartial_Arbitrator"
+    assert adjusted_sequence[-2] == "Devils_Advocate" # Devils_Advocate is before Arbitrator in SE set
+
+# Add more tests for other PersonaManager functionalities like framework saving/loading, etc.

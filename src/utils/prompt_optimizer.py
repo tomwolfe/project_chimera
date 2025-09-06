@@ -1,3 +1,4 @@
+# src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional
 from src.tokenizers import Tokenizer
@@ -60,7 +61,7 @@ class PromptOptimizer:
                 
                 if self.tokenizer.count_tokens(optimized_prompt) < prompt_tokens:
                     logger.info(
-                        f"Self_Improvement_Analyst prompt intelligently optimized from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
+                        f"Prompt for {persona_name} truncated from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
                     )
                     return optimized_prompt
                 else:
