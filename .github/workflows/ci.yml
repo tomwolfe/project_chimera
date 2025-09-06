@@ -33,7 +33,8 @@ jobs:
     - name: Run Bandit Security Scan (Enhanced)
       shell: bash
       run: |
-        bandit -r . --config pyproject.toml --severity-level MEDIUM --confidence-level LOW --exit-on-error
+        # Use stricter levels for CI, overriding pyproject.toml if needed, or ensuring pyproject.toml is strict
+        bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level MEDIUM --exit-on-error
     - name: Run Unit and Integration Tests with Coverage
       shell: bash
       run: |

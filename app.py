@@ -1,20 +1,16 @@
 # -*- coding: utf-8 -*-
 # app.py
 import streamlit as st
-import json
 import os
 import io # Used in capture_rich_output_and_get_console
 import contextlib # Used in capture_rich_output_and_get_console
-import re # Used in validate_gemini_api_key_format, sanitize_user_input, strip_ansi_codes
-import datetime # Used in generate_markdown_report, _log_persona_change, SESSION_TIMEOUT_SECONDS check
-import time # Used in update_activity_timestamp, SESSION_TIMEOUT_SECONDS check, DEBATE_RETRY_DELAY_SECONDS
+import re # Used in sanitize_user_input
+import datetime # Used in _log_persona_change
+import time # Used in DEBATE_RETRY_DELAY_SECONDS
 from typing import Dict, Any, List, Optional
-import yaml # Used in load_config
 import logging # Used for logger
 from rich.console import Console # Used in capture_rich_output_and_get_console
 from core import SocraticDebate # Instantiated
-import google.genai as genai # Used in test_gemini_api_key_functional
-from google.genai.errors import APIError # Used in test_gemini_api_key_functional
 
 from src.models import ( # All these are used for type hints or schema validation in results display
     PersonaConfig,
@@ -48,6 +44,9 @@ from pydantic import ValidationError # Used in handle_debate_errors
 import html # Used in sanitize_user_input
 import difflib # Used in diff_lines
 
+import yaml # Used in load_config, but also for persona_manager.load_framework_into_session
+import json # Used for json.dumps in results display
+
 import uuid # Used for _session_id, request_id
 from src.logging_config import setup_structured_logging # Called
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # Instantiated, used in handle_debate_errors
@@ -57,6 +56,10 @@ from pathlib import Path # Used for Path.cwd(), file_path.name
 from src.utils.prompt_analyzer import PromptAnalyzer # Instantiated via PersonaManager
 from src.token_tracker import TokenUsageTracker # Instantiated
 from src.context.context_analyzer import CodebaseScanner # Instantiated
+
+from src.utils.report_generator import generate_markdown_report, strip_ansi_codes # NEW: Import from report_generator
+from src.utils.session_manager import _initialize_session_state, update_activity_timestamp, reset_app_state, check_session_expiration, SESSION_TIMEOUT_SECONDS # NEW: Import from session_manager
+from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key # NEW: Import from ui_helpers
 
 # --- Configuration Loading ---
 @st.cache_resource
@@ -100,225 +103,32 @@ MAX_TOKENS_LIMIT = app_config.get(
 ) # Default to 64000 if not in config
 
 
-# --- NEW: API Key Validation and Test Functions ---
-def validate_gemini_api_key_format(api_key: str) -> bool:
-    """Validate Gemini API key format."""
-    if not api_key or not isinstance(api_key, str):
-        return False
-    return re.match(r"^[A-Za-z0-9_-]{35,}$", api_key) is not None
-
-
-def test_gemini_api_key_functional(api_key: str) -> bool:
-    """Test if the Gemini API key is functional by making a minimal API call."""
-    try:
-        test_client = genai.Client(api_key=api_key)
-        test_client.models.list()
-        return True
-    except APIError as e:
-        logger.error(f"API key functional test failed: {e}")
-        # Differentiate between key issues and service issues
-        if e.code == 401:
-            st.error("🔐 Invalid API key - access denied")
-        elif e.code == 403:
-            st.error("🚫 API key valid but lacks required permissions")
-        else:
-            st.error(f"⚠️ API error: {e.message}")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error during API key functional test: {e}")
-        # Network or service issues
-        if "connection" in str(e).lower() or "timeout" in str(e).lower():
-            st.error("🌐 Network connection issue - check your internet connection")
-        else:
-            st.error("⚠️ Unexpected error during API validation")
-        return False
-
-
-# - NEW: Callback for API Key Input -
-def on_api_key_change():
-    """Callback to validate API key format and update activity timestamp."""
-    # Initialize session state variables if they don't exist (defensive programming)
-    # While _initialize_session_state() should handle this, callbacks can sometimes
-    # run in contexts where session_state might not be fully populated yet,
-    # especially before the widget itself has fully registered its key.
-    if "api_key_input" not in st.session_state:
-        st.session_state.api_key_input = ""
-    if "api_key_valid_format" not in st.session_state:
-        st.session_state.api_key_valid_format = False
-
-    # Access the current value directly from the widget's key in session_state
-    api_key_value = st.session_state.api_key_input
-    st.session_state.api_key_valid_format = validate_gemini_api_key_format(
-        api_key_value
-    )
-    update_activity_timestamp()
-    # NEW: Reset token tracker on API key change
-    if "token_tracker" in st.session_state:
-        st.session_state.token_tracker.reset()
-        st.session_state.current_debate_tokens_used = 0
-        st.session_state.current_debate_cost_usd = 0.0
-
-
-# --- NEW: Helper functions for API Key UI status ---
-def display_key_status():
-    """Display detailed API key status with appropriate icons"""
-    if not st.session_state.api_key_input:
-        st.caption("🔑 Key status: Not provided")
-        return
-
-    if not st.session_state.api_key_valid_format:
-        st.caption("❌ Key status: Invalid format")
-        return
-
-    if not st.session_state.api_key_functional:
-        st.caption("⚠️ Key status: Format valid but non-functional")
-        return
-
-    st.caption("✅ Key status: Valid and functional")
-
-
-def test_api_key():
-    """Test the API key functionality with proper error handling"""
-    api_key = st.session_state.api_key_input.strip()
-    if not api_key:
-        st.session_state.api_key_functional = False
-        return
-
-    st.session_state.api_key_functional = test_gemini_api_key_functional(api_key)
-
-
 # NEW: Instantiate CodebaseScanner once for the UI
 @st.cache_resource
-def get_codebase_scanner():
+def get_codebase_scanner_instance():
     return CodebaseScanner()
 
-# --- Demo Codebase Context Loading ---
-# REMOVED: @st.cache_data
-# REMOVED: def load_demo_codebase_context(...): as data/demo_codebase_context.json was deleted
 
+# --- NEW CONSTANTS FOR SESSION MANAGEMENT AND RETRIES ---
+# SESSION_TIMEOUT_SECONDS = 1800  # 30 minutes of inactivity # Moved to session_manager
+MAX_DEBATE_RETRIES = 3  # Max retries for the entire debate process if rate limited
+DEBATE_RETRY_DELAY_SECONDS = (
+    5  # Initial delay for debate retries (will be multiplied by attempt number)
+)
+# --- END NEW CONSTANTS ---
 
-# Redirect rich output to a string buffer for Streamlit display
-@contextlib.contextmanager
-def capture_rich_output_and_get_console():
-    """Captures rich output (like Streamlit elements) and returns the captured content."""
-    buffer = io.StringIO()
-    console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
-    yield buffer, console_instance
+# --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
+setup_structured_logging(log_level=logging.INFO)
+logger = logging.getLogger(__name__)
+# --- END LOGGING SETUP ---
 
-
-ansi_escape_re = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-
-
-def strip_ansi_codes(text):
-    return ansi_escape_re.sub("", text)
-
-
-# --- Helper function for Markdown Report Generation ---
-def generate_markdown_report(
-    user_prompt: str,
-    final_answer: Any,
-    intermediate_steps: Dict[str, Any],
-    process_log_output: str,
-    config_params: Dict[str, Any],
-    persona_audit_log: List[Dict[str, Any]],
-) -> str:
-    report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    md_content = f"# Project Chimera Socratic Debate Report\n\n"
-    md_content += f"**Date:** {report_date}\n"
-    md_content += f"**Original Prompt:** {user_prompt}\n\n"
-    md_content += "---\n\n"
-    md_content += "## Configuration\n\n"
-    md_content += f"*   **Model:** {config_params.get('model_name', 'N/A')}\n"
-    md_content += f"*   **Max Total Tokens Budget:** {config_params.get('max_tokens_budget', 'N/A')}\n"
-    md_content += f"*   **Intermediate Steps Shown in UI:** {'Yes' if config_params.get('show_intermediate_steps', False) else 'No'}\n"
-    md_content += f"*   **Reasoning Framework:** {config_params.get('domain', 'N/A')}\n"
-    md_content += "---\n\n"
-
-    if persona_audit_log:
-        md_content += "## Persona Configuration Audit Trail (Current Session)\n\n"
-        md_content += "| Timestamp | Persona | Parameter | Old Value | New Value |\n"
-        md_content += "|---|---|---|---|---|\n"
-
-        escaped_newline_for_display = "\\n"
-
-        for entry in persona_audit_log:
-            old_val_str = str(entry.get("old_value", ""))
-            new_val_str = str(entry.get("new_value", ""))
-            old_val_display = (
-                (old_val_str[:50] + "...") if len(old_val_str) > 50 else old_val_str
-            )
-            new_val_display = (
-                (new_val_str[:50] + "...") if len(new_val_str) > 50 else new_val_str
-            )
-
-            old_val_display_escaped = old_val_display.replace(
-                "\n", escaped_newline_for_display
-            )
-            new_val_display_escaped = new_val_display.replace(
-                "\n", escaped_newline_for_display
-            )
-            md_content += f"| {entry.get('timestamp')} | {entry.get('persona')} | {entry.get('parameter')} | `{old_val_display_escaped}` | `{new_val_display_escaped}` |\n"
-        md_content += "\n---\n\n"
-
-    md_content += "## Process Log\n\n"
-    md_content += "```text\n"
-    md_content += strip_ansi_codes(process_log_output)
-    md_content += "\n```\n\n"
-
-    if config_params.get("show_intermediate_steps", True):
-        md_content += "---\n\n"
-        md_content += "## Intermediate Reasoning Steps\n\n"
-        step_keys_to_process = sorted(
-            [
-                k
-                for k in intermediate_steps.keys()
-                if not k.endswith("_Tokens_Used")
-                and not k.endswith("_Estimated_Cost_USD")
-                and k != "Total_Tokens_Used"
-                and k != "Total_Estimated_Cost_USD"
-                and k != "debate_history"
-                and not k.startswith("malformed_blocks")
-            ],
-            key=lambda x: (x.split("_")[0] if "_" in x else "", x),
-        )
-
-        for step_key in step_keys_to_process:
-            display_name = (
-                step_key.replace("_Output", "")
-                .replace("_Critique", "")
-                .replace("_Feedback", "")
-                .replace("_", " ")
-                .title()
-            )
-            content = intermediate_steps.get(step_key, "N/A")
-            token_base_name = (
-                step_key.replace("_Output", "")
-                .replace("_Critique", "")
-                .replace("_Feedback", "")
-            )
-            token_count_key = f"{token_base_name}_Tokens_Used"
-            tokens_used = intermediate_steps.get(token_count_key, "N/A")
-
-            md_content += f"### {display_name}\n\n"
-            if isinstance(content, dict):
-                md_content += "```json\n"
-                md_content += json.dumps(content, indent=2)
-                md_content += "\n```\n"
-            else:
-                md_content += f"```markdown\n{content}\n```\n"
-            md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
-    md_content += "---\n\n"
-    md_content += "## Final Synthesized Answer\n\n"
-    if isinstance(final_answer, dict):
-        md_content += "```json\n"
-        md_content += json.dumps(final_answer, indent=2)
-    else:
-        md_content += f"{final_answer}\n\n"
-    md_content += "---\n\n"
-    md_content += "## Summary\n\n"
-    md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"
-    md_content += f"**Total Estimated Cost:** ${intermediate_steps.get('Total_Estimated_Cost_USD', 0.0):.4f}\n"
-    return md_content
+# Define the cache directory dynamically based on the environment
+if os.path.expanduser("~") == "/home/appuser":
+    SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
+else:
+    SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser(
+        "~/.cache/huggingface/transformers"
+    )
 
 
 st.set_page_config(layout="wide", page_title="Project Chimera Web App")
@@ -372,189 +182,14 @@ EXAMPLE_PROMPTS = {
 }
 # --- END EXAMPLE_PROMPTS STRUCTURE ---
 
-# --- NEW CONSTANTS FOR SESSION MANAGEMENT AND RETRIES ---
-SESSION_TIMEOUT_SECONDS = 1800  # 30 minutes of inactivity
-MAX_DEBATE_RETRIES = 3  # Max retries for the entire debate process if rate limited
-DEBATE_RETRY_DELAY_SECONDS = (
-    5  # Initial delay for debate retries (will be multiplied by attempt number)
-)
-# --- END NEW CONSTANTS ---
-
-# --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
-setup_structured_logging(log_level=logging.INFO)
-logger = logging.getLogger(__name__)
-# --- END LOGGING SETUP ---
-
-# Define the cache directory dynamically based on the environment
-if os.path.expanduser("~") == "/home/appuser":
-    SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
-else:
-    SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser(
-        "~/.cache/huggingface/transformers"
-    )
-
-
-# FIX START: Removed @st.cache_resource from get_context_analyzer()
-def get_context_analyzer(_pm_instance: PersonaManager):
-    """Returns a cached instance of ContextRelevanceAnalyzer, injecting the persona router."""
-    if _pm_instance and _pm_instance.persona_router:
-        analyzer = ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR)
-        analyzer.set_persona_router(_pm_instance.persona_router)
-        return analyzer
-    else:
-        app_logger = (
-            logging.getLogger(__name__)
-            if __name__ in logging.Logger.manager.loggerDict
-            else logging.getLogger("app")
-        )
-        app_logger.warning(
-            "PersonaManager or its router not found. Context relevance scoring might be suboptimal."
-        )
-        return ContextRelevanceAnalyzer(cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR)
-
-
-# FIX START: REMOVED @st.cache_resource from get_persona_manager()
-def get_persona_manager(
-    token_tracker: Optional[TokenUsageTracker] = None,
-):  # MODIFIED: Accept token_tracker
-    # PersonaManager now requires DOMAIN_KEYWORDS and token_tracker
-    return PersonaManager(
-        DOMAIN_KEYWORDS, token_tracker=token_tracker
-    )  # MODIFIED: Pass token_tracker
-
-
-# FIX END
-
-
-# --- Helper to update activity timestamp ---
-def update_activity_timestamp():
-    st.session_state.last_activity_timestamp = time.time()
-    logger.debug("Activity timestamp updated.")
-
-
-# --- Session State Initialization ---
-def _initialize_session_state():
-    """Initializes or resets all session state variables to their default values."""
-    defaults = {
-        "initialized": True,
-        "api_key_input": os.getenv("GEMINI_API_KEY", ""),
-        "user_prompt_input": "",
-        "max_tokens_budget_input": MAX_TOKENS_LIMIT,  # MODIFIED: Use MAX_TOKENS_LIMIT from config
-        "show_intermediate_steps_checkbox": True,
-        "selected_model_selectbox": "gemini-2.5-flash-lite",
-        "selected_example_name": "",
-        "selected_prompt_category": "",
-        "active_example_framework_hint": None,
-        "debate_ran": False,
-        "final_answer_output": "",
-        "intermediate_steps_output": {},
-        "process_log_output_text": "",
-        "last_config_params": {},
-        "codebase_context": {},
-        "uploaded_files": [],
-        "persona_audit_log": [],
-        "persona_edit_mode": False,
-        "persona_changes_detected": False,
-        "context_token_budget_ratio": CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG,
-        "save_framework_input": "",
-        "framework_description": "",
-        "load_framework_select": "",
-        "_session_id": str(uuid.uuid4()),
-        "debate_progress": 0.0,
-        "api_key_valid_format": False,
-        "api_key_functional": False,
-        "current_debate_tokens_used": 0,
-        "current_debate_cost_usd": 0.0,
-        "last_activity_timestamp": time.time(),
-        "context_ratio_user_modified": False,
-    }
-
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-    # NEW: Initialize TokenUsageTracker
-    if "token_tracker" not in st.session_state:
-        st.session_state.token_tracker = TokenUsageTracker(
-            budget=st.session_state.max_tokens_budget_input
-        )
-    else:
-        # Ensure tracker budget is updated if max_tokens_budget_input changed
-        st.session_state.token_tracker.budget = st.session_state.max_tokens_budget_input
-        st.session_state.token_tracker.reset()  # Reset tracker on re-init
-
-    if "persona_manager" not in st.session_state:
-        # MODIFIED: Pass DOMAIN_KEYWORDS and token_tracker to PersonaManager constructor
-        st.session_state.persona_manager = PersonaManager(
-            DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker
-        )
-        st.session_state.all_personas = st.session_state.persona_manager.all_personas
-        st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
-        st.session_state.selected_persona_set = (
-            st.session_state.persona_manager.available_domains[0]
-            if st.session_state.persona_manager.available_domains
-            else "General"
-        )
-        initial_framework_personas = (
-            st.session_state.persona_manager.get_persona_sequence_for_framework(
-                st.session_state.selected_persona_set
-            )
-        )
-        st.session_state.personas = {
-            name: st.session_state.persona_manager.all_personas.get(name)
-            for name in initial_framework_personas
-            if name in st.session_state.persona_manager.all_personas
-        }
-        # REMOVED: The redundant PersonaRouter initialization block, as PersonaManager's __init__ now handles it.
-
-    if "context_analyzer" not in st.session_state:
-        analyzer = ContextRelevanceAnalyzer(
-            cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR,
-            codebase_context=st.session_state.codebase_context,
-        )
-        if st.session_state.persona_manager.persona_router:
-            analyzer.set_persona_router(st.session_state.persona_manager.persona_router)
-        st.session_state.context_analyzer = analyzer
-
-    if "session_rate_limiter_instance" not in st.session_state:
-        st.session_state.session_rate_limiter_instance = RateLimiter(
-            key_func=lambda: st.session_state._session_id, calls=10, period=60.0
-        )
-
-    if st.session_state.api_key_input:
-        st.session_state.api_key_valid_format = validate_gemini_api_key_format(
-            st.session_state.api_key_input
-        )
-
-    if (
-        "user_prompt_input" not in st.session_state
-        or not st.session_state.user_prompt_input
-    ):
-        default_example_category = list(EXAMPLE_PROMPTS.keys())[0]
-        default_example_name = list(EXAMPLE_PROMPTS[default_example_category].keys())[0]
-        st.session_state.user_prompt_input = EXAMPLE_PROMPTS[default_example_category][
-            default_example_name
-        ]["prompt"]
-        st.session_state.selected_example_name = default_example_name
-        st.session_state.selected_prompt_category = default_example_category
-        st.session_state.active_example_framework_hint = EXAMPLE_PROMPTS[
-            default_example_category
-        ][default_example_name].get("framework_hint")
-
 
 # --- Session State Initialization Call ---
 if "initialized" not in st.session_state:
-    _initialize_session_state()
+    _initialize_session_state(app_config, EXAMPLE_PROMPTS)
 # --- END Session State Initialization Call ---
 
 # --- NEW: Session Expiration Check ---
-if "initialized" in st.session_state and st.session_state.initialized:
-    if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:
-        st.warning(
-            "Your session has expired due to inactivity. Resetting the application."
-        )
-        _initialize_session_state()
-        st.rerun()
+check_session_expiration(app_config, EXAMPLE_PROMPTS)
 # --- END NEW: Session Expiration Check ---
 
 
@@ -629,12 +264,6 @@ def sanitize_user_input(prompt: str) -> str:
 
 
 # --- END ENHANCED SANITIZATION FUNCTION ---
-
-
-def reset_app_state():
-    """Resets all session state variables to their default values."""
-    _initialize_session_state()
-    st.rerun()
 
 
 # --- Persona Change Logging ---
@@ -821,14 +450,9 @@ with st.sidebar:
         with api_key_col1:
             if st.session_state.api_key_input:
                 if st.session_state.api_key_valid_format:
-                    if st.session_state.api_key_functional:
-                        st.success("✅ API key is valid and functional.")
-                    else:
-                        st.warning("⚠️ API key format valid but functional test failed.")
+                    st.success("✅ API key format is valid.")
                 else:
-                    st.error(
-                        "❌ Invalid API key format. Gemini keys are typically 35+ characters long with letters, numbers, hyphens and underscores."
-                    )
+                    st.error(f"❌ {st.session_state.api_key_format_message}")
             else:
                 st.info("Please enter your Gemini API Key.")
 
@@ -1026,7 +650,7 @@ def on_example_select_change(selectbox_key, tab_name):
     # When "Critically analyze the entire Project Chimera codebase" is selected
     if selected_example_key == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.":
         # Force load codebase context
-        scanner = get_codebase_scanner()
+        scanner = get_codebase_scanner_instance()
         st.session_state.codebase_context = scanner.load_own_codebase_context()
         # Update the prompt to reflect we have context
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'] + \
@@ -1664,7 +1288,7 @@ with run_col:
         ),
     )
 with reset_col:
-    st.button("🔄 Reset All", on_click=reset_app_state, use_container_width=True)
+    st.button("🔄 Reset All", on_click=lambda: reset_app_state(app_config, EXAMPLE_PROMPTS), use_container_width=True)
 
 
 # --- MODIFICATION: Extract debate execution logic into a separate function ---
@@ -1815,6 +1439,13 @@ def _run_socratic_debate_process():
 
             st.session_state.current_debate_tokens_used = current_total_tokens
             st.session_state.current_debate_cost_usd = current_total_cost
+
+        @contextlib.contextmanager # Corrected decorator syntax
+        def capture_rich_output_and_get_console():
+            """Captures rich output (like Streamlit elements) and returns the captured content."""
+            buffer = io.StringIO()
+            console_instance = Console(file=buffer, force_terminal=True, soft_wrap=True)
+            yield buffer, console_instance
 
         with capture_rich_output_and_get_console() as (
             rich_output_buffer,
@@ -1982,7 +1613,7 @@ def _run_socratic_debate_process():
 # --- END OF NEW FUNCTION ---
 
 if run_button_clicked:
-    st.session_state.last_activity_timestamp = time.time()
+    update_activity_timestamp() # Use the imported function
 
     for attempt in range(MAX_DEBATE_RETRIES):
         try:
@@ -1995,7 +1626,7 @@ if run_button_clicked:
                     f"Rate limit exceeded. Retrying Socratic Debate in {wait_time:.1f} seconds... (Attempt {attempt + 1}/{MAX_DEBATE_RETRIES})"
                 )
                 time.sleep(wait_time)
-                st.session_state.last_activity_timestamp = time.time()
+                update_activity_timestamp() # Use the imported function
             else:
                 st.error(
                     f"Max retries ({MAX_DEBATE_RETRIES}) for Socratic Debate reached due to rate limiting. Please try again later."
@@ -2151,7 +1782,7 @@ if st.session_state.debate_ran:
                 "Total_Estimated_Cost_USD", 0.0
             )
             st.metric("Total Tokens Consumed", f"{total_tokens:,}")
-            st.metric("Total Estimated Cost (USD)", f"${total_cost:.4f}")
+            st.metric("Total Estimated Cost (USD)", f"${total_cost:.6f}")
         st.markdown("**Rationale**")
         st.markdown(parsed_llm_output_dict.get("RATIONALE", "N/A"))
         if parsed_llm_output_dict.get("CONFLICT_RESOLUTION"):

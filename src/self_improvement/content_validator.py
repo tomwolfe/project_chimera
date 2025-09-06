@@ -3,6 +3,7 @@ import re
 import logging
 import json
 from typing import List, Tuple, Dict, Any, Union, Optional
+from jsonschema import validate # NEW: Import validate for schema compliance
 
 logger = logging.getLogger(__name__)
 
@@ -376,3 +377,11 @@ class ContentAlignmentValidator:
 
         nuanced_feedback["is_aligned"] = True
         return True, "Content aligned with focus areas.", nuanced_feedback
+
+    def validate_schema_compliance(self, response: dict, schema: dict) -> tuple[bool, str]:
+        """Validates response against JSON schema with detailed error reporting"""
+        try:
+            validate(instance=response, schema=schema)
+            return True, "Schema validation passed"
+        except Exception as e:
+            return False, f"Schema validation failed: {str(e)}"

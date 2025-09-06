@@ -7,10 +7,9 @@ and circuit breaker protection.
 
 from pathlib import Path
 import time
-# REMOVED: from collections import defaultdict # Not directly used in this file
 import logging
 from functools import wraps
-from typing import Callable, Any, Dict, Optional, Type
+from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
 from google.genai import types
 from google.genai.errors import APIError
@@ -48,10 +47,12 @@ from src.resilience.circuit_breaker import CircuitBreaker
 from src.utils.error_handler import handle_errors
 # --- END NEW IMPORT ---
 
+from src.config.model_registry import ModelRegistry, ModelSpecification # NEW: Import ModelRegistry
 from src.config.settings import ChimeraSettings
 
-# NEW IMPORTS: From src/utils/file_operations.py
-from src.utils.file_operations import _create_file_backup, _apply_code_change
+# NEW IMPORTS: From src/utils/api_key_validator.py
+# REMOVED: Old imports for file_operations and direct re/genai/APIError
+from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional
 
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
@@ -90,6 +91,7 @@ class GeminiProvider:
     ):
         self._api_key = api_key
         self.model_name = model_name
+        self.model_registry = ModelRegistry() # Initialize ModelRegistry
         self.rich_console = rich_console or Console(stderr=True)
         self.request_id = request_id
         self._log_extra = {
@@ -163,7 +165,7 @@ class GeminiProvider:
             (
                 self.model_name,
                 hashlib.sha256(self._api_key.encode()).hexdigest(),
-                tokenizer_type_hash,
+                tokenizer_type_hash, # No change here
             )
         )
 
@@ -175,6 +177,10 @@ class GeminiProvider:
             and self._api_key == other.api_key
             and type(self.tokenizer) == type(other.tokenizer)
         )
+
+    def get_model_specification(self, model_name: str) -> Optional[ModelSpecification]:
+        """Retrieves model specification from the registry."""
+        return self.model_registry.get_model(preferred_model_name=model_name)
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance."""
@@ -193,11 +199,12 @@ class GeminiProvider:
             logger_method(message, extra=log_data)
 
     def _get_pricing_model_name(self) -> str:
-        if "flash" in self.model_name:
-            return "gemini-1.5-flash"
-        elif "pro" in self.model_name:
-            return "gemini-1.5-pro"
-        return "gemini-1.5-flash"
+        model_spec = self.get_model_specification(self.model_name)
+        if model_spec:
+            # Map to pricing model names if they differ from actual model names
+            if "flash" in model_spec.name: return "gemini-1.5-flash"
+            if "pro" in model_spec.name: return "gemini-1.5-pro"
+        return "gemini-1.5-flash" # Fallback
 
     def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
         pricing_model = self._get_pricing_model_name()
@@ -241,7 +248,12 @@ class GeminiProvider:
 
         final_model_to_use = requested_model_name
 
-        if final_model_to_use and final_model_to_use != self.model_name:
+        # Get max_output_tokens from ModelRegistry for the current model
+        current_model_spec = self.get_model_specification(final_model_to_use or self.model_name)
+        if current_model_spec:
+            self.tokenizer.max_output_tokens = current_model_spec.max_output_tokens
+
+        if final_model_to_use and final_model_to_use != self.model_name: # No change here
             self._log_with_context(
                 "debug",
                 f"Requested model '{final_model_to_use}' differs from provider's initialized model '{self.model_name}'.",
@@ -443,6 +455,3 @@ class GeminiProvider:
         """Estimates tokens for a context and prompt combination."""
         combined_text = f"{context_str}\n\n{prompt}"
         return self.tokenizer.count_tokens(combined_text)
-
-# REMOVED: Placeholder methods for other potential analyses (_create_file_backup, _apply_code_change)
-# These functions have been moved to src/utils/file_operations.py

@@ -2,7 +2,7 @@
 """Gemini-specific tokenizer implementation."""
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from .base import Tokenizer
 import hashlib
 import re
@@ -11,22 +11,13 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
+# Use TYPE_CHECKING to avoid circular import at runtime
+if TYPE_CHECKING:
+    from src.config.model_registry import ModelRegistry
+
 
 class GeminiTokenizer(Tokenizer):
     """Gemini-specific tokenizer that uses the google-genai library to count tokens."""
-
-    # Map model names to their max output tokens.
-    # Values are based on common Gemini model specifications and the provided code's usage.
-    # Note: Official Gemini API docs might not always list exact max output tokens for every variant.
-    # These are generally accepted values.
-    MODEL_MAX_OUTPUT_TOKENS = {
-        # Gemini 2.5 models (explicitly listed as per app's selectbox)
-        "gemini-2.5-flash-lite": 65538, # MODIFIED: Increased to prevent 1-token truncation issues
-        "gemini-2.5-flash": 65536,
-        "gemini-2.5-pro": 65536,
-        # Default fallback for any other models or versions
-        "default": 65536,
-    }
 
     def __init__(
         self, model_name: str = "gemini-2.5-flash-lite", genai_client: Any = None
@@ -44,29 +35,15 @@ class GeminiTokenizer(Tokenizer):
 
         self.genai_client = genai_client
         self.model_name = model_name
+        self._max_output_tokens: int = 8192 # Default, will be updated by LLMProvider
 
     @property
     def max_output_tokens(self) -> int:
         """Returns the maximum number of output tokens for the model."""
-        # Try to find the exact model name in the map
-        if self.model_name in self.MODEL_MAX_OUTPUT_TOKENS:
-            return self.MODEL_MAX_OUTPUT_TOKENS[self.model_name]
-
-        # Attempt to match with common patterns if exact name not found
-        # This is a heuristic and might need adjustment if model naming conventions change.
-        for model_pattern, token_limit in self.MODEL_MAX_OUTPUT_TOKENS.items():
-            # Simple check for common prefixes or substrings
-            if model_pattern in self.model_name:
-                logger.debug(
-                    f"Matched model '{self.model_name}' with pattern '{model_pattern}', using limit {token_limit}"
-                )
-                return token_limit
-
-        # Return default value if no match found
-        logger.warning(
-            f"Unknown model '{self.model_name}', using default max output tokens ({self.MODEL_MAX_OUTPUT_TOKENS['default']})"
-        )
-        return self.MODEL_MAX_OUTPUT_TOKENS["default"]
+        return self._max_output_tokens
+    @max_output_tokens.setter
+    def max_output_tokens(self, value: int):
+        self._max_output_tokens = value
 
     @lru_cache(maxsize=512)
     def count_tokens(self, text: str) -> int:

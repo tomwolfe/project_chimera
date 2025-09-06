@@ -32,6 +32,7 @@ def mock_config_persistence():
             {"name": "Skeptical_Generator", "system_prompt": "Skeptical", "temperature": 0.3, "max_tokens": 1024, "description": "Identifies flaws."},
             {"name": "Impartial_Arbitrator", "system_prompt": "Arbitrator", "temperature": 0.1, "max_tokens": 4096, "description": "Synthesizes outcomes."},
             {"name": "Test_Engineer", "system_prompt": "Test Engineer", "temperature": 0.3, "max_tokens": 4096, "description": "Ensures code quality."},
+            {"name": "TestPersona", "system_prompt": "Test system prompt", "temperature": 0.5, "max_tokens": 1024, "description": "A persona for testing metrics."} # Added for new tests
         ],
         "persona_sets": {
             "General": ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"],
@@ -61,6 +62,27 @@ def persona_manager_instance(mock_token_tracker, mock_prompt_analyzer, mock_conf
         if pm.persona_router:
             pm.persona_router.prompt_analyzer = mock_prompt_analyzer
         return pm
+
+@pytest.fixture
+def persona_manager_for_metrics(mock_token_tracker, mock_prompt_analyzer, mock_config_persistence):
+    """Provides a PersonaManager instance specifically for testing metrics, ensuring 'TestPersona' is available."""
+    with patch('src.persona_manager.ConfigPersistence', return_value=mock_config_persistence):
+        pm = PersonaManager(
+            domain_keywords={"General": ["general"]},
+            token_tracker=mock_token_tracker
+        )
+        # Ensure TestPersona is in all_personas for metrics tracking
+        if "TestPersona" not in pm.all_personas:
+            pm.all_personas["TestPersona"] = PersonaConfig(
+                name="TestPersona",
+                system_prompt="Test system prompt",
+                temperature=0.5,
+                max_tokens=1024,
+                description="A persona for testing metrics."
+            )
+        pm._initialize_performance_metrics() # Re-initialize to ensure TestPersona is in metrics
+        return pm
+
 
 def test_persona_manager_initialization(persona_manager_instance):
     """Tests that PersonaManager initializes correctly and loads default personas."""
@@ -198,24 +220,25 @@ def test_get_adjusted_persona_config_truncated(persona_manager_instance):
     # Assert that the system prompt includes the truncation warning
     assert "CRITICAL: Be extremely concise" in truncated_config.system_prompt
 
-def test_record_persona_performance(persona_manager_instance):
+def test_record_persona_performance(persona_manager_for_metrics):
     """Tests recording persona performance metrics."""
+    pm = persona_manager_for_metrics
     # Record a successful turn
-    persona_manager_instance.record_persona_performance("Visionary_Generator", 1, {}, True, "Valid output")
-    metrics = persona_manager_instance.persona_performance_metrics["Visionary_Generator"]
+    pm.record_persona_performance("TestPersona", 1, {}, True, "Valid output")
+    metrics = pm.persona_performance_metrics["TestPersona"]
     assert metrics["total_turns"] == 1
     assert metrics["schema_failures"] == 0
     assert metrics["truncation_failures"] == 0
 
     # Record a turn with schema failure
-    persona_manager_instance.record_persona_performance("Visionary_Generator", 2, {}, False, "Schema error")
-    metrics = persona_manager_instance.persona_performance_metrics["Visionary_Generator"]
+    pm.record_persona_performance("TestPersona", 2, {}, False, "Schema error")
+    metrics = pm.persona_performance_metrics["TestPersona"]
     assert metrics["total_turns"] == 2
     assert metrics["schema_failures"] == 1
 
     # Record a turn with truncation
-    persona_manager_instance.record_persona_performance("Visionary_Generator", 3, {}, True, "Truncated", is_truncated=True)
-    metrics = persona_manager_instance.persona_performance_metrics["Visionary_Generator"]
+    pm.record_persona_performance("TestPersona", 3, {}, True, "Truncated", is_truncated=True)
+    metrics = pm.persona_performance_metrics["TestPersona"]
     assert metrics["total_turns"] == 3
     assert metrics["truncation_failures"] == 1
 
@@ -248,35 +271,34 @@ def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(person
     assert "Visionary_Generator_TRUNCATED" in optimized_sequence
     assert "Skeptical_Generator" in optimized_sequence # Skeptical_Generator should remain as is
 
-def test_dynamic_reordering_based_on_performance(persona_router_instance, mock_persona_manager):
-    """Tests dynamic re-ordering of personas based on performance metrics."""
-    prompt = "Analyze and improve the system."
-    domain = "Software Engineering"
+def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_metrics):
+    """Test adaptive temperature adjustment based on schema failures."""
+    pm = persona_manager_for_metrics
+    original_temp = pm.all_personas["TestPersona"].temperature
+    metrics = pm.persona_performance_metrics["TestPersona"]
 
-    # Simulate Skeptical_Generator having bad performance (high schema failures)
-    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["schema_failures"] = 8
-    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["total_turns"] = 10
-    mock_persona_manager.persona_performance_metrics["Skeptical_Generator"]["last_adjustment_timestamp"] = time.time() - 600 # Not in cooldown
+    # Simulate high schema failure rate
+    metrics["total_turns"] = 10
+    metrics["schema_failures"] = 3 # 30% failure rate
+    metrics["last_adjustment_timestamp"] = time.time() - pm.adjustment_cooldown_seconds - 10 # Ensure not in cooldown
 
-    # Simulate Visionary_Generator having good performance
-    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["schema_failures"] = 0
-    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["total_turns"] = 10
-    mock_persona_manager.persona_performance_metrics["Visionary_Generator"]["last_adjustment_timestamp"] = time.time() - 600 # Not in cooldown
+    adjusted_config = pm.get_adjusted_persona_config("TestPersona")
+    assert adjusted_config.temperature < original_temp
+    assert metrics["last_adjusted_temp"] == adjusted_config.temperature
+    assert metrics["total_turns"] == 0 # Metrics should be reset after adjustment
 
-    persona_router_instance.prompt_analyzer.is_self_analysis_prompt.return_value = False
-    persona_router_instance.prompt_analyzer.recommend_domain_from_keywords.return_value = "Software Engineering"
+def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_metrics):
+    """Test adaptive max_tokens adjustment based on truncation failures."""
+    pm = persona_manager_for_metrics
+    original_max_tokens = pm.all_personas["TestPersona"].max_tokens
+    metrics = pm.persona_performance_metrics["TestPersona"]
 
-    # Get the initial sequence (should contain both Visionary and Skeptical)
-    initial_sequence = persona_router_instance.persona_sets["Software Engineering"].copy()
-    
-    # Determine the dynamically adjusted sequence
-    adjusted_sequence = persona_router_instance.determine_persona_sequence(prompt, domain)
+    # Simulate high truncation failure rate
+    metrics["total_turns"] = 10
+    metrics["truncation_failures"] = 2 # 20% truncation rate
+    metrics["last_adjustment_timestamp"] = time.time() - pm.adjustment_cooldown_seconds - 10 # Ensure not in cooldown
 
-    # Expect Visionary_Generator to be prioritized over Skeptical_Generator
-    assert adjusted_sequence.index("Visionary_Generator") < adjusted_sequence.index("Skeptical_Generator")
-    
-    # Ensure synthesis personas remain at the end
-    assert adjusted_sequence[-1] == "Impartial_Arbitrator"
-    assert adjusted_sequence[-2] == "Devils_Advocate" # Devils_Advocate is before Arbitrator in SE set
-
-# Add more tests for other PersonaManager functionalities like framework saving/loading, etc.
+    adjusted_config = pm.get_adjusted_persona_config("TestPersona")
+    assert adjusted_config.max_tokens > original_max_tokens
+    assert metrics["last_adjusted_max_tokens"] == adjusted_config.max_tokens
+    assert metrics["total_turns"] == 0 # Metrics should be reset after adjustment

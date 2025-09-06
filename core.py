@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # core.py
 import json
 import logging
@@ -60,6 +59,7 @@ from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's use
 
 from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
 from src.conflict_resolution import ConflictResolutionManager # NEW: Import ConflictResolutionManager
+from src.config.model_registry import ModelRegistry # NEW: Import ModelRegistry
 logger = logging.getLogger(__name__)
 
 
@@ -228,7 +228,11 @@ class SocraticDebate:
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
         self.conflict_manager = ConflictResolutionManager() # NEW: Initialize ConflictResolutionManager
+        self.model_registry = ModelRegistry() # NEW: Initialize ModelRegistry
 
+        # Determine best model based on requirements, preferring the one passed in
+        self.model_name = self._determine_optimal_model(model_name)
+        
         # Compute embeddings if codebase_context is present but embeddings are not
         if self.codebase_context and self.context_analyzer:
             if isinstance(self.codebase_context, dict):
@@ -272,6 +276,15 @@ class SocraticDebate:
         else:
             logger_method(message, extra=log_data)
 
+    def _determine_optimal_model(self, preferred_model_name: str) -> str:
+        """Determine the best model to use based on requirements and availability"""
+        requirements = ["reasoning"]
+        if "coding" in self.domain.lower():
+            requirements.append("coding")
+            
+        model = self.model_registry.get_model(requirements=requirements, preferred_model_name=preferred_model_name)
+        return model.name if model else preferred_model_name
+    
     def _determine_phase_ratios(
         self, prompt_analysis: Dict[str, Any]
     ) -> Tuple[float, float, float]:

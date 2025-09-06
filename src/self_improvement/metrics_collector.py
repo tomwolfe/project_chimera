@@ -921,7 +921,7 @@ class FocusedMetricsCollector:
 
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (
-                total_complexity_across_functions / total_functions_across_codebase
+                total_complexity_across_codebase / total_functions_across_codebase
             )
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
                 total_loc_across_functions / total_functions_across_codebase
@@ -1147,7 +1147,7 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": []
+                "common_failure_modes": {} # Changed to dict
             }
         
         try:
@@ -1192,14 +1192,36 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": []
+                "common_failure_modes": {} # Changed to dict
             }
     
     @staticmethod
-    def _identify_common_failure_modes(records: List[Dict]) -> List[Dict]:
-        """Identifies common patterns in failed improvements."""
-        # Implementation would analyze failure patterns
-        return []
+    def _identify_common_failure_modes(records: List[Dict]) -> Dict[str, int]:
+        """Identifies common patterns in failed improvements by analyzing malformed_blocks and error types."""
+        failure_modes_count = defaultdict(int)
+        
+        for record in records:
+            if not record.get("success", False):
+                # Check for malformed blocks in the metrics_before/after or suggestions
+                # This assumes malformed_blocks are consistently recorded in the output
+                # of the Self_Improvement_Analyst, which is then stored in the record.
+                # We need to look into the actual output structure of the Self_Improvement_Analyst
+                # which is part of the `suggestions` structure.
+
+                # For now, let's assume `malformed_blocks` are directly in the final output
+                # which is part of the `suggestions` structure.
+                for suggestion in record.get("suggestions", []):
+                    for block in suggestion.get("malformed_blocks", []):
+                        failure_modes_count[block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
+                
+                # Also check for specific error types in the performance changes
+                for category, changes in record.get("performance_changes", {}).items():
+                    if "schema_validation_failures_count" in changes and changes["schema_validation_failures_count"].get("after", 0) > changes["schema_validation_failures_count"].get("before", 0):
+                        failure_modes_count["schema_validation_failures_count"] += 1
+                    if "token_budget_exceeded_count" in changes and changes["token_budget_exceeded_count"].get("after", 0) > changes["token_budget_exceeded_count"].get("before", 0):
+                        failure_modes_count["token_budget_exceeded_count"] += 1
+
+        return dict(failure_modes_count)
 
     def analyze(self) -> List[Dict[str, Any]]:
         """
@@ -1511,56 +1533,57 @@ def test_llm_provider_generate_content_default(llm_provider):
                             "FILE_PATH": "tests/test_prompt_engineering.py",
                             "ACTION": "ADD",
                             "FULL_CONTENT": """import pytest
-from src.utils.prompt_engineering import create_persona_prompt, create_task_prompt
+from src.utils.prompt_engineering import format_prompt
+from src.persona_manager import PersonaManager # Needed for mocking in session_manager
 
-def test_create_persona_prompt_basic():
-    \"\"\"Test creating a persona prompt with basic details.\"\"\"
-    persona_details = {
-        "name": "Test Persona",
-        "role": "Tester",
-        "goal": "Evaluate prompts"
+# Mock app_config and EXAMPLE_PROMPTS for session_manager initialization
+@pytest.fixture
+def mock_app_config():
+    return {
+        "max_tokens_limit": 2000000,
+        "context_token_budget_ratio": 0.25,
+        "domain_keywords": {"General": ["general"], "Software Engineering": ["code"]},
+        "example_prompts": {
+            "Coding & Implementation": {
+                "Implement Python API Endpoint": {
+                    "prompt": "Implement a new FastAPI endpoint.",
+                    "description": "Generate an API endpoint.",
+                    "framework_hint": "Software Engineering",
+                }
+            }
+        }
     }
-    expected_prompt = "You are Test Persona, a Tester. Your goal is to Evaluate prompts."
-    assert create_persona_prompt(persona_details) == expected_prompt
 
-def test_create_persona_prompt_with_constraints():
-    \"\"\"Test creating a persona prompt with additional constraints.\"\"\"
-    persona_details = {
-        "name": "Constraint Bot",
-        "role": "Rule Enforcer",
-        "goal": "Ensure adherence to rules",
-        "constraints": ["Be concise", "Avoid jargon"]
+def test_format_prompt_basic():
+    \"\"\"Test format_prompt with basic variable substitution.\"\"\"
+    template = "Hello, {name}!"
+    kwargs = {"name": "World"}
+    result = format_prompt(template, **kwargs)
+    assert result == "Hello, World!"
+
+def test_format_prompt_with_codebase_context_self_analysis():
+    \"\"\"Test format_prompt with codebase context for self-analysis.\"\"\"
+    template = "Analyze this: {issue}"
+    codebase_context = {
+        "file_structure": {
+            "critical_files_preview": {
+                "file1.py": "def func(): pass"
+            }
+        }
     }
-    expected_prompt = "You are Constraint Bot, a Rule Enforcer. Your goal is to Ensure adherence to rules. Adhere to the following constraints: Be concise, Avoid jargon."
-    assert create_persona_prompt(persona_details) == expected_prompt
+    kwargs = {"issue": "bug"}
+    result = format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs)
+    assert "CODEBASE CONTEXT" in result
+    assert "file1.py" in result
+    assert "bug" in result
 
-def test_create_persona_prompt_empty_details():
-    \"\"\"Test creating a persona prompt with empty details.\"\"\"
-    persona_details = {}
-    expected_prompt = "You are an AI assistant. Your goal is to assist the user."
-    assert create_persona_prompt(persona_details) == expected_prompt
-
-def test_create_task_prompt_basic():
-    \"\"\"Test creating a basic task prompt.\"\"\"
-    task_description = "Summarize the provided text."
-    expected_prompt = f"Task: {task_description}\\n\\nProvide a concise summary."
-    assert create_task_prompt(task_description) == expected_prompt
-
-def test_create_task_prompt_with_context():
-    \"\"\"Test creating a task prompt with context.\"\"\"
-    task_description = "Analyze the user query."
-    context = "User is asking about project status."
-    expected_prompt = f"Task: {task_description}\\n\\nContext: {context}\\n\\nProvide a detailed analysis."
-    assert create_task_prompt(task_description, context=context) == expected_prompt
-
-def test_create_task_prompt_with_specific_instructions():
-    \"\"\"Test creating a task prompt with specific output instructions.\"\"\"
-    task_description = "Extract key entities."
-    instructions = "Output the entities as a JSON list."
-    expected_prompt = f"Task: {task_description}\\n\\nInstructions: {instructions}\\n\\nProvide the extracted entities in the specified format."
-    assert create_task_prompt(task_description, instructions=instructions) == expected_prompt
-
-# Add more tests for edge cases and variations in input
+def test_format_prompt_missing_key():
+    \"\"\"Test format_prompt handles missing keys gracefully.\"\"\"
+    template = "Hello, {name}!"
+    kwargs = {"age": 30} # Missing 'name'
+    result = format_prompt(template, **kwargs)
+    assert "Missing key for prompt formatting" in result # Check for warning message
+    assert "{name}" in result # The placeholder should remain if not formatted
 """,
                         },
                     ],

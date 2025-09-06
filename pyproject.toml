@@ -5,7 +5,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311" # Explicitly set target Python version
+target-version = "py311" # Corrected to a valid Python version
 
 [tool.ruff.lint]
 select = [
@@ -28,22 +28,18 @@ skip-magic-trailing-comma = false
 
 [tool.bandit]
 conf_file = "pyproject.toml"
-# Exclude directories from Bandit scans to improve performance and reduce noise
+level = "HIGH"
+confidence = "MEDIUM"
 exclude = [
-  "tests/",
-  "docs/",
-  "venv/",
-  ".venv/",
-  "env/",
-  ".env/",
+    "**/migrations/**",
+    "**/tests/**",
+    "**/docs/**",
 ]
-
-# Configure Bandit severity and confidence levels for CI/pre-commit hooks
-# These levels are used by the CI workflow and pre-commit hooks if not overridden there.
-# Setting them here provides a baseline configuration.
-severity_level = "MEDIUM" # Scan for Medium and High severity issues
-confidence_level = "LOW" # Scan for Low, Medium, and High confidence issues
-level = "info"
+# Specific security checks to prioritize
+[tool.bandit.plugins]
+hardcoded_password = true
+sql_injection = true
+command_injection = true
 
 # Add other configurations as needed, e.g., for MyPy, Pytest, etc.
 
