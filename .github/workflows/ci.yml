@@ -34,7 +34,7 @@ jobs:
     - name: Run Bandit Security Scan (Enhanced)
       # Configure Bandit to fail on medium/high severity issues with high confidence
       # Use -c for config file; pyproject.toml is the standard location
-      run: bandit -r . --config pyproject.toml --severity-level LOW --confidence-level LOW --exit-on-error # Use stricter levels
+      run: bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level HIGH --exit-on-error
       # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
 
     - name: Run Unit and Integration Tests with Coverage

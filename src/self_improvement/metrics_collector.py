@@ -10,6 +10,7 @@ import yaml
 import toml
 from pydantic import ValidationError
 from datetime import datetime
+import sys # Added for sys.executable
 
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
@@ -999,14 +1000,45 @@ class FocusedMetricsCollector:
     def _assess_test_coverage(self) -> Dict[str, Any]:
         """
         Assesses test coverage for the codebase.
-        Placeholder implementation.
+        Executes pytest with coverage and parses the generated JSON report.
         """
-        return {
+        coverage_data = {
             "overall_coverage_percentage": 0.0,
             "files_covered": 0,
             "total_files": 0,
-            "coverage_details": "Automated test coverage assessment not implemented.",
+            "coverage_details": "Failed to run coverage tool.",
         }
+        try:
+            # Run pytest with coverage and generate a JSON report
+            command = [
+                sys.executable, "-m", "pytest", "tests/", "--cov=src", "--cov-report=json:coverage.json"
+            ]
+            # Use execute_command_safely for robustness
+            return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
+
+            if return_code not in (0, 1): # pytest returns 1 for failed tests, 0 for success
+                logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
+                coverage_data["coverage_details"] = f"Pytest command failed: {stderr}"
+                return coverage_data
+
+            coverage_json_path = Path("coverage.json")
+            if coverage_json_path.exists():
+                with open(coverage_json_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
+                coverage_data["files_covered"] = report.get("totals", {}).get("num_statements", 0) - report.get("totals", {}).get("missing_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
+                coverage_data["coverage_details"] = "Coverage report generated successfully."
+                coverage_json_path.unlink() # Clean up the generated JSON file
+            else:
+                coverage_data["coverage_details"] = "Coverage JSON report not found."
+
+        except Exception as e:
+            logger.error(f"Error assessing test coverage: {e}", exc_info=True)
+            coverage_data["coverage_details"] = f"Error during coverage assessment: {e}"
+
+        return coverage_data
 
     @classmethod
     def _analyze_python_file_ast(
