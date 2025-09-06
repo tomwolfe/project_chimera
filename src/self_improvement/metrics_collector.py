@@ -921,7 +921,7 @@ class FocusedMetricsCollector:
 
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (
-                total_complexity_across_codebase / total_functions_across_codebase
+                total_complexity_across_functions / total_functions_across_codebase
             )
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
                 total_loc_across_functions / total_functions_across_codebase
