@@ -6,7 +6,7 @@ based on prompt analysis and intermediate results.
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Set, Optional, Any, Tuple
+from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING # Added TYPE_CHECKING
 import re
 import logging
 from functools import lru_cache
@@ -19,6 +19,9 @@ from src.utils.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# NEW: Use TYPE_CHECKING to avoid circular import at runtime
+if TYPE_CHECKING:
+    from src.persona_manager import PersonaManager
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
@@ -28,10 +31,14 @@ class PersonaRouter:
         all_personas: Dict[str, PersonaConfig],
         persona_sets: Dict[str, List[str]],
         prompt_analyzer: PromptAnalyzer,
+        # NEW: Add persona_manager parameter with Optional type hint
+        persona_manager: Optional["PersonaManager"] = None,
     ):
         self.all_personas = all_personas
         self.persona_sets = persona_sets
         self.prompt_analyzer = prompt_analyzer
+        # NEW: Store persona_manager
+        self.persona_manager = persona_manager
 
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.persona_embeddings = self._generate_persona_embeddings()
