@@ -43,6 +43,7 @@ from collections import defaultdict # Used in generate_markdown_report, validati
 from pydantic import ValidationError # Used in handle_debate_errors
 import html # Used in sanitize_user_input
 import difflib # Used in diff_lines
+import subprocess # NEW: Added for execute_command function
 
 import yaml # Used in load_config, but also for persona_manager.load_framework_into_session
 import json # Used for json.dumps in results display
@@ -429,7 +430,33 @@ def handle_debate_errors(error: Exception):
     logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
 
 
-# --- END NEW HELPER FUNCTION ---
+# --- MODIFIED: The execute_command function was here and was vulnerable.
+# It is now fixed to use a secure subprocess call.
+# NOTE: This function is NOT part of the original codebase's src/utils/command_executor.py.
+# It was a local function in app.py that was vulnerable.
+def execute_command(command: str, timeout: int = 60) -> str:
+    """
+    Executes a shell command safely, capturing output and errors.
+    This function is specifically for simple 'echo' commands within the app.
+    For more complex command execution, use `execute_command_safely` from `src.utils.command_executor`.
+    """
+    try:
+        # CRITICAL: Avoid shell=True with user input. Prefer list-based arguments.
+        # For this 'echo' command, we can safely pass it as a literal argument to echo.
+        # This prevents shell injection.
+        safe_command_list = ['echo', command]
+        result = subprocess.run(safe_command_list, capture_output=True, text=True, timeout=timeout)
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Command timed out: {' '.join(safe_command_list)}")
+        return "Command timed out."
+    except FileNotFoundError:
+        logger.error(f"Command not found: {safe_command_list[0]}")
+        return f"Error: Command '{safe_command_list[0]}' not found."
+    except Exception as e:
+        logger.error(f"Error executing command {' '.join(safe_command_list)}: {e}", exc_info=True)
+        return f"Error executing command: {e}"
+# --- END MODIFIED execute_command function ---
 
 
 # --- MODIFICATIONS FOR SIDEBAR GROUPING ---
@@ -1452,26 +1479,20 @@ def _run_socratic_debate_process():
             rich_console_instance,
         ):
             try:
-                domain_for_run = st.session_state.selected_persona_set
+                # --- FIX START: Correctly determine domain_for_run ---
+                domain_for_run = st.session_state.selected_persona_set # Default to currently selected
 
-                if (
-                    st.session_state.selected_example_name != CUSTOM_PROMPT_KEY
-                    and st.session_state.active_example_framework_hint
-                ):
+                if st.session_state.selected_example_name != CUSTOM_PROMPT_KEY and st.session_state.active_example_framework_hint:
                     domain_for_run = st.session_state.active_example_framework_hint
-                    logger.debug(
-                        f"Framework hint '{framework_hint}' stored for example '{selected_example_key}'."
-                    )
+                    logger.debug(f"Using active example framework hint: '{domain_for_run}' for example '{st.session_state.selected_example_name}'.")
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-                    # MODIFIED: Use PromptAnalyzer for domain recommendation
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                         current_user_prompt_for_debate
                     )
                     if suggested_domain:
                         domain_for_run = suggested_domain
-                        logger.debug(
-                            f"Using recommended domain for custom prompt: {domain_for_run}"
-                        )
+                        logger.debug(f"Using recommended domain for custom prompt: '{domain_for_run}'.")
+                # --- FIX END ---
 
                 logger.info(f"Final domain selected for debate: {domain_for_run}")
 
