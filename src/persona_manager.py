@@ -602,9 +602,11 @@ class PersonaManager:
         persona_name: str,
         turn_number: int,
         output: Any,
-        is_valid: bool,
+        is_aligned: bool, # Renamed from is_valid to be more precise
         validation_message: str,
         is_truncated: bool = False,
+        schema_validation_failed: bool = False, # NEW: Explicitly track schema failures
+        token_budget_exceeded: bool = False, # NEW: Explicitly track token budget exceedances
     ):
         """Record performance metrics for a persona's turn."""
         base_persona_name = persona_name.replace(
@@ -613,14 +615,14 @@ class PersonaManager:
         metrics = self.persona_performance_metrics.get(base_persona_name)
         if metrics:
             metrics["total_turns"] += 1
-            if (
-                not is_valid
-            ):
+            if schema_validation_failed: # Use the new explicit flag
                 metrics["schema_failures"] += 1
             if is_truncated:
                 metrics["truncation_failures"] += 1
+            # Optionally, track token_budget_exceeded if needed for future adjustments
+            # metrics["token_budget_exceeded"] += 1 if token_budget_exceeded else 0
             logger.debug(
-                f"Recorded performance for {persona_name}: Turn={turn_number}, IsValid={is_valid}, IsTruncated={is_truncated}, ValidationMessage='{validation_message}', SchemaError (inferred from !is_valid)={not is_valid}"
+                f"Recorded performance for {persona_name}: Turn={turn_number}, IsAligned={is_aligned}, IsTruncated={is_truncated}, SchemaFailed={schema_validation_failed}, TokenBudgetExceeded={token_budget_exceeded}, ValidationMessage='{validation_message}'"
             )
 
     def get_token_optimized_persona_sequence(
