@@ -1273,7 +1273,7 @@ with st.expander(
                     st.session_state.persona_changes_detected = False
                     st.rerun()
                 else:
-                    st.error(f"Could not reset persona '{p_name}'.")
+                    st.error("Could not reset all personas for the current framework.")
 # --- END NEW: Persona Editing UI ---
 
 st.markdown("---")
@@ -1460,7 +1460,7 @@ def _run_socratic_debate_process():
                 ):
                     domain_for_run = st.session_state.active_example_framework_hint
                     logger.debug(
-                        f"Using active example framework hint: {domain_for_run}"
+                        f"Framework hint '{framework_hint}' stored for example '{selected_example_key}'."
                     )
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
                     # MODIFIED: Use PromptAnalyzer for domain recommendation

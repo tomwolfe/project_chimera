@@ -1,14 +1,17 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from core import SocraticDebate
-from src.models import PersonaConfig
+from src.models import PersonaConfig, SelfImprovementAnalysisOutputV1 # Import SelfImprovementAnalysisOutputV1
 from src.config.settings import ChimeraSettings
 from src.token_tracker import TokenUsageTracker
 from src.persona_manager import PersonaManager
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager
-from src.utils.output_parser import LLMOutputParser
+from src.utils.output_parser import LLMOutputParser # Keep LLMOutputParser
+from src.self_improvement.metrics_collector import FocusedMetricsCollector # Import FocusedMetricsCollector
+from src.self_improvement.content_validator import ContentAlignmentValidator # Import ContentAlignmentValidator
+from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer
 
 @pytest.fixture
 def mock_persona_manager():
@@ -33,19 +36,20 @@ def mock_persona_manager():
     pm.get_persona_sequence_for_framework.return_value = ["Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"]
     pm.prompt_analyzer = MagicMock()
     pm.prompt_analyzer.is_self_analysis_prompt.return_value = False
-    pm.get_token_optimized_persona_sequence.side_effect = lambda seq: seq
+    pm.get_token_optimized_persona_sequence.side_effect = lambda seq: seq # Return sequence as is for simplicity
     return pm
 
 @pytest.fixture
 def mock_gemini_provider():
     """Provides a mock GeminiProvider instance."""
     gp = MagicMock(spec=GeminiProvider)
-    gp.tokenizer = MagicMock()
+    gp.tokenizer = MagicMock(spec=GeminiTokenizer) # Specify spec for tokenizer
     # Simple token count approximation for testing
     gp.tokenizer.count_tokens.side_effect = lambda text: len(text) // 4 if text else 0
     # Simple truncation simulation
     gp.tokenizer.truncate_to_token_limit.side_effect = lambda text, max_tokens, indicator="": text[:max_tokens*4] + indicator if len(text) > max_tokens*4 else text
     gp.tokenizer.max_output_tokens = 65536
+    # Mock generate method to return a tuple: (raw_output, input_tokens, output_tokens, is_truncated)
     gp.generate.return_value = ("{'general_output': 'Mocked LLM response'}", 50, 100, False)
     gp.calculate_usd_cost.return_value = 0.001
     return gp
@@ -54,11 +58,11 @@ def mock_gemini_provider():
 def mock_context_analyzer():
     """Provides a mock ContextRelevanceAnalyzer instance."""
     ca = MagicMock(spec=ContextRelevanceAnalyzer)
-    ca.codebase_context = {}
+    ca.codebase_context = {"file1.py": "content"} # Provide some context
     ca.file_embeddings = {}
     ca.find_relevant_files.return_value = []
     ca.generate_context_summary.return_value = "Mock context summary."
-    ca.set_persona_router = MagicMock()
+    ca.set_persona_router = MagicMock() # Mock this method as it's called in SocraticDebate init
     return ca
 
 @pytest.fixture
@@ -67,6 +71,7 @@ def mock_token_tracker():
     tt = MagicMock(spec=TokenUsageTracker)
     tt.budget = 100000
     tt.current_usage = 0
+    # Mock record_usage to update current_usage
     tt.record_usage.side_effect = lambda tokens, persona=None: setattr(tt, 'current_usage', tt.current_usage + tokens)
     tt.reset.side_effect = lambda: setattr(tt, 'current_usage', 0)
     tt.set_current_stage = MagicMock()
@@ -86,12 +91,31 @@ def mock_conflict_manager():
     return cm
 
 @pytest.fixture
+def mock_content_validator():
+    """Provides a mock ContentAlignmentValidator instance."""
+    cv = MagicMock(spec=ContentAlignmentValidator)
+    cv.validate.return_value = (True, "Content aligned.", {})
+    return cv
+
+@pytest.fixture
+def mock_metrics_collector():
+    """Provides a mock FocusedMetricsCollector instance."""
+    mc = MagicMock(spec=FocusedMetricsCollector)
+    mc.collect_all_metrics.return_value = {"reasoning_quality": {"schema_validation_failures_count": 0}}
+    mc.analyze_historical_effectiveness.return_value = {"total_attempts": 0}
+    return mc
+
+@pytest.fixture
+def mock_prompt_optimizer():
+    """Provides a mock PromptOptimizer instance."""
+    po = MagicMock(spec=PromptOptimizer)
+    po.optimize_prompt.side_effect = lambda prompt, persona_name, max_output_tokens_for_turn: prompt # Return prompt as is for simplicity
+    return po
+
+@pytest.fixture
 def socratic_debate_instance(
-    mock_persona_manager,
-    mock_gemini_provider,
-    mock_context_analyzer,
-    mock_token_tracker,
-    mock_conflict_manager,
+    mock_persona_manager, mock_gemini_provider, mock_context_analyzer, mock_token_tracker, mock_conflict_manager,
+    mock_content_validator, mock_metrics_collector, mock_prompt_optimizer
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     # Patch the constructors of dependencies to return our mocks
@@ -99,7 +123,10 @@ def socratic_debate_instance(
          patch('core.PersonaManager', return_value=mock_persona_manager), \
          patch('core.ContextRelevanceAnalyzer', return_value=mock_context_analyzer), \
          patch('core.TokenUsageTracker', return_value=mock_token_tracker), \
-         patch('core.ConflictResolutionManager', return_value=mock_conflict_manager): # Patch the new manager
+         patch('core.ConflictResolutionManager', return_value=mock_conflict_manager), \
+         patch('core.ContentAlignmentValidator', return_value=mock_content_validator), \
+         patch('src.self_improvement.metrics_collector.FocusedMetricsCollector', return_value=mock_metrics_collector), \
+         patch('core.PromptOptimizer', return_value=mock_prompt_optimizer):
         
         settings = ChimeraSettings(total_budget=100000)
         debate = SocraticDebate(
@@ -114,6 +141,8 @@ def socratic_debate_instance(
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager
+        debate.content_validator = mock_content_validator
+        debate.prompt_optimizer = mock_prompt_optimizer
         return debate
 
 def test_socratic_debate_initialization(socratic_debate_instance):
@@ -123,6 +152,7 @@ def test_socratic_debate_initialization(socratic_debate_instance):
     assert socratic_debate_instance.max_total_tokens_budget == 100000
     assert socratic_debate_instance.token_tracker.current_usage == 0
     assert isinstance(socratic_debate_instance.conflict_manager, MagicMock)
+    assert isinstance(socratic_debate_instance.prompt_optimizer, MagicMock)
 
 def test_socratic_debate_run_debate_basic_flow(socratic_debate_instance, mock_gemini_provider, mock_token_tracker):
     """Tests the basic flow of run_debate with mocked LLM responses."""
@@ -131,7 +161,7 @@ def test_socratic_debate_run_debate_basic_flow(socratic_debate_instance, mock_ge
         "Visionary_Generator", "Skeptical_Generator", "Impartial_Arbitrator"
     ]
     
-    # Mock LLM responses for each persona turn
+    # Mock LLM responses for each persona turn, including is_truncated
     mock_gemini_provider.generate.side_effect = [
         ("{'general_output': 'Visionary idea'}", 50, 100, False), # Turn 1
         ("{'general_output': 'Skeptical critique'}", 60, 110, False), # Turn 2
@@ -203,6 +233,7 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(socratic_deb
         assert any(block['type'] == 'JSON_DECODE_ERROR' for block in intermediate_steps.get('malformed_blocks', [])), "Malformed block not recorded"
         
         # Assert that the resolved output from the conflict manager was used in the history
+        # The history should contain an entry for Conflict_Resolution_Manager
         conflict_manager_turn = next((t for t in intermediate_steps.get('Debate_History', []) if t.get('persona') == 'Conflict_Resolution_Manager'), None)
         assert conflict_manager_turn is not None, "Conflict resolution turn not found in history"
         assert "Mock resolved output from conflict" in conflict_manager_turn['output'].get('resolved_output', {}).get('general_output', '')
@@ -245,6 +276,3 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
 
     # Ensure the generate call was made for the second turn before the exception
     assert mock_gemini_provider.generate.call_count == 2
-
-# Note: Additional tests for other SocraticDebate functionalities (like context analysis,
-# different persona sequences, specific error handling) would be beneficial for comprehensive coverage.

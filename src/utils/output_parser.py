@@ -1,5 +1,3 @@
-# src/utils/output_parser.py
-
 import json
 import logging
 import re
@@ -459,6 +457,7 @@ class LLMOutputParser:
         if json_start != -1 and json_end != -1 and json_end > json_start:
             cleaned = cleaned[json_start:json_end]
 
+        self.logger.debug(f"Cleaned LLM output: {cleaned[:500]}...")
         return cleaned.strip()
 
     def _detect_potential_suggestion_item(self, text: str) -> Optional[Dict]:
@@ -533,6 +532,7 @@ class LLMOutputParser:
 
         # 1. Attempt to extract JSON string using markers from the cleaned output
         cleaned_raw_output = self._clean_llm_output(raw_output)
+        self.logger.debug(f"Cleaned raw output for parsing: {cleaned_raw_output[:500]}...")
 
         marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
         if marker_extraction_result:
@@ -553,6 +553,7 @@ class LLMOutputParser:
             try:
                 parsed_data = json.loads(cleaned_raw_output)
                 extracted_json_str = cleaned_raw_output
+                self.logger.debug("Direct JSON parsing of cleaned output successful.")
             except json.JSONDecodeError:
                 # No direct JSON, try markdown blocks
                 extracted_json_str = self._extract_json_from_markdown(
@@ -611,6 +612,7 @@ class LLMOutputParser:
                 schema_model,
                 malformed_blocks_list,
                 raw_output,
+                parsed_data,
                 extracted_json_str=extracted_json_str,
             )
 
@@ -636,6 +638,7 @@ class LLMOutputParser:
                     schema_model,
                     malformed_blocks_list,
                     raw_output,
+                    parsed_data,
                     extracted_json_str=extracted_json_str,
                 )
 
@@ -808,6 +811,7 @@ class LLMOutputParser:
                 schema_model,
                 malformed_blocks_list,
                 raw_output,
+                parsed_data,
                 extracted_json_str=extracted_json_str,
             )
 

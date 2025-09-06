@@ -102,32 +102,32 @@ class PromptOptimizer:
         }
 
         # Regex to extract sections based on headings/markers
-        # This needs to be robust to the exact prompt structure in personas.yaml
-        core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)\n---", prompt, re.DOTALL)
+        # More robust regex patterns to capture sections based on common markdown headings or explicit markers
+        core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)(?=\n---|\Z)", prompt, re.DOTALL)
         if core_mission_match:
             sections["core_mission"] = core_mission_match.group(1).strip()
 
-        critical_instruction_match = re.search(r"(---\n\s*\*\*CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION\*\*.*?)\n---", prompt, re.DOTALL)
+        critical_instruction_match = re.search(r"(---\n\s*\*\*CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
         if critical_instruction_match:
             sections["critical_instruction_absolute_adherence"] = critical_instruction_match.group(1).strip()
 
-        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION:\*\*|\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
         if security_analysis_match:
             sections["security_analysis"] = security_analysis_match.group(1).strip()
 
-        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
         if token_optimization_match:
             sections["token_optimization"] = token_optimization_match.group(1).strip()
         
-        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
         if testing_strategy_match:
             sections["testing_strategy"] = testing_strategy_match.group(1).strip()
 
-        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)\n---", prompt, re.DOTALL)
+        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
         if ai_reasoning_match:
             sections["ai_reasoning_quality"] = ai_reasoning_match.group(1).strip()
 
-        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput)", prompt, re.DOTALL)
+        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*|\Z)", prompt, re.DOTALL)
         if json_instructions_match:
             sections["critical_json_output_instructions"] = json_instructions_match.group(1).strip()
 
@@ -135,8 +135,11 @@ class PromptOptimizer:
         if json_schema_match:
             sections["json_schema"] = json_schema_match.group(1).strip()
 
-        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas
-        # This order can be adjusted based on observed LLM behavior
+        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas.
+        # The order is crucial for effective truncation.
+        # Core mission and JSON schema/instructions are always critical.
+        # Specific analysis areas (security, token, testing, reasoning) can be dynamically prioritized
+        # or truncated more aggressively if the overall prompt is too long.
         prioritized_sections = [
             sections["core_mission"],
             sections["critical_instruction_absolute_adherence"],

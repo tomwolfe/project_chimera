@@ -1,4 +1,3 @@
-# src/utils/code_validator.py
 import io
 from typing import List, Tuple, Dict, Any, Optional, Union
 import subprocess
@@ -66,7 +65,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                     lint_command,
                     capture_output=True,
                     text=True,
-                    check=False, # Changed to False to prevent CalledProcessError on linting issues
+                    check=False, # Ruff returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
                     shell=False,
                     timeout=30,
                 )
@@ -234,7 +233,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=False, # Changed to False to prevent CalledProcessError on security issues
+                check=False, # Bandit returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
             )
 
             if (
