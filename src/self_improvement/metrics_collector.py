@@ -413,7 +413,7 @@ class FocusedMetricsCollector:
                         logger.warning(f"Repos section in pre-commit is malformed (not a list). Skipping repos processing.")
                         malformed_blocks.append({
                             "type": "PRE_COMMIT_REPOS_SECTION_MALFORMED",
-                            "message": "Repos section is not a list.",
+                            "message": "Repos section is not a dictionary.",
                             "file": str(pre_commit_path)
                         })
 
@@ -845,6 +845,7 @@ class FocusedMetricsCollector:
             "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
+        # Initialize aggregation variables *before* the os.walk loop
         total_functions_across_codebase = 0
         total_loc_across_functions = 0
         total_complexity_across_functions = 0
