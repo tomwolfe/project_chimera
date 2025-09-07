@@ -2,7 +2,9 @@
 # app.py
 import streamlit as st
 import os
-import io # Used in capture_rich_output_and_get_console
+# NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+import io
 import contextlib # Used in capture_rich_output_and_get_console
 import re # Used in sanitize_user_input
 import datetime # Used in _log_persona_change
@@ -1161,7 +1163,7 @@ with col2:
             and st.session_state.selected_example_name == "Custom Prompt"
         ):
             if st.session_state.codebase_context:
-                st.session_state.codebase_context = {}
+                st.session_state.codebase_state.codebase_context = {}
                 st.session_state.uploaded_files = []
                 st.info("Codebase context cleared for custom prompt.")
 
