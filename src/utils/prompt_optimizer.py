@@ -30,12 +30,27 @@ class PromptOptimizer:
         
         # Get persona-specific token limits from settings
         # Use a default if not explicitly defined for the persona
+        # Note: max_output_tokens_for_turn is already passed, so we use that as the target output.
+        # The persona's max_tokens from PersonaConfig is the hard limit for output.
+        # Here, we're concerned with the *input* prompt's size.
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
 
+        # Heuristic: If the current prompt tokens are already very high,
+        # or if the combined input + expected output tokens exceed a certain percentage
+        # of the persona's total capacity (e.g., 80% of its max_tokens from PersonaConfig),
+        # then we should aggressively optimize the input.
+        # The `max_output_tokens_for_turn` is the *actual* budget for the output,
+        # so we should consider it.
+        
         # Calculate a soft limit for the input prompt based on the persona's overall capacity
         # and the expected output size.
+        # A persona's total capacity is its max_tokens (from PersonaConfig, which is passed to _execute_llm_turn)
+        # We want to ensure input + output fits within that.
+        # Let's assume `max_output_tokens_for_turn` is the effective max output.
+        # So, the input should ideally be `persona_total_capacity - max_output_tokens_for_turn`.
+        
         # Prioritize `persona_input_token_limit` from settings for input control.
         effective_input_limit = persona_input_token_limit
 

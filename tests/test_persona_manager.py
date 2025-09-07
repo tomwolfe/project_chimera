@@ -5,7 +5,7 @@ from src.models import PersonaConfig
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.config.persistence import ConfigPersistence
-import time # Import time for timestamp mocking
+import time
 
 @pytest.fixture
 def mock_token_tracker():
@@ -220,18 +220,19 @@ def test_get_adjusted_persona_config_truncated(persona_manager_instance):
     # Assert that the system prompt includes the truncation warning
     assert "CRITICAL: Be extremely concise" in truncated_config.system_prompt
 
-def test_record_persona_performance(persona_manager_for_metrics):
+def test_record_persona_performance(persona_manager_instance):
     """Tests recording persona performance metrics."""
-    pm = persona_manager_for_metrics
+    pm = persona_manager_instance
+    pm._initialize_performance_metrics() # Ensure metrics are initialized for TestPersona
     # Record a successful turn
-    pm.record_persona_performance("TestPersona", 1, {}, True, "Valid output")
+    pm.record_persona_performance("TestPersona", 1, {}, True, "Valid output", schema_validation_failed=False, is_truncated=False)
     metrics = pm.persona_performance_metrics["TestPersona"]
     assert metrics["total_turns"] == 1
     assert metrics["schema_failures"] == 0
     assert metrics["truncation_failures"] == 0
 
     # Record a turn with schema failure
-    pm.record_persona_performance("TestPersona", 2, {}, False, "Schema error")
+    pm.record_persona_performance("TestPersona", 2, {}, False, "Schema error", schema_validation_failed=True, is_truncated=False)
     metrics = pm.persona_performance_metrics["TestPersona"]
     assert metrics["total_turns"] == 2
     assert metrics["schema_failures"] == 1
@@ -271,9 +272,9 @@ def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(person
     assert "Visionary_Generator_TRUNCATED" in optimized_sequence
     assert "Skeptical_Generator" in optimized_sequence # Skeptical_Generator should remain as is
 
-def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_metrics):
+def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_instance):
     """Test adaptive temperature adjustment based on schema failures."""
-    pm = persona_manager_for_metrics
+    pm = persona_manager_instance
     original_temp = pm.all_personas["TestPersona"].temperature
     metrics = pm.persona_performance_metrics["TestPersona"]
 
@@ -287,9 +288,9 @@ def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_me
     assert metrics["last_adjusted_temp"] == adjusted_config.temperature
     assert metrics["total_turns"] == 0 # Metrics should be reset after adjustment
 
-def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_metrics):
+def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_instance):
     """Test adaptive max_tokens adjustment based on truncation failures."""
-    pm = persona_manager_for_metrics
+    pm = persona_manager_instance
     original_max_tokens = pm.all_personas["TestPersona"].max_tokens
     metrics = pm.persona_performance_metrics["TestPersona"]
 

@@ -28,7 +28,7 @@ skip-magic-trailing-comma = false
 
 [tool.bandit]
 conf_file = "pyproject.toml"
-level = "HIGH"
+level = "HIGH" # Ensure this is explicitly set to HIGH
 confidence = "MEDIUM"
 exclude = [
     "**/migrations/**",

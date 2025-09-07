@@ -921,7 +921,7 @@ class FocusedMetricsCollector:
 
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (
-                total_complexity_across_functions / total_functions_across_codebase
+                total_complexity_across_codebase / total_functions_across_codebase
             )
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
                 total_loc_across_functions / total_functions_across_codebase
@@ -1004,7 +1004,7 @@ class FocusedMetricsCollector:
         """
         coverage_data = {
             "overall_coverage_percentage": 0.0,
-            "files_covered": 0,
+            "covered_statements": 0, # Renamed for clarity
             "total_files": 0,
             "coverage_details": "Failed to run coverage tool.",
         }
@@ -1026,8 +1026,8 @@ class FocusedMetricsCollector:
                 with open(coverage_json_path, "r", encoding="utf-8") as f:
                     report = json.load(f)
                 
-                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
-                coverage_data["files_covered"] = report.get("totals", {}).get("num_statements", 0) - report.get("totals", {}).get("missing_statements", 0)
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0) # Corrected key
+                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0) # Corrected key
                 coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
                 coverage_data["coverage_details"] = "Coverage report generated successfully."
                 coverage_json_path.unlink() # Clean up the generated JSON file

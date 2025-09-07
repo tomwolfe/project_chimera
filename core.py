@@ -631,10 +631,9 @@ class SocraticDebate:
         field_path = error_details.get("field_path", "N/A")
         invalid_value_snippet = str(error_details.get("invalid_value", "N/A"))[:200]
         retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
-        retry_feedback += (
-            "CRITICAL: Your output failed schema validation. You MUST correct this.\n"
-        )
-        retry_feedback += "REMEMBER: OUTPUT MUST BE RAW JSON ONLY WITH NO MARKDOWN. STRICTLY ADHERE TO THE SCHEMA.\n\n"
+        retry_feedback += "CRITICAL: Your output failed schema validation. You MUST correct this. "
+        retry_feedback += "Ensure the JSON is perfectly formed, with correct types and no extra text or markdown fences. "
+        retry_feedback += "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
         return f"{retry_feedback}Original prompt: {prompt_for_llm}"
 
     def _handle_content_alignment_check(
