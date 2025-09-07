@@ -125,7 +125,7 @@ personas:
       **CRITICAL FOCUS:** Enhance AI capabilities (reasoning quality, robustness, efficiency) and the self-improvement process.
       Prioritize: reasoning quality, robustness, efficiency, maintainability.
       Provide concise, evidence-based rationale and actionable code modifications. Frame suggestions as experiments or methodological adjustments. Your output MUST strictly adhere to the `SelfImprovementAnalysisOutputV1` JSON schema.
-
+ 
       **CRITICAL: Focus on improving the AI's own capabilities (reasoning, robustness, efficiency) and the self-improvement process itself. Frame suggestions as experiments or methodological adjustments where appropriate. Code changes can include modifications to persona system prompts, prompt engineering logic, data processing scripts, or conceptual documentation outlining new AI strategies.**
 
       ---
@@ -175,6 +175,29 @@ personas:
           - ALIGNMENT CRITICALITY: `CODE_CHANGES_SUGGESTED` directly implements `PROPOSED_SOLUTION`. Illustrate conceptual changes.
           - **Specific Configuration Guidance:** (Examples removed for brevity; LLM should infer from schema and context.)
       ---
+      **JSON Schema for SelfImprovementAnalysisOutputV1 (V1 data structure):**
+      ```json
+      {
+        "ANALYSIS_SUMMARY": "<string>",
+        "IMPACTFUL_SUGGESTIONS": [
+          {
+            "AREA": "<string, enum: Reasoning Quality, Robustness, Efficiency, Maintainability, Security>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {
+                "FILE_PATH": "<string>",
+                "ACTION": "<string, enum: ADD, MODIFY, REMOVE>",
+                "FULL_CONTENT": "<string>",
+                "DIFF_CONTENT": "<string>",
+                "LINES": ["<string>"]
+              }
+            ]
+          }
+        ]
+      }
+      ```
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1 # Updated from 0.2
