@@ -10,6 +10,7 @@ from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager
 from src.utils.output_parser import LLMOutputParser # Keep LLMOutputParser
 from src.self_improvement.metrics_collector import FocusedMetricsCollector # Import FocusedMetricsCollector
+from src.exceptions import SchemaValidationError # Import SchemaValidationError
 from src.self_improvement.content_validator import ContentAlignmentValidator # Import ContentAlignmentValidator
 from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer
 
@@ -276,3 +277,43 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
 
     # Ensure the generate call was made for the second turn before the exception
     assert mock_gemini_provider.generate.call_count == 2
+
+def test_execute_llm_turn_schema_validation_retry(socratic_debate_instance, mock_gemini_provider):
+    """Tests that _execute_llm_turn retries on SchemaValidationError."""
+    persona_name = "Constructive_Critic"
+    prompt_for_llm = "Critique this."
+    phase = "debate"
+    max_output_tokens_for_turn = 1000
+
+    # Simulate initial malformed output, then a valid one on retry
+    mock_gemini_provider.generate.side_effect = [
+        ("Malformed JSON string", 50, 50, False), # First attempt: malformed
+        ("{'CRITIQUE_SUMMARY': 'Valid critique', 'CRITIQUE_POINTS': [], 'SUGGESTIONS': []}", 60, 60, False), # Second attempt: valid
+    ]
+
+    # Mock the parser to raise SchemaValidationError on first call, then succeed
+    with patch('src.utils.output_parser.LLMOutputParser.parse_and_validate') as mock_parse:
+        mock_parse.side_effect = [
+            # First call: simulate schema validation failure
+            SchemaValidationError(
+                error_type="validation_error",
+                field_path="CRITIQUE_SUMMARY",
+                invalid_value="missing",
+                details={"message": "Missing required field"}
+            ),
+            # Second call: simulate success
+            ({'CRITIQUE_SUMMARY': 'Valid critique', 'CRITIQUE_POINTS': [], 'SUGGESTIONS': [], 'malformed_blocks': []}),
+        ]
+
+        output = socratic_debate_instance._execute_llm_turn(
+            persona_name, prompt_for_llm, phase, max_output_tokens_for_turn, max_retries=1
+        )
+
+        # Assert that generate was called twice (initial + 1 retry)
+        assert mock_gemini_provider.generate.call_count == 2
+        # Assert that parse_and_validate was called twice
+        assert mock_parse.call_count == 2
+        # Assert that the final output is the valid one
+        assert output["CRITIQUE_SUMMARY"] == "Valid critique"
+        # Assert that a malformed block for retry was recorded
+        assert any(block['type'] == 'RETRYABLE_VALIDATION_ERROR' for block in socratic_debate_instance.intermediate_steps.get('malformed_blocks', []))

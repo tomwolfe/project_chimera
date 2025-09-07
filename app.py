@@ -43,7 +43,8 @@ from collections import defaultdict # Used in generate_markdown_report, validati
 from pydantic import ValidationError # Used in handle_debate_errors
 import html # Used in sanitize_user_input
 import difflib # Used in diff_lines
-import subprocess # NEW: Added for execute_command function
+# import subprocess # REMOVED: Not needed after refactoring execute_command
+from src.utils.command_executor import execute_command_safely # NEW: Import for secure command execution
 
 import yaml # Used in load_config, but also for persona_manager.load_framework_into_session
 import json # Used for json.dumps in results display
@@ -433,28 +434,22 @@ def handle_debate_errors(error: Exception):
 # --- MODIFIED: The execute_command function was here and was vulnerable.
 # It is now fixed to use a secure subprocess call.
 # NOTE: This function is NOT part of the original codebase's src/utils/command_executor.py.
-# It was a local function in app.py that was vulnerable.
-def execute_command(command: str, timeout: int = 60) -> str:
+# It was a local function in app.py that was vulnerable, now it's refactored to use the safe utility.
+def execute_command(command_str: str, timeout: int = 60) -> str:
     """
-    Executes a shell command safely, capturing output and errors.
-    This function is specifically for simple 'echo' commands within the app.
-    For more complex command execution, use `execute_command_safely` from `src.utils.command_executor`.
+    Executes a simple command safely using the centralized utility.
+    This function is specifically for simple 'echo' commands within the app's UI.
     """
     try:
-        # CRITICAL: Avoid shell=True with user input. Prefer list-based arguments.
-        # For this 'echo' command, we can safely pass it as a literal argument to echo.
-        # This prevents shell injection.
-        safe_command_list = ['echo', command]
-        result = subprocess.run(safe_command_list, capture_output=True, text=True, timeout=timeout)
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Command timed out: {' '.join(safe_command_list)}")
-        return "Command timed out."
-    except FileNotFoundError:
-        logger.error(f"Command not found: {safe_command_list[0]}")
-        return f"Error: Command '{safe_command_list[0]}' not found."
+        # Use the centralized, secure command executor
+        # For 'echo', we pass it as a list of arguments to prevent injection.
+        return_code, stdout, stderr = execute_command_safely(['echo', command_str], timeout=timeout)
+        if return_code == 0:
+            return stdout.strip()
+        else:
+            return f"Error executing command: {stderr.strip()}"
     except Exception as e:
-        logger.error(f"Error executing command {' '.join(safe_command_list)}: {e}", exc_info=True)
+        logger.error(f"Error executing command '{command_str}': {e}", exc_info=True)
         return f"Error executing command: {e}"
 # --- END MODIFIED execute_command function ---
 
