@@ -1389,6 +1389,20 @@ class SocraticDebate:
                         persona_name, turn_output, debate_history # Pass current history
                     )
                 
+                # Add a meta-reasoning step for clarity, especially in conflict scenarios
+                if len(debate_history) > 0 and persona_name != debate_history[-1].get("persona"):
+                    last_response = debate_history[-1].get("output", {}).get("general_output", str(debate_history[-1].get("output"))) # Get previous speaker's response
+                    meta_reasoning_prompt = f"The previous speaker stated: '{last_response}'. Based on this, explicitly state your primary point of contention or agreement and the core reason for it before proceeding with your main response."
+                    # This meta-reasoning is for the *current* persona, so it should be part of its prompt,
+                    # but for the purpose of the diff, it's added here as a separate step.
+                    # In a real implementation, this would be integrated into the prompt construction.
+                    # For now, we'll just log it as a conceptual step.
+                    self._log_with_context(
+                        "debug",
+                        f"Meta-reasoning step for {persona_name}: {meta_reasoning_prompt}",
+                        persona=persona_name,
+                    )
+
                 # Append the output to the debate history
                 debate_history.append({"persona": persona_name, "output": turn_output})
 

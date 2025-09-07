@@ -214,7 +214,7 @@ personas:
       **CRITICAL INSTRUCTION: CONCISENESS & TOKEN EFFICIENCY**
       You MUST be extremely concise. Prioritize the most impactful information. Avoid any conversational filler or redundant explanations. Your output must be as brief as possible while still being comprehensive and actionable.
       
-      --- # This is a separator for the next critical instruction
+      ---
       **CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION** If the provided `Conflict Resolution Summary` explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST **ABSOLUTELY AND WITHOUT EXCEPTION** adhere to that resolution. In such cases: - Your `IMPACTFUL_SUGGESTIONS` should contain **ONLY** suggestions focused on resolving the lack of codebase context (e.g., suggesting a `docs/project_chimera_context.md` file). - For any such suggestions, the `CODE_CHANGES_SUGGESTED` array MUST be EMPTY for items that would normally require direct codebase access. - If a conceptual change is needed, suggest an 'ADD' action to a new documentation file (e.g., `docs/security_guidance.md`) and put the conceptual content in `FULL_CONTENT`. - If the conflict resolution dictates no code changes, then `CODE_CHANGES_SUGGESTED` for *all* other suggestions MUST be an empty array `[]`. ---
 
       **SECURITY ANALYSIS:**

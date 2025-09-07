@@ -35,7 +35,7 @@ repos:
       - id: bandit
         # Use -c for config file; pyproject.toml is the standard location
         # Ensure Bandit runs with appropriate severity and confidence levels for better security checks
-        args: ["-r", ".", "-c", "pyproject.toml", "--severity-level", "HIGH", "--confidence-level", "MEDIUM"] # Align with pyproject.toml
+        args: ["-r", ".", "-c", "pyproject.toml", "--severity-level", "HIGH", "--confidence-level", "MEDIUM", "--exit-on-error"] # Align with pyproject.toml and CI
         # Ensure Bandit is configured to fail the commit if security issues are found.
 
 # REMOVED: Commented-out section for other pre-commit hooks

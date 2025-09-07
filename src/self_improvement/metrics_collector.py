@@ -1005,6 +1005,8 @@ class FocusedMetricsCollector:
         coverage_data = {
             "overall_coverage_percentage": 0.0,
             "covered_statements": 0, # Renamed for clarity
+            "files_covered_count": 0,
+            "total_python_files_analyzed": 0,
             "total_files": 0,
             "coverage_details": "Failed to run coverage tool.",
         }
@@ -1028,7 +1030,10 @@ class FocusedMetricsCollector:
                 
                 coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0) # Corrected key
                 coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0) # Corrected key
-                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0) # Total statements, keep for context
+                coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
+                coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
+
                 coverage_data["coverage_details"] = "Coverage report generated successfully."
                 coverage_json_path.unlink() # Clean up the generated JSON file
             else:
