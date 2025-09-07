@@ -625,7 +625,9 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 
 
 def validate_code_output(
-    parsed_change: Dict[str, Any], original_content: str = None
+    parsed_change: Dict[str, Any],
+    original_content: str = None,
+    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None, # NEW: Add cache parameter
 ) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get("FILE_PATH")
@@ -685,11 +687,29 @@ def validate_code_output(
                         "message": "New content is identical to original.",
                     }
                 )
+            
+            # NEW: If cache is available, add pre-computed issues for original content
+            if file_analysis_cache and file_path_str in file_analysis_cache:
+                cached_analysis = file_analysis_cache[file_path_str]
+                if "ruff_issues" in cached_analysis:
+                    issues.extend(cached_analysis["ruff_issues"])
+                if "bandit_issues" in cached_analysis:
+                    issues.extend(cached_analysis["bandit_issues"])
+                if "ast_security_issues" in cached_analysis:
+                    issues.extend(cached_analysis["ast_security_issues"])
+                logger.debug(f"Added pre-computed issues for original content of {file_path_str} from cache.")
+            else:
+                # If no cache or not in cache, the original content's issues would not be added here.
+                # This is fine, as the primary goal of this function is to validate the *proposed change*.
+                pass
+
+            # Always run tools on the NEW content for MODIFY actions
             if is_python:
                 issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
         else:
+            # If no original content provided, just run tools on the new content
             if is_python:
                 issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
@@ -724,7 +744,9 @@ def validate_code_output(
 
 
 def validate_code_output_batch(
-    parsed_data: Dict, original_contents: Dict[str, str] = None
+    parsed_data: Dict,
+    original_contents: Dict[str, str] = None,
+    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None, # NEW: Add cache parameter
 ) -> Dict[str, Any]:
     """Validates a batch of code changes and aggregates issues per file."""
     if original_contents is None:
@@ -789,7 +811,8 @@ def validate_code_output_batch(
         if file_path:
             try:
                 original_content = original_contents.get(file_path)
-                validation_result = validate_code_output(change_entry, original_content)
+                # NEW: Pass the file_analysis_cache to validate_code_output
+                validation_result = validate_code_output(change_entry, original_content, file_analysis_cache)
 
                 all_validation_results[file_path] = validation_result.get("issues", [])
                 logger.debug(

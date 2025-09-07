@@ -1327,6 +1327,7 @@ def _run_socratic_debate_process():
     )
 
     st.session_state.token_tracker.reset()  # NEW: Reset token tracker at start of debate
+    st.session_state.file_analysis_cache = None # NEW: Reset cache at start of debate
 
     if not st.session_state.api_key_input.strip():
         st.error("Please enter your Gemini API Key in the sidebar to proceed.")
@@ -1545,6 +1546,14 @@ def _run_socratic_debate_process():
                 )
 
                 final_answer, intermediate_steps = debate_instance.run_debate()
+
+                # NEW: Capture file_analysis_cache if available from the debate instance
+                if hasattr(debate_instance, 'metrics_collector') and debate_instance.metrics_collector:
+                    st.session_state.file_analysis_cache = debate_instance.metrics_collector.file_analysis_cache
+                    logger.debug("Captured file_analysis_cache from debate instance.")
+                else:
+                    st.session_state.file_analysis_cache = None
+
 
                 logger.info(
                     "Socratic Debate execution finished.",
@@ -1766,8 +1775,11 @@ if st.session_state.debate_ran:
                 ],
             }
 
+        # NEW: Pass file_analysis_cache to validate_code_output_batch
         validation_results_by_file = validate_code_output_batch(
-            parsed_llm_output_dict, st.session_state.get("codebase_context", {})
+            parsed_llm_output_dict,
+            st.session_state.get("codebase_context", {}),
+            file_analysis_cache=st.session_state.get("file_analysis_cache", None)
         )
 
         all_issues = []

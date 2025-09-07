@@ -14,9 +14,7 @@ import sys # Added for sys.executable
 
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
-    _run_ruff,
-    _run_bandit,
-    _run_ast_security_checks,
+    _run_ruff, _run_bandit, _run_ast_security_checks, # Centralized validation functions
 )
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -77,6 +75,7 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # NEW: Cache for file analyses
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
@@ -861,6 +860,10 @@ class FocusedMetricsCollector:
                             content = f.read()
                             content_lines = content.splitlines()
 
+                        # Check cache first, if not present, run tools and cache results
+                        if file_path not in self.file_analysis_cache:
+                            self.file_analysis_cache[file_path] = {}
+
                         ruff_issues = _run_ruff(content, file_path)
                         if ruff_issues:
                             metrics["code_quality"]["ruff_issues_count"] += len(
@@ -872,6 +875,7 @@ class FocusedMetricsCollector:
                             metrics["code_quality"]["ruff_violations"].extend(
                                 ruff_issues
                             )
+                            self.file_analysis_cache[file_path]["ruff_issues"] = ruff_issues
 
                         bandit_issues = _run_bandit(content, file_path)
                         if bandit_issues:
@@ -881,6 +885,7 @@ class FocusedMetricsCollector:
                             metrics["code_quality"]["detailed_issues"].extend(
                                 bandit_issues
                             )
+                            self.file_analysis_cache[file_path]["bandit_issues"] = bandit_issues
 
                         ast_security_issues = _run_ast_security_checks(
                             content, file_path
@@ -889,6 +894,7 @@ class FocusedMetricsCollector:
                             metrics["security"]["ast_security_issues_count"] += len(
                                 ast_security_issues
                             )
+                            self.file_analysis_cache[file_path]["ast_security_issues"] = ast_security_issues
                             metrics["code_quality"]["detailed_issues"].extend(
                                 ast_security_issues
                             )
@@ -1344,7 +1350,7 @@ This document outlines the refined methodology for identifying and implementing 
                             "FILE_PATH": ".github/workflows/ci.yml",
                             "ACTION": "MODIFY",
                             "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
-+++ b/.github/workflows/ci.yml
++++ b/app.py
 @@ -18,8 +18,8 @@
                # Explicitly install Ruff and Black for CI to ensure they are available
                pip install ruff black
