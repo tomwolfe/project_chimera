@@ -10,6 +10,7 @@ from src.utils.output_parser import LLMOutputParser
 from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
+from src.exceptions import ChimeraError # Import ChimeraError for raising
 
 # Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:

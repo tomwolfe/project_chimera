@@ -1,3 +1,5 @@
+# src/utils/code_validator.py
+
 import io
 from typing import List, Tuple, Dict, Any, Optional, Union
 import subprocess
@@ -49,9 +51,8 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             tmp_file_path = Path(temp_file.name)
 
             # 1. Run Ruff Linter
+            # FIX: Removed 'python', '-m' from the command list
             lint_command = [
-                "python", # Explicitly use python executable
-                "-m",
                 "ruff",
                 "check",
                 "--output-format=json",
@@ -131,9 +132,8 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
 
             # 2. Run Ruff Formatter Check
+            # FIX: Removed 'python', '-m' from the command list
             format_command = [
-                "python", # Explicitly use python executable
-                "-m",
                 "ruff",
                 "format",
                 "--check",
@@ -220,9 +220,8 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
             else:
                 config_args = ["-c", str(bandit_config_path)]
 
+            # FIX: Removed 'python', '-m' from the command list
             command = [
-                "python", # Explicitly use python executable
-                "-m",
                 "bandit",
                 "-q",
                 "-f",

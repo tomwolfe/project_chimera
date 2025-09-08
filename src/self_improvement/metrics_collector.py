@@ -1,3 +1,4 @@
+# src/self_improvement/metrics_collector.py
 import os
 import json
 import ast
@@ -65,6 +66,7 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
+        metrics_collector: Any, # NEW: Add metrics_collector to init
     ):
         """Initialize with debate context for analysis."""
         self.initial_prompt = initial_prompt
@@ -75,24 +77,10 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
+        self.metrics_collector = metrics_collector # NEW: Store metrics_collector
         self.codebase_path = (
             PROJECT_ROOT
-        )
-        self.metrics = {}
-        self.critical_metric = None
-        self.reasoning_quality_metrics = {
-            "argument_strength_score": 0.0,
-            "debate_effectiveness": 0.0,
-            "conflict_resolution_quality": 0.0,
-            "80_20_adherence_score": 0.0,
-            "reasoning_depth": 0,
-            "critical_thinking_indicators": {
-                "counter_arguments": 0,
-                "evidence_citations": 0,
-                "assumption_challenges": 0,
-            },
-        }
+        )  # Assuming the analyst operates from the project root
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
         """Collect core metrics and identify the single most critical bottleneck."""
@@ -1012,10 +1000,10 @@ class FocusedMetricsCollector:
         }
         try:
             # Run pytest with coverage and generate a JSON report
-            # FIX: Add -v for verbosity to help debug failures.
-            # A non-zero return code from pytest (e.g., 1 for test failures) is still valid for coverage report generation.
+            # FIX: Construct the command without the python executable,
+            # allowing execute_command_safely to handle it.
             command = [
-                sys.executable, "-m", "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
+                "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
             ]
             # Use execute_command_safely for robustness
             return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
@@ -1483,49 +1471,89 @@ This document outlines the refined methodology for identifying and implementing 
                             "FILE_PATH": "tests/test_llm_provider.py",
                             "ACTION": "ADD",
                             "FULL_CONTENT": """import pytest
-from src.llm_provider import LLMProvider
+from src.llm_provider import GeminiProvider # Corrected import
 
 # Mocking the LLM API for testing
 class MockLLMClient:
     def __init__(self, model_name):
         self.model_name = model_name
 
-    def generate_content(self, prompt):
+    def generate_content(self, contents, config): # Updated signature to match genai.Client
         # Simulate a response based on prompt content
-        if "summarize" in prompt.lower():
-            return "This is a simulated summary."
-        elif "analyze" in prompt.lower():
-            return "this is a simulated analysis."
+        prompt_content = contents # Assuming 'contents' is the prompt string
+        if "summarize" in prompt_content.lower():
+            return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="This is a simulated summary.")]))])
+        elif "analyze" in prompt_content.lower():
+            return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="this is a simulated analysis.")]))])
         else:
-            return "This is a simulated default response."
+            return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="This is a simulated default response.")]))])
+
+    def count_tokens(self, model, contents): # Updated signature to match genai.Client
+        return MagicMock(total_tokens=len(contents) // 4) # Simulate token count
 
 @pytest.fixture
-def llm_provider():
+def llm_provider_instance():
     # Use the mock client for testing
-    client = MockLLMClient(model_name="mock-model")
-    return LLMProvider(client=client)
+    mock_client = MockLLMClient(model_name="mock-model")
+    mock_tokenizer = MagicMock() # Mock tokenizer
+    mock_tokenizer.count_tokens.side_effect = lambda text: len(text) // 4 # Simple token count
+    mock_tokenizer.max_output_tokens = 8192 # Set a default max_output_tokens
+    
+    # Patch genai.Client during fixture creation
+    with patch('src.llm_provider.genai.Client', return_value=mock_client):
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=MagicMock() # Mock settings
+        )
+        return provider
 
-def test_llm_provider_initialization(llm_provider):
-    \"\"\"Test that the LLMProvider initializes correctly.\"\"\"
-    assert llm_provider.client.model_name == "mock-model"
+def test_llm_provider_initialization(llm_provider_instance):
+    \"\"\"Test that the GeminiProvider initializes correctly.\"\"\"
+    assert llm_provider_instance.model_name == "mock-model"
 
-def test_llm_provider_generate_content_summary(llm_provider):
+def test_llm_provider_generate_content_summary(llm_provider_instance):
     \"\"\"Test content generation for a summarization prompt.\"\"\"
     prompt = "Please summarize the following text: ..."
-    response = llm_provider.generate_content(prompt)
-    assert response == "This is a simulated summary."
+    response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
+        prompt=prompt,
+        system_prompt="You are a helpful assistant.",
+        temperature=0.7,
+        max_tokens=100,
+    )
+    assert response_text == "This is a simulated summary."
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert is_truncated == False
 
-def test_llm_provider_generate_content_analysis(llm_provider):
+def test_llm_provider_generate_content_analysis(llm_provider_instance):
     \"\"\"Test content generation for an analysis prompt.\"\"\"
     prompt = "Analyze the provided data: ..."
-    response = llm_provider.generate_content(prompt)
-    assert response == "this is a simulated analysis."
+    response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
+        prompt=prompt,
+        system_prompt="You are a helpful assistant.",
+        temperature=0.7,
+        max_tokens=100,
+    )
+    assert response_text == "this is a simulated analysis."
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert is_truncated == False
 
-def test_llm_provider_generate_content_default(llm_provider):
+def test_llm_provider_generate_content_default(llm_provider_instance):
     \"\"\"Test content generation for a general prompt.\"\"\"
     prompt = "What is the capital of France?"
-    response = llm_provider.generate_content(prompt)
-    assert response == "This is a simulated default response."
+    response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
+        prompt=prompt,
+        system_prompt="You are a helpful assistant.",
+        temperature=0.7,
+        max_tokens=100,
+    )
+    assert response_text == "This is a simulated default response."
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert is_truncated == False
 
 # Add more tests for different scenarios and edge cases
 """,
@@ -1536,15 +1564,16 @@ def test_llm_provider_generate_content_default(llm_provider):
                             "FULL_CONTENT": """import pytest
 from src.utils.prompt_engineering import format_prompt
 from src.persona_manager import PersonaManager # Needed for mocking in session_manager
+from unittest.mock import MagicMock # Import MagicMock
 
 # Mock app_config and EXAMPLE_PROMPTS for session_manager initialization
 @pytest.fixture
 def mock_app_config():
-    return {
-        "max_tokens_limit": 2000000,
-        "context_token_budget_ratio": 0.25,
-        "domain_keywords": {"General": ["general"], "Software Engineering": ["code"]},
-        "example_prompts": {
+    return MagicMock(
+        total_budget=2000000,
+        context_token_budget_ratio=0.25,
+        domain_keywords={"General": ["general"], "Software Engineering": ["code"]},
+        example_prompts={
             "Coding & Implementation": {
                 "Implement Python API Endpoint": {
                     "prompt": "Implement a new FastAPI endpoint.",
@@ -1553,7 +1582,7 @@ def mock_app_config():
                 }
             }
         }
-    }
+    )
 
 def test_format_prompt_basic():
     \"\"\"Test format_prompt with basic variable substitution.\"\"\"

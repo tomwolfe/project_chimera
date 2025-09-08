@@ -175,7 +175,7 @@ personas:
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1
-    max_tokens: 4096
+    max_tokens: 8192 # MODIFIED: Increased from 4096 to 8192
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
 
   # Domain-specific personas
@@ -285,7 +285,7 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", "<string>"],
+        "SUGGESTIONS": ["<string>", ["<string>"]],
         "malformed_blocks": []
       }
       ```

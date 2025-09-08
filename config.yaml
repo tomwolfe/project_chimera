@@ -11,3 +11,7 @@ max_tokens_limit: 2000000 # NEW: Added for configurable max_value in UI
 self_improvement:
   max_suggestions: 5  # Enforce 80/20 principle by limiting to highest-impact items
   max_tokens_per_suggestion: 8000  # Prevent overly verbose suggestions
+  # MODIFIED: Reallocated budget from debate to synthesis
+  self_analysis_context_ratio: 0.45
+  self_analysis_debate_ratio: 0.30 # Decreased from 0.40
+  self_analysis_synthesis_ratio: 0.25 # Increased from 0.15
