@@ -493,5 +493,5 @@ persona_sets:
     - DevOps_Engineer
     - Test_Engineer
     - Constructive_Critic
-    - Devils_Advocate
+    - Devils_Advocate # ADDED: Devils_Advocate to the Self-Improvement persona set
     - Impartial_Arbitrator

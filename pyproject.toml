@@ -5,7 +5,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311" # Corrected to a valid Python version
+target-version = "py311" # FIXED: Corrected from "null" to "py311"
 
 [tool.ruff.lint]
 select = [
@@ -28,7 +28,7 @@ skip-magic-trailing-comma = false
 
 [tool.bandit]
 conf_file = "pyproject.toml"
-level = "info" # Changed to 'info' to align with common practice, but HIGH is recommended for production CI.
+level = "info" # FIXED: Corrected from "null" to "info" to align with common practice.
                # The CI workflow explicitly overrides this to HIGH for its run.
 confidence = "MEDIUM"
 exclude = [

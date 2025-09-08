@@ -246,7 +246,7 @@ class ConflictResolutionManager:
             logger.info(f"Attempting self-correction for {persona_name} (Retry {retry_attempt + 1}/{self.max_self_correction_retries}).")
             try:
                 # Ensure LLMProvider and Tokenizer are available
-                if not self.llm_provider or not self.llm_provider.tokenizer:
+                if not self.llm_provider or not self.llm_provider.tokenizer or not self.persona_manager:
                     raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
 
                 # FIX: Replicate logic from _prepare_llm_call_config to determine effective max tokens
@@ -254,10 +254,7 @@ class ConflictResolutionManager:
                 # without calling a SocraticDebate-specific method on GeminiProvider.
                 final_model_to_use = self.llm_provider.model_name # Use the provider's current model
                 actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
-                effective_max_output_tokens = min(
-                    persona_config.max_tokens, # Max tokens requested by persona
-                    actual_model_max_output_tokens # Max tokens allowed by the model
-                )
+                effective_max_output_tokens = min(persona_config.max_tokens, actual_model_max_output_tokens)
 
                 raw_llm_output, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
                     prompt=feedback_prompt,

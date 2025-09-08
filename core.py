@@ -291,7 +291,7 @@ class SocraticDebate:
         if "coding" in self.domain.lower():
             requirements.append("coding")
             
-        model = self.model_registry.get_model(requirements=requirements, preferred_model_name=preferred_model_name)
+        model = self.model_registry.get_model(requirements=requirements, budget=None, preferred_model_name=preferred_model_name)
         return model.name if model else preferred_model_name
     
     def _determine_phase_ratios(
@@ -1442,6 +1442,19 @@ class SocraticDebate:
                         self.intermediate_steps["Unresolved_Conflict"] = turn_output
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = None
                 else:
+                    # STRATEGIC ACTIVATION: If output is problematic but not a conflict,
+                    # consider inserting Devils_Advocate to challenge the reasoning.
+                    if "Devils_Advocate" not in personas_for_debate[i+1:]: # Avoid adding it multiple times
+                        self._log_with_context(
+                            "info",
+                            f"Problematic output from {persona_name} detected. Strategically inserting Devils_Advocate.",
+                            persona=persona_name
+                        )
+                        # Insert Devils_Advocate to run next
+                        personas_for_debate.insert(i + 1, "Devils_Advocate")
+                        # Re-distribute remaining budget to accommodate the new persona
+                        self._distribute_debate_persona_budgets(personas_for_debate)
+
                     previous_output_for_llm = turn_output
                     self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
@@ -1458,7 +1471,6 @@ class SocraticDebate:
                 self._log_with_context(
                     "error",
                     f"Error during {persona_name} turn: {e}. Attempting conflict resolution.",
-                    persona=persona_name,
                     exc_info=True,
                     original_exception=e,
                 )
@@ -1832,6 +1844,7 @@ class SocraticDebate:
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
+                metrics_collector=self.metrics_collector, # NEW: Pass metrics_collector
             )
             collected_metrics = metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
