@@ -48,6 +48,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -72,6 +73,17 @@ personas:
       **CRITICAL META-REASONING INSTRUCTION:** If the debate's conflict resolution (provided in the prompt) explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST adhere to that resolution. In such cases: - Your `CODE_CHANGES` should contain **ONLY** suggestions focused on resolving the lack of codebase context (e.g., suggesting a `docs/project_chimera_context.md` file). - For any such suggestions, the `CODE_CHANGES` array MUST be EMPTY for items that would normally require direct codebase access. - If a conceptual change is needed, suggest an 'ADD' action to a new documentation file (e.g., `docs/security_guidance.md`) and put the conceptual content in `FULL_CONTENT`. - If the conflict resolution dictates no code changes, then `CODE_CHANGES` for *all* other suggestions MUST be an empty array `[]`. ---
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
+      **CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:
+      ```diff
+      --- a/src/example.py
+      +++ b/src/example.py
+      @@ -1,3 +1,4 @@
+       def old_func():
+      -    print("old")
+      +    print("new")
+      +    print("added")
+      ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1
@@ -102,6 +114,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **Output a `ConflictReport` JSON object.**
     temperature: 0.15
@@ -119,6 +132,17 @@ personas:
       You are a general synthesizer. Consolidate and synthesize information from previous debate turns into a coherent, comprehensive response. Focus on clarity, conciseness, and addressing the core prompt. Your output MUST strictly adhere to the `GeneralOutput` JSON schema.
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
+      **CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:
+      ```diff
+      --- a/src/example.py
+      +++ b/src/example.py
+      @@ -1,3 +1,4 @@
+       def old_func():
+      -    print("old")
+      +    print("new")
+      +    print("added")
+      ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.2
@@ -171,6 +195,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
@@ -241,6 +266,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -277,6 +303,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -319,6 +346,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -353,6 +381,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -464,5 +493,5 @@ persona_sets:
     - DevOps_Engineer
     - Test_Engineer
     - Constructive_Critic
-    - Impartial_Arbitrator
     - Devils_Advocate
+    - Impartial_Arbitrator
