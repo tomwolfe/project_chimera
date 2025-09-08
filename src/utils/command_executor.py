@@ -29,7 +29,8 @@ def execute_command_safely(
         # NEW: Prepend sys.executable -m if the command starts with a Python module name.
         # This ensures the command runs with the same Python interpreter as the current process,
         # which is crucial for virtual environments and consistent tool execution.
-        if command and command[0] in ['pytest', 'ruff', 'bandit']:
+        # MODIFIED: Added check `and not command[0].startswith(sys.executable)` to prevent double-prepending
+        if command and command[0] in ['pytest', 'ruff', 'bandit'] and not command[0].startswith(sys.executable):
             command.insert(0, '-m')
             command.insert(0, sys.executable)
             logger.debug(f"Adjusted command to use sys.executable: {command}")

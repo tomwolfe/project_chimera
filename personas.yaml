@@ -161,29 +161,6 @@ personas:
       +    print("added")
       ```
 
-      **JSON Schema for SelfImprovementAnalysisOutputV1 (V1 data structure):**
-      ```json
-      {
-        "ANALYSIS_SUMMARY": "<string>",
-        "IMPACTFUL_SUGGESTIONS": [
-          {
-            "AREA": "<string, enum: Reasoning Quality, Robustness, Efficiency, Maintainability, Security>",
-            "PROBLEM": "<string>",
-            "PROPOSED_SOLUTION": "<string>",
-            "EXPECTED_IMPACT": "<string>",
-            "CODE_CHANGES_SUGGESTED": [
-              {
-                "FILE_PATH": "<string>",
-                "ACTION": "<string, enum: ADD, MODIFY, REMOVE>",
-                "FULL_CONTENT": "<string>",
-                "DIFF_CONTENT": "<string>",
-                "LINES": ["<string>"]
-              }
-            ]
-          }
-        ]
-      }
-      ```
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1

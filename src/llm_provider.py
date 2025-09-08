@@ -241,7 +241,7 @@ class GeminiProvider:
         persona_config: PersonaConfig = None,
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
         """
         Generates content using the Gemini API, protected by a circuit breaker.
         """
@@ -304,7 +304,7 @@ class GeminiProvider:
         system_prompt: str,
         config: types.GenerateContentConfig,
         model_name_to_use: str = None,
-    ) -> tuple[str, int, int]:
+    ) -> tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -350,6 +350,8 @@ class GeminiProvider:
                 output_tokens = self.tokenizer.count_tokens(
                     generated_text
                 )
+                # MODIFIED: Calculate is_truncated based on actual output tokens vs max_output_tokens
+                is_truncated = output_tokens >= config.max_output_tokens * 0.95
                 self._log_with_context(
                     "debug",
                     f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)",
@@ -372,7 +374,7 @@ class GeminiProvider:
                     full_generated_text=generated_text,
                 )
 
-                return generated_text, input_tokens, output_tokens
+                return generated_text, input_tokens, output_tokens, is_truncated # MODIFIED: Return 4 values
 
             except Exception as e:
                 error_msg = str(e).encode("utf-8", "replace").decode("utf-8")

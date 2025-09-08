@@ -1,5 +1,5 @@
 # .github/workflows/ci.yml
-name: CI/CD Pipeline
+name: CI Pipeline
 
 on: [push, pull_request] # Corrected 'on:' syntax
 
