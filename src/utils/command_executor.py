@@ -1,7 +1,7 @@
 # src/utils/command_executor.py
 import subprocess
 import logging
-import sys
+import sys # NEW: Import sys
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,13 @@ def execute_command_safely(
         Exception: For other errors during command execution.
     """
     try:
+        # NEW: Prepend sys.executable if the command starts with 'python' or 'pip'
+        # This ensures the command runs with the same Python interpreter as the current process,
+        # which is crucial for virtual environments and consistent tool execution.
+        if command and (command[0] == 'python' or command[0] == 'pip'):
+            command[0] = sys.executable
+            logger.debug(f"Adjusted command to use sys.executable: {command}")
+
         # Ensure shell=False for security when passing a list of arguments
         logger.info(f"Executing command: {command}")
         process = subprocess.run(

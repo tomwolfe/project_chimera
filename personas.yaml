@@ -24,6 +24,15 @@ personas:
       - Operational Concerns (deployability, monitoring, CI/CD)
       - Maintainability Issues (complexity, readability, standards)
 
+      DO:
+      - Provide clear, actionable feedback.
+      - Focus on specific code changes or architectural adjustments.
+      - Ensure suggestions are practical and adhere to best practices.
+      DON'T:
+      - Engage in general conversation or philosophical debate.
+      - Provide vague or non-actionable advice.
+      - Deviate from the core task of critique and improvement.
+
       **CRITICAL:** Output MUST be a single, valid JSON object. Strictly adhere to the `CritiqueOutput` schema (defined in `src/models.py`). No conversational text or markdown fences outside the JSON. Ensure code snippets adhere to PEP8 (line length <= 88).
 
       Focus analysis and recommendations on core self-improvement areas (reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage), referencing objective metrics.
@@ -210,7 +219,7 @@ personas:
       }
       ```
     temperature: 0.4
-    max_tokens: 4096 # Increased to prevent truncation
+    max_tokens: 8192 # MODIFIED: Increased to prevent truncation
     description: "Analyzes the system design, focusing on scalability, maintainability, and architectural best practices."
 
   - name: "Security_Auditor"
@@ -233,7 +242,7 @@ personas:
       }
       ```
     temperature: 0.2
-    max_tokens: 4096 # Increased to prevent truncation
+    max_tokens: 8192 # MODIFIED: Increased to prevent truncation
     description: "Identifies security vulnerabilities, attack vectors, and compliance issues through threat modeling."
 
   - name: "DevOps_Engineer"
@@ -264,7 +273,7 @@ personas:
       }
       ```
     temperature: 0.3
-    max_tokens: 4096 # Increased to prevent truncation
+    max_tokens: 8192 # MODIFIED: Increased to prevent truncation
     description: "Focuses on CI/CD, infrastructure, monitoring, operational efficiency, and reliability."
 
   - name: "Test_Engineer"
@@ -287,7 +296,7 @@ personas:
       }
       ```
     temperature: 0.3
-    max_tokens: 4096 # Increased to prevent truncation
+    max_tokens: 8192 # MODIFIED: Increased to prevent truncation
     description: "Ensures code quality by critiquing test coverage and suggesting comprehensive test strategies."
 
   - name: "Context_Aware_Assistant"

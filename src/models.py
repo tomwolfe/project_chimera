@@ -205,7 +205,8 @@ class ContextAnalysisOutput(BaseModel):
 # Moved LLMOutput and CodeChange definitions here for centralization.
 class CodeChange(BaseModel):
     file_path: str = Field(..., alias="FILE_PATH")
-    action: str = Field(..., alias="ACTION")
+    # MODIFIED: Added 'CREATE' and 'CREATE_DIRECTORY' to valid actions
+    action: Literal["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"] = Field(..., alias="ACTION")
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
     lines: List[str] = Field(default_factory=list, alias="LINES")
     diff_content: Optional[str] = Field(
@@ -235,7 +236,8 @@ class CodeChange(BaseModel):
     @classmethod
     def validate_action(cls, v):
         """Validates the action type."""
-        valid_actions = ["ADD", "MODIFY", "REMOVE"]
+        # MODIFIED: Added 'CREATE' and 'CREATE_DIRECTORY' to valid_actions
+        valid_actions = ["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"]
         if v not in valid_actions:
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
         return v
@@ -260,14 +262,14 @@ class CodeChange(BaseModel):
     @model_validator(mode="after")
     def check_content_based_on_action(self) -> "CodeChange":
         """Ensures content is provided based on action type and prioritizes diff_content for MODIFY."""
-        if self.action == "ADD":
-            if self.full_content is None:
+        if self.action in ["ADD", "CREATE", "CREATE_DIRECTORY"]: # MODIFIED: Include new actions
+            if self.full_content is None and not self.lines: # Allow lines for directory creation
                 raise ValueError(
-                    f"FULL_CONTENT is required for action 'ADD' on file '{self.file_path}'."
+                    f"FULL_CONTENT or LINES is required for action '{self.action}' on file '{self.file_path}'."
                 )
             if self.diff_content is not None:
                 raise ValueError(
-                    f"DIFF_CONTENT should not be provided for action 'ADD' on file '{self.file_path}'."
+                    f"DIFF_CONTENT should not be provided for action '{self.action}' on file '{self.file_path}'."
                 )
         elif self.action == "MODIFY":
             if self.diff_content is not None:
@@ -385,10 +387,6 @@ class CritiqueOutput(BaseModel):
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
-
-    # REMOVED: The validator `validate_paths_in_suggestions` is removed
-    # because `suggestions` is now a list of `SuggestionItem` objects,
-    # and `CodeChange` already handles path validation.
 
 
 # NEW: Pydantic model for General_Synthesizer's output
