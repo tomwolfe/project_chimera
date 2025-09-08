@@ -585,7 +585,8 @@ class SocraticDebate:
         system_prompt_for_llm: str,
     ) -> Tuple[str, int, int, bool]:
         """Executes the actual LLM API call and tracks tokens."""
-        raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
+        # MODIFIED: Unpack all 4 return values from self.llm_provider.generate()
+        raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = self.llm_provider.generate(
             prompt=current_prompt,
             system_prompt=system_prompt_for_llm,
             temperature=persona_config.temperature,
@@ -602,13 +603,14 @@ class SocraticDebate:
         self.intermediate_steps[f"{persona_config.name}_Actual_Max_Tokens"] = (
             effective_max_output_tokens
         )
-        is_truncated = output_tokens >= effective_max_output_tokens * 0.95
-        if is_truncated:
+        # REMOVED: This line is now redundant as is_truncated is returned by llm_provider.generate()
+        # is_truncated = output_tokens >= effective_max_output_tokens * 0.95
+        if is_truncated_from_llm: # MODIFIED: Use the unpacked variable
             self._log_with_context(
                 "warning",
                 f"Output for {persona_config.name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({effective_max_output_tokens}).",
             )
-        return raw_llm_output, input_tokens, output_tokens, is_truncated
+        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm # MODIFIED: Return the unpacked variable
 
     def _parse_and_track_llm_output(
         self, persona_name: str, raw_llm_output: str, output_schema: Type[BaseModel]
@@ -764,6 +766,7 @@ class SocraticDebate:
                         persona_config, max_output_tokens_for_turn, requested_model_name
                     )
                 )
+                # MODIFIED: Unpack all 4 return values from _make_llm_api_call
                 raw_llm_output, input_tokens, output_tokens, is_truncated = (
                     self._make_llm_api_call(
                         persona_config,
@@ -1690,11 +1693,11 @@ class SocraticDebate:
                         if len(turn_copy["output"]["CRITIQUE_SUMMARY"]) > 50
                         else turn_copy["output"]["CRITIQUE_SUMMARY"]
                     }
-                elif "summary" in turn_copy["output"]:
+                elif "ANALYSIS_SUMMARY" in turn_copy["output"]:
                     turn_copy["output"] = {
-                        "summary": turn_copy["output"]["summary"][:50] + "..."
-                        if len(turn_copy["output"]["summary"]) > 50
-                        else turn_copy["output"]["summary"]
+                        "ANALYSIS_SUMMARY": turn_copy["output"]["ANALYSIS_SUMMARY"][:50] + "..."
+                        if len(turn_copy["output"]["ANALYSIS_SUMMARY"]) > 50
+                        else turn_copy["output"]["ANALYSIS_SUMMARY"]
                     }
                 elif "general_output" in turn_copy["output"]:
                     turn_copy["output"] = {
