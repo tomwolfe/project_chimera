@@ -11,3 +11,4 @@ python-json-logger
 # Code quality and security tools (used in core logic for self-improvement)
 pycodestyle
 bandit
+pytest-cov # NEW: Required for test coverage metrics collection in production

@@ -10,11 +10,11 @@ import yaml
 import toml
 from pydantic import ValidationError
 from datetime import datetime
-import sys # Added for sys.executable
+import sys
 
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
-    _run_ruff, _run_bandit, _run_ast_security_checks, # Centralized validation functions
+    _run_ruff, _run_bandit, _run_ast_security_checks,
 )
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -75,10 +75,10 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # NEW: Cache for file analyses
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
         self.codebase_path = (
             PROJECT_ROOT
-        )  # Assuming the analyst operates from the project root
+        )
         self.metrics = {}
         self.critical_metric = None
         self.reasoning_quality_metrics = {
@@ -245,7 +245,7 @@ class FocusedMetricsCollector:
         if ci_yml_path.exists():
             try:
                 with open(ci_yml_path, "r", encoding="utf-8") as f:
-                    ci_config_raw = yaml.safe_load(f) or {} # Ensure it's a dict even if file is empty
+                    ci_config_raw = yaml.safe_load(f) or {}
                 with open(
                     ci_yml_path, "r", encoding="utf-8"
                 ) as f:
@@ -253,9 +253,9 @@ class FocusedMetricsCollector:
                     ci_workflow_jobs = {}
                     
                     jobs_section = ci_config_raw.get("jobs")
-                    if isinstance(jobs_section, dict): # NEW: Check if 'jobs' section is a dictionary
+                    if isinstance(jobs_section, dict):
                         for job_name, job_details in jobs_section.items():
-                            if not isinstance(job_details, dict): # NEW: Check if individual job_details is a dictionary
+                            if not isinstance(job_details, dict):
                                 logger.warning(f"Job '{job_name}' in CI workflow is malformed (not a dictionary). Skipping.")
                                 malformed_blocks.append({
                                     "type": "CI_JOB_MALFORMED",
@@ -267,9 +267,9 @@ class FocusedMetricsCollector:
 
                             steps_summary = []
                             steps_section = job_details.get("steps")
-                            if isinstance(steps_section, list): # NEW: Check if 'steps' section is a list
+                            if isinstance(steps_section, list):
                                 for step in steps_section:
-                                    if not isinstance(step, dict): # NEW: Check if individual step is a dictionary
+                                    if not isinstance(step, dict):
                                         logger.warning(f"Step in job '{job_name}' in CI workflow is malformed (not a dictionary). Skipping.")
                                         malformed_blocks.append({
                                             "type": "CI_STEP_MALFORMED",
@@ -305,7 +305,7 @@ class FocusedMetricsCollector:
                                             ci_content_lines, run_line_number, context_lines=3
                                         )
                                     steps_summary.append(CiWorkflowStep(**summary_item_data))
-                            else: # NEW: Handle malformed 'steps' section
+                            else:
                                 logger.warning(f"Steps section for job '{job_name}' in CI workflow is malformed (not a list). Skipping steps processing.")
                                 malformed_blocks.append({
                                     "type": "CI_STEPS_SECTION_MALFORMED",
@@ -316,7 +316,7 @@ class FocusedMetricsCollector:
                             ci_workflow_jobs[job_name] = CiWorkflowJob(
                                 steps_summary=steps_summary
                             )
-                    else: # NEW: Handle malformed 'jobs' section
+                    else:
                         logger.warning(f"Jobs section in CI workflow is malformed (not a dictionary). Skipping jobs processing.")
                         malformed_blocks.append({
                             "type": "CI_JOBS_SECTION_MALFORMED",
@@ -344,16 +344,16 @@ class FocusedMetricsCollector:
         if pre_commit_path.exists():
             try:
                 with open(pre_commit_path, "r", encoding="utf-8") as f:
-                    pre_commit_config_raw = yaml.safe_load(f) or {} # Ensure it's a dict even if file is empty
+                    pre_commit_config_raw = yaml.safe_load(f) or {}
                 with open(
                     pre_commit_path, "r", encoding="utf-8"
                 ) as f:
                     pre_commit_content_lines = f.readlines()
                     
                     repos_section = pre_commit_config_raw.get("repos")
-                    if isinstance(repos_section, list): # NEW: Check if 'repos' section is a list
+                    if isinstance(repos_section, list):
                         for repo_config in repos_section:
-                            if not isinstance(repo_config, dict): # NEW: Check if individual repo_config is a dictionary
+                            if not isinstance(repo_config, dict):
                                 logger.warning(f"Repo config in pre-commit is malformed (not a dictionary). Skipping.")
                                 malformed_blocks.append({
                                     "type": "PRE_COMMIT_REPO_MALFORMED",
@@ -366,9 +366,9 @@ class FocusedMetricsCollector:
                             repo_rev = repo_config.get("rev")
                             
                             hooks_section = repo_config.get("hooks")
-                            if isinstance(hooks_section, list): # NEW: Check if 'hooks' section is a list
+                            if isinstance(hooks_section, list):
                                 for hook in hooks_section:
-                                    if not isinstance(hook, dict): # NEW: Check if individual hook is a dictionary
+                                    if not isinstance(hook, dict):
                                         logger.warning(f"Hook config in pre-commit repo '{repo_url}' is malformed (not a dictionary). Skipping.")
                                         malformed_blocks.append({
                                             "type": "PRE_COMMIT_HOOK_MALFORMED",
@@ -400,7 +400,7 @@ class FocusedMetricsCollector:
                                             ),
                                         )
                                     )
-                            else: # NEW: Handle malformed 'hooks' section
+                            else:
                                 logger.warning(f"Hooks section for repo '{repo_url}' in pre-commit is malformed (not a list). Skipping hooks processing.")
                                 malformed_blocks.append({
                                     "type": "PRE_COMMIT_HOOKS_SECTION_MALFORMED",
@@ -408,7 +408,7 @@ class FocusedMetricsCollector:
                                     "file": str(pre_commit_path),
                                     "repo": repo_url
                                 })
-                    else: # NEW: Handle malformed 'repos' section
+                    else:
                         logger.warning(f"Repos section in pre-commit is malformed (not a list). Skipping repos processing.")
                         malformed_blocks.append({
                             "type": "PRE_COMMIT_REPOS_SECTION_MALFORMED",
@@ -433,7 +433,7 @@ class FocusedMetricsCollector:
         if pyproject_path.exists():
             try:
                 with open(pyproject_path, "r", encoding="utf-8") as f:
-                    pyproject_config_raw = toml.load(f) or {} # Ensure it's a dict even if file is empty
+                    pyproject_config_raw = toml.load(f) or {}
                 with open(
                     pyproject_path, "r", encoding="utf-8"
                 ) as f:
@@ -441,25 +441,24 @@ class FocusedMetricsCollector:
                     pyproject_toml_data = {}
 
                     tool_section = pyproject_config_raw.get("tool")
-                    if isinstance(tool_section, dict): # NEW: Check if 'tool' section is a dictionary
+                    if isinstance(tool_section, dict):
                         ruff_tool_config = tool_section.get("ruff")
-                        if isinstance(ruff_tool_config, dict): # NEW: Check if 'ruff' config is a dictionary
+                        if isinstance(ruff_tool_config, dict):
                             ruff_line_number = None
                             for i, line in enumerate(pyproject_content_lines):
                                 if "[tool.ruff]" in line:
                                     ruff_line_number = i + 1
                                     break
 
-                            # Define lint_section_data as a local variable here
                             lint_section_data = ruff_tool_config.get("lint")
                             if not isinstance(lint_section_data, dict):
-                                lint_section_data = {} # Default to empty dict if not a dict or None
+                                lint_section_data = {}
 
                             pyproject_toml_data["ruff"] = RuffConfig(
                                 line_length=ruff_tool_config.get("line-length"),
                                 target_version=ruff_tool_config.get("target-version"),
-                                lint_select=lint_section_data.get("select"), # Use the defined variable
-                                lint_ignore=lint_section_data.get("ignore"), # Use the defined variable
+                                lint_select=lint_section_data.get("select"),
+                                lint_ignore=lint_section_data.get("ignore"),
                                 format_settings=ruff_tool_config.get("format"),
                                 config_snippet=_get_code_snippet(
                                     pyproject_content_lines,
@@ -467,7 +466,7 @@ class FocusedMetricsCollector:
                                     context_lines=5,
                                 ),
                             )
-                        elif ruff_tool_config is not None: # NEW: Handle malformed 'ruff' config
+                        elif ruff_tool_config is not None:
                             logger.warning(f"Ruff config in pyproject.toml is malformed (not a dictionary). Skipping.")
                             malformed_blocks.append({
                                 "type": "PYPROJECT_RUFF_MALFORMED",
@@ -476,7 +475,7 @@ class FocusedMetricsCollector:
                             })
 
                         bandit_tool_config = tool_section.get("bandit")
-                        if isinstance(bandit_tool_config, dict): # NEW: Check if 'bandit' config is a dictionary
+                        if isinstance(bandit_tool_config, dict):
                             bandit_line_number = None
                             for i, line in enumerate(pyproject_content_lines):
                                 if "[tool.bandit]" in line:
@@ -494,7 +493,7 @@ class FocusedMetricsCollector:
                                     context_lines=5,
                                 ),
                             )
-                        elif bandit_tool_config is not None: # NEW: Handle malformed 'bandit' config
+                        elif bandit_tool_config is not None:
                             logger.warning(f"Bandit config in pyproject.toml is malformed (not a dictionary). Skipping.")
                             malformed_blocks.append({
                                 "type": "PYPROJECT_BANDIT_MALFORMED",
@@ -503,18 +502,18 @@ class FocusedMetricsCollector:
                             })
 
                         pydantic_settings_config = tool_section.get("pydantic-settings")
-                        if isinstance(pydantic_settings_config, dict): # NEW: Check if 'pydantic-settings' config is a dictionary
+                        if isinstance(pydantic_settings_config, dict):
                             pyproject_toml_data["pydantic_settings"] = (
                                 PydanticSettingsConfig(**pydantic_settings_config)
                             )
-                        elif pydantic_settings_config is not None: # NEW: Handle malformed 'pydantic-settings' config
+                        elif pydantic_settings_config is not None:
                             logger.warning(f"Pydantic-settings config in pyproject.toml is malformed (not a dictionary). Skipping.")
                             malformed_blocks.append({
                                 "type": "PYPROJECT_PYDANTIC_SETTINGS_MALFORMED",
                                 "message": "Pydantic-settings config is not a dictionary.",
                                 "file": str(pyproject_path)
                             })
-                    else: # NEW: Handle malformed 'tool' section
+                    else:
                         logger.warning(f"Tool section in pyproject.toml is malformed (not a dictionary). Skipping tool processing.")
                         malformed_blocks.append({
                             "type": "PYPROJECT_TOOL_SECTION_MALFORMED",
@@ -844,7 +843,6 @@ class FocusedMetricsCollector:
             "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
-        # Initialize aggregation variables *before* the os.walk loop
         total_functions_across_codebase = 0
         total_loc_across_functions = 0
         total_complexity_across_functions = 0
@@ -860,7 +858,6 @@ class FocusedMetricsCollector:
                             content = f.read()
                             content_lines = content.splitlines()
 
-                        # Check cache first, if not present, run tools and cache results
                         if file_path not in self.file_analysis_cache:
                             self.file_analysis_cache[file_path] = {}
 
@@ -1011,7 +1008,7 @@ class FocusedMetricsCollector:
         """
         coverage_data = {
             "overall_coverage_percentage": 0.0,
-            "covered_statements": 0, # Renamed for clarity
+            "covered_statements": 0,
             "files_covered_count": 0,
             "total_python_files_analyzed": 0,
             "total_files": 0,
@@ -1025,7 +1022,9 @@ class FocusedMetricsCollector:
             # Use execute_command_safely for robustness
             return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
 
-            if return_code not in (0, 1): # pytest returns 1 for failed tests, 0 for success
+            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
+            # We consider 0 or 1 as successful execution of the coverage command.
+            if return_code not in (0, 1):
                 logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
                 coverage_data["coverage_details"] = f"Pytest command failed: {stderr}"
                 return coverage_data
@@ -1035,14 +1034,17 @@ class FocusedMetricsCollector:
                 with open(coverage_json_path, "r", encoding="utf-8") as f:
                     report = json.load(f)
                 
-                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0) # Corrected key
-                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0) # Corrected key
-                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0) # Total statements, keep for context
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
+                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
                 coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
                 coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
 
                 coverage_data["coverage_details"] = "Coverage report generated successfully."
-                coverage_json_path.unlink() # Clean up the generated JSON file
+                # NEW: Add a note if tests failed, even if coverage command ran
+                if return_code == 1:
+                    coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
+                coverage_json_path.unlink()
             else:
                 coverage_data["coverage_details"] = "Coverage JSON report not found."
 
@@ -1062,7 +1064,6 @@ class FocusedMetricsCollector:
         """
         try:
             tree = ast.parse(content)
-            # Use the ComplexityVisitor from code_utils
             visitor = ComplexityVisitor(content_lines)
             visitor.visit(tree)
             return visitor.function_metrics
@@ -1143,7 +1144,6 @@ class FocusedMetricsCollector:
         """Generates a consistent ID for a suggestion to track its impact over time."""
         import hashlib
         
-        # Create a hash based on the core elements of the suggestion
         hash_input = (
             suggestion.get("AREA", "") + 
             suggestion.get("PROBLEM", "") + 
@@ -1159,7 +1159,7 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": {} # Changed to dict
+                "common_failure_modes": {}
             }
         
         try:
@@ -1169,7 +1169,6 @@ class FocusedMetricsCollector:
             total = len(records)
             successful = sum(1 for r in records if r.get("success", False))
             
-            # Analyze by area
             area_success = {}
             for record in records:
                 for suggestion in record.get("suggestions", []):
@@ -1180,7 +1179,6 @@ class FocusedMetricsCollector:
                     if record.get("success", False):
                         area_success[area]["successes"] += 1
             
-            # Convert to sorted list
             top_areas = [
                 {
                     "area": area,
@@ -1188,7 +1186,7 @@ class FocusedMetricsCollector:
                     "attempts": data["attempts"]
                 }
                 for area, data in area_success.items()
-                if data["attempts"] > 2  # Only include areas with sufficient data
+                if data["attempts"] > 2
             ]
             top_areas.sort(key=lambda x: x["success_rate"], reverse=True)
             
@@ -1204,7 +1202,7 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": {} # Changed to dict
+                "common_failure_modes": {}
             }
     
     @staticmethod
@@ -1214,19 +1212,10 @@ class FocusedMetricsCollector:
         
         for record in records:
             if not record.get("success", False):
-                # Check for malformed blocks in the metrics_before/after or suggestions
-                # This assumes malformed_blocks are consistently recorded in the output
-                # of the Self_Improvement_Analyst, which is then stored in the record.
-                # We need to look into the actual output structure of the Self_Improvement_Analyst
-                # which is part of the `suggestions` structure.
-
-                # For now, let's assume `malformed_blocks` are directly in the final output
-                # which is part of the `suggestions` structure.
                 for suggestion in record.get("suggestions", []):
                     for block in suggestion.get("malformed_blocks", []):
                         failure_modes_count[block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
                 
-                # Also check for specific error types in the performance changes
                 for category, changes in record.get("performance_changes", {}).items():
                     if "schema_validation_failures_count" in changes and changes["schema_validation_failures_count"].get("after", 0) > changes["schema_validation_failures_count"].get("before", 0):
                         failure_modes_count["schema_validation_failures_count"] += 1

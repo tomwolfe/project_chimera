@@ -5,18 +5,17 @@ import yaml
 import datetime
 import re
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Union
-from pydantic import ValidationError
-# REMOVED: import streamlit as st # Not directly used in this file
-import copy # Re-added copy import as it's used here
+from typing import Dict, Any, List, Optional, Tuple, Union, Type
+from pydantic import ValidationError, BaseModel
+import copy
 import time
 
 from src.persona.routing import PersonaRouter
-from src.models import PersonaConfig, ReasoningFrameworkConfig
+from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutputV1, ContextAnalysisOutput, ConfigurationAnalysisOutput, DeploymentAnalysisOutput
 from src.config.persistence import ConfigPersistence
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
-from src.exceptions import SchemaValidationError # NEW: Import SchemaValidationError
+from src.exceptions import SchemaValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +30,30 @@ class PersonaManager:
     GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = (
         0.7  # If overall token usage exceeds 70% of budget
     )
+
+    # NEW: Moved PERSONA_OUTPUT_SCHEMAS here from core.py
+    PERSONA_OUTPUT_SCHEMAS: Dict[str, Type[BaseModel]] = {
+        "Impartial_Arbitrator": LLMOutput,
+        "Context_Aware_Assistant": ContextAnalysisOutput,
+        "Constructive_Critic": CritiqueOutput,
+        "General_Synthesizer": GeneralOutput,
+        "Devils_Advocate": ConflictReport,
+        "Self_Improvement_Analyst": SelfImprovementAnalysisOutputV1,
+        "Code_Architect": CritiqueOutput,
+        "Security_Auditor": CritiqueOutput,
+        "DevOps_Engineer": CritiqueOutput,
+        "Test_Engineer": CritiqueOutput,
+        # Add _TRUNCATED versions to map to their base schemas
+        "Code_Architect_TRUNCATED": CritiqueOutput,
+        "Security_Auditor_TRUNCATED": CritiqueOutput,
+        "DevOps_Engineer_TRUNCATED": CritiqueOutput,
+        "Test_Engineer_TRUNCATED": CritiqueOutput,
+        "Constructive_Critic_TRUNCATED": CritiqueOutput,
+        "Impartial_Arbitrator_TRUNCATED": LLMOutput,
+        "Devils_Advocate_TRUNCATED": ConflictReport,
+        "General_Synthesizer_TRUNCATED": GeneralOutput,
+        "Self_Improvement_Analyst_TRUNCATED": SelfImprovementAnalysisOutputV1,
+    }
 
     def __init__(
         self,

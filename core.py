@@ -3,20 +3,20 @@ import json
 import logging
 import re
 from pathlib import Path
-from collections import defaultdict # Used for defaultdict in _consolidate_self_improvement_code_changes
+from collections import defaultdict
 from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
-from functools import lru_cache # Used for lru_cache in _calculate_pareto_score (if it were implemented) and other potential caching
-from rich.console import Console # Used for rich_console
-from pydantic import BaseModel, ValidationError # Used for schema validation
-import difflib # Used for diff generation
-import uuid # Used for request_id
+from functools import lru_cache
+from rich.console import Console
+from pydantic import BaseModel, ValidationError
+import difflib
+import uuid
 
 # --- IMPORT MODIFICATIONS ---
-from src.llm_provider import GeminiProvider # LLM Provider
-from src.context.context_analyzer import ContextRelevanceAnalyzer # Context analysis
-from src.persona.routing import PersonaRouter # Persona routing
-from src.utils.output_parser import LLMOutputParser # Output parsing and validation
-from src.models import ( # All Pydantic models for structured data
+from src.llm_provider import GeminiProvider
+from src.context.context_analyzer import ContextRelevanceAnalyzer
+from src.persona.routing import PersonaRouter
+from src.utils.output_parser import LLMOutputParser
+from src.models import (
     PersonaConfig,
     ReasoningFrameworkConfig,
     LLMOutput,
@@ -32,8 +32,8 @@ from src.models import ( # All Pydantic models for structured data
     SelfImprovementFinding,
     QuantitativeImpactMetrics,
 )
-from src.config.settings import ChimeraSettings # Application settings
-from src.exceptions import ( # Custom exceptions
+from src.config.settings import ChimeraSettings
+from src.exceptions import (
     ChimeraError,
     LLMResponseValidationError,
     SchemaValidationError,
@@ -41,52 +41,33 @@ from src.exceptions import ( # Custom exceptions
     LLMProviderError,
     CircuitBreakerError,
 )
-from src.logging_config import setup_structured_logging # Logging setup
-from src.utils.error_handler import handle_errors # Error handling decorator
+from src.logging_config import setup_structured_logging
+from src.utils.error_handler import handle_errors
 from src.persona_manager import PersonaManager # Persona management
 
 # NEW IMPORTS FOR SELF-IMPROVEMENT
-from src.self_improvement.metrics_collector import FocusedMetricsCollector # Metrics collection
-from src.self_improvement.content_validator import ContentAlignmentValidator # Content alignment validation
-from src.token_tracker import TokenUsageTracker # Token usage tracking
-from src.utils.prompt_analyzer import ( # Prompt analysis
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
+from src.self_improvement.content_validator import ContentAlignmentValidator
+from src.token_tracker import TokenUsageTracker
+from src.utils.prompt_analyzer import (
     PromptAnalyzer,
 )
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner # Codebase scanning
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # Constants
+from src.context.context_analyzer import CodebaseScanner
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
-from src.utils.prompt_optimizer import PromptOptimizer # Prompt optimization
-from src.conflict_resolution import ConflictResolutionManager # Conflict resolution
-from src.config.model_registry import ModelRegistry # Model registry
+from src.utils.prompt_optimizer import PromptOptimizer
+from src.conflict_resolution import ConflictResolutionManager
+from src.config.model_registry import ModelRegistry
+
 logger = logging.getLogger(__name__)
 
 
 class SocraticDebate:
-    PERSONA_OUTPUT_SCHEMAS = {
-        "Impartial_Arbitrator": LLMOutput,
-        "Context_Aware_Assistant": ContextAnalysisOutput,
-        "Constructive_Critic": CritiqueOutput,
-        "General_Synthesizer": GeneralOutput,
-        "Devils_Advocate": ConflictReport,
-        "Self_Improvement_Analyst": SelfImprovementAnalysisOutputV1,
-        "Code_Architect": CritiqueOutput,
-        "Security_Auditor": CritiqueOutput,
-        "DevOps_Engineer": CritiqueOutput,
-        "Test_Engineer": CritiqueOutput,
-        # Add _TRUNCATED versions to map to their base schemas
-        "Code_Architect_TRUNCATED": CritiqueOutput,
-        "Security_Auditor_TRUNCUE_CRITICATED": CritiqueOutput,
-        "DevOps_Engineer_TRUNCATED": CritiqueOutput,
-        "Test_Engineer_TRUNCATED": CritiqueOutput,
-        "Constructive_Critic_TRUNCATED": CritiqueOutput,
-        "Impartial_Arbitrator_TRUNCATED": LLMOutput,
-        "Devils_Advocate_TRUNCATED": ConflictReport,
-        "General_Synthesizer_TRUNCATED": GeneralOutput,
-        "Self_Improvement_Analyst_TRUNCATED": SelfImprovementAnalysisOutputV1,
-    }
+    # REMOVED: PERSONA_OUTPUT_SCHEMAS from here, moved to PersonaManager
+    # PERSONA_OUTPUT_SCHEMAS = { ... }
 
     def __init__(
         self,
@@ -121,11 +102,10 @@ class SocraticDebate:
         self.rich_console = rich_console or Console(stderr=True)
         self.is_self_analysis = is_self_analysis
 
-        self.request_id = str(uuid.uuid4())[:8] # uuid is used here
+        self.request_id = str(uuid.uuid4())[:8]
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        # Initialize codebase context if this is a self-analysis
         if is_self_analysis and codebase_context is None:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
@@ -150,7 +130,7 @@ class SocraticDebate:
                 model_name=self.model_name,
                 rich_console=self.rich_console,
                 request_id=self.request_id,
-                settings=self.settings, # Pass settings
+                settings=self.settings,
             )
         except LLMProviderError as e:
             self._log_with_context(
@@ -209,7 +189,7 @@ class SocraticDebate:
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
                 codebase_context=self.codebase_context,
-                cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers") # Use a default cache dir
+                cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers")
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
@@ -222,14 +202,15 @@ class SocraticDebate:
                 debate_domain=self.domain,
             )
         
-        self.prompt_optimizer = PromptOptimizer( # NEW: Initialize PromptOptimizer
+        self.prompt_optimizer = PromptOptimizer(
             tokenizer=self.tokenizer, settings=self.settings
             )
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
-        self.conflict_manager = ConflictResolutionManager() # NEW: Initialize ConflictResolutionManager
-        self.model_registry = ModelRegistry() # NEW: Initialize ModelRegistry
+        # NEW: Pass llm_provider and persona_manager to ConflictResolutionManager
+        self.conflict_manager = ConflictResolutionManager(llm_provider=self.llm_provider, persona_manager=self.persona_manager)
+        self.model_registry = ModelRegistry()
 
         # Determine best model based on requirements, preferring the one passed in
         self.model_name = self._determine_optimal_model(model_name)
@@ -292,7 +273,6 @@ class SocraticDebate:
         """Determines the token budget ratios for context, debate, and synthesis phases."""
         complexity_score = prompt_analysis["complexity_score"]
 
-        # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
         if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
             context_ratio = self.settings.self_analysis_context_ratio
             debate_ratio = self.settings.self_analysis_debate_ratio
@@ -392,7 +372,7 @@ class SocraticDebate:
     def _calculate_token_budgets(self):
         """Calculates token budgets for different phases based on context, model limits, and prompt type."""
         try:
-            prompt_analysis = self.persona_manager.prompt_analyzer.analyze_complexity( # Use prompt_analyzer from persona_manager
+            prompt_analysis = self.persona_manager.prompt_analyzer.analyze_complexity(
                 self.initial_prompt
             )
             context_ratio, debate_ratio, synthesis_ratio = self._determine_phase_ratios(
@@ -528,7 +508,7 @@ class SocraticDebate:
                 and k != "Debate_History"
                 and k != "Conflict_Resolution_Attempt"
                 and k != "Unresolved_Conflict"
-                and k != "Context_Aware_Assistant_Output" # Exclude context assistant if it ran separately
+                and k != "Context_Aware_Assistant_Output"
             )
 
             if total_debate_personas > 0:
@@ -549,7 +529,6 @@ class SocraticDebate:
 
         return min(max(0.0, current_progress), 1.0)
 
-    # --- START REFACTORED _execute_llm_turn HELPER METHODS ---
     def _prepare_llm_call_config(
         self,
         persona_config: PersonaConfig,
@@ -715,7 +694,8 @@ class SocraticDebate:
             raise ChimeraError(f"Persona configuration not found for {persona_name}.")
 
 
-        output_schema_class = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        # NEW: Use persona_manager.PERSONA_OUTPUT_SCHEMAS
+        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
         self.logger.debug(
             f"Using schema {output_schema_class.__name__} for {persona_name}."
         )
@@ -734,7 +714,6 @@ class SocraticDebate:
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
         current_prompt = prompt_for_llm
-        # NEW: Optimize prompt content before sending to LLM
         current_prompt = self.prompt_optimizer.optimize_prompt(
             current_prompt, persona_name, max_output_tokens_for_turn
         )
@@ -800,7 +779,7 @@ class SocraticDebate:
                         f"Non-retryable error: {type(e).__name__}",
                         is_truncated=is_truncated,
                         schema_validation_failed=isinstance(e, SchemaValidationError),
-                        token_budget_exceeded=isinstance(e, TokenBudgetExceededError),
+                        token_budget_exceeded=False,
                     )
                 raise e
 
@@ -874,18 +853,14 @@ class SocraticDebate:
                             schema_validation_failed=True,
                             token_budget_exceeded=False,
                         )
-                    return {
-                        "ANALYSIS_SUMMARY": "JSON validation failed after multiple attempts",
-                        "IMPACTFUL_SUGGESTIONS": [
-                            {
-                                "AREA": "Robustness",
-                                "PROBLEM": f"Failed to produce valid JSON after {max_retries} attempts",
-                                "PROPOSED_SOLUTION": "Review system prompts and validation logic",
-                                "EXPECTED_IMPACT": "Critical failure in self-improvement process",
-                                "CODE_CHANGES_SUGGESTED": [],
-                            }
-                        ],
-                    }
+                    # NEW: Return a structured fallback output using the parser
+                    return self.output_parser._create_fallback_output(
+                        output_schema_class,
+                        malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
+                        raw_output_snippet=raw_llm_output,
+                        partial_data=None,
+                        extracted_json_str=None
+                    )
 
             except Exception as e:
                 self._log_with_context(
@@ -955,7 +930,6 @@ class SocraticDebate:
             )
             return None
 
-        # NEW: Ensure embeddings are computed if codebase_context is present but embeddings are not
         if (
             self.codebase_context
             and self.context_analyzer
@@ -1079,7 +1053,6 @@ class SocraticDebate:
         persona_turn_budgets: Dict[str, int] = {}
 
         for p_name in active_debate_personas:
-            # MODIFIED: Get adjusted persona config here to use its max_tokens
             persona_config = self.persona_manager.get_adjusted_persona_config(p_name)
             allocated = max(
                 MIN_PERSONA_TOKENS,
@@ -1272,8 +1245,6 @@ class SocraticDebate:
                     f"Devils_Advocate reported conflict: {conflict_report.summary}. Main loop will trigger ConflictResolutionManager.",
                     conflict_report=conflict_report.model_dump(),
                 )
-                # Return the conflict report itself. The main loop will detect `_is_problematic_output`
-                # and call the `conflict_manager.resolve_conflict`.
                 return output
             else:
                 self._log_with_context(
@@ -1308,7 +1279,6 @@ class SocraticDebate:
         """
         debate_history = []
 
-        # Initialize previous_output_for_llm with initial prompt and context
         previous_output_for_llm: Union[str, Dict[str, Any]]
         if context_persona_turn_results:
             previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}\n\nStructured Context Analysis:\n{json.dumps(context_persona_turn_results, indent=2)}"
@@ -1327,7 +1297,6 @@ class SocraticDebate:
             ]
         ]
 
-        # Ensure Devils_Advocate is positioned correctly if present
         if (
             "Devils_Advocate" in persona_sequence
             and "Devils_Advocate" not in personas_for_debate
@@ -1400,13 +1369,11 @@ class SocraticDebate:
                     "debate",
                     max_output_tokens_for_turn,
                 )
-                # If Devils_Advocate, process its specific logic
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
                         persona_name, turn_output, debate_history
                     )
                 
-                # Add a meta-reasoning step for clarity, especially in conflict scenarios
                 if len(debate_history) > 0 and persona_name != debate_history[-1].get("persona"):
                     last_response = debate_history[-1].get("output", {}).get("general_output", str(debate_history[-1].get("output")))
                     meta_reasoning_prompt = f"The previous speaker stated: '{last_response}'. Based on this, explicitly state your primary point of contention or agreement and the core reason for it before proceeding with your main response."
@@ -1416,10 +1383,8 @@ class SocraticDebate:
                         persona=persona_name,
                     )
 
-                # Append the output to the debate history
                 debate_history.append({"persona": persona_name, "output": turn_output})
 
-                # Check if the output is problematic (either from LLM or DA processing)
                 if self._is_problematic_output(turn_output):
                     self._log_with_context(
                         "warning",
@@ -1431,7 +1396,6 @@ class SocraticDebate:
                     if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
                         debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
                         previous_output_for_llm = resolved_output_from_manager["resolved_output"]
-                        # Update intermediate steps with conflict resolution info
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = {
                             "conflict_resolved": True,
                             "resolution_summary": resolved_output_from_manager["resolution_summary"],
@@ -1439,7 +1403,6 @@ class SocraticDebate:
                         }
                         self.intermediate_steps["Unresolved_Conflict"] = None
                     else:
-                        # If manager couldn't resolve, use the problematic output for next turn's context
                         previous_output_for_llm = turn_output
                         self.intermediate_steps["Unresolved_Conflict"] = turn_output
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = None
@@ -1450,14 +1413,12 @@ class SocraticDebate:
 
 
             except Exception as e:
-                # If an error occurs during LLM turn execution
                 error_output = {
                     "error": f"Turn failed for {persona_name}: {str(e)}",
                     "malformed_blocks": [
                         {"type": "DEBATE_TURN_ERROR", "message": str(e)}
                     ],
                 }
-                # Append the error output to history
                 debate_history.append({"persona": persona_name, "output": error_output})
                 self._log_with_context(
                     "error",
@@ -1470,7 +1431,6 @@ class SocraticDebate:
                 if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
                     debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
                     previous_output_for_llm = resolved_output_from_manager["resolved_output"]
-                    # Update intermediate steps with conflict resolution info
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = {
                         "conflict_resolved": True,
                         "resolution_summary": resolved_output_from_manager["resolution_summary"],
@@ -1603,7 +1563,6 @@ class SocraticDebate:
                             }
                         )
                     else:
-                        # If no issues can be kept, replace with a summary string
                         summarized_metrics["code_quality"][issue_list_key] = (
                             f"Too many {issue_list_key} to list ({len(original_issues)} total). Only high-level counts are provided."
                         )
@@ -1612,7 +1571,6 @@ class SocraticDebate:
                         f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.",
                     )
                 elif num_issues_to_keep == 0 and len(original_issues) > 0:
-                    # If there are issues but budget allows none, remove the list and add a summary
                     del summarized_metrics["code_quality"][issue_list_key]
                     self._log_with_context(
                         "debug",
@@ -1623,7 +1581,6 @@ class SocraticDebate:
                 and issue_list_key in summarized_metrics["code_quality"]
                 and not summarized_metrics["code_quality"][issue_list_key]
             ):
-                # If the list is empty, remove the key to save tokens
                 del summarized_metrics["code_quality"][issue_list_key]
         return summarized_metrics
 
@@ -1789,7 +1746,6 @@ class SocraticDebate:
         self._log_with_context("info", "Executing final synthesis persona turn.")
 
         synthesis_persona_name = ""
-        # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
         if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
             synthesis_persona_name = "Self_Improvement_Analyst"
         elif self.domain == "Software Engineering":
@@ -1867,7 +1823,8 @@ class SocraticDebate:
                 "For each suggestion, provide a clear rationale and a specific, actionable code modification. "
                 "Your output MUST strictly adhere to the SelfImprovementAnalysisOutputV1 JSON schema."
             )
-            self.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (
+            # NEW: Use persona_manager.PERSONA_OUTPUT_SCHEMAS
+            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (
                 SelfImprovementAnalysisOutputV1
             )
 
@@ -1877,8 +1834,9 @@ class SocraticDebate:
                 "Address all aspects of the initial problem and integrate insights from all personas. "
                 "Your output MUST strictly adhere to the LLMOutput JSON schema."
             )
-            self.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = LLMOutput
-            self.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = GeneralOutput
+            # NEW: Use persona_manager.PERSONA_OUTPUT_SCHEMAS
+            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = LLMOutput
+            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = GeneralOutput
 
         final_synthesis_prompt_raw = "\n".join(synthesis_prompt_parts)
 
@@ -1890,7 +1848,6 @@ class SocraticDebate:
             truncation_indicator="\n... (truncated for token limits) ...",
         )
 
-        # MODIFIED: Ensure max_output_tokens_for_turn respects the persona's configured max_tokens
         max_output_tokens_for_turn = self.phase_budgets[
             "synthesis"
         ] - self.tokenizer.count_tokens(final_synthesis_prompt)
@@ -1977,14 +1934,12 @@ class SocraticDebate:
             return True
         if output.get("malformed_blocks") or output.get("content_misalignment_warning"):
             return True
-        # NEW: Check for ConflictReport indicating a conflict
         if "conflict_found" in output and output["conflict_found"] is True:
             return True
         return False
 
     def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
-        # lru_cache is used here
         impact = (finding.metrics.expected_quality_improvement or 0) + (
             finding.metrics.token_savings_percent or 0
         )
@@ -2028,7 +1983,6 @@ class SocraticDebate:
         persona_sequence = self._get_final_persona_sequence(
             self.initial_prompt, context_analysis_results
         )
-        # NEW: Apply token optimization to the persona sequence
         persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
             persona_sequence
         )

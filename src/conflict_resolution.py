@@ -1,7 +1,19 @@
 # src/conflict_resolution.py
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+# NEW: Import necessary classes for self-correction
+from src.llm_provider import GeminiProvider
+from src.models import PersonaConfig, GeneralOutput, LLMOutput, CritiqueOutput, ConflictReport, SelfImprovementAnalysisOutputV1, ContextAnalysisOutput, ConfigurationAnalysisOutput, DeploymentAnalysisOutput
+from src.utils.output_parser import LLMOutputParser
+from src.tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.config.settings import ChimeraSettings
+from src.constants import SHARED_JSON_INSTRUCTIONS
+
+# Use TYPE_CHECKING to avoid circular import at runtime
+if TYPE_CHECKING:
+    from src.persona_manager import PersonaManager
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +23,13 @@ class ConflictResolutionManager:
     Implements strategies to attempt to recover or synthesize a coherent output.
     """
 
-    def __init__(self):
+    def __init__(self, llm_provider: Optional[GeminiProvider] = None, persona_manager: Optional["PersonaManager"] = None):
         logger.info("ConflictResolutionManager initialized.")
+        self.llm_provider = llm_provider
+        self.persona_manager = persona_manager
+        self.max_self_correction_retries = 2 # Max retries for self-correction
+        self.settings = ChimeraSettings() # Initialize settings
+        self.output_parser = LLMOutputParser() # Initialize parser here
 
     def resolve_conflict(self, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
@@ -36,22 +53,49 @@ class ConflictResolutionManager:
 
         latest_turn = debate_history[-1]
         latest_output = latest_turn.get('output')
-        latest_persona = latest_turn.get('persona', 'Unknown')
+        latest_persona_name = latest_turn.get('persona', 'Unknown')
 
+        # NEW: Check if the latest output is problematic (malformed_blocks or conflict_found)
+        is_problematic = False
+        if isinstance(latest_output, dict):
+            if latest_output.get('malformed_blocks') or (latest_output.get('conflict_found') is True):
+                is_problematic = True
+        elif isinstance(latest_output, str):
+            # If it's a string, it's problematic unless it can be parsed as valid JSON
+            try:
+                json.loads(latest_output)
+            except json.JSONDecodeError:
+                is_problematic = True
+
+        if is_problematic:
+            logger.warning(f"ConflictResolutionManager: Detected problematic output from {latest_persona_name}. Attempting self-correction.")
+            
+            # Attempt self-correction by re-invoking the persona with feedback
+            resolved_output = self._retry_persona_with_feedback(latest_persona_name, debate_history)
+            if resolved_output:
+                logger.info(f"ConflictResolutionManager: Successfully self-corrected output from {latest_persona_name}.")
+                return {
+                    "resolution_strategy": "self_correction_retry",
+                    "resolved_output": resolved_output,
+                    "resolution_summary": f"Persona '{latest_persona_name}' self-corrected its output after receiving validation feedback.",
+                    "malformed_blocks": [{"type": "SELF_CORRECTION_SUCCESS", "message": "Persona self-corrected."}]
+                }
+            else:
+                logger.warning(f"ConflictResolutionManager: Self-correction failed for {latest_persona_name}. Falling back to synthesis/manual intervention.")
+        
         # Strategy 1: Attempt to parse if the latest output is a string that looks like JSON
         if isinstance(latest_output, str):
             try:
-                # Attempt to parse the string as JSON
-                parsed_latest_output = json.loads(latest_output)
-                logger.info(f"ConflictResolutionManager: Successfully parsed string output from {latest_persona}.")
+                parsed_latest_output = json.loads(latest_output) # Assuming this is a valid JSON string
+                logger.info(f"ConflictResolutionManager: Successfully parsed string output from {latest_persona_name}.")
                 return {
                     "resolution_strategy": "parsed_malformed_string",
                     "resolved_output": parsed_latest_output,
-                    "resolution_summary": f"Successfully parsed malformed string output from {latest_persona}.",
+                    "resolution_summary": f"Successfully parsed malformed string output from {latest_persona_name}.",
                     "malformed_blocks": [{"type": "PARSED_STRING_OUTPUT", "message": "Successfully parsed string output."}]
                 }
             except json.JSONDecodeError:
-                logger.debug(f"ConflictResolutionManager: Latest output from {latest_persona} is a malformed string, cannot parse directly.")
+                logger.debug(f"ConflictResolutionManager: Latest output from {latest_persona_name} is a malformed string, cannot parse directly.")
                 # If parsing fails, fall through to the next strategy
 
         # Strategy 2: Synthesize from previous valid turns
@@ -78,7 +122,7 @@ class ConflictResolutionManager:
         # Strategy 3: Fallback to a generic placeholder or flag for manual intervention
         logger.warning("ConflictResolutionManager: Automated resolution strategies exhausted.")
         return self._manual_intervention_fallback(
-            f"Automated resolution failed for output from {latest_persona}. Latest output snippet: {str(latest_output)[:200]}..."
+            f"Automated resolution failed for output from {latest_persona_name}. Latest output snippet: {str(latest_output)[:200]}..."
         )
 
     def _synthesize_from_history(self, problematic_output: Any, valid_turns: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -123,3 +167,99 @@ class ConflictResolutionManager:
             "resolution_summary": f"Automated conflict resolution failed. Manual review required: {message}",
             "malformed_blocks": [{"type": "MANUAL_INTERVENTION_REQUIRED", "message": message}]
         }
+
+    def _retry_persona_with_feedback(self, persona_name: str, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Re-invokes the persona with explicit feedback on its previous problematic output.
+        """
+        if not self.llm_provider or not self.persona_manager:
+            logger.error("LLMProvider or PersonaManager not set in ConflictResolutionManager. Cannot self-correct.")
+            return None
+
+        # The initial prompt is typically the first entry in the debate history
+        # or can be passed explicitly to the SocraticDebate constructor.
+        # For this context, we'll assume the initial prompt is available from the SocraticDebate instance
+        # that initialized this ConflictResolutionManager.
+        # Since this method is called from core.py, core.py should provide the initial prompt.
+        # For now, we'll try to extract it from the first turn if available.
+        initial_prompt_from_history = "Original task context not explicitly captured in history."
+        if debate_history and debate_history[0].get('output') and isinstance(debate_history[0]['output'], dict):
+            # Assuming the first turn's output might contain the initial prompt if it's a ContextAnalysisOutput or similar
+            initial_prompt_from_history = debate_history[0]['output'].get('initial_prompt', initial_prompt_from_history)
+        # Fallback to a more general summary of the debate if initial_prompt is still not found
+        if initial_prompt_from_history == "Original task context not explicitly captured in history.":
+            initial_prompt_from_history = f"The debate started with the goal of: {debate_history[0].get('initial_prompt', 'analyzing a problem.')}"
+
+
+        # Get the persona's original system prompt and config
+        persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
+        if not persona_config:
+            logger.error(f"Persona config not found for {persona_name}. Cannot self-correct.")
+            return None
+
+        # Get the problematic output and its error details
+        problematic_turn = debate_history[-1]
+        problematic_output = problematic_turn.get('output')
+        
+        error_message = "Previous output was malformed or did not adhere to the schema."
+        if isinstance(problematic_output, dict) and problematic_output.get('malformed_blocks'):
+            error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
+        elif isinstance(problematic_output, str):
+            error_message = f"Previous output was a malformed string: '{problematic_output[:200]}...'"
+
+        # Construct the feedback prompt
+        feedback_prompt = f"""
+        Your previous response for the persona '{persona_name}' was problematic.
+        
+        Original Request Context:
+        {initial_prompt_from_history}
+
+        Your Previous Output (which failed validation):
+        ```
+        {str(problematic_output)[:1000]}
+        ```
+
+        CRITICAL ERROR FEEDBACK:
+        {error_message}
+
+        You MUST correct this. Ensure your new output is a SINGLE, VALID JSON OBJECT, strictly adhering to the schema provided in your system prompt.
+        DO NOT include any conversational text or markdown fences outside the JSON. Focus solely on providing a correct, valid response.
+        """
+        
+        # Get the schema for the persona's output
+        # This requires persona_manager to have access to PERSONA_OUTPUT_SCHEMAS
+        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        
+        full_system_prompt_parts = [persona_config.system_prompt]
+        full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
+        full_system_prompt_parts.append(f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```")
+        final_system_prompt = "\n\n".join(full_system_prompt_parts)
+
+        # Re-invoke the LLM for self-correction
+        for retry_attempt in range(self.max_self_correction_retries):
+            logger.info(f"Attempting self-correction for {persona_name} (Retry {retry_attempt + 1}/{self.max_self_correction_retries}).")
+            try:
+                raw_llm_output, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
+                    prompt=feedback_prompt,
+                    system_prompt=final_system_prompt,
+                    temperature=persona_config.temperature,
+                    max_tokens=persona_config.max_tokens,
+                    persona_config=persona_config,
+                )
+                
+                # Attempt to parse and validate the corrected output
+                corrected_output = self.output_parser.parse_and_validate(raw_llm_output, output_schema_class)
+                
+                if not corrected_output.get('malformed_blocks'):
+                    logger.info(f"Self-correction successful for {persona_name} on retry {retry_attempt + 1}.")
+                    return corrected_output
+                else:
+                    logger.warning(f"Self-correction attempt {retry_attempt + 1} for {persona_name} still resulted in malformed blocks: {corrected_output.get('malformed_blocks')}")
+                    feedback_prompt += f"\n\nPrevious self-correction attempt also failed. New errors: {json.dumps(corrected_output['malformed_blocks'], indent=2)}\nCRITICAL: You MUST fix these new errors."
+
+            except Exception as e:
+                logger.error(f"Error during self-correction retry for {persona_name}: {e}", exc_info=True)
+                feedback_prompt += f"\n\nPrevious self-correction attempt failed with an internal error: {str(e)}\nCRITICAL: Address this error."
+
+        logger.warning(f"Self-correction failed for {persona_name} after {self.max_self_correction_retries} retries.")
+        return None

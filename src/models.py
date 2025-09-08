@@ -184,7 +184,7 @@ class ContextAnalysisOutput(BaseModel):
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            # logger.warning( # REMOVED: logger is not imported
+            # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
             # )
             return self
@@ -194,7 +194,7 @@ class ContextAnalysisOutput(BaseModel):
                 try:
                     module["name"] = sanitize_and_validate_file_path(module["name"])
                 except ValueError as e:
-                    # logger.warning( # REMOVED: logger is not imported
+                    # logger.warning(
                     #     f"Invalid file path detected in ContextAnalysisOutput.key_modules: '{module['name']}' - {e}"
                     # )
                     module["name"] = f"INVALID_PATH_DETECTED:{module['name']}"
@@ -205,7 +205,6 @@ class ContextAnalysisOutput(BaseModel):
 # Moved LLMOutput and CodeChange definitions here for centralization.
 class CodeChange(BaseModel):
     file_path: str = Field(..., alias="FILE_PATH")
-    # MODIFIED: Added 'CREATE' and 'CREATE_DIRECTORY' to valid actions
     action: Literal["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"] = Field(..., alias="ACTION")
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
     lines: List[str] = Field(default_factory=list, alias="LINES")
@@ -222,7 +221,7 @@ class CodeChange(BaseModel):
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            # logger.warning( # REMOVED: logger is not imported
+            # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation."
             # )
             return v
@@ -236,7 +235,6 @@ class CodeChange(BaseModel):
     @classmethod
     def validate_action(cls, v):
         """Validates the action type."""
-        # MODIFIED: Added 'CREATE' and 'CREATE_DIRECTORY' to valid_actions
         valid_actions = ["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"]
         if v not in valid_actions:
             raise ValueError(f"Invalid action: '{v}'. Must be one of {valid_actions}.")
@@ -248,7 +246,6 @@ class CodeChange(BaseModel):
         """Validates that diff_content, if present, looks like a unified diff."""
         if v is None:
             return v
-        # FIX: re.search requires 're' module to be imported
         if not re.search(r"^--- a/.*?\n\+\+\+ b/.*?\n", v, re.MULTILINE):
             raise ValueError(
                 "DIFF_CONTENT does not appear to be in a standard unified diff format (missing '--- a/' and '+++ b/' headers)."
@@ -262,8 +259,8 @@ class CodeChange(BaseModel):
     @model_validator(mode="after")
     def check_content_based_on_action(self) -> "CodeChange":
         """Ensures content is provided based on action type and prioritizes diff_content for MODIFY."""
-        if self.action in ["ADD", "CREATE", "CREATE_DIRECTORY"]: # MODIFIED: Include new actions
-            if self.full_content is None and not self.lines: # Allow lines for directory creation
+        if self.action in ["ADD", "CREATE", "CREATE_DIRECTORY"]:
+            if self.full_content is None and not self.lines:
                 raise ValueError(
                     f"FULL_CONTENT or LINES is required for action '{self.action}' on file '{self.file_path}'."
                 )
@@ -274,7 +271,7 @@ class CodeChange(BaseModel):
         elif self.action == "MODIFY":
             if self.diff_content is not None:
                 if self.full_content is not None:
-                    # logger.warning( # REMOVED: logger is not imported
+                    # logger.warning(
                     #     f"Both FULL_CONTENT and DIFF_CONTENT provided for MODIFY on {self.file_path}. Prioritizing DIFF_CONTENT."
                     # )
                     self.full_content = None
@@ -378,7 +375,6 @@ class CritiqueOutput(BaseModel):
     critique_points: List[Dict[str, Any]] = Field(
         ..., alias="CRITIQUE_POINTS", description="Detailed points of critique."
     )
-    # MODIFIED: Changed suggestions to be a list of SuggestionItem objects
     suggestions: List[SuggestionItem] = Field(
         default_factory=list,
         alias="SUGGESTIONS",
@@ -404,13 +400,12 @@ class GeneralOutput(BaseModel):
         try:
             from src.utils.path_utils import sanitize_and_validate_file_path
         except ImportError as e:
-            # logger.warning( # REMOVED: logger is not imported
+            # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation."
             # )
             return self
 
         sanitized_output = self.general_output
-        # FIX: re.findall requires 're' module to be imported
         potential_paths = re.findall(
             r"\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b",
             sanitized_output,
@@ -421,7 +416,7 @@ class GeneralOutput(BaseModel):
                 sanitized_path = sanitize_and_validate_file_path(path)
                 sanitized_output = sanitized_output.replace(path, sanitized_path)
             except ValueError as e:
-                # logger.warning( # REMOVED: logger is not imported
+                # logger.warning(
                 #     f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}"
                 # )
                 sanitized_output = sanitized_output.replace(
@@ -486,13 +481,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     def validate_suggestion_structure(self) -> "SelfImprovementAnalysisOutputV1":
         processed_suggestions = []
         for suggestion in self.impactful_suggestions:
-            # Pydantic will handle validation of SuggestionItem directly,
-            # so we just need to ensure it's a SuggestionItem instance.
             if not isinstance(suggestion, SuggestionItem):
-                # This case should ideally be caught by Pydantic's automatic validation
-                # if `impactful_suggestions` is typed as `List[SuggestionItem]`.
-                # However, if raw dicts are passed, Pydantic will attempt to coerce.
-                # This block acts as a safeguard if coercion fails or if the input is unexpected.
                 try:
                     validated_suggestion = SuggestionItem.model_validate(suggestion)
                     processed_suggestions.append(validated_suggestion)
