@@ -55,8 +55,9 @@ from src.utils.prompt_analyzer import (
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE # Keep this as it's used in PersonaRouter fallback
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # Keep this as it's used in PersonaRouter fallback
 
+# NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
 from src.conflict_resolution import ConflictResolutionManager # NEW: Import ConflictResolutionManager
 from src.config.model_registry import ModelRegistry # NEW: Import ModelRegistry
@@ -149,7 +150,7 @@ class SocraticDebate:
                 model_name=self.model_name,
                 rich_console=self.rich_console,
                 request_id=self.request_id,
-                settings=self.settings, # Pass settings to provider
+                settings=self.settings, # Pass settings
             )
         except LLMProviderError as e:
             self._log_with_context(
@@ -574,11 +575,12 @@ class SocraticDebate:
         current_prompt: str,
         effective_max_output_tokens: int,
         final_model_to_use: str,
+        system_prompt_for_llm: str, # NEW parameter
     ) -> Tuple[str, int, int, bool]:
         """Executes the actual LLM API call and tracks tokens."""
         raw_llm_output, input_tokens, output_tokens = self.llm_provider.generate(
             prompt=current_prompt,
-            system_prompt=persona_config.system_prompt,
+            system_prompt=system_prompt_for_llm, # Use the new parameter
             temperature=persona_config.temperature,
             max_tokens=effective_max_output_tokens,
             persona_config=persona_config,
@@ -712,10 +714,23 @@ class SocraticDebate:
             raise ChimeraError(f"Persona configuration not found for {persona_name}.")
 
 
-        output_schema = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        output_schema_class = self.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
         self.logger.debug(
-            f"Using schema {output_schema.__name__} for {persona_name}."
+            f"Using schema {output_schema_class.__name__} for {persona_name}."
         )
+
+        # Dynamically construct the full system prompt
+        # Start with the persona's core system prompt
+        full_system_prompt_parts = [persona_config.system_prompt]
+
+        # Add shared JSON instructions
+        full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
+
+        # Add the specific JSON schema for this persona's output
+        full_system_prompt_parts.append(
+            f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"
+        )
+        final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
         current_prompt = prompt_for_llm
         # NEW: Optimize prompt content before sending to LLM
@@ -748,11 +763,12 @@ class SocraticDebate:
                         current_prompt,
                         effective_max_output_tokens,
                         final_model_to_use,
+                        final_system_prompt, # Pass the dynamically constructed system prompt
                     )
                 )
 
                 parsed_output, has_schema_error = self._parse_and_track_llm_output(
-                    persona_name, raw_llm_output, output_schema
+                    persona_name, raw_llm_output, output_schema_class
                 )
 
                 parsed_output = self._handle_content_alignment_check(
@@ -1718,6 +1734,13 @@ class SocraticDebate:
                         "overall_assessment": turn_copy["output"][
                             "architectural_analysis"
                         ].get("assessment", "Architectural analysis performed.")[:50]
+                        + "..."
+                    }
+                elif "security_analysis" in turn_copy["output"]:
+                    turn_copy["output"] = {
+                        "overall_assessment": turn_copy["output"][
+                            "security_analysis"
+                        ].get("overall_assessment", "Security analysis performed.")[:50]
                         + "..."
                     }
                 elif "CRITIQUE_POINTS" in turn_copy["output"]:

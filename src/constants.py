@@ -2,9 +2,11 @@
 
 import re
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 logger = logging.getLogger(__name__)
+
+# --- Constants for Prompt Analysis ---
 
 # Centralized keywords with weights for self-analysis prompt detection.
 # Higher weights indicate stronger indicators.
@@ -22,20 +24,42 @@ SELF_ANALYSIS_KEYWORDS = {
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
-NEGATION_PATTERNS = [
+NEGATION_PATTERNS: List[Tuple[str, float]] = [
     (r"(?i)\b(not|don\'t|do not|avoid|without|never|no)\b", 0.7),
     (r"(?i)\b(please do not|kindly avoid|do not intend to)\b", 0.9),
 ]
 
 THRESHOLD = 0.75
 
+# --- Constants for Persona Routing ---
+
 # Optimized persona sequence for self-analysis prompts
-SELF_ANALYSIS_PERSONA_SEQUENCE = [
+SELF_ANALYSIS_PERSONA_SEQUENCE: List[str] = [
+    "Self_Improvement_Analyst", # Primary analyst first
     "Code_Architect",
     "Security_Auditor",
-    "Test_Engineer",
     "DevOps_Engineer",
+    "Test_Engineer",
     "Constructive_Critic",
     "Impartial_Arbitrator",
-    "Devils_Advocate",
+    "Devils_Advocate", # Devils Advocate is often useful for critical self-reflection
 ]
+
+# --- SHARED CONSTANTS FOR LLM OUTPUT FORMATTING ---
+
+# Common JSON output instructions that are repeated across multiple persona prompts.
+# This constant centralizes these instructions to avoid redundancy and ensure consistency.
+SHARED_JSON_INSTRUCTIONS: str = """
+---
+**CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
+1. MUST BE A SINGLE, VALID JSON OBJECT. NO ARRAYS.
+2. NO NUMBERED ARRAY ELEMENTS.
+3. ABSOLUTELY NO CONVERSATIONAL TEXT, MARKDOWN FENCES (```json, ```python, ```), OR EXPLANATIONS OUTSIDE JSON.
+4. STRICTLY ADHERE TO THE PROVIDED SCHEMA.
+5. USE DOUBLE QUOTES for all keys and string values.
+6. ENSURE COMMAS separate all properties in objects and elements in arrays.
+7. DO NOT include trailing commas.
+---"""
+
+# --- Other potential constants could be added here ---
+# e.g., default file paths, common error messages, etc.

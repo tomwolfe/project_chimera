@@ -3,21 +3,15 @@ from typing import Dict, Any, Optional, List, Literal
 from pydantic import (
     BaseModel,
     Field,
-    # REMOVED: validator # Deprecated in Pydantic v2, replaced by field_validator/model_validator
-    # validator, # Re-added for compatibility with older Pydantic versions if not fully v2
     model_validator,
     ConfigDict,
     ValidationError,
     field_validator,
 )
-# REMOVED: import logging # Not directly used in this file
-import re # ADDED: re import for regex in validate_diff_content_format and validate_paths_in_suggestions/general_output
+import re
 from pathlib import Path
 from enum import Enum
-from typing import Self # For Python 3.11+ type hinting
-
-# logger = logging.getLogger(__name__) # REMOVED: Not used
-
+from typing import Self
 
 # --- Pydantic Models for Schema Validation ---
 class PersonaConfig(BaseModel):
@@ -364,6 +358,15 @@ class SelfImprovementFinding(BaseModel):
         ge=0.0, le=1.0, description="80/20 Pareto principle score (impact/effort)"
     )
 
+# NEW: Model for structured suggestions within CritiqueOutput
+class SuggestionItem(BaseModel):
+    area: str = Field(..., alias="AREA", description="Category of the suggestion (e.g., Reasoning Quality, Robustness).")
+    problem: str = Field(..., alias="PROBLEM", description="Specific issue identified.")
+    proposed_solution: str = Field(..., alias="PROPOSED_SOLUTION", description="Concrete solution to the identified problem.")
+    expected_impact: str = Field(..., alias="EXPECTED_IMPACT", description="Expected benefits of implementing the solution.")
+    code_changes_suggested: List[CodeChange] = Field(default_factory=list, alias="CODE_CHANGES_SUGGESTED", description="Details of suggested code modifications.")
+    rationale: Optional[str] = Field(None, alias="RATIONALE", description="Detailed rationale for the suggestion.")
+
 
 # NEW: Pydantic model for general critique output
 class CritiqueOutput(BaseModel):
@@ -373,7 +376,8 @@ class CritiqueOutput(BaseModel):
     critique_points: List[Dict[str, Any]] = Field(
         ..., alias="CRITIQUE_POINTS", description="Detailed points of critique."
     )
-    suggestions: List[str] = Field(
+    # MODIFIED: Changed suggestions to be a list of SuggestionItem objects
+    suggestions: List[SuggestionItem] = Field(
         default_factory=list,
         alias="SUGGESTIONS",
         description="Actionable suggestions for improvement.",
@@ -382,41 +386,9 @@ class CritiqueOutput(BaseModel):
         default_factory=list, alias="malformed_blocks"
     )
 
-    @model_validator(mode="after")
-    def validate_paths_in_suggestions(self) -> "CritiqueOutput":
-        """Validates potential file paths within suggestions for security."""
-        try:
-            from src.utils.path_utils import sanitize_and_validate_file_path
-        except ImportError as e:
-            # logger.warning( # REMOVED: logger is not imported
-            #     f"Could not import 'sanitize_and_validate_file_path' for CritiqueOutput validation: {e}. Skipping path validation."
-            # )
-            return self
-
-        sanitized_suggestions = []
-        for suggestion in self.suggestions:
-            # FIX: re.findall requires 're' module to be imported
-            potential_paths = re.findall(
-                r"\b(?:src|data|tests|config|custom_frameworks)[/\w.-]+\.py\b",
-                suggestion,
-                re.IGNORECASE,
-            )
-            for path in potential_paths:
-                try:
-                    sanitized_path = sanitize_and_validate_file_path(path)
-                    suggestion = suggestion.replace(
-                        path, sanitized_path
-                    )
-                except ValueError as e:
-                    # logger.warning( # REMOVED: logger is not imported
-                    #     f"Invalid file path detected in CritiqueOutput.suggestions: '{path}' - {e}"
-                    # )
-                    suggestion = suggestion.replace(
-                        path, f"INVALID_PATH_DETECTED:{path}"
-                    )
-            sanitized_suggestions.append(suggestion)
-        self.suggestions = sanitized_suggestions
-        return self
+    # REMOVED: The validator `validate_paths_in_suggestions` is removed
+    # because `suggestions` is now a list of `SuggestionItem` objects,
+    # and `CodeChange` already handles path validation.
 
 
 # NEW: Pydantic model for General_Synthesizer's output
@@ -500,7 +472,8 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
         alias="ANALYSIS_SUMMARY",
         description="Overall summary of the self-improvement analysis.",
     )
-    impactful_suggestions: List[Dict[str, Any]] = Field(
+    # MODIFIED: Changed impactful_suggestions to be a list of SuggestionItem objects
+    impactful_suggestions: List[SuggestionItem] = Field(
         ...,
         alias="IMPACTFUL_SUGGESTIONS",
         description="List of structured suggestions for improvement.",
@@ -515,45 +488,27 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     def validate_suggestion_structure(self) -> "SelfImprovementAnalysisOutputV1":
         processed_suggestions = []
         for suggestion in self.impactful_suggestions:
-            required_fields = [
-                "AREA",
-                "PROBLEM",
-                "PROPOSED_SOLUTION",
-                "EXPECTED_IMPACT",
-            ]
-            if not all(k in suggestion for k in required_fields):
-                self.malformed_blocks.append(
-                    {
-                        "type": "MALFORMED_SUGGESTION_STRUCTURE",
-                        "message": f"A suggestion item is missing required fields: {', '.join(required_fields)}. Skipping this suggestion.",
-                        "raw_string_snippet": str(suggestion)[:500],
-                    }
-                )
-                continue
-
-            if "CODE_CHANGES_SUGGESTED" in suggestion:
-                validated_code_changes = []
-                for cc_data in suggestion["CODE_CHANGES_SUGGESTED"]:
-                    try:
-                        validated_code_changes.append(
-                            CodeChange.model_validate(cc_data).model_dump(by_alias=True)
-                        )
-                    except ValidationError as e:
-                        # logger.warning( # REMOVED: logger is not imported
-                        #     f"Malformed CodeChange in SelfImprovementAnalysisOutputV1: {e}. Skipping this change."
-                        # )
-                        self.malformed_blocks.append(
-                            {
-                                "type": "CODE_CHANGE_SCHEMA_VALIDATION_ERROR",
-                                "message": f"A suggested code change item failed validation: {e}",
-                                "raw_string_snippet": str(cc_data)[:500],
-                            }
-                        )
-                suggestion["CODE_CHANGES_SUGGESTED"] = validated_code_changes
-            processed_suggestions.append(suggestion)
-        self.impactful_suggestions = (
-            processed_suggestions
-        )
+            # Pydantic will handle validation of SuggestionItem directly,
+            # so we just need to ensure it's a SuggestionItem instance.
+            if not isinstance(suggestion, SuggestionItem):
+                # This case should ideally be caught by Pydantic's automatic validation
+                # if `impactful_suggestions` is typed as `List[SuggestionItem]`.
+                # However, if raw dicts are passed, Pydantic will attempt to coerce.
+                # This block acts as a safeguard if coercion fails or if the input is unexpected.
+                try:
+                    validated_suggestion = SuggestionItem.model_validate(suggestion)
+                    processed_suggestions.append(validated_suggestion)
+                except ValidationError as e:
+                    self.malformed_blocks.append(
+                        {
+                            "type": "MALFORMED_SUGGESTION_STRUCTURE",
+                            "message": f"A suggestion item failed validation: {e}. Skipping this suggestion.",
+                            "raw_string_snippet": str(suggestion)[:500],
+                        }
+                    )
+            else:
+                processed_suggestions.append(suggestion)
+        self.impactful_suggestions = processed_suggestions
         return self
 
 

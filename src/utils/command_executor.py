@@ -39,7 +39,11 @@ def execute_command_safely(
 
         if process.returncode != 0:
             logger.error(f"Command failed: {command}")
-            logger.error(f"Stderr: {process.stderr}")
+            if process.stderr:
+                logger.error(f"Stderr: {process.stderr}")
+            else:
+                # NEW: Added more context when stderr is empty but command failed
+                logger.error(f"Command failed with non-zero exit code {process.returncode}, but stderr was empty. This might indicate an environment or execution path issue.")
         else:
             logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
 
