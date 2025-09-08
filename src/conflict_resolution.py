@@ -248,14 +248,23 @@ class ConflictResolutionManager:
                 if not self.llm_provider or not self.llm_provider.tokenizer:
                     raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
 
-                # MODIFIED: Call the public generate method, which internally handles _prepare_llm_call_config
+                # FIX: Replicate logic from _prepare_llm_call_config to determine effective max tokens
+                # This addresses the AttributeError by ensuring the correct parameters are derived
+                # without calling a SocraticDebate-specific method on GeminiProvider.
+                final_model_to_use = self.llm_provider.model_name # Use the provider's current model
+                actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
+                effective_max_output_tokens = min(
+                    persona_config.max_tokens, # Max tokens requested by persona
+                    actual_model_max_output_tokens # Max tokens allowed by the model
+                )
+
                 raw_llm_output, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
                     prompt=feedback_prompt,
                     system_prompt=final_system_prompt,
                     temperature=persona_config.temperature,
-                    max_tokens=persona_config.max_tokens, # Use persona's max_tokens for output
+                    max_tokens=effective_max_output_tokens, # Use the calculated effective max tokens
                     persona_config=persona_config,
-                    requested_model_name=self.llm_provider.model_name, # Use the provider's current model
+                    requested_model_name=final_model_to_use
                 )
                 
                 # Attempt to parse and validate the corrected output

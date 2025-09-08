@@ -1008,25 +1008,25 @@ class FocusedMetricsCollector:
         """
         coverage_data = {
             "overall_coverage_percentage": 0.0,
-            "covered_statements": 0,
-            "files_covered_count": 0,
-            "total_python_files_analyzed": 0,
-            "total_files": 0,
             "coverage_details": "Failed to run coverage tool.",
         }
         try:
             # Run pytest with coverage and generate a JSON report
+            # FIX: Add -v for verbosity to help debug failures.
+            # A non-zero return code from pytest (e.g., 1 for test failures) is still valid for coverage report generation.
             command = [
-                sys.executable, "-m", "pytest", "tests/", "--cov=src", "--cov-report=json:coverage.json"
+                sys.executable, "-m", "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
             ]
             # Use execute_command_safely for robustness
             return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
 
             # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
-            # We consider 0 or 1 as successful execution of the coverage command.
-            if return_code not in (0, 1):
+            # FIX: Only consider exit code 0 as full success for the command itself.
+            # Test failures (exit code 1) are still a valid execution for coverage reporting.
+            if return_code not in (0, 1): # Keep 0 or 1 as valid for coverage report generation
                 logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
-                coverage_data["coverage_details"] = f"Pytest command failed: {stderr}"
+                # Provide more detailed error info, including stdout for debugging.
+                coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
                 return coverage_data
 
             coverage_json_path = Path("coverage.json")
