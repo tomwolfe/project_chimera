@@ -118,6 +118,13 @@ class SocraticDebate:
         else:
             self.codebase_context = codebase_context or {}
 
+        # NEW: Log if codebase_context is still empty after initialization
+        if not self.codebase_context:
+            self.logger.warning(
+                "Codebase context is empty after SocraticDebate initialization. Context-aware features may be limited.",
+                extra=self._log_extra
+            )
+
         self.domain = domain
 
         self.token_tracker = token_tracker or TokenUsageTracker(
@@ -188,11 +195,30 @@ class SocraticDebate:
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
-                codebase_context=self.codebase_context,
+                codebase_context=self.codebase_context, # FIX: Pass the correctly populated self.codebase_context
                 cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers")
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
+
+        # FIX: Ensure context_analyzer has computed embeddings if codebase_context is present
+        # This is a safeguard in case ContextRelevanceAnalyzer was passed in without embeddings
+        # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
+        if self.codebase_context and not self.context_analyzer.file_embeddings:
+            try:
+                self.context_analyzer.compute_file_embeddings(self.codebase_context)
+                self._log_with_context(
+                    "info",
+                    "Computed file embeddings for codebase context after SocraticDebate init.",
+                )
+            except Exception as e:
+                self._log_with_context(
+                    "error", f"Error computing context embeddings: {e}[/red]"
+                )
+                if self.status_callback:
+                    self.status_callback(
+                        message=f"[red]Error computing context embeddings: {e}[/red]"
+                    )
 
         # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
@@ -216,25 +242,26 @@ class SocraticDebate:
         self.model_name = self._determine_optimal_model(model_name)
         
         # Compute embeddings if codebase_context is present but embeddings are not
-        if self.codebase_context and self.context_analyzer:
-            if isinstance(self.codebase_context, dict):
-                try:
-                    if not self.context_analyzer.file_embeddings:
-                        self.context_analyzer.compute_file_embeddings(
-                            self.codebase_context
-                        )
-                except Exception as e:
-                    self._log_with_context(
-                        "error", f"Error computing context embeddings: {e}[/red]"
-                    )
-                    if self.status_callback:
-                        self.status_callback(
-                            message=f"[red]Error computing context embeddings: {e}[/red]"
-                        )
-            else:
-                self.logger.warning(
-                    "codebase_context was not a dictionary, skipping embedding computation."
-                )
+        # REMOVED: This block is now redundant due to the explicit check above
+        # if self.codebase_context and self.context_analyzer:
+        #     if isinstance(self.codebase_context, dict):
+        #         try:
+        #             if not self.context_analyzer.file_embeddings:
+        #                 self.context_analyzer.compute_file_embeddings(
+        #                     self.codebase_context
+        #                 )
+        #         except Exception as e:
+        #             self._log_with_context(
+        #                 "error", f"Error computing context embeddings: {e}[/red]"
+        #             )
+        #             if self.status_callback:
+        #                 self.status_callback(
+        #                     message=f"[red]Error computing context embeddings: {e}[/red]"
+        #                 )
+        #     else:
+        #         self.logger.warning(
+        #             "codebase_context was not a dictionary, skipping embedding computation."
+        #         )
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""

@@ -26,13 +26,13 @@ def execute_command_safely(
         Exception: For other errors during command execution.
     """
     try:
-        # NEW: Prepend sys.executable if the command starts with 'python' or 'pip'
+        # NEW: Prepend sys.executable -m if the command starts with a Python module name.
         # This ensures the command runs with the same Python interpreter as the current process,
         # which is crucial for virtual environments and consistent tool execution.
-        if command and (command[0] == 'python' or command[0] == 'pip'):
-            command[0] = sys.executable
+        if command and command[0] in ['pytest', 'ruff', 'bandit']:
+            command.insert(0, '-m')
+            command.insert(0, sys.executable)
             logger.debug(f"Adjusted command to use sys.executable: {command}")
-
         # Ensure shell=False for security when passing a list of arguments
         logger.info(f"Executing command: {command}")
         process = subprocess.run(
