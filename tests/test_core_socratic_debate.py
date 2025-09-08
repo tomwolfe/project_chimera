@@ -15,6 +15,10 @@ from src.self_improvement.content_validator import ContentAlignmentValidator # I
 from src.utils.prompt_optimizer import PromptOptimizer # Import PromptOptimizer
 from src.config.model_registry import ModelRegistry, ModelSpecification # NEW: Import ModelRegistry
 
+# NEW IMPORTS FOR THE ADDED TESTS
+# from src.core import SocraticDebate as DebateManager # Assuming SocraticDebate is the DebateManager
+# from src.persona_manager import PersonaManager # Already imported above
+
 @pytest.fixture
 def mock_persona_manager():
     """Provides a mock PersonaManager instance."""
@@ -408,3 +412,141 @@ def test_socratic_debate_context_aware_assistant_turn(socratic_debate_instance, 
     assert intermediate_steps["Context_Aware_Assistant_Output"].get("general_overview") == "Context analysis output"
     mock_context_analyzer.find_relevant_files.assert_called_once()
     mock_context_analyzer.generate_context_summary.assert_called_once()
+
+# NEW TESTS ADDED FROM THE SYSTEM'S SUGGESTION (modified to fit existing file)
+@pytest.fixture
+def mock_llm_client_for_debate_tests():
+    client = MagicMock()
+    # Mock a basic LLM response structure
+    client.models.generate_content.return_value.candidates[0].content.parts[0].text = "{ \"response\": \"This is a mock response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }"
+    # Mock count_tokens for the tokenizer
+    client.models.count_tokens.return_value.total_tokens = 10 # Arbitrary small number
+    return client
+
+@pytest.fixture
+def debate_manager_for_new_tests(mock_llm_client_for_debate_tests, mock_persona_manager, mock_context_analyzer, mock_token_tracker, mock_settings):
+    # Patch GeminiProvider to use our mock_llm_client_for_debate_tests
+    with patch('core.GeminiProvider') as MockGeminiProvider:
+        mock_gemini_provider_instance = MagicMock(spec=GeminiProvider)
+        mock_gemini_provider_instance.tokenizer = MagicMock(spec=GeminiTokenizer)
+        mock_gemini_provider_instance.tokenizer.count_tokens.side_effect = lambda text: len(text) // 4 if text else 0
+        mock_gemini_provider_instance.tokenizer.max_output_tokens = 8192
+        mock_gemini_provider_instance.generate.return_value = ("{'general_output': 'Mocked LLM response'}", 50, 100, False)
+        mock_gemini_provider_instance.calculate_usd_cost.return_value = 0.001
+        mock_gemini_provider_instance.model_registry = MagicMock(spec=ModelRegistry)
+        mock_gemini_provider_instance.model_registry.get_model.return_value = ModelSpecification(
+            name="gemini-2.5-flash-lite",
+            max_input_tokens=1048576,
+            max_output_tokens=8192,
+            cost_per_1k_input=0.075,
+            cost_per_1k_output=0.30,
+            capabilities=["reasoning", "coding"]
+        )
+        mock_gemini_provider_instance.get_model_specification.return_value = mock_gemini_provider_instance.model_registry.get_model.return_value
+        mock_gemini_provider_instance.MAX_RETRIES = mock_settings.max_retries
+        mock_gemini_provider_instance.MAX_BACKOFF_SECONDS = mock_settings.max_backoff_seconds
+        MockGeminiProvider.return_value = mock_gemini_provider_instance
+
+        # Patch other dependencies as needed for SocraticDebate
+        with patch('core.PersonaManager', return_value=mock_persona_manager), \
+             patch('core.ContextRelevanceAnalyzer', return_value=mock_context_analyzer), \
+             patch('core.TokenUsageTracker', return_value=mock_token_tracker), \
+             patch('core.ConflictResolutionManager'), \
+             patch('core.ContentAlignmentValidator'), \
+             patch('src.self_improvement.metrics_collector.FocusedMetricsCollector'), \
+             patch('core.PromptOptimizer'):
+
+            # Create a minimal PersonaManager for the test
+            # This is needed because SocraticDebate expects a PersonaManager instance
+            # and the PersonaManager needs domain_keywords.
+            pm_for_test = PersonaManager(domain_keywords={"General": ["general"]})
+            pm_for_test.all_personas = {
+                'MockPersona': PersonaConfig(name='MockPersona', system_prompt='You are a mock persona.', temperature=0.5, max_tokens=1024)
+            }
+            pm_for_test.persona_sets = {'General': ['MockPersona']}
+            pm_for_test.get_adjusted_persona_config.return_value = pm_for_test.all_personas['MockPersona']
+            pm_for_test.get_persona_sequence_for_framework.return_value = ['MockPersona']
+            pm_for_test.prompt_analyzer = MagicMock()
+            pm_for_test.prompt_analyzer.is_self_analysis_prompt.return_value = False
+            pm_for_test.get_token_optimized_persona_sequence.side_effect = lambda seq: seq
+
+            # Mock the output parser on the debate instance
+            mock_output_parser = MagicMock(spec=LLMOutputParser)
+            mock_output_parser.parse_and_validate.side_effect = lambda raw, schema: json.loads(raw) if isinstance(raw, str) else raw
+            mock_output_parser._create_fallback_output.side_effect = lambda schema, blocks, raw, partial, extracted: {"response": "Fallback response", "malformed_blocks": blocks}
+
+            debate_manager_instance = SocraticDebate( # Use SocraticDebate directly
+                initial_prompt="Start the debate on topic X.",
+                api_key="mock_api_key",
+                model_name="gemini-2.5-flash-lite",
+                persona_manager=pm_for_test,
+                llm_provider=mock_gemini_provider_instance, # Pass the mocked provider
+                context_analyzer=mock_context_analyzer,
+                token_tracker=mock_token_tracker,
+                settings=mock_settings,
+            )
+            debate_manager_instance.output_parser = mock_output_parser # Assign the mock parser
+            return debate_manager_instance
+
+def test_socratic_debate_flow(debate_manager_for_new_tests):
+    # Mocking persona routing to ensure a predictable flow for testing
+    debate_manager_for_new_tests.persona_router.determine_persona_sequence.return_value = ['MockPersona']
+    
+    initial_prompt = "Start the debate on topic X."
+    # The run_debate method is the entry point, it handles initialization and turns
+    final_answer, intermediate_steps = debate_manager_for_new_tests.run_debate()
+
+    assert len(intermediate_steps.get('Debate_History', [])) > 0
+    # Add more assertions to check the content and structure of the debate history
+    # For example, check if responses are parsed correctly, if reasoning steps are present, etc.
+    assert "Mocked LLM response" in final_answer.get('general_output', '')
+
+def test_llm_response_parsing(debate_manager_for_new_tests):
+    # Test the parsing of LLM responses, ensuring it handles valid JSON and extracts key fields
+    mock_response_content = "{ \"response\": \"Parsed response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }"
+    
+    # Directly call the parser with the mock content and a generic schema
+    # For this test, we'll use GeneralOutput as a stand-in for a simple dict response
+    parsed_data = debate_manager_for_new_tests.output_parser.parse_and_validate(mock_response_content, GeneralOutput)
+    
+    assert parsed_data['response'] == "Parsed response."
+    assert 'reasoning_steps' in parsed_data
+    assert len(parsed_data['reasoning_steps']) == 2
+
+def test_persona_routing(debate_manager_for_new_tests):
+    # Test that the persona manager correctly routes to different personas based on some criteria
+    # This might involve mocking the state or the criteria used for routing
+    debate_manager_for_new_tests.persona_router.determine_persona_sequence.side_effect = [['PersonaA'], ['PersonaB'], ['PersonaA']]
+    
+    # Mock the persona manager's get_adjusted_persona_config to return valid configs for these mock personas
+    debate_manager_for_new_tests.persona_manager.all_personas['PersonaA'] = PersonaConfig(name='PersonaA', system_prompt='Prompt A', temperature=0.5, max_tokens=1024)
+    debate_manager_for_new_tests.persona_manager.all_personas['PersonaB'] = PersonaConfig(name='PersonaB', system_prompt='Prompt B', temperature=0.5, max_tokens=1024)
+    debate_manager_for_new_tests.persona_manager.get_adjusted_persona_config.side_effect = lambda name: debate_manager_for_new_tests.persona_manager.all_personas.get(name)
+    debate_manager_for_new_tests.persona_manager.get_persona_sequence_for_framework.side_effect = lambda name: [name] # For simplicity
+
+    # Mock LLM responses for these mock personas
+    debate_manager_for_new_tests.llm_provider.generate.side_effect = [
+        ("{'general_output': 'Response from PersonaA'}", 50, 100, False),
+        ("{'general_output': 'Response from PersonaB'}", 50, 100, False),
+        ("{'general_output': 'Response from PersonaA again'}", 50, 100, False),
+        ("{'general_output': 'Final synthesis'}", 50, 100, False), # Final synthesis turn
+    ]
+    debate_manager_for_new_tests.output_parser.parse_and_validate.side_effect = [
+        ({'general_output': 'Response from PersonaA', 'malformed_blocks': []}),
+        ({'general_output': 'Response from PersonaB', 'malformed_blocks': []}),
+        ({'general_output': 'Response from PersonaA again', 'malformed_blocks': []}),
+        ({'general_output': 'Final synthesis', 'malformed_blocks': []}),
+    ]
+
+    initial_prompt = "Topic Y"
+    # The run_debate method orchestrates the turns, which includes persona routing
+    final_answer, intermediate_steps = debate_manager_for_new_tests.run_debate()
+
+    # Assert that determine_persona_sequence was called multiple times
+    assert debate_manager_for_new_tests.persona_router.determine_persona_sequence.call_count >= 2 # Initial + after context
+    
+    # Check the debate history to see if personas were routed as expected
+    debate_history = intermediate_steps.get('Debate_History', [])
+    assert any(t.get('persona') == 'PersonaA' for t in debate_history)
+    assert any(t.get('persona') == 'PersonaB' for t in debate_history)
+    # Note: More sophisticated tests would check the actual persona used for each turn

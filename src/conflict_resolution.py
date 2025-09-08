@@ -248,25 +248,21 @@ class ConflictResolutionManager:
                 if not self.llm_provider or not self.llm_provider.tokenizer:
                     raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
 
-                # Prepare LLM call configuration
-                final_model_to_use, effective_max_output_tokens = self.llm_provider._prepare_llm_call_config(
-                    persona_config, persona_config.max_tokens, self.llm_provider.model_name
-                )
-
+                # MODIFIED: Call the public generate method, which internally handles _prepare_llm_call_config
                 raw_llm_output, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
                     prompt=feedback_prompt,
                     system_prompt=final_system_prompt,
                     temperature=persona_config.temperature,
-                    max_tokens=effective_max_output_tokens,
+                    max_tokens=persona_config.max_tokens, # Use persona's max_tokens for output
                     persona_config=persona_config,
-                    requested_model_name=final_model_to_use,
+                    requested_model_name=self.llm_provider.model_name, # Use the provider's current model
                 )
                 
                 # Attempt to parse and validate the corrected output
                 corrected_output = self.output_parser.parse_and_validate(raw_llm_output, output_schema_class)
                 
                 if not corrected_output.get('malformed_blocks'):
-                    logger.logger.info(f"Self-correction successful for {persona_name} on retry {retry_attempt + 1}.")
+                    logger.info(f"Self-correction successful for {persona_name} on retry {retry_attempt + 1}.")
                     return corrected_output
                 else:
                     logger.warning(f"Self-correction attempt {retry_attempt + 1} for {persona_name} still resulted in malformed blocks: {corrected_output.get('malformed_blocks')}")
