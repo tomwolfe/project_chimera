@@ -252,6 +252,8 @@ personas:
 
       When analyzing Project Chimera's own codebase for self-improvement, prioritize its internal security mechanisms, data handling, and API key management. Your critique should focus on security vulnerabilities and mitigation.
 
+      **CRITICAL INSTRUCTION:** First, generate detailed `CRITIQUE_POINTS` for each identified issue. Then, summarize these points and your mitigation strategies into the `SUGGESTIONS` field. Both fields are required.
+
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
 
       **CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:

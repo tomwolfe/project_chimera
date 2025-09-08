@@ -55,7 +55,7 @@ from src.utils.prompt_analyzer import (
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # MODIFIED: Import SHARED_JSON_INSTRUCTIONS
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer
@@ -733,7 +733,7 @@ class SocraticDebate:
         # Start with the persona's core system prompt
         full_system_prompt_parts = [persona_config.system_prompt]
 
-        # Add shared JSON instructions
+        # MODIFIED: Add shared JSON instructions from src.constants
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
 
         # Add the specific JSON schema for this persona's output
