@@ -6,7 +6,7 @@ import sys # NEW: Import sys
 logger = logging.getLogger(__name__)
 
 
-# ADDED 'check' parameter to the function signature
+# ADDED: 'check' parameter to the function signature
 def execute_command_safely(
     command: list[str], timeout: int = 60, check: bool = False
 ) -> tuple[int, str, str]:
@@ -66,5 +66,5 @@ def execute_command_safely(
         )
         raise
     except Exception as e:
-        logger.error(f"An error occurred while executing command: {e}")
+        logger.error(f"An error occurred while executing command: {e}", exc_info=True)
         raise

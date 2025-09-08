@@ -10,7 +10,7 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScann
 from src.token_tracker import TokenUsageTracker
 from src.config.settings import ChimeraSettings
 from src.middleware.rate_limiter import RateLimiter
-from src.utils.api_key_validator import validate_gemini_api_key_format # NEW: Import from api_key_validator
+from src.utils.api_key_validator import validate_gemini_api_key_format
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,12 @@ def update_activity_timestamp():
     st.session_state.last_activity_timestamp = time.time()
     logger.debug("Activity timestamp updated.")
 
-def _initialize_session_state(app_config: Dict[str, Any], example_prompts: Dict[str, Any]):
+def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
     """Initializes or resets all session state variables to their default values."""
-    MAX_TOKENS_LIMIT = app_config.get("max_tokens_limit", 64000)
-    CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25)
-    DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
+    # MODIFIED: Access total_budget directly from app_config (ChimeraSettings instance)
+    MAX_TOKENS_LIMIT = app_config.total_budget
+    CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.context_token_budget_ratio
+    DOMAIN_KEYWORDS = app_config.domain_keywords # NEW: Access domain_keywords from app_config
 
     defaults = {
         "initialized": True,
@@ -76,7 +77,7 @@ def _initialize_session_state(app_config: Dict[str, Any], example_prompts: Dict[
 
     if "persona_manager" not in st.session_state:
         st.session_state.persona_manager = PersonaManager(
-            DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker
+            DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker # MODIFIED: Pass DOMAIN_KEYWORDS
         )
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
@@ -97,9 +98,10 @@ def _initialize_session_state(app_config: Dict[str, Any], example_prompts: Dict[
         }
 
     if "context_analyzer" not in st.session_state:
-        SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/transformers")
+        # REMOVED: SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/transformers")
+        # NEW: Use cache dir from settings
         analyzer = ContextRelevanceAnalyzer(
-            cache_dir=SENTENCE_TRANSFORMER_CACHE_DIR,
+            cache_dir=app_config.sentence_transformer_cache_dir, # NEW: Use cache dir from settings
             codebase_context=st.session_state.codebase_context,
         )
         if st.session_state.persona_manager.persona_router:
@@ -144,12 +146,12 @@ def _initialize_session_state(app_config: Dict[str, Any], example_prompts: Dict[
             default_example_category
         ][default_example_name].get("framework_hint")
 
-def reset_app_state(app_config: Dict[str, Any], example_prompts: Dict[str, Any]):
+def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
     """Resets all session state variables to their default values."""
     _initialize_session_state(app_config, example_prompts)
     st.rerun()
 
-def check_session_expiration(app_config: Dict[str, Any], example_prompts: Dict[str, Any]):
+def check_session_expiration(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
     """Checks for session expiration due to inactivity."""
     if "initialized" in st.session_state and st.session_state.initialized:
         if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:

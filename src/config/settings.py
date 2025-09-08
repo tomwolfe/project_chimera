@@ -1,7 +1,11 @@
 # src/config/settings.py
 from pydantic import BaseModel, Field, validator, model_validator
-from typing import Self, Dict # Import Self for Python 3.11+ type hinting, Dict for new fields
+from typing import Self, Dict, Any, List # FIX: Added List import
+import yaml
+from pathlib import Path
+import logging
 
+logger = logging.getLogger(__name__)
 
 class ChimeraSettings(BaseModel):
     """
@@ -88,6 +92,18 @@ class ChimeraSettings(BaseModel):
         description="Specific maximum input tokens for individual personas.",
     )
 
+    # NEW: Domain keywords for prompt analysis, loaded from config.yaml
+    domain_keywords: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Keywords for classifying prompts into domains."
+    )
+
+    # NEW: Sentence Transformer cache directory
+    sentence_transformer_cache_dir: str = Field(
+        default=str(Path.home() / ".cache" / "huggingface" / "transformers"),
+        description="Directory for caching SentenceTransformer models."
+    )
+
     @model_validator(mode="after")
     def normalize_token_budget_ratios(self) -> Self:
         """
@@ -134,3 +150,17 @@ class ChimeraSettings(BaseModel):
             self.self_analysis_synthesis_ratio = 0.15
 
         return self
+
+    @classmethod
+    def from_yaml(cls, file_path: str) -> 'ChimeraSettings':
+        """Loads settings from a YAML file."""
+        try:
+            # Use Path for robust file handling
+            config_path = Path(file_path)
+            with open(config_path, 'r') as f:
+                config_data = yaml.safe_load(f)
+            return cls(**config_data)
+        except (FileNotFoundError, TypeError, yaml.YAMLError) as e:
+            # Log the error for debugging
+            logger.error(f"Failed to load settings from {file_path}: {e}. Returning default settings.", exc_info=True)
+            return cls() # Return default settings on error

@@ -48,13 +48,13 @@ import difflib # Used in diff_lines
 # import subprocess # REMOVED: Not needed after refactoring execute_command
 from src.utils.command_executor import execute_command_safely # NEW: Import for secure command execution
 
-import yaml # Used in load_config, but also for persona_manager.load_framework_into_session
+# REMOVED: import yaml # No longer needed, ChimeraSettings handles YAML loading
 import json # Used for json.dumps in results display
 
 import uuid # Used for _session_id, request_id
 from src.logging_config import setup_structured_logging # Called
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # Instantiated, used in handle_debate_errors
-from src.config.settings import ChimeraSettings # Instantiated
+from src.config.settings import ChimeraSettings # NEW: Import ChimeraSettings
 from pathlib import Path # Used for Path.cwd(), file_path.name
 
 from src.utils.prompt_analyzer import PromptAnalyzer # Instantiated via PersonaManager
@@ -66,46 +66,21 @@ from src.utils.session_manager import _initialize_session_state, update_activity
 from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key # NEW: Import from ui_helpers
 
 # --- Configuration Loading ---
-@st.cache_resource
-def load_config(file_path: str = "config.yaml") -> Dict[str, Any]:
-    """Load config with validation and user-friendly errors."""
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(
-            f"Config file not found at '{file_path}'. Please create `config.example.yaml` from the `config.example.yaml` template."
-        )
-    try:
-        with open(file_path, "r") as f:
-            config = yaml.safe_load(f)
-            if not isinstance(config, dict):
-                raise ValueError(
-                    f"Invalid config format in '{file_path}'. Expected a dictionary."
-                )
-            return config
-    except yaml.YAMLError as e:
-        raise ValueError(
-            f"Error parsing config file '{file_path}'. Please check YAML syntax: {e}"
-        ) from e
-    except IOError as e:
-        raise IOError(
-            f"IO error reading config file '{file_path}'. Check permissions: {e}"
-        ) from e
-
-
+# REMOVED: @st.cache_resource def load_config(...) function
+# NEW: Load ChimeraSettings directly
 try:
-    app_config = load_config()
-except (FileNotFoundError, ValueError, IOError) as e:
+    settings_instance = ChimeraSettings.from_yaml("config.yaml")
+except Exception as e:
     st.error(f"❌ Application configuration error: {e}")
     st.stop()
 
-DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
-CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get(
-    "context_token_budget_ratio", 0.25
-)
-# NEW: Max tokens limit from config
-MAX_TOKENS_LIMIT = app_config.get(
-    "max_tokens_limit", 64000
-) # Default to 64000 if not in config
-
+# REMOVED: DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
+# REMOVED: CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25)
+# REMOVED: MAX_TOKENS_LIMIT = app_config.get("max_tokens_limit", 64000)
+# NEW: Use settings_instance directly
+DOMAIN_KEYWORDS = settings_instance.domain_keywords
+CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = settings_instance.context_token_budget_ratio
+MAX_TOKENS_LIMIT = settings_instance.total_budget # Use total_budget from settings
 
 # NEW: Instantiate CodebaseScanner once for the UI
 @st.cache_resource
@@ -127,12 +102,9 @@ logger = logging.getLogger(__name__)
 # --- END LOGGING SETUP ---
 
 # Define the cache directory dynamically based on the environment
-if os.path.expanduser("~") == "/home/appuser":
-    SENTENCE_TRANSFORMER_CACHE_DIR = "/home/appuser/.cache/huggingface/transformers"
-else:
-    SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser(
-        "~/.cache/huggingface/transformers"
-    )
+# REMOVED: Old SENTENCE_TRANSFORMER_CACHE_DIR global variable
+# NEW: Use settings_instance for cache directory
+SENTENCE_TRANSFORMER_CACHE_DIR = settings_instance.sentence_transformer_cache_dir
 
 
 st.set_page_config(layout="wide", page_title="Project Chimera Web App")
@@ -189,11 +161,11 @@ EXAMPLE_PROMPTS = {
 
 # --- Session State Initialization Call ---
 if "initialized" not in st.session_state:
-    _initialize_session_state(app_config, EXAMPLE_PROMPTS)
+    _initialize_session_state(settings_instance, EXAMPLE_PROMPTS) # MODIFIED: Pass settings_instance
 # --- END Session State Initialization Call ---
 
 # --- NEW: Session Expiration Check ---
-check_session_expiration(app_config, EXAMPLE_PROMPTS)
+check_session_expiration(settings_instance, EXAMPLE_PROMPTS) # MODIFIED: Pass settings_instance
 # --- END NEW: Session Expiration Check ---
 
 
@@ -522,7 +494,7 @@ with st.sidebar:
         st.number_input(
             "Max Total Tokens Budget:",
             min_value=1000,
-            max_value=MAX_TOKENS_LIMIT,  # MODIFIED: Use MAX_TOKENS_LIMIT
+            max_value=MAX_TOKENS_LIMIT,  # MODIFIED: Use MAX_TOKENS_LIMIT from settings_instance
             step=1000,
             key="max_tokens_budget_input",
             value=st.session_state.max_tokens_budget_input,
@@ -554,13 +526,14 @@ with st.sidebar:
 
         if user_prompt_text and not st.session_state.context_ratio_user_modified:
             # MODIFIED: Use PromptAnalyzer for domain recommendation
+            # FIX: Removed settings_instance.domain_keywords as an argument
             recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 user_prompt_text
             )
 
             # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
             if st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(user_prompt_text):
-                smart_default_ratio = 0.35
+                smart_default_ratio = settings_instance.self_analysis_context_ratio # NEW: Use setting
                 help_text_dynamic = "Self-analysis prompts often benefit from more context tokens (35%+)."
             elif recommended_domain == "Software Engineering":
                 smart_default_ratio = 0.30
@@ -675,8 +648,9 @@ def on_example_select_change(selectbox_key, tab_name):
     # When "Critically analyze the entire Project Chimera codebase" is selected
     if selected_example_key == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.":
         # Force load codebase context
-        scanner = get_codebase_scanner_instance()
-        st.session_state.codebase_context = scanner.load_own_codebase_context()
+        # REMOVED: scanner = get_codebase_scanner_instance()
+        # REMOVED: st.session_state.codebase_context = scanner.load_own_codebase_context()
+        # The SocraticDebate constructor will handle loading codebase context if is_self_analysis is True
         # Update the prompt to reflect we have context
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'] + \
             "\n\nNOTE: You have full access to the Project Chimera codebase for this analysis."
@@ -730,6 +704,7 @@ for i, tab_name in enumerate(tab_names):
                 """)
 
             # MODIFIED: Use PromptAnalyzer for domain recommendation
+            # FIX: Removed settings_instance.domain_keywords as an argument
             suggested_domain_for_custom = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 st.session_state.user_prompt_input
             )
@@ -862,6 +837,7 @@ with col1:
     if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
         if user_prompt.strip():
             # MODIFIED: Use PromptAnalyzer for domain recommendation
+            # FIX: Removed settings_instance.domain_keywords as an argument
             suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                 user_prompt
             )
@@ -1313,7 +1289,7 @@ with run_col:
         ),
     )
 with reset_col:
-    st.button("🔄 Reset All", on_click=lambda: reset_app_state(app_config, EXAMPLE_PROMPTS), use_container_width=True)
+    st.button("🔄 Reset All", on_click=lambda: reset_app_state(settings_instance, EXAMPLE_PROMPTS), use_container_width=True) # MODIFIED: Pass settings_instance
 
 
 # --- MODIFICATION: Extract debate execution logic into a separate function ---
@@ -1485,6 +1461,7 @@ def _run_socratic_debate_process():
                     domain_for_run = st.session_state.active_example_framework_hint
                     logger.debug(f"Using active example framework hint: '{domain_for_run}' for example '{st.session_state.selected_example_name}'.")
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
+                    # FIX: Removed settings_instance.domain_keywords as an argument
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                         current_user_prompt_for_debate
                     )
@@ -1515,10 +1492,9 @@ def _run_socratic_debate_process():
                     f"Domain selection logic - Final domain_for_run: {domain_for_run}"
                 )
 
-                current_settings = ChimeraSettings(
-                    context_token_budget_ratio=st.session_state.context_token_budget_ratio,
-                    total_budget=st.session_state.max_tokens_budget_input,
-                )
+                # REMOVED: current_settings = ChimeraSettings(...)
+                # NEW: Use the globally loaded settings_instance
+                # This ensures consistency across the app and the debate.
 
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate,
@@ -1535,7 +1511,7 @@ def _run_socratic_debate_process():
                     is_self_analysis=st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
                         current_user_prompt_for_debate
                     ),
-                    settings=current_settings,
+                    settings=settings_instance, # MODIFIED: Pass settings_instance
                     persona_manager=st.session_state.persona_manager,
                     token_tracker=st.session_state.token_tracker,
                 )

@@ -107,12 +107,12 @@ class ConflictResolutionManager:
 
         if len(valid_turns) >= 2:
             logger.info(f"ConflictResolutionManager: Found {len(valid_turns)} previous valid turns. Attempting synthesis.")
-            synthesis_result = self._synthesize_from_history(latest_output, valid_turns)
-            if synthesis_result:
+            synthesized_output = self._synthesize_from_history(latest_output, valid_turns)
+            if synthesized_output:
                 logger.info("ConflictResolutionManager: Successfully synthesized from history.")
                 return {
                     "resolution_strategy": "synthesis_from_history",
-                    "resolved_output": synthesis_result,
+                    "resolved_output": synthesized_output,
                     "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
                     "malformed_blocks": [{"type": "SYNTHESIS_FROM_HISTORY", "message": "Synthesized from previous valid turns."}]
                 }
@@ -203,10 +203,15 @@ class ConflictResolutionManager:
         
         error_message = "Previous output was malformed or did not adhere to the schema."
         if isinstance(problematic_output, dict) and problematic_output.get('malformed_blocks'):
-            error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
+            # NEW: Make feedback more direct by extracting the core error message.
+            validation_error_block = next((b for b in problematic_output['malformed_blocks'] if b.get('type') == 'SCHEMA_VALIDATION_ERROR'), None)
+            if validation_error_block:
+                error_message = f"Specific validation error: {validation_error_block.get('message', 'Unknown schema error.')}"
+            else:
+                error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
         elif isinstance(problematic_output, str):
             error_message = f"Previous output was a malformed string: '{problematic_output[:200]}...'"
-
+        
         # Construct the feedback prompt
         feedback_prompt = f"""
         Your previous response for the persona '{persona_name}' was problematic.
@@ -239,22 +244,33 @@ class ConflictResolutionManager:
         for retry_attempt in range(self.max_self_correction_retries):
             logger.info(f"Attempting self-correction for {persona_name} (Retry {retry_attempt + 1}/{self.max_self_correction_retries}).")
             try:
+                # Ensure LLMProvider and Tokenizer are available
+                if not self.llm_provider or not self.llm_provider.tokenizer:
+                    raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
+
+                # Prepare LLM call configuration
+                final_model_to_use, effective_max_output_tokens = self.llm_provider._prepare_llm_call_config(
+                    persona_config, persona_config.max_tokens, self.llm_provider.model_name
+                )
+
                 raw_llm_output, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
                     prompt=feedback_prompt,
                     system_prompt=final_system_prompt,
                     temperature=persona_config.temperature,
-                    max_tokens=persona_config.max_tokens,
+                    max_tokens=effective_max_output_tokens,
                     persona_config=persona_config,
+                    requested_model_name=final_model_to_use,
                 )
                 
                 # Attempt to parse and validate the corrected output
                 corrected_output = self.output_parser.parse_and_validate(raw_llm_output, output_schema_class)
                 
                 if not corrected_output.get('malformed_blocks'):
-                    logger.info(f"Self-correction successful for {persona_name} on retry {retry_attempt + 1}.")
+                    logger.logger.info(f"Self-correction successful for {persona_name} on retry {retry_attempt + 1}.")
                     return corrected_output
                 else:
                     logger.warning(f"Self-correction attempt {retry_attempt + 1} for {persona_name} still resulted in malformed blocks: {corrected_output.get('malformed_blocks')}")
+                    # Append new errors to the feedback prompt for the next retry
                     feedback_prompt += f"\n\nPrevious self-correction attempt also failed. New errors: {json.dumps(corrected_output['malformed_blocks'], indent=2)}\nCRITICAL: You MUST fix these new errors."
 
             except Exception as e:

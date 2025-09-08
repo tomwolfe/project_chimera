@@ -60,7 +60,7 @@ from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIO
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.conflict_resolution import ConflictResolutionManager
-from src.config.model_registry import ModelRegistry
+from src.config.model_registry import ModelRegistry # NEW: Import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -641,7 +641,12 @@ class SocraticDebate:
         error_type = error_details.get("error_type", "Unknown validation error")
         field_path = error_details.get("field_path", "N/A")
         invalid_value_snippet = str(error_details.get("invalid_value", "N/A"))[:200]
+        
+        # NEW: Include the full validation error message for more specific feedback
+        full_validation_message = str(e)
+
         retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
+        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n" # Provide full validation message
         retry_feedback += "CRITICAL: Your output failed schema validation. You MUST correct this. "
         retry_feedback += "Ensure the JSON is perfectly formed, with correct types and no extra text or markdown fences. "
         retry_feedback += "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
@@ -884,7 +889,7 @@ class SocraticDebate:
                             token_budget_exceeded=False,
                         )
                     # NEW: Return a structured fallback output using the parser
-                    return self.output_parser._create_fallback_output(
+                    return LLMOutputParser()._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
                         output_schema_class,
                         malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
                         raw_output_snippet=raw_llm_output,

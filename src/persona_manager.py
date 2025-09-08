@@ -16,6 +16,7 @@ from src.config.persistence import ConfigPersistence
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 from src.exceptions import SchemaValidationError
+from src.config.settings import ChimeraSettings # NEW: Import ChimeraSettings
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class PersonaManager:
         self,
         domain_keywords: Dict[str, List[str]],
         token_tracker: Optional[TokenUsageTracker] = None,
+        settings: Optional[ChimeraSettings] = None, # NEW: Add settings parameter
     ):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
@@ -73,6 +75,7 @@ class PersonaManager:
         self.min_turns_for_adjustment = 5  # Minimum turns before considering adjustment
 
         self.config_persistence = ConfigPersistence()
+        self.settings = settings or ChimeraSettings() # NEW: Store settings
 
         # Initialize PromptAnalyzer first
         self.prompt_analyzer = PromptAnalyzer(domain_keywords)
