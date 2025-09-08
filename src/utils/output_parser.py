@@ -521,7 +521,7 @@ class LLMOutputParser:
                 "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
                 "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
                 "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput,
-                "LLMOutput": LLMOutput,  # Ensure LLMOutput is also mapped
+                "LLMOutput": LLMOutput,
             }
 
             if schema_model in model_map:

@@ -270,24 +270,6 @@ def sanitize_user_input(prompt: str) -> str:
 # --- END ENHANCED SANITIZATION FUNCTION ---
 
 
-# --- Persona Change Logging ---
-def _log_persona_change(
-    persona_name: str, parameter: str, old_value: Any, new_value: Any
-):
-    """Logs a change to a persona parameter in the session audit log."""
-    st.session_state.persona_audit_log.append(
-        {
-            "timestamp": datetime.datetime.now().isoformat(),
-            "persona": persona_name,
-            "parameter": parameter,
-            "old_value": old_value,
-            "new_value": new_value,
-        }
-    )
-    st.session_state.persona_changes_detected = True
-    update_activity_timestamp()
-
-
 # --- NEW: HELPER FUNCTION FOR ACTION-ORIENTED ERROR MESSAGING ---
 def handle_debate_errors(error: Exception):
     """Displays user-friendly, action-oriented error messages based on exception type."""
@@ -433,10 +415,7 @@ def handle_debate_errors(error: Exception):
     logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
 
 
-# --- MODIFIED: The execute_command function was here and was vulnerable.
-# It is now fixed to use a secure subprocess call.
-# NOTE: This function is NOT part of the original codebase's src/utils/command_executor.py.
-# It was a local function in app.py that was vulnerable, now it's refactored to use the safe utility.
+# --- MODIFIED execute_command function for security ---
 def execute_command(command_str: str, timeout: int = 60) -> str:
     """
     Executes a simple command safely using the centralized utility.
@@ -445,15 +424,37 @@ def execute_command(command_str: str, timeout: int = 60) -> str:
     try:
         # Use the centralized, secure command executor
         # For 'echo', we pass it as a list of arguments to prevent injection.
+        # The command_str itself is treated as a single argument to 'echo'.
         return_code, stdout, stderr = execute_command_safely(['echo', command_str], timeout=timeout)
         if return_code == 0:
             return stdout.strip()
         else:
-            return f"Error executing command: {stderr.strip()}"
+            # Log stderr if available, otherwise a generic message
+            error_output = stderr.strip() if stderr.strip() else f"Command failed with exit code {return_code}."
+            logger.error(f"Error executing command '{command_str}': {error_output}")
+            return f"Error executing command: {error_output}"
     except Exception as e:
         logger.error(f"Error executing command '{command_str}': {e}", exc_info=True)
         return f"Error executing command: {e}"
 # --- END MODIFIED execute_command function ---
+
+
+# --- Persona Change Logging ---
+def _log_persona_change(
+    persona_name: str, parameter: str, old_value: Any, new_value: Any
+):
+    """Logs a change to a persona parameter in the session audit log."""
+    st.session_state.persona_audit_log.append(
+        {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "persona": persona_name,
+            "parameter": parameter,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
+    )
+    st.session_state.persona_changes_detected = True
+    update_activity_timestamp()
 
 
 # --- MODIFICATIONS FOR SIDEBAR GROUPING ---
