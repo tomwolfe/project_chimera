@@ -649,6 +649,15 @@ def validate_code_output(
     is_python = file_path.suffix.lower() == ".py"
 
     if action == "ADD":
+        # For ADD, ensure the file does NOT exist already
+        if file_path.exists():
+            issues.append(
+                {
+                    "type": "File Exists Error",
+                    "file": file_path_str,
+                    "message": f"Attempted to ADD file '{file_path_str}', but it already exists. Consider MODIFY or REMOVE/ADD.",
+                }
+            )
         content_to_check = parsed_change.get("FULL_CONTENT", "")
         checksum = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
         issues.append(
@@ -664,6 +673,15 @@ def validate_code_output(
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == "MODIFY":
+        # For MODIFY, ensure the file DOES exist
+        if not file_path.exists():
+            issues.append(
+                {
+                    "type": "File Not Found Error",
+                    "file": file_path_str,
+                    "message": f"Attempted to MODIFY file '{file_path_str}', but it does not exist. Consider ADD or CREATE.",
+                }
+            )
         content_to_check = parsed_change.get("FULL_CONTENT", "")
         checksum_new = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
         issues.append(
@@ -715,6 +733,15 @@ def validate_code_output(
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == "REMOVE":
+        # For REMOVE, ensure the file DOES exist
+        if not file_path.exists():
+            issues.append(
+                {
+                    "type": "File Not Found Error",
+                    "file": file_path_str,
+                    "message": f"Attempted to REMOVE file '{file_path_str}', but it does not exist.",
+                }
+            )
         if original_content is not None:
             original_lines = original_content.splitlines()
             lines_to_remove = parsed_change.get("LINES", [])

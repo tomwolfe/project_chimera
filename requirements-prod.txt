@@ -3,7 +3,7 @@
 streamlit
 google-genai
 pyyaml
-pydantic
+pydantic # Ensure pydantic is available for models (used in models.py)
 rich
 sentence-transformers
 python-json-logger

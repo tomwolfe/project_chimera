@@ -705,13 +705,8 @@ class SocraticDebate:
         return parsed_output
 
     def _execute_llm_turn(
-        self,
-        persona_name: str,
-        prompt_for_llm: str,
-        phase: str,
-        max_output_tokens_for_turn: int,
-        requested_model_name: Optional[str] = None,
-        max_retries: int = 2,
+        self, persona_name: str, prompt_for_llm: str, phase: str, max_output_tokens_for_turn: int,
+        requested_model_name: Optional[str] = None, max_retries: int = 2
     ) -> Dict[str, Any]:
         """
         Executes a single LLM turn for a given persona, handles API calls,
@@ -753,10 +748,7 @@ class SocraticDebate:
         )
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
-        current_prompt = prompt_for_llm
-        current_prompt = self.prompt_optimizer.optimize_prompt(
-            current_prompt, persona_name, max_output_tokens_for_turn
-        )
+        current_prompt = self.prompt_optimizer.optimize_prompt(prompt_for_llm, persona_name, max_output_tokens_for_turn)
         raw_llm_output = ""
         is_truncated = False
 
@@ -772,26 +764,15 @@ class SocraticDebate:
                         current_persona_name=persona_name,
                     )
 
-                final_model_to_use, effective_max_output_tokens = (
-                    self._prepare_llm_call_config(
-                        persona_config, max_output_tokens_for_turn, requested_model_name
-                    )
+                final_model_to_use, effective_max_output_tokens = self._prepare_llm_call_config(
+                    persona_config, max_output_tokens_for_turn, requested_model_name
                 )
-                # MODIFIED: Unpack all 4 return values from _make_llm_api_call
-                raw_llm_output, input_tokens, output_tokens, is_truncated = (
-                    self._make_llm_api_call(
-                        persona_config,
-                        current_prompt,
-                        effective_max_output_tokens,
-                        final_model_to_use,
-                        final_system_prompt,
-                    )
+                raw_llm_output, input_tokens, output_tokens, is_truncated = self._make_llm_api_call(
+                    persona_config, current_prompt, effective_max_output_tokens, final_model_to_use, final_system_prompt
                 )
-
                 parsed_output, has_schema_error = self._parse_and_track_llm_output(
                     persona_name, raw_llm_output, output_schema_class
                 )
-
                 parsed_output = self._handle_content_alignment_check(
                     persona_name, parsed_output, has_schema_error, is_truncated
                 )
@@ -1270,7 +1251,6 @@ class SocraticDebate:
 
     def _handle_devils_advocate_turn(
         self,
-        persona_name: str,
         output: Dict[str, Any],
         debate_history_so_far: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
@@ -1412,7 +1392,7 @@ class SocraticDebate:
                 )
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
-                        persona_name, turn_output, debate_history
+                        turn_output, debate_history
                     )
                 
                 if len(debate_history) > 0 and persona_name != debate_history[-1].get("persona"):
