@@ -471,6 +471,9 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
         alias="IMPACTFUL_SUGGESTIONS",
         description="List of structured suggestions for improvement.",
     )
+    estimated_impact_score: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="AI's self-estimated impact score for the overall analysis (0.0 to 1.0)."
+    )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )

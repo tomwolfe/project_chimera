@@ -27,8 +27,8 @@ from src.models import (
     ConflictReport,
     SelfImprovementAnalysisOutput,
     ConfigurationAnalysisOutput,
-    SelfImprovementAnalysisOutputV1,
     DeploymentAnalysisOutput,
+    SelfImprovementAnalysisOutputV1,
     SelfImprovementFinding,
     QuantitativeImpactMetrics,
 )
@@ -953,7 +953,7 @@ class SocraticDebate:
         )
         self._log_with_context("info", "Debate state initialized.")
 
-    def _perform_context_analysis(
+    def _perform_context_analysis_phase(
         self,
         persona_sequence: Tuple[str, ...],
     ) -> Optional[Dict[str, Any]]:
@@ -1422,15 +1422,17 @@ class SocraticDebate:
 
                 debate_history.append({"persona": persona_name, "output": turn_output})
 
-                if self._is_problematic_output(turn_output):
+                if self._is_problematic_output(turn_output): # Check if the output is problematic
                     self._log_with_context(
                         "warning",
                         f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
                         persona=persona_name,
                         output_snippet=str(turn_output)[:200],
                     )
+                    # Immediately attempt to resolve the problematic output
                     resolved_output_from_manager = self.conflict_manager.resolve_conflict(debate_history)
                     if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
+                        # If resolved, append the resolution to history and use it as the next input
                         debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
                         previous_output_for_llm = resolved_output_from_manager["resolved_output"]
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = {
@@ -1440,27 +1442,15 @@ class SocraticDebate:
                         }
                         self.intermediate_steps["Unresolved_Conflict"] = None
                     else:
+                        # If not resolved, log it and continue with the problematic output
                         previous_output_for_llm = turn_output
                         self.intermediate_steps["Unresolved_Conflict"] = turn_output
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = None
                 else:
-                    # STRATEGIC ACTIVATION: If output is problematic but not a conflict,
-                    # consider inserting Devils_Advocate to challenge the reasoning.
-                    if "Devils_Advocate" not in personas_for_debate[i+1:]: # Avoid adding it multiple times
-                        self._log_with_context(
-                            "info",
-                            f"Problematic output from {persona_name} detected. Strategically inserting Devils_Advocate.",
-                            persona=persona_name
-                        )
-                        # Insert Devils_Advocate to run next
-                        personas_for_debate.insert(i + 1, "Devils_Advocate")
-                        # Re-distribute remaining budget to accommodate the new persona
-                        self._distribute_debate_persona_budgets(personas_for_debate)
-
+                    # If output is not problematic, clear any previous conflict flags
                     previous_output_for_llm = turn_output
                     self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
-
 
             except Exception as e:
                 error_output = {
@@ -1786,7 +1776,7 @@ class SocraticDebate:
 
         return summarized_history
 
-    def _perform_synthesis_persona_turn(
+    def _perform_synthesis_phase(
         self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
@@ -2007,24 +1997,16 @@ class SocraticDebate:
     @handle_errors(default_return=None, log_level="ERROR")
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
         """
-        Orchestrates the full Socratic debate process.
+        Orchestrates the full Socratic debate process by calling phase-specific methods.
         Returns the final synthesized answer and a dictionary of intermediate steps.
         """
         self._initialize_debate_state()
-
         initial_persona_sequence = self._get_final_persona_sequence(
             self.initial_prompt, None
         )
         self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
 
-        self.status_callback(
-            message="Phase 1: Analyzing Context...",
-            state="running",
-            current_total_tokens=self.token_tracker.current_usage,
-            current_total_cost=self.get_total_estimated_cost(),
-            progress_pct=self.get_progress_pct("context"),
-        )
-        context_analysis_results = self._perform_context_analysis(
+        context_analysis_results = self._perform_context_analysis_phase(
             tuple(initial_persona_sequence)
         )
         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
@@ -2079,10 +2061,17 @@ class SocraticDebate:
             progress_pct=self.get_progress_pct("synthesis"),
         )
 
-        synthesis_persona_results = self._perform_synthesis_persona_turn(
+        synthesis_persona_results = self._perform_synthesis_phase(
             persona_sequence, debate_persona_results
         )
         self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
+
+        # NEW: Record the outcome of the Self_Improvement_Analyst's suggestions
+        if synthesis_persona_name == "Self_Improvement_Analyst" and self.metrics_collector:
+            is_successful_suggestion = not self._is_problematic_output(synthesis_persona_results)
+            self.metrics_collector.record_self_improvement_suggestion_outcome(
+                synthesis_persona_name, is_successful_suggestion, schema_failed=bool(synthesis_persona_results.get("malformed_blocks"))
+            )
 
         self.status_callback(
             message="Finalizing Results...",
