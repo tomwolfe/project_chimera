@@ -1528,7 +1528,7 @@ def _run_socratic_debate_process():
 
                 # NEW: Capture file_analysis_cache if available from the debate instance
                 if hasattr(debate_instance, 'metrics_collector') and debate_instance.metrics_collector:
-                    st.session_state.file_analysis_cache = debate_instance.metrics_collector.file_analysis_cache
+                    st.session_state.file_analysis_cache = debate_instance.file_analysis_cache # MODIFIED: Access directly from debate_instance
                     logger.debug("Captured file_analysis_cache from debate instance.")
                 else:
                     st.session_state.file_analysis_cache = None

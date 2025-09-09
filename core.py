@@ -241,6 +241,10 @@ class SocraticDebate:
         # Determine best model based on requirements, preferring the one passed in
         self.model_name = self._determine_optimal_model(model_name)
         
+        # NEW: Declare instance variable for synthesis persona name and file analysis cache
+        self.synthesis_persona_name_for_metrics: Optional[str] = None
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
+
         # Compute embeddings if codebase_context is present but embeddings are not
         # REMOVED: This block is now redundant due to the explicit check above
         # if self.codebase_context and self.context_analyzer:
@@ -585,7 +589,7 @@ class SocraticDebate:
         effective_max_output_tokens: int,
         final_model_to_use: str,
         system_prompt_for_llm: str,
-    ) -> Tuple[str, int, int, bool]:
+    ) -> Tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
         """Executes the actual LLM API call and tracks tokens."""
         # MODIFIED: Unpack all 4 return values from self.llm_provider.generate()
         raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = self.llm_provider.generate(
@@ -1778,7 +1782,7 @@ class SocraticDebate:
 
     def _perform_synthesis_phase(
         self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, Any], Optional[FocusedMetricsCollector]]: # MODIFIED: Return type to include metrics_collector
         """
         Executes the final synthesis persona turn based on the debate history.
         """
@@ -1802,6 +1806,11 @@ class SocraticDebate:
             synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
             if not synthesis_persona_config:
                 raise ChimeraError("No synthesis persona configuration found.")
+
+        # NEW: Store the synthesis persona name as an instance variable
+        self.synthesis_persona_name_for_metrics = synthesis_persona_name
+
+        local_metrics_collector: Optional[FocusedMetricsCollector] = None # NEW: Local variable for metrics collector
 
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
@@ -1827,7 +1836,7 @@ class SocraticDebate:
             )
 
         if synthesis_persona_name == "Self_Improvement_Analyst":
-            metrics_collector = FocusedMetricsCollector(
+            local_metrics_collector = FocusedMetricsCollector( # Keep local instantiation
                 initial_prompt=self.initial_prompt,
                 debate_history=debate_persona_results,
                 intermediate_steps=self.intermediate_steps,
@@ -1837,7 +1846,9 @@ class SocraticDebate:
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
             )
-            collected_metrics = metrics_collector.collect_all_metrics()
+            # NEW: Expose the file_analysis_cache from the local metrics_collector
+            self.file_analysis_cache = local_metrics_collector.file_analysis_cache
+            collected_metrics = local_metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
             effective_metrics_budget = max(
@@ -1908,7 +1919,7 @@ class SocraticDebate:
             max_output_tokens_for_turn,
         )
         self._log_with_context("info", "Final synthesis persona turn completed.")
-        return synthesis_output
+        return synthesis_output, local_metrics_collector # MODIFIED: Return local_metrics_collector
 
     def _finalize_debate_results(
         self,
@@ -2061,16 +2072,17 @@ class SocraticDebate:
             progress_pct=self.get_progress_pct("synthesis"),
         )
 
-        synthesis_persona_results = self._perform_synthesis_phase(
+        # MODIFIED: Unpack the returned metrics_collector instance
+        synthesis_persona_results, metrics_collector_instance_from_synthesis_phase = self._perform_synthesis_phase(
             persona_sequence, debate_persona_results
         )
         self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
 
         # NEW: Record the outcome of the Self_Improvement_Analyst's suggestions
-        if synthesis_persona_name == "Self_Improvement_Analyst" and self.metrics_collector:
+        if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and metrics_collector_instance_from_synthesis_phase: # MODIFIED: Use instance variable and local metrics_collector
             is_successful_suggestion = not self._is_problematic_output(synthesis_persona_results)
-            self.metrics_collector.record_self_improvement_suggestion_outcome(
-                synthesis_persona_name, is_successful_suggestion, schema_failed=bool(synthesis_persona_results.get("malformed_blocks"))
+            metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome( # MODIFIED: Use local metrics_collector
+                self.synthesis_persona_name_for_metrics, is_successful_suggestion, schema_failed=bool(synthesis_persona_results.get("malformed_blocks"))
             )
 
         self.status_callback(
