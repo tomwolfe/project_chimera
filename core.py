@@ -1823,6 +1823,7 @@ class SocraticDebate:
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
+                # REMOVED: metrics_collector=self.metrics_collector, # This line was incorrectly added
             )
             # NEW: Expose the file_analysis_cache from the local metrics_collector
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache

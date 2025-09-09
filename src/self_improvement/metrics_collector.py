@@ -65,10 +65,10 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        metrics_collector: Any, # NEW: Add metrics_collector to init
+        # REMOVED: metrics_collector: Any, # This argument was incorrectly added
     ):
         """Initialize with debate context for analysis."""
-        self.metrics = metrics
+        self.initial_prompt = initial_prompt # FIXED: Corrected from 'self.metrics = metrics'
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_context = codebase_context
@@ -76,7 +76,7 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.metrics_collector = metrics_collector # NEW: Store metrics_collector
+        # REMOVED: self.metrics_collector = metrics_collector # This was incorrectly stored
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
