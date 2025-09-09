@@ -82,10 +82,24 @@ class FocusedMetricsCollector:
         self.collected_metrics: Dict[str, Any] = {} # Stores the final collected metrics
         self.reasoning_quality_metrics: Dict[str, Any] = {} # Initialized here, populated by analyze_reasoning_quality
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # Cache for file analysis results
-        # NEW: Metrics for self-improvement process quality
-        self.self_improvement_suggestion_success_rate: float = 0.0
-        self.schema_validation_failure_rate_by_persona: Dict[str, float] = defaultdict(float)
+        
+        # NEW: Raw counts for tracking current run's outcome (to be saved historically)
+        self._current_run_total_suggestions_processed: int = 0
+        self._current_run_successful_suggestions: int = 0
+        self._current_run_schema_validation_failures: Dict[str, int] = defaultdict(int)
+
+        # These will hold aggregated historical data, populated by analyze_historical_effectiveness
+        self._historical_total_suggestions_processed: int = 0
+        self._historical_successful_suggestions: int = 0
+        self._historical_schema_validation_failures: Dict[str, int] = defaultdict(int)
+
         self.critical_metric: Optional[str] = None # Initialized here, populated by _identify_critical_metric
+
+        # Load historical data at initialization
+        historical_summary = self.analyze_historical_effectiveness()
+        self._historical_total_suggestions_processed = historical_summary.get("historical_total_suggestions_processed", 0)
+        self._historical_successful_suggestions = historical_summary.get("historical_successful_suggestions", 0)
+        self._historical_schema_validation_failures = defaultdict(int, historical_summary.get("historical_schema_validation_failures", {}))
 
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
@@ -169,6 +183,9 @@ class FocusedMetricsCollector:
                 "evidence_citations": 0,
                 "assumption_challenges": 0,
             },
+            # NEW: Include historical self-improvement process quality metrics here
+            "self_improvement_suggestion_success_rate_historical": self._get_historical_self_improvement_success_rate(),
+            "schema_validation_failures_historical": dict(self._get_historical_schema_validation_failures()),
         }
 
         for turn in debate_history:
@@ -928,7 +945,7 @@ class FocusedMetricsCollector:
                             ]
                             total_loc_across_functions += func_metric["loc"]
                             total_args_across_functions += func_metric["num_arguments"]
-                            total_nesting_depth_across_functions += func_metric[
+                            total_nesting_depth_across_codebase += func_metric[
                                 "max_nesting_depth"
                             ]
                             metrics["code_quality"]["code_smells_count"] += func_metric[
@@ -1142,6 +1159,11 @@ class FocusedMetricsCollector:
             "success": success,
             "performance_changes": performance_changes,
             "improvement_score": self.intermediate_steps.get("improvement_score", 0.0),
+            "current_run_outcome": { # NEW: Add current run's outcome to the historical record
+                "total_suggestions_processed": self._current_run_total_suggestions_processed,
+                "successful_suggestions": self._current_run_successful_suggestions,
+                "schema_validation_failures": dict(self._current_run_schema_validation_failures),
+            },
         }
         history_file = Path("data/improvement_history.jsonl")
         history_file.parent.mkdir(exist_ok=True)
@@ -1172,7 +1194,10 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": {}
+                "common_failure_modes": {},
+                "historical_total_suggestions_processed": 0, # NEW: Return raw counts
+                "historical_successful_suggestions": 0,
+                "historical_schema_validation_failures": {},
             }
         
         try:
@@ -1181,6 +1206,17 @@ class FocusedMetricsCollector:
             
             total = len(records)
             successful = sum(1 for r in records if r.get("success", False))
+
+            # NEW: Aggregate raw counts from historical records
+            total_suggestions_across_history = 0
+            successful_suggestions_across_history = 0
+            schema_validation_failures_across_history = defaultdict(int)
+            for record in records:
+                outcome = record.get("current_run_outcome", {})
+                total_suggestions_across_history += outcome.get("total_suggestions_processed", 0)
+                successful_suggestions_across_history += outcome.get("successful_suggestions", 0)
+                for persona, count in outcome.get("schema_validation_failures", {}).items():
+                    schema_validation_failures_across_history[persona] += count
             
             area_success = {}
             for record in records:
@@ -1207,7 +1243,10 @@ class FocusedMetricsCollector:
                 "total_attempts": total,
                 "success_rate": successful / total if total > 0 else 0.0,
                 "top_performing_areas": top_areas[:3],
-                "common_failure_modes": self._identify_common_failure_modes(records)
+                "common_failure_modes": self._identify_common_failure_modes(records),
+                "historical_total_suggestions_processed": total_suggestions_across_history,
+                "historical_successful_suggestions": successful_suggestions_across_history,
+                "historical_schema_validation_failures": dict(schema_validation_failures_across_history),
             }
         except Exception as e:
             logger.error(f"Error analyzing historical data: {e}")
@@ -1215,7 +1254,10 @@ class FocusedMetricsCollector:
                 "total_attempts": 0,
                 "success_rate": 0.0,
                 "top_performing_areas": [],
-                "common_failure_modes": {}
+                "common_failure_modes": {},
+                "historical_total_suggestions_processed": 0,
+                "historical_successful_suggestions": 0,
+                "historical_schema_validation_failures": {},
             }
     
     @staticmethod
@@ -1236,6 +1278,40 @@ class FocusedMetricsCollector:
                         failure_modes_count["token_budget_exceeded_count"] += 1
 
         return dict(failure_modes_count)
+
+    # NEW: Method to record self-improvement suggestion outcomes
+    def record_self_improvement_suggestion_outcome(
+        self, persona_name: str, is_successful: bool, schema_failed: bool
+    ):
+        """
+        Records the outcome of a self-improvement suggestion generated by a persona
+        for the *current run*. This data will be saved historically.
+        """
+        self._current_run_total_suggestions_processed += 1
+        if is_successful:
+            self._current_run_successful_suggestions += 1
+        if schema_failed:
+            self._current_run_schema_validation_failures[persona_name] += 1
+
+        logger.info(
+            f"Recorded current run's self-improvement suggestion outcome for {persona_name}: "
+            f"Successful={is_successful}, SchemaFailed={schema_failed}. "
+            f"Current run total processed: {self._current_run_total_suggestions_processed}, "
+            f"Successful: {self._current_run_successful_suggestions}"
+        )
+
+    def _get_historical_self_improvement_success_rate(self) -> float:
+        """Calculates the historical overall success rate of self-improvement suggestions."""
+        if self._historical_total_suggestions_processed > 0:
+            return (
+                self._historical_successful_suggestions
+                / self._historical_total_suggestions_processed
+            )
+        return 0.0
+
+    def _get_historical_schema_validation_failures(self) -> Dict[str, int]:
+        """Returns the historical counts of schema validation failures for self-improvement suggestions."""
+        return self._historical_schema_validation_failures
 
     def analyze(self) -> List[Dict[str, Any]]:
         """
@@ -1352,7 +1428,7 @@ This document outlines the refined methodology for identifying and implementing 
                             "FILE_PATH": ".github/workflows/ci.yml",
                             "ACTION": "MODIFY",
                             "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
-+++ b/app.py
++++ b/.github/workflows/ci.yml
 @@ -18,8 +18,8 @@
                # Explicitly install Ruff and Black for CI to ensure they are available
                pip install ruff black
