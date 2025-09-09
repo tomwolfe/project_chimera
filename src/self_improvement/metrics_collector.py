@@ -79,6 +79,11 @@ class FocusedMetricsCollector:
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
+        self.collected_metrics: Dict[str, Any] = {} # Stores the final collected metrics
+        self.reasoning_quality_metrics: Dict[str, Any] = {} # Initialized here, populated by analyze_reasoning_quality
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # Cache for file analysis results
+        self.critical_metric: Optional[str] = None # Initialized here, populated by _identify_critical_metric
+
 
     def _collect_core_metrics(self, tokenizer, llm_provider):
         """Collect core metrics and identify the single most critical bottleneck."""
@@ -98,7 +103,7 @@ class FocusedMetricsCollector:
             logger.warning(f"Failed to parse debate history for suggestions count: {e}")
             pass
 
-        self.metrics["token_efficiency"] = (
+        self.collected_metrics["token_efficiency"] = ( # Use self.collected_metrics
             output_tokens / max(1, suggestions_count)
             if suggestions_count > 0
             else output_tokens
@@ -112,7 +117,7 @@ class FocusedMetricsCollector:
         max_deviation = -1
 
         for metric_name, config in self.CRITICAL_METRICS.items():
-            value = self.metrics.get(metric_name, 0)
+            value = self.collected_metrics.get(metric_name, 0) # Use self.collected_metrics
             threshold = config["threshold"]
 
             if metric_name == "token_efficiency":
@@ -132,7 +137,7 @@ class FocusedMetricsCollector:
             return None
 
         config = self.CRITICAL_METRICS[self.critical_metric]
-        value = self.metrics.get(self.critical_metric, 0)
+        value = self.collected_metrics.get(self.critical_metric, 0) # Use self.collected_metrics
         threshold = config["threshold"]
 
         return {
@@ -209,7 +214,7 @@ class FocusedMetricsCollector:
             5, total_indicators // 3
         )
 
-        self.metrics["reasoning_quality"] = self.reasoning_quality_metrics
+        # No need to assign to self.metrics here, as self.reasoning_quality_metrics is already updated.
 
     @classmethod
     def _collect_configuration_analysis(
@@ -785,6 +790,11 @@ class FocusedMetricsCollector:
         """
         Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
         """
+        # Ensure reasoning_quality_metrics is populated before being used in the 'metrics' dict
+        self.analyze_reasoning_quality(
+            self.debate_history, self.intermediate_steps.get("Final_Synthesis_Output", {})
+        )
+
         metrics = {
             "code_quality": {
                 "ruff_issues_count": 0,
@@ -825,7 +835,7 @@ class FocusedMetricsCollector:
             "deployment_robustness": self._collect_deployment_robustness_metrics(
                 self.codebase_path
             ).model_dump(by_alias=True),
-            "reasoning_quality": self.reasoning_quality_metrics,
+            "reasoning_quality": self.reasoning_quality_metrics, # Now this is safe
             "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
@@ -923,14 +933,6 @@ class FocusedMetricsCollector:
                 total_nesting_depth_across_functions / total_functions_across_codebase
             )
 
-        self.analyze_reasoning_quality(
-            self.debate_history,
-            self.intermediate_steps.get("Final_Synthesis_Output", {}),
-        )
-        metrics["reasoning_quality"] = (
-            self.reasoning_quality_metrics
-        )
-
         return metrics
 
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
@@ -1009,7 +1011,7 @@ class FocusedMetricsCollector:
             # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
             # FIX: Only consider exit code 0 as full success for the command itself.
             # Test failures (exit code 1) are still a valid execution for coverage reporting.
-            if return_code not in (0, 1):  # Keep 0 or 1 as valid for coverage report generation
+            if return_code not in (0, 1): # Keep 0 or 1 as valid for coverage report generation
                 logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
                 # Provide more detailed error info, including stdout for debugging.
                 coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
@@ -1278,7 +1280,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         ruff_detailed_issues = [
             issue
-            for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
+            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", []) # Use self.collected_metrics
             if issue.get("source") == "ruff_lint"
             or issue.get("source") == "ruff_format"
         ]
@@ -1295,7 +1297,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         bandit_detailed_issues = [
             issue
-            for issue in self.metrics.get("code_quality", {}).get("detailed_issues", [])
+            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", []) # Use self.collected_metrics
             if issue.get("source") == "bandit"
         ]
         for issue in bandit_detailed_issues[:3]:
@@ -1309,7 +1311,7 @@ This document outlines the refined methodology for identifying and implementing 
                     f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
                 )
 
-        ruff_issues_count = self.metrics.get("code_quality", {}).get(
+        ruff_issues_count = self.collected_metrics.get("code_quality", {}).get( # Use self.collected_metrics
             "ruff_issues_count", 0
         )
         if ruff_issues_count > 100:
@@ -1378,12 +1380,12 @@ This document outlines the refined methodology for identifying and implementing 
                 }
             )
 
-        bandit_issues_count = self.metrics.get("security", {}).get(
+        bandit_issues_count = self.collected_metrics.get("security", {}).get( # Use self.collected_metrics
             "bandit_issues_count", 0
         )
         pyproject_config_error = any(
             block.get("type") == "PYPROJECT_CONFIG_PARSE_ERROR"
-            for block in self.metrics.get("configuration_analysis", {}).get(
+            for block in self.collected_metrics.get("configuration_analysis", {}).get( # Use self.collected_metrics
                 "malformed_blocks", []
             )
         )
@@ -1452,7 +1454,7 @@ This document outlines the refined methodology for identifying and implementing 
             )
 
         zero_test_coverage = (
-            self.metrics.get("maintainability", {})
+            self.collected_metrics.get("maintainability", {}) # Use self.collected_metrics
             .get("test_coverage_summary", {})
             .get("overall_coverage_percentage", 0)
             == 0
@@ -1619,7 +1621,7 @@ def test_format_prompt_missing_key():
             )
 
         high_token_personas = (
-            self.metrics.get("performance_efficiency", {})
+            self.collected_metrics.get("performance_efficiency", {}) # Use self.collected_metrics
             .get("debate_efficiency_summary", {})
             .get("persona_token_breakdown", {})
         )
@@ -1638,7 +1640,7 @@ def test_format_prompt_missing_key():
                 }
             )
 
-        content_misalignment_warnings = self.metrics.get("reasoning_quality", {}).get(
+        content_misalignment_warnings = self.collected_metrics.get("reasoning_quality", {}).get( # Use self.collected_metrics
             "content_misalignment_warnings", 0
         )
         if content_misalignment_warnings > 3:
