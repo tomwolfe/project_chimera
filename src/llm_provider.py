@@ -394,16 +394,12 @@ class GeminiProvider:
                 elif isinstance(e, socket.gaierror):
                     should_retry = True
                     error_details["network_error"] = "socket.gaierror"
-                elif (
+                elif ( # NEW: Added block for access/permission denied errors
                     "access denied" in error_msg.lower()
                     or "permission" in error_msg.lower()
                 ):
-                    self._log_with_context(
-                        "warning",
-                        f"Access denied or permission error encountered: {error_msg}",
-                        **error_details,
-                    )
                     should_retry = True
+                    error_details["permission_error"] = "access denied"
                 elif (
                     "context window exceeded" in error_msg.lower()
                     or "prompt too large" in error_msg.lower()

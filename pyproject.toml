@@ -28,7 +28,7 @@ skip-magic-trailing-comma = false
 
 [tool.bandit]
 conf_file = "pyproject.toml"
-level = "info" # FIXED: Corrected from "null" to "info" to align with common practice.
+level = "info" # Corrected from "null" to a valid Bandit level
                # The CI workflow explicitly overrides this to HIGH for its run.
 confidence = "MEDIUM"
 exclude = [

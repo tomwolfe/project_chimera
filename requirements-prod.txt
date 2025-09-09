@@ -5,10 +5,6 @@ google-genai
 pyyaml
 pydantic # Ensure pydantic is available for models (used in models.py)
 rich
-sentence-transformers
+sentence-transformers # Ensure sentence-transformers is available
 python-json-logger
-
-# Code quality and security tools (used in core logic for self-improvement)
-pycodestyle
-bandit
 pytest-cov # NEW: Required for test coverage metrics collection in production
