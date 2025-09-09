@@ -66,9 +66,10 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
+        metrics_collector: Any, # NEW: Add metrics_collector to init
     ):
         """Initialize with debate context for analysis."""
-        self.initial_prompt = initial_prompt
+        self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_context = codebase_context
@@ -76,6 +77,7 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
+        self.metrics_collector = metrics_collector # NEW: Store metrics_collector
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
@@ -885,7 +887,7 @@ class FocusedMetricsCollector:
         total_loc_across_functions = 0
         total_complexity_across_functions = 0
         total_args_across_functions = 0
-        total_nesting_depth_across_functions = 0
+        total_nesting_depth_across_codebase = 0 # MODIFIED: Initialize this variable
 
         for root, _, files in os.walk(self.codebase_path):
             for file in files:
@@ -972,7 +974,7 @@ class FocusedMetricsCollector:
                 total_args_across_functions / total_functions_across_codebase
             )
             metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = (
-                total_nesting_depth_across_functions / total_functions_across_codebase
+                total_nesting_depth_across_codebase / total_functions_across_codebase
             )
 
         return metrics

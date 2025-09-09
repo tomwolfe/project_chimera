@@ -6,7 +6,6 @@ import sys # NEW: Import sys
 logger = logging.getLogger(__name__)
 
 
-# ADDED: 'check' parameter to the function signature
 def execute_command_safely(
     command: list[str], timeout: int = 60, check: bool = False
 ) -> tuple[int, str, str]:
@@ -54,8 +53,6 @@ def execute_command_safely(
                 logger.error(f"Command failed with non-zero exit code {process.returncode}, but stderr was empty. This might indicate an environment or execution path issue.")
         else:
             logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
-
-        return process.returncode, process.stdout, process.stderr
 
     except subprocess.TimeoutExpired:
         logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")

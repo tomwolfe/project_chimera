@@ -609,14 +609,12 @@ class SocraticDebate:
         self.intermediate_steps[f"{persona_config.name}_Actual_Max_Tokens"] = (
             effective_max_output_tokens
         )
-        # REMOVED: This line is now redundant as is_truncated is returned by llm_provider.generate()
-        # is_truncated = output_tokens >= effective_max_output_tokens * 0.95
         if is_truncated_from_llm: # MODIFIED: Use the unpacked variable
             self._log_with_context(
                 "warning",
                 f"Output for {persona_config.name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({effective_max_output_tokens}).",
             )
-        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm # MODIFIED: Return the unpacked variable
+        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm # MODIFIED: Return 4 values
 
     def _parse_and_track_llm_output(
         self, persona_name: str, raw_llm_output: str, output_schema: Type[BaseModel]
@@ -1472,7 +1470,7 @@ class SocraticDebate:
                         f"[red]Error during {persona_name} turn: {e}[/red]"
                     )
                     previous_output_for_llm = error_output
-                    self.intermediate_steps["Unresolved_Conflict"] = error_output
+                    self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
                 continue
 
