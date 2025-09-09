@@ -65,7 +65,7 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        # REMOVED: metrics_collector: Any, # This argument was incorrectly added
+        # REMOVED: metrics_collector: Any, # This argument was incorrectly added and caused the TypeError
     ):
         """Initialize with debate context for analysis."""
         self.initial_prompt = initial_prompt # FIXED: Corrected from 'self.metrics = metrics'
