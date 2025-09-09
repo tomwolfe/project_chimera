@@ -672,6 +672,28 @@ class FocusedMetricsCollector:
 
         return DeploymentAnalysisOutput(**deployment_metrics_data)
 
+    def _collect_token_usage_stats(self) -> Dict[str, Any]:
+        """
+        Collects token usage statistics from debate intermediate steps.
+        This method was missing and caused the AttributeError.
+        """
+        total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
+        total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+
+        phase_token_usage = {}
+        for key, value in self.intermediate_steps.items():
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
+                persona_name = key.replace("_Tokens_Used", "")
+                phase_token_usage[persona_name] = value
+
+        return {
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+            "persona_token_usage": phase_token_usage,
+        }
+
     def _collect_reasoning_quality_metrics(self) -> Dict[str, Any]:
         """
         Collects metrics related to the quality of the Socratic debate process itself.
@@ -938,19 +960,136 @@ class FocusedMetricsCollector:
 
         return metrics
 
-    def record_self_improvement_suggestion_outcome(self, persona_name: str, is_successful: bool, schema_failed: bool = False, token_usage: int = 0):
+    def _collect_token_usage_stats(self) -> Dict[str, Any]:
         """
-        Records the outcome of a self-improvement suggestion.
-        This is called by core.py after a Self_Improvement_Analyst turn.
+        Collects token usage statistics from debate intermediate steps.
         """
-        # This method would aggregate data over multiple runs to calculate rates.
-        # For a single run, we can just store the immediate outcome.
-        # In a persistent system, this would update a database or log file.
-        logger.info(f"Recording self-improvement suggestion outcome for {persona_name}: Success={is_successful}, SchemaFailed={schema_failed}, Tokens={token_usage}")
-        # For simplicity, we'll just log for now. Actual aggregation would happen in analyze_historical_effectiveness.
-        if schema_failed:
-            self.schema_validation_failure_rate_by_persona[persona_name] += 1 # Increment count for this run
-    
+        total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
+        total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+
+        phase_token_usage = {}
+        for key, value in self.intermediate_steps.items():
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
+                persona_name = key.replace("_Tokens_Used", "")
+                phase_token_usage[persona_name] = value
+
+        return {
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+            "persona_token_usage": phase_token_usage,
+        }
+
+    def _analyze_debate_efficiency(self) -> Dict[str, Any]:
+        """
+        Analyzes the efficiency of the debate process.
+        """
+        efficiency_summary = {
+            "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
+            "malformed_blocks_count": len(
+                self.intermediate_steps.get("malformed_blocks", [])
+            ),
+            "conflict_resolution_attempts": 1
+            if self.intermediate_steps.get("Conflict_Resolution_Attempt")
+            else 0,
+            "unresolved_conflict": bool(
+                self.intermediate_steps.get("Unresolved_Conflict")
+            ),
+            "average_turn_tokens": 0.0,
+            "persona_token_breakdown": {},
+        }
+
+        total_debate_tokens = self.intermediate_steps.get("debate_Tokens_Used", 0)
+        num_turns = efficiency_summary["num_turns"]
+        if num_turns > 0:
+            efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
+
+        for key, value in self.intermediate_steps.items():
+            if key.endswith("_Tokens_Used") and not key.startswith(
+                ("Total_", "context_", "synthesis_", "debate_")
+            ):
+                persona_name = key.replace("_Tokens_Used", "")
+                efficiency_summary["persona_token_breakdown"][persona_name] = value
+
+        return efficiency_summary
+
+    def _assess_test_coverage(self) -> Dict[str, Any]:
+        """
+        Assesses test coverage for the codebase.
+        Executes pytest with coverage and parses the generated JSON report.
+        """
+        coverage_data = {
+            "overall_coverage_percentage": 0.0,
+            "coverage_details": "Failed to run coverage tool.",
+        }
+        try:
+            # Run pytest with coverage and generate a JSON report
+            # FIX: Construct the command without the python executable,
+            # allowing execute_command_safely to handle it.
+            command = [
+                "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
+            ]
+            # Use execute_command_safely for robustness
+            return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
+
+            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
+            # FIX: Only consider exit code 0 as full success for the command itself.
+            # Test failures (exit code 1) are still a valid execution for coverage reporting.
+            if return_code not in (0, 1): # Keep 0 or 1 as valid for coverage report generation
+                logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
+                # Provide more detailed error info, including stdout for debugging.
+                coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
+                return coverage_data
+
+            coverage_json_path = Path("coverage.json")
+            if coverage_json_path.exists():
+                with open(coverage_json_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
+                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
+                coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
+                coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
+
+                coverage_data["coverage_details"] = "Coverage report generated successfully."
+                # NEW: Add a note if tests failed, even if coverage command ran
+                if return_code == 1:
+                    coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
+                coverage_json_path.unlink()
+            else:
+                coverage_data["coverage_details"] = "Coverage JSON report not found."
+
+        except Exception as e:
+            logger.error(f"Error assessing test coverage: {e}", exc_info=True)
+            coverage_data["coverage_details"] = f"Error during coverage assessment: {e}"
+
+        return coverage_data
+
+    @classmethod
+    def _analyze_python_file_ast(
+        cls, content: str, content_lines: List[str], file_path: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyzes a Python file's AST for complexity, lines of code in functions,
+        number of functions, code smells, and potential bottlenecks.
+        """
+        try:
+            tree = ast.parse(content)
+            visitor = ComplexityVisitor(content_lines)
+            visitor.visit(tree)
+            return visitor.function_metrics
+        except SyntaxError as e:
+            logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
+            return []
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during AST analysis for {file_path}: {e}",
+                exc_info=True,
+            )
+            return []
+
     def save_improvement_results(
         self,
         suggestions: List[Dict],
@@ -1470,14 +1609,14 @@ def mock_app_config():
         }
     )
 
-def test_format_prompt_basic():
+def test_format_prompt_basic(prompt_manager):
     \"\"\"Test format_prompt with basic variable substitution.\"\"\"
     template = "Hello, {name}!"
     kwargs = {"name": "World"}
-    result = format_prompt(template, **kwargs)
+    result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
     assert result == "Hello, World!"
 
-def test_format_prompt_with_codebase_context_self_analysis():
+def test_format_prompt_with_codebase_context_self_analysis(prompt_manager):
     \"\"\"Test format_prompt with codebase context for self-analysis.\"\"\"
     template = "Analyze this: {issue}"
     codebase_context = {
@@ -1488,16 +1627,16 @@ def test_format_prompt_with_codebase_context_self_analysis():
         }
     }
     kwargs = {"issue": "bug"}
-    result = format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs)
+    result = prompt_manager.format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs) # Use prompt_manager instance
     assert "CODEBASE CONTEXT" in result
     assert "file1.py" in result
     assert "bug" in result
 
-def test_format_prompt_missing_key():
+def test_format_prompt_missing_key(prompt_manager):
     \"\"\"Test format_prompt handles missing keys gracefully.\"\"\"
     template = "Hello, {name}!"
     kwargs = {"age": 30} # Missing 'name'
-    result = format_prompt(template, **kwargs)
+    result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
     assert "Missing key for prompt formatting" in result # Check for warning message
     assert "{name}" in result # The placeholder should remain if not formatted
 """,
@@ -1546,7 +1685,7 @@ def test_format_prompt_missing_key():
             f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
         )
 
-        return final_suggestions
+        return suggestions
 
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")
