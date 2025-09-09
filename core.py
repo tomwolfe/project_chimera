@@ -566,13 +566,15 @@ class SocraticDebate:
         final_model_to_use = (
             requested_model_name if requested_model_name else self.model_name
         )
-        actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
-        effective_max_output_tokens = min(
-            max_output_tokens_for_turn, actual_model_max_output_tokens
-        )
+        # Apply a small safety margin to max_output_tokens to ensure space for closing JSON syntax
+        safety_margin_factor = 0.98 # Request 98% of the actual max output tokens
+        effective_max_output_tokens = int(min(
+            max_output_tokens_for_turn, self.llm_provider.tokenizer.max_output_tokens
+        ) * safety_margin_factor)
+        effective_max_output_tokens = max(128, effective_max_output_tokens) # Ensure a minimum output
         self._log_with_context(
             "debug",
-            f"Adjusting max_output_tokens for {persona_config.name}. Requested: {max_output_tokens_for_turn}, Model Max: {actual_model_max_output_tokens}, Effective: {effective_max_output_tokens}",
+            f"Adjusting max_output_tokens for {persona_config.name}. Requested: {max_output_tokens_for_turn}, Model Max: {self.llm_provider.tokenizer.max_output_tokens}, Effective: {effective_max_output_tokens}",
         )
         return final_model_to_use, effective_max_output_tokens
 
@@ -1844,7 +1846,6 @@ class SocraticDebate:
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
-                metrics_collector=self.metrics_collector, # NEW: Pass metrics_collector
             )
             collected_metrics = metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics

@@ -66,7 +66,6 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        metrics_collector: Any, # NEW: Add metrics_collector to init
     ):
         """Initialize with debate context for analysis."""
         self.initial_prompt = initial_prompt
@@ -77,7 +76,6 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.metrics_collector = metrics_collector # NEW: Store metrics_collector
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
@@ -1011,7 +1009,7 @@ class FocusedMetricsCollector:
             # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
             # FIX: Only consider exit code 0 as full success for the command itself.
             # Test failures (exit code 1) are still a valid execution for coverage reporting.
-            if return_code not in (0, 1): # Keep 0 or 1 as valid for coverage report generation
+            if return_code not in (0, 1):  # Keep 0 or 1 as valid for coverage report generation
                 logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
                 # Provide more detailed error info, including stdout for debugging.
                 coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
