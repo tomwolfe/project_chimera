@@ -1,4 +1,3 @@
-# src/conflict_resolution.py
 import json
 import logging
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
@@ -234,7 +233,7 @@ class ConflictResolutionManager:
         
         # Get the schema for the persona's output
         # This requires persona_manager to have access to PERSONA_OUTPUT_SCHEMAS
-        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_name.replace("_TRUNCATED", ""), GeneralOutput)
         
         full_system_prompt_parts = [persona_config.system_prompt]
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
@@ -249,10 +248,6 @@ class ConflictResolutionManager:
                 if not self.llm_provider or not self.llm_provider.tokenizer or not self.persona_manager:
                     raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
 
-                # FIX: Replicate logic from _prepare_llm_call_config to determine effective max tokens
-                # This addresses the AttributeError by ensuring the correct parameters are derived
-                # without calling a SocraticDebate-specific method on GeminiProvider.
-                final_model_to_use = self.llm_provider.model_name # Use the provider's current model
                 actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
                 effective_max_output_tokens = min(persona_config.max_tokens, actual_model_max_output_tokens)
 
@@ -262,7 +257,7 @@ class ConflictResolutionManager:
                     temperature=persona_config.temperature,
                     max_tokens=effective_max_output_tokens, # Use the calculated effective max tokens
                     persona_config=persona_config,
-                    requested_model_name=final_model_to_use
+                    requested_model_name=self.llm_provider.model_name # Use the provider's current model
                 )
                 
                 # Attempt to parse and validate the corrected output

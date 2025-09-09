@@ -1,4 +1,3 @@
-# src/self_improvement/metrics_collector.py
 import os
 import json
 import ast
@@ -694,7 +693,6 @@ class FocusedMetricsCollector:
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
         """
         Collects token usage statistics from debate intermediate steps.
-        This method was missing and caused the AttributeError.
         """
         total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
         total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
@@ -883,11 +881,11 @@ class FocusedMetricsCollector:
             "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
-        total_functions_across_codebase = 0
-        total_loc_across_functions = 0
-        total_complexity_across_functions = 0
-        total_args_across_functions = 0
-        total_nesting_depth_across_codebase = 0 # MODIFIED: Initialize this variable
+        total_functions_across_codebase = 0 # NEW: Initialize
+        total_loc_across_functions = 0 # NEW: Initialize
+        total_complexity_across_functions = 0 # NEW: Initialize
+        total_args_across_functions = 0 # NEW: Initialize
+        total_nesting_depth_across_codebase = 0 # NEW: Initialize
 
         for root, _, files in os.walk(self.codebase_path):
             for file in files:

@@ -1,4 +1,8 @@
 # src/config/settings.py
+"""
+Configuration settings for Project Chimera, including token budgeting and retry parameters.
+"""
+
 from pydantic import BaseModel, Field, validator, model_validator
 from typing import Self, Dict, Any, List # FIX: Added List import
 import yaml

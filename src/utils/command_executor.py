@@ -49,8 +49,8 @@ def execute_command_safely(
             if process.stderr:
                 logger.error(f"Stderr: {process.stderr}")
             else:
-                # NEW: Added more context when stderr is empty but command failed
-                logger.error(f"Command failed with non-zero exit code {process.returncode}, but stderr was empty. This might indicate an environment or execution path issue.")
+                # MODIFIED: Include stdout in the error message if stderr is empty
+                logger.error(f"Command failed with non-zero exit code {process.returncode}, but stderr was empty. This might indicate an environment or execution path issue. Stdout: {process.stdout.strip()}")
         else:
             logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
 

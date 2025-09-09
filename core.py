@@ -56,6 +56,7 @@ from src.utils.prompt_analyzer import (
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # MODIFIED: Import SHARED_JSON_INSTRUCTIONS
+from src.utils.path_utils import PROJECT_ROOT # NEW: Import PROJECT_ROOT for CodebaseScanner initialization
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer
@@ -110,7 +111,7 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
-            scanner = CodebaseScanner()
+            scanner = CodebaseScanner(project_root=str(PROJECT_ROOT)) # Ensure scanner is initialized with project root
             self.codebase_context = scanner.scan_codebase()
             self.logger.info(
                 f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
@@ -234,7 +235,7 @@ class SocraticDebate:
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
-        # NEW: Pass llm_provider and persona_manager to ConflictResolutionManager
+        # NEW: Pass llm_provider and persona_manager to ConflictResolutionManager for self-correction
         self.conflict_manager = ConflictResolutionManager(llm_provider=self.llm_provider, persona_manager=self.persona_manager)
         self.model_registry = ModelRegistry()
 
@@ -873,7 +874,7 @@ class SocraticDebate:
                             schema_validation_failed=True,
                             token_budget_exceeded=False,
                         )
-                    # NEW: Return a structured fallback output using the parser
+                    # NEW: Return a fallback output using the parser
                     return LLMOutputParser()._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
                         output_schema_class,
                         malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
@@ -963,8 +964,7 @@ class SocraticDebate:
                 )
             except Exception as e:
                 self._log_with_context(
-                    "error",
-                    f"Failed to compute embeddings for codebase context during context analysis: {e}",
+                    "error", f"Failed to compute embeddings for codebase context during context analysis: {e}",
                     exc_info=True,
                 )
                 if self.status_callback:
@@ -2182,7 +2182,7 @@ class SocraticDebate:
                 self._log_with_context(
                     "info",
                     f"Consolidated MODIFY for {file_path} resulted in no effective change. Removing from suggestions.",
-                )
+                    )
                 analysis_output.setdefault("malformed_blocks", []).append(
                     {
                         "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
