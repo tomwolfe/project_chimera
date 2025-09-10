@@ -42,7 +42,7 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         "intermediate_steps_output": {},
         "process_log_output_text": "",
         "last_config_params": {},
-        "codebase_context": {},
+        "codebase_context": {}, # This will now hold raw_file_contents for UI display/download
         "uploaded_files": [],
         "persona_audit_log": [],
         "persona_edit_mode": False,
@@ -60,6 +60,8 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         "current_debate_tokens_used": 0,
         "current_debate_cost_usd": 0.0,
         "last_activity_timestamp": time.time(),
+        "structured_codebase_context": {}, # NEW: For structured analysis from CodebaseScanner
+        "raw_file_contents": {}, # NEW: For raw file contents used by ContextRelevanceAnalyzer
         "context_ratio_user_modified": False,
     }
 
@@ -98,11 +100,10 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         }
 
     if "context_analyzer" not in st.session_state:
-        # REMOVED: SENTENCE_TRANSFORMER_CACHE_DIR = os.path.expanduser("~/.cache/huggingface/transformers")
         # NEW: Use cache dir from settings
         analyzer = ContextRelevanceAnalyzer(
-            cache_dir=app_config.sentence_transformer_cache_dir, # NEW: Use cache dir from settings
-            codebase_context=st.session_state.codebase_context,
+            cache_dir=app_config.sentence_transformer_cache_dir,
+            raw_file_contents=st.session_state.raw_file_contents, # MODIFIED: Pass raw_file_contents
         )
         if st.session_state.persona_manager.persona_router:
             analyzer.set_persona_router(st.session_state.persona_manager.persona_router)

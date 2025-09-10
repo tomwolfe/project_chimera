@@ -27,7 +27,6 @@ from src.models import ( # All these are used for type hints or schema validatio
     SelfImprovementAnalysisOutputV1,
 )
 from src.utils.output_parser import LLMOutputParser # Instantiated for parsing final_answer
-from src.utils.code_validator import validate_code_output_batch # Used for validation_results_by_file
 from src.persona_manager import PersonaManager # Instantiated
 from src.exceptions import ( # All these are used in handle_debate_errors
     ChimeraError,
@@ -59,6 +58,8 @@ from pathlib import Path # Used for Path.cwd(), file_path.name
 
 from src.utils.prompt_analyzer import PromptAnalyzer # Instantiated via PersonaManager
 from src.token_tracker import TokenUsageTracker # Instantiated
+
+# NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner # Instantiated
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes # NEW: Import from report_generator
@@ -141,7 +142,7 @@ EXAMPLE_PROMPTS = {
             "framework_hint": "Creative",
         },
         "Ethical AI Framework": {
-            "prompt": "Develop an ethical framework for an AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
+            "prompt": "Develop an ethical framework for an and AI system designed to assist in judicial sentencing, addressing bias, transparency, and accountability.",
             "description": "Formulate ethical guidelines for sensitive AI applications.",
             "framework_hint": "Business",
         },
@@ -536,7 +537,7 @@ with st.sidebar:
             # MODIFIED: Use PromptAnalyzer for domain recommendation
             # FIX: Removed settings_instance.domain_keywords as an argument
             recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                user_prompt_text
+                user_prompt_text # MODIFIED: Removed settings_instance.domain_keywords
             )
 
             # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
@@ -623,7 +624,9 @@ def on_custom_prompt_change():
     st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
     st.session_state.selected_prompt_category = CUSTOM_PROMPT_KEY
     st.session_state.active_example_framework_hint = None
-    st.session_state.codebase_context = {}
+    st.session_state.codebase_context = {} # This now holds raw_file_contents
+    st.session_state.structured_codebase_context = {} # NEW: Clear structured context
+    st.session_state.raw_file_contents = {} # NEW: Clear raw file contents
     st.session_state.uploaded_files = []
     update_activity_timestamp()
     st.rerun()
@@ -650,14 +653,14 @@ def on_example_select_change(selectbox_key, tab_name):
         st.session_state.active_example_framework_hint = None
         logger.warning(f"No framework hint found for example '{selected_example_key}'.")
 
-    st.session_state.codebase_context = {}
+    st.session_state.codebase_context = {} # This now holds raw_file_contents
+    st.session_state.structured_codebase_context = {} # NEW: Clear structured context
+    st.session_state.raw_file_contents = {} # NEW: Clear raw file contents
     st.session_state.uploaded_files = []
 
     # When "Critically analyze the entire Project Chimera codebase" is selected
     if selected_example_key == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification.":
         # Force load codebase context
-        # REMOVED: scanner = get_codebase_scanner_instance()
-        # REMOVED: st.session_state.codebase_context = scanner.load_own_codebase_context()
         # The SocraticDebate constructor will handle loading codebase context if is_self_analysis is True
         # Update the prompt to reflect we have context
         st.session_state.user_prompt_input = EXAMPLE_PROMPTS[tab_name][selected_example_key]['prompt'] + \
@@ -714,7 +717,7 @@ for i, tab_name in enumerate(tab_names):
             # MODIFIED: Use PromptAnalyzer for domain recommendation
             # FIX: Removed settings_instance.domain_keywords as an argument
             suggested_domain_for_custom = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                st.session_state.user_prompt_input
+                st.session_state.user_prompt_input # MODIFIED: Removed settings_instance.domain_keywords
             )
 
             if (
@@ -762,7 +765,9 @@ for i, tab_name in enumerate(tab_names):
                 if st.session_state.selected_prompt_category == tab_name:
                     st.session_state.user_prompt_input = ""
                     st.session_state.selected_example_name = ""
-                    st.session_state.codebase_context = {}
+                    st.session_state.codebase_context = {} # This now holds raw_file_contents
+                    st.session_state.structured_codebase_context = {} # NEW: Clear structured context
+                    st.session_state.raw_file_contents = {} # NEW: Clear raw file contents
                     st.session_state.uploaded_files = []
                 continue
 
@@ -846,7 +851,7 @@ with col1:
             # MODIFIED: Use PromptAnalyzer for domain recommendation
             # FIX: Removed settings_instance.domain_keywords as an argument
             suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                user_prompt
+                user_prompt # MODIFIED: Removed settings_instance.domain_keywords
             )
             if (
                 suggested_domain
@@ -1101,7 +1106,7 @@ with col2:
             }
 
             if current_uploaded_file_names != previous_uploaded_file_names or (
-                current_uploaded_file_names and not st.session_state.codebase_context
+                current_uploaded_file_names and not st.session_state.raw_file_contents # MODIFIED: Check raw_file_contents
             ):
                 if len(uploaded_files) > 100:
                     st.warning(
@@ -1109,45 +1114,49 @@ with col2:
                     )
                     uploaded_files = uploaded_files[:100]
 
-                temp_context = {}
+                temp_raw_file_contents = {} # NEW: Store raw file contents
                 for file in uploaded_files:
                     try:
                         content = file.getvalue().decode("utf-8")
-                        temp_context[file.name] = content
+                        temp_raw_file_contents[file.name] = content
                     except Exception as e:
                         st.error(f"Error reading {file.name}: {e}")
 
-                st.session_state.codebase_context = temp_context
+                st.session_state.raw_file_contents = temp_raw_file_contents # NEW: Update raw_file_contents
+                st.session_state.codebase_context = temp_raw_file_contents # Keep codebase_context for backward compatibility in UI
                 st.session_state.uploaded_files = uploaded_files
                 st.toast(
-                    f"{len(st.session_state.codebase_context)} file(s) loaded for context from upload."
+                    f"{len(st.session_state.raw_file_contents)} file(s) loaded for context from upload."
                 )
 
         elif (
             not st.session_state.uploaded_files
             and st.session_state.selected_example_name != "Custom Prompt"
         ):
-            if not st.session_state.codebase_context:
+            if not st.session_state.raw_file_contents: # MODIFIED: Check raw_file_contents
                 try:
                     # REMOVED: load_demo_codebase_context() call as the file was deleted in Phase 1
                     st.info("No demo codebase context file found. Please upload files manually.")
-                    st.session_state.codebase_context = {}
+                    st.session_state.raw_file_contents = {} # NEW: Clear raw_file_contents
+                    st.session_state.codebase_context = {} # Keep codebase_context for backward compatibility in UI
                     st.session_state.uploaded_files = []
                 except (FileNotFoundError, ValueError, IOError) as e:
                     st.error(f"❌ Error loading demo codebase context: {e}")
-                    st.session_state.codebase_context = {}
+                    st.session_state.raw_file_contents = {} # NEW: Clear raw_file_contents
+                    st.session_state.codebase_context = {} # Keep codebase_context for backward compatibility in UI
                     st.session_state.uploaded_files = []
             else:
                 st.success(
-                    f"{len(st.session_state.codebase_context)} file(s) already loaded for context."
+                    f"{len(st.session_state.raw_file_contents)} file(s) already loaded for context."
                 )
 
         elif (
             not st.session_state.uploaded_files
             and st.session_state.selected_example_name == "Custom Prompt"
         ):
-            if st.session_state.codebase_context:
-                st.session_state.codebase_state.codebase_context = {}
+            if st.session_state.raw_file_contents: # MODIFIED: Check raw_file_contents
+                st.session_state.raw_file_contents = {} # NEW: Clear raw_file_contents
+                st.session_state.codebase_context = {} # Keep codebase_context for backward compatibility in UI
                 st.session_state.uploaded_files = []
                 st.info("Codebase context cleared for custom prompt.")
 
@@ -1295,18 +1304,26 @@ with reset_col:
 def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
 
-    debate_instance = None
+    debate_instance: Optional[SocraticDebate] = None
+    
     request_id = str(uuid.uuid4())[:8]
     
-    codebase_context_for_debate = st.session_state.get("codebase_context", {})
+    # NEW: Initialize structured and raw codebase context variables
+    structured_codebase_context_for_debate: Dict[str, Any] = {}
+    codebase_raw_file_contents_for_debate: Dict[str, str] = {}
+
     is_self_analysis_prompt_detected = st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(user_prompt)
 
-    if is_self_analysis_prompt_detected and not codebase_context_for_debate:
+    if is_self_analysis_prompt_detected: # MODIFIED: Always attempt to load for self-analysis
         st.info("Self-analysis prompt detected. Loading Project Chimera's codebase context...")
         try:
             scanner = get_codebase_scanner_instance()
-            codebase_context_for_debate = scanner.load_own_codebase_context()
-            st.session_state.codebase_context = codebase_context_for_debate # Update session state
+            full_codebase_analysis = scanner.load_own_codebase_context() # This now returns structured_analysis and raw_file_contents
+            structured_codebase_context_for_debate = full_codebase_analysis.get("file_structure", {})
+            codebase_raw_file_contents_for_debate = full_codebase_analysis.get("raw_file_contents", {})
+            st.session_state.structured_codebase_context = structured_codebase_context_for_debate # Update session state
+            st.session_state.raw_file_contents = codebase_raw_file_contents_for_debate # Update session state
+            st.session_state.codebase_context = codebase_raw_file_contents_for_debate # Update session state for UI display/download
             logger.info("Successfully loaded Project Chimera's codebase context for self-analysis.")
         except Exception as e:
             st.error(f"❌ Error loading Project Chimera's codebase for self-analysis: {e}")
@@ -1476,7 +1493,7 @@ def _run_socratic_debate_process():
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
                     # FIX: Removed settings_instance.domain_keywords as an argument
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                        current_user_prompt_for_debate
+                        current_user_prompt_for_debate # MODIFIED: Removed settings_instance.domain_keywords
                     )
                     if suggested_domain:
                         domain_for_run = suggested_domain
@@ -1518,7 +1535,8 @@ def _run_socratic_debate_process():
                     domain=domain_for_run,
                     status_callback=update_status_with_realtime_metrics,
                     rich_console=rich_console_instance,
-                    codebase_context=codebase_context_for_debate, # NEW: Pass the loaded codebase context
+                    structured_codebase_context=structured_codebase_context_for_debate, # MODIFIED: Pass structured context
+                    raw_file_contents=codebase_raw_file_contents_for_debate, # NEW: Pass raw file contents
                     context_analyzer=st.session_state.context_analyzer,
                     # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
                     is_self_analysis=st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
@@ -1540,7 +1558,7 @@ def _run_socratic_debate_process():
                 final_answer, intermediate_steps = debate_instance.run_debate()
 
                 # NEW: Capture file_analysis_cache if available from the debate instance
-                if hasattr(debate_instance, 'metrics_collector') and debate_instance.metrics_collector:
+                if hasattr(debate_instance, 'file_analysis_cache') and debate_instance.file_analysis_cache: # MODIFIED: Check debate_instance directly
                     st.session_state.file_analysis_cache = debate_instance.file_analysis_cache # MODIFIED: Access directly from debate_instance
                     logger.debug("Captured file_analysis_cache from debate instance.")
                 else:
@@ -1770,7 +1788,7 @@ if st.session_state.debate_ran:
         # NEW: Pass file_analysis_cache to validate_code_output_batch
         validation_results_by_file = validate_code_output_batch(
             parsed_llm_output_dict,
-            st.session_state.get("codebase_context", {}),
+            st.session_state.get("raw_file_contents", {}), # MODIFIED: Pass raw_file_contents
             file_analysis_cache=st.session_state.get("file_analysis_cache", None)
         )
 
@@ -1879,7 +1897,7 @@ if st.session_state.debate_ran:
 
                 if change.get("ACTION") in ["ADD", "MODIFY"]:
                     if change.get("ACTION") == "MODIFY":
-                        original_content = st.session_state.codebase_context.get(
+                        original_content = st.session_state.raw_file_contents.get( # MODIFIED: Use raw_file_contents
                             change.get("FILE_PATH", "N/A"), ""
                         )
                         if original_content:
@@ -2084,6 +2102,7 @@ if st.session_state.debate_ran:
                 and not k.endswith("_Estimated_Cost_USD")
                 and k != "Total_Tokens_Used"
                 and k != "Total_Estimated_Cost_USD"
+                and k != "debate_history"
                 and not k.startswith("malformed_blocks")
             }
             sorted_step_keys = sorted(

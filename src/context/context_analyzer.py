@@ -2,6 +2,7 @@
 import os # Used for os.walk, os.path.relpath
 import logging # Used for logger
 from pathlib import Path # Used for Path objects
+import fnmatch # NEW: For file pattern matching
 from typing import Dict, Any, List, Tuple, Optional
 from sentence_transformers import SentenceTransformer # Needed for embeddings
 import re # For keyword matching
@@ -9,6 +10,107 @@ import json # For potential JSON handling
 import numpy as np # Needed for semantic similarity calculation
 
 logger = logging.getLogger(__name__)
+
+# --- Constants for Project Root Markers ---
+# These markers help in identifying the project's root directory.
+PROJECT_ROOT_MARKERS = [
+    ".git",
+    "config.yaml",
+    "pyproject.toml",
+    "Dockerfile",
+    "README.md",
+    "src/",
+    ".github/",
+    "app.py",
+    "core.py",
+]
+
+def _find_project_root_internal(start_path: Path) -> Optional[Path]:
+    """Internal helper to find the project root without raising an error."""
+    current_dir = start_path
+    # Limit search depth to prevent infinite loops in unusual file structures
+    for _ in range(15):
+        if any(current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS):
+            return current_dir
+
+        parent_path = current_dir.parent
+        if parent_path == current_dir: # Reached the filesystem root
+            break
+        current_dir = parent_path
+    return None # Return None if not found
+
+# --- Define PROJECT_ROOT dynamically ---
+# This ensures that the project root is correctly identified regardless of where the script is run from.
+_initial_start_path = Path(__file__).resolve().parent
+_found_root = _find_project_root_internal(_initial_start_path)
+
+if _found_root:
+    PROJECT_ROOT = _found_root
+    logger.info(f"Project root identified at: {PROJECT_ROOT}")
+else:
+    PROJECT_ROOT = Path.cwd() # Fallback to current working directory
+    logger.warning(
+        f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
+    )
+
+def is_within_base_dir(file_path: Path) -> bool:
+    """Checks if a file path is safely within the project base directory."""
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(PROJECT_ROOT) # This will raise ValueError if not a subpath
+        return True
+    except ValueError:
+        logger.debug(
+            f"Path '{file_path}' (resolved: '{resolved_path}') is outside the project base directory '{PROJECT_ROOT}'."
+        )
+        return False
+    except FileNotFoundError:
+        logger.debug(
+            f"Path '{file_path}' (resolved: '{resolved_path}') does not exist."
+        )
+        return False
+    except Exception as e:
+        logger.error(
+            f"Error validating path '{file_path}' against base directory '{PROJECT_ROOT}': {e}"
+        )
+        return False
+
+def sanitize_and_validate_file_path(raw_path: str) -> str:
+    """Sanitizes and validates a file path for safety against traversal and invalid characters.
+    Ensures the path is within the project's base directory and returns it relative to PROJECT_ROOT.
+    """
+    if not raw_path:
+        raise ValueError("File path cannot be empty.")
+
+    # Remove potentially harmful characters and sequences
+    sanitized_path_str = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "", raw_path) # Remove invalid chars
+    sanitized_path_str = re.sub(r"\.\./", "", sanitized_path_str) # Remove parent directory traversal
+    sanitized_path_str = re.sub(r"//+", "/", sanitized_path_str) # Normalize multiple slashes
+
+    path_obj = Path(sanitized_path_str)
+
+    # Resolve the path to get its absolute, canonical form
+    try:
+        resolved_path = path_obj.resolve()
+    except Exception as e:
+        raise ValueError(f"Failed to resolve path '{sanitized_path_str}': {e}") from e
+
+    # Check if the resolved path is within the project root
+    if not is_within_base_dir(resolved_path):
+        raise ValueError(
+            f"File path '{raw_path}' (sanitized: '{sanitized_path_str}') resolves to a location outside the allowed project directory."
+        )
+
+    # Return path relative to PROJECT_ROOT
+    try:
+        return str(resolved_path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        # This should ideally not happen if is_within_base_dir returned True,
+        # but as a safeguard, return the absolute path if relative_to fails.
+        logger.warning(
+            f"Could not get relative path for '{resolved_path}' from '{PROJECT_ROOT}'. Returning absolute path."
+        )
+        return str(resolved_path)
 
 
 # --- CodebaseScanner Class ---
@@ -18,40 +120,28 @@ class CodebaseScanner:
     def __init__(self, project_root: str = None):
         """Initialize with optional project root path."""
         if project_root is None:
-            found_root = self._find_project_root()
-            if found_root:
-                project_root = str(found_root)
-            else:
-                project_root = str(
-                    Path(__file__).resolve().parent.parent.parent
-                )
-                logger.warning(
-                    f"Project root markers not found. Falling back to default path: {project_root}"
-                )
+            # Use the dynamically determined PROJECT_ROOT
+            project_root = str(PROJECT_ROOT)
+            logger.info(f"Using dynamically determined project root: {project_root}")
 
         self.project_root = project_root
         self.codebase_path = Path(self.project_root)
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
         self.logger.info(
             f"CodebaseScanner initialized with project root: {self.project_root}"
         )
 
     def scan_codebase(self) -> Dict[str, Any]:
-        """Scan the entire codebase and return structured context."""
+        """Scan the entire codebase and return structured context, including raw file contents."""
         context = {
             "file_structure": {},
-            "code_quality_metrics": {},
-            "security_issues": [],
-            "test_coverage": {},
-            "dependencies": {},
+            "raw_file_contents": {}, # NEW: Add raw file contents here
         }
 
         try:
             context["file_structure"] = self._scan_file_structure()
-            context["code_quality_metrics"] = self._analyze_code_quality()
-            context["security_issues"] = self._check_security_issues()
-            context["test_coverage"] = self._analyze_test_coverage()
-            context["dependencies"] = self._gather_dependencies()
+            context["raw_file_contents"] = self._collect_raw_file_contents() # NEW: Collect raw file contents
+            context["project_root"] = self.project_root # Add project root to the context
 
             return context
         except Exception as e:
@@ -59,40 +149,24 @@ class CodebaseScanner:
             return {"error": str(e)}
 
     def load_own_codebase_context(self) -> Dict[str, Any]:
-        """Loads Project Chimera's own codebase context for self-analysis."""
-        project_root = self._find_project_root()
-        if not project_root:
-            logger.error("Could not locate Project Chimera root directory for self-analysis")
+        """Loads Project Chimera's own codebase context for self-analysis, including raw file contents."""
+        project_root_path = Path(self.project_root)
+        if not project_root_path.exists():
+            logger.error(f"Project root directory not found at {project_root_path} for self-analysis")
             raise RuntimeError(
                 "Project root not found. Self-analysis requires access to the codebase. "
                 "Ensure the application is running from within the Project Chimera directory."
             )
         
-        self._validate_project_structure(project_root)
+        self._validate_project_structure(project_root_path)
         
-        # Collect context from relevant directories
-        context = {
-            "project_root": str(project_root),
-            "file_structure": self._scan_file_structure(),
-            "code_quality_metrics": self._analyze_code_quality(),
-            "security_issues": self._check_security_issues(),
-            "test_coverage": self._analyze_test_coverage(),
-            "dependencies": self._gather_dependencies()
-        }
-
-        return context
+        # Call scan_codebase to get the full structured context including raw file contents
+        return self.scan_codebase()
 
     def _find_project_root(self) -> Optional[Path]:
         """Determine the root directory of the current Project Chimera instance."""
-        current_path = Path(__file__).resolve().parent
-
-        markers = ['pyproject.toml', '.git', 'README.md', 'src/']
-
-        for parent in [current_path] + list(current_path.parents):
-            if any((parent / marker).exists() for marker in markers):
-                return parent
-
-        return None
+        # Use the dynamically determined PROJECT_ROOT
+        return PROJECT_ROOT
 
     @staticmethod
     def _validate_project_structure(project_root: Path) -> None:
@@ -101,7 +175,7 @@ class CodebaseScanner:
             "pyproject.toml",
             "personas.yaml",
             "src/__init__.py",
-            "core.py" # FIX: Corrected path for core.py
+            "core.py"
         ]
         
         missing = []
@@ -112,33 +186,72 @@ class CodebaseScanner:
         if missing:
             logger.warning(f"Missing critical files for self-analysis: {', '.join(missing)}")
     
-    def _gather_dependencies(self) -> Dict[str, Any]:
-        """Placeholder to gather project dependencies."""
-        logger.info("Gathering dependencies (placeholder).")
-        return {
-            "python_dependencies": ["streamlit", "google-genai", "pydantic"],
-            "system_dependencies": [],
-            "package_manager": "pip",
-        }
+    def _collect_raw_file_contents(self) -> Dict[str, str]:
+        """
+        Collects the raw string content of relevant files in the project.
+        Filters out binary files, large files, and common ignore patterns.
+        """
+        raw_contents: Dict[str, str] = {}
+        exclude_patterns = [
+            ".git/", "__pycache__/", "venv/", ".venv/", "node_modules/",
+            "*.pyc", "*.log", "*.sqlite3", "*.db", "*.DS_Store",
+            "data/", # Exclude data directory contents by default
+            "docs/", # Exclude docs directory contents by default, unless explicitly needed
+            "repo_contents.txt", "repo_to_single_file.sh", # Specific files
+            ".env", # Exclude environment files
+            "*.bak", # Exclude backup files
+        ]
+        include_extensions = [
+            ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".txt", ".sh",
+            ".dockerignore", ".gitignore", ".pre-commit-config.yaml", "Dockerfile",
+            "requirements.txt", "requirements-prod.txt", "LICENSE", "README.md",
+            ".github/workflows/*.yml", # Include GitHub Actions workflows
+        ]
+        
+        for root, dirs, files in os.walk(self.project_root):
+            # Filter out excluded directories
+            dirs[:] = [d for d in dirs if not any(fnmatch.fnmatch(d, p.strip('/')) for p in exclude_patterns)]
+            
+            for file in files:
+                relative_file_path = Path(root).relative_to(self.project_root) / file
+                full_file_path = Path(root) / file
+                
+                # Apply exclude patterns to the relative path
+                if any(fnmatch.fnmatch(str(relative_file_path), p) for p in exclude_patterns):
+                    continue
+                # Apply include extensions/patterns
+                if not any(str(relative_file_path).endswith(ext) or fnmatch.fnmatch(str(relative_file_path), ext) for ext in include_extensions):
+                    continue
+                
+                try:
+                    # Limit file size to avoid reading huge binary files or logs
+                    if full_file_path.stat().st_size > 1 * 1024 * 1024: # 1MB limit
+                        self.logger.warning(f"Skipping large file: {relative_file_path} (>{1}MB)")
+                        continue
+                    
+                    with open(full_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        raw_contents[str(relative_file_path)] = f.read()
+                except Exception as e:
+                    self.logger.warning(f"Could not read file {relative_file_path}: {e}")
+        return raw_contents
 
     def _scan_file_structure(self) -> Dict[str, Any]:
         """Scan and document the file structure of the project."""
         file_structure = {}
         try:
             for root, dirs, files in os.walk(self.project_root):
-                if "venv" in dirs:
-                    dirs.remove("venv")
-                if ".git" in dirs:
-                    dirs.remove(".git")
-                if "__pycache__" in dirs:
-                    dirs.remove("__pycache__")
-                if "node_modules" in dirs:
-                    dirs.remove("node_modules")
-
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                # Filter out excluded directories and hidden directories (except .github)
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith(".") or d == ".github"
+                ]
+                # Remove common excluded directories from traversal
+                for excluded_dir in [".git", "__pycache__", "venv", ".venv", "node_modules", "data", "docs"]:
+                    if excluded_dir in dirs:
+                        dirs.remove(excluded_dir)
 
                 rel_path = os.path.relpath(root, self.project_root)
-
+                
                 dir_key = rel_path if rel_path != "." else "."
 
                 file_structure[dir_key] = {
@@ -149,20 +262,18 @@ class CodebaseScanner:
                 }
         except Exception as e:
             logger.error(f"Error walking directory structure: {e}", exc_info=True)
-            return {"error": f"Failed to scan file structure: {e}"}
+            return {"error": f"Failed to scan file structure: {e}"} # Return error in a structured way
 
-        critical_files = ["core.py", "src/llm_provider.py", "src/config/settings.py"]
-
+        # Add preview of critical files
+        critical_files = ["core.py", "src/llm_provider.py", "src/config/settings.py", "app.py", "personas.yaml"]
         file_structure["critical_files_preview"] = {}
         for filename in critical_files:
             file_path = Path(self.project_root) / filename
             if file_path.exists():
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()[:50]
-                        file_structure["critical_files_preview"][filename] = "".join(
-                            lines
-                        )
+                        lines = f.readlines()[:50] # Read first 50 lines
+                        file_structure["critical_files_preview"][filename] = "".join(lines)
                 except Exception as e:
                     logger.error(f"Error reading critical file {filename}: {str(e)}")
             else:
@@ -170,56 +281,8 @@ class CodebaseScanner:
 
         return file_structure
 
-    def _analyze_code_quality(self) -> Dict[str, Any]:
-        """Analyze code quality metrics (placeholder for Ruff, complexity, etc.)."""
-        logger.info("Running placeholder code quality analysis.")
-        return {
-            "ruff_issues_count": 0,
-            "complexity_metrics": {
-                "avg_cyclomatic_complexity": 2.5,
-                "avg_loc_per_function": 30,
-                "avg_num_arguments": 3,
-                "avg_max_nesting_depth": 2,
-            },
-            "code_smells_count": 5,
-            "detailed_issues": [],
-            "test_coverage_summary": {
-                "overall_coverage_percentage": 75.5,
-                "untested_files": ["src/utils/some_util.py"],
-                "critical_paths_uncovered": ["auth_flow"],
-            },
-        }
-
-    def _check_security_issues(self) -> List[Dict[str, Any]]:
-        """Check for security issues in the codebase (placeholder for Bandit, AST checks)."""
-        logger.info("Running placeholder security analysis.")
-        return [
-            {
-                "type": "Bandit Security Issue",
-                "file": "src/llm_provider.py",
-                "line": 42,
-                "code": "B105",
-                "message": "[MEDIUM] Hardcoded password string",
-            },
-            {
-                "type": "Security Vulnerability (AST)",
-                "file": "src/database_operations.py",
-                "line": 150,
-                "message": "Use of eval() is discouraged.",
-            },
-        ]
-
-    def _analyze_test_coverage(self) -> Dict[str, Any]:
-        """Analyze test coverage metrics (placeholder for coverage.py)."""
-        logger.info("Running placeholder test coverage analysis.")
-        return {
-            "overall_coverage_percentage": 85.0,
-            "files_covered": 50,
-            "total_files": 60,
-            "coverage_details": "High coverage in core modules, lower in utility scripts.",
-            "untested_files": ["src/utils/legacy_helper.py"],
-            "critical_paths_uncovered": [],
-        }
+    # Removed placeholder methods: _gather_dependencies, _analyze_code_quality, _check_security_issues, _analyze_test_coverage
+    # These are now handled by FocusedMetricsCollector in core.py or are not directly part of context scanning for embeddings.
 
 
 # --- ContextRelevanceAnalyzer Class ---
@@ -230,13 +293,13 @@ class ContextRelevanceAnalyzer:
     """
 
     def __init__(
-        self, cache_dir: str, codebase_context: Optional[Dict[str, str]] = None
+        self, cache_dir: str, raw_file_contents: Optional[Dict[str, str]] = None # MODIFIED: Renamed codebase_context to raw_file_contents
     ):
         """
         Initializes the analyzer.
         """
         self.cache_dir = cache_dir
-        self.codebase_context = codebase_context if codebase_context is not None else {}
+        self.raw_file_contents = raw_file_contents if raw_file_contents is not None else {} # MODIFIED: Use raw_file_contents
         self.logger = logger
         self.persona_router = None
 
@@ -246,7 +309,6 @@ class ContextRelevanceAnalyzer:
             # Initialize SentenceTransformer model
             # This will download the model if not already cached in self.cache_dir
 
-            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
             self.model = SentenceTransformer(
                 "all-MiniLM-L6-v2",
                 cache_folder=self.cache_dir,
@@ -258,8 +320,8 @@ class ContextRelevanceAnalyzer:
             )
             raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
 
-        if self.codebase_context:
-            self.file_embeddings = self._compute_file_embeddings(self.codebase_context)
+        if self.raw_file_contents: # MODIFIED: Check raw_file_contents
+            self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents) # MODIFIED: Pass raw_file_contents
         else:
             self.file_embeddings = {}
 
@@ -276,13 +338,15 @@ class ContextRelevanceAnalyzer:
     def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
         """Computes embeddings for files in the codebase context."""
         if not context:
+            self.logger.warning("No file content provided for embedding.")
             return {}
 
         embeddings = {}
         try:
+            # Filter out empty file contents before encoding
             files_with_content = {k: v for k, v in context.items() if v}
             if not files_with_content:
-                self.logger.warning("No file content found in context for embedding.")
+                self.logger.warning("No non-empty file content found in context for embedding.")
                 return {}
 
             file_paths = list(files_with_content.keys())
@@ -299,7 +363,7 @@ class ContextRelevanceAnalyzer:
 
         except Exception as e:
             self.logger.error(f"Error computing file embeddings: {e}", exc_info=True)
-            return {}
+            return {} # Return empty dict on error
         return embeddings
 
     def find_relevant_files(
@@ -330,6 +394,7 @@ class ContextRelevanceAnalyzer:
 
         for file_path, embedding in self.file_embeddings.items():
             try:
+                # Calculate cosine similarity
                 similarity = np.dot(prompt_embedding, embedding) / (
                     np.linalg.norm(prompt_embedding) * np.linalg.norm(embedding)
                 )
@@ -338,7 +403,7 @@ class ContextRelevanceAnalyzer:
                 self.logger.warning(
                     f"Could not calculate similarity for {file_path}: {e}"
                 )
-                relevance_scores[file_path] = -1.0
+                relevance_scores[file_path] = -1.0 # Assign a low score if calculation fails
 
         sorted_files = sorted(
             relevance_scores.items(), key=lambda item: item[1], reverse=True
@@ -346,20 +411,25 @@ class ContextRelevanceAnalyzer:
 
         relevant_files = []
         current_tokens = 0
+        # Estimate average tokens per file for budget calculation. This is a heuristic.
+        # A more accurate approach would be to count tokens for each file before adding.
         avg_file_tokens = 500
 
         for file_path, score in sorted_files:
-            if score < 0:
+            if score < 0: # Skip files where similarity calculation failed
                 continue
-            file_tokens = avg_file_tokens
+            
+            # Estimate tokens for the file content. A more precise method would count tokens.
+            file_tokens = avg_file_tokens # Using a fixed average for simplicity
+            
             if current_tokens + file_tokens <= max_context_tokens:
                 relevant_files.append((file_path, score))
                 current_tokens += file_tokens
             else:
-                break
+                break # Stop if adding this file exceeds the token budget
 
         self.logger.info(
-            f"Found {len(relevant_files)} relevant files within token budget."
+            f"Found {len(relevant_files)} relevant files within token budget ({current_tokens}/{max_context_tokens} tokens estimated)."
         )
         return relevant_files
 
@@ -371,31 +441,40 @@ class ContextRelevanceAnalyzer:
     ) -> str:
         """
         Generates a concise summary of the relevant codebase context.
+        Includes previews of critical files.
         """
         summary = f"Context Summary for prompt: '{prompt[:100]}...'\n\n"
         summary += f"Relevant files ({len(relevant_files)}):\n"
         for file_path in relevant_files:
             summary += f"- {file_path}\n"
 
-        if self.codebase_context and "critical_files_preview" in self.codebase_context:
+        # Use the raw_file_contents to get snippets for critical files
+        if self.raw_file_contents:
             summary += "\nCritical Files Preview:\n"
-            for filename, snippet in self.codebase_context[
-                "critical_files_preview"
-            ].items():
-                summary += f"\n--- {filename} (first 50 lines) ---\n{snippet}\n--------------------\n"
+            # Define critical files to preview
+            critical_files_to_preview = ["core.py", "src/llm_provider.py", "src/config/settings.py", "app.py", "personas.yaml"]
+            for filename in critical_files_to_preview:
+                snippet = self.raw_file_contents.get(filename, "")
+                if snippet:
+                    lines = snippet.splitlines()[:50] # Get first 50 lines
+                    summary += f"\n--- {filename} (first 50 lines) ---\n{''.join(lines)}\n--------------------\n"
+                else:
+                    summary += f"\n--- {filename} (not found or empty) ---\n"
         else:
             summary += "\nNo critical files preview available.\n"
 
         summary += "\n(Detailed content summarization is a placeholder.)"
 
+        # Estimate characters per token for truncation
         chars_per_token_estimate = 4
+        # Truncate summary if it exceeds the token budget (approximated by characters)
         if len(summary) > max_tokens * chars_per_token_estimate:
             summary = summary[: max_tokens * chars_per_token_estimate] + "..."
 
         return summary
 
     def get_context_summary(self) -> str:
-        """Returns the pre-computed or scanned context summary."""
-        if self.codebase_context:
-            return f"Codebase context available ({len(self.codebase_context)} files). See details in intermediate steps."
-        return "No codebase context provided or scanned."
+        """Returns a summary of the raw file contents available."""
+        if self.raw_file_contents: # MODIFIED: Check raw_file_contents
+            return f"Raw file contents available ({len(self.raw_file_contents)} files). See details in intermediate steps."
+        return "No raw file contents provided or scanned."

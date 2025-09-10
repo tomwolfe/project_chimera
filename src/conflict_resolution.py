@@ -168,7 +168,7 @@ class ConflictResolutionManager:
             "malformed_blocks": [{"type": "MANUAL_INTERVENTION_REQUIRED", "message": message}]
         }
 
-    def _retry_persona_with_feedback(self0, persona_name: str, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _retry_persona_with_feedback(self, persona_name: str, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
         Re-invokes the persona with explicit feedback on its previous problematic output.
         """

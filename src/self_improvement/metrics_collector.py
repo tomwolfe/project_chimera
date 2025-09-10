@@ -1,3 +1,4 @@
+# src/self_improvement/metrics_collector.py
 import os
 import json
 import ast
@@ -60,7 +61,7 @@ class FocusedMetricsCollector:
         initial_prompt: str,
         debate_history: List[Dict],
         intermediate_steps: Dict[str, Any],
-        codebase_context: Dict[str, str],
+        codebase_raw_file_contents: Dict[str, str], # MODIFIED: Accept raw file contents
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
@@ -70,7 +71,7 @@ class FocusedMetricsCollector:
         self.initial_prompt = initial_prompt
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.codebase_context = codebase_context
+        self.raw_file_contents = codebase_raw_file_contents # MODIFIED: Store raw file contents
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
@@ -885,79 +886,81 @@ class FocusedMetricsCollector:
         total_args_across_functions = 0
         total_nesting_depth_across_codebase = 0
 
-        for root, _, files in os.walk(self.codebase_path):
-            for file in files:
-                if file.endswith(".py"):
-                    file_path = os.path.join(root, file)
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            content_lines = content.splitlines()
+        # Iterate through raw_file_contents for Python files
+        for relative_file_path, content in self.raw_file_contents.items():
+            if relative_file_path.endswith(".py"):
+                full_file_path = str(self.codebase_path / relative_file_path) # Construct full path for tools
+                try:
+                    if not content:
+                        logger.warning(f"Empty content for {relative_file_path}. Skipping analysis.")
+                        continue
+                    content_lines = content.splitlines()
 
-                        if file_path not in self.file_analysis_cache:
-                            self.file_analysis_cache[file_path] = {}
+                    # Use full_file_path as key for cache for consistency with tools
+                    if full_file_path not in self.file_analysis_cache:
+                        self.file_analysis_cache[full_file_path] = {}
 
-                        ruff_issues = _run_ruff(content, file_path)
-                        if ruff_issues:
-                            metrics["code_quality"]["ruff_issues_count"] += len(
-                                ruff_issues
-                            )
-                            metrics["code_quality"]["detailed_issues"].extend(
-                                ruff_issues
-                            )
-                            metrics["code_quality"]["ruff_violations"].extend(
-                                ruff_issues
-                            )
-                            self.file_analysis_cache[file_path]["ruff_issues"] = ruff_issues
-
-                        bandit_issues = _run_bandit(content, file_path)
-                        if bandit_issues:
-                            metrics["security"]["bandit_issues_count"] += len(
-                                bandit_issues
-                            )
-                            metrics["code_quality"]["detailed_issues"].extend(
-                                bandit_issues
-                            )
-                            self.file_analysis_cache[file_path]["bandit_issues"] = bandit_issues
-
-                        ast_security_issues = _run_ast_security_checks(
-                            content, file_path
+                    ruff_issues = _run_ruff(content, full_file_path)
+                    if ruff_issues:
+                        metrics["code_quality"]["ruff_issues_count"] += len(
+                            ruff_issues
                         )
-                        if ast_security_issues:
-                            metrics["security"]["ast_security_issues_count"] += len(
-                                ast_security_issues
-                            )
-                            self.file_analysis_cache[file_path]["ast_security_issues"] = ast_security_issues
-                            metrics["code_quality"]["detailed_issues"].extend(
-                                ast_security_issues
-                            )
+                        metrics["code_quality"]["detailed_issues"].extend(
+                            ruff_issues
+                        )
+                        metrics["code_quality"]["ruff_violations"].extend(
+                            ruff_issues
+                        )
+                        self.file_analysis_cache[full_file_path]["ruff_issues"] = ruff_issues
 
-                        file_function_metrics = self._analyze_python_file_ast(
-                            content, content_lines, file_path
+                    bandit_issues = _run_bandit(content, full_file_path)
+                    if bandit_issues:
+                        metrics["security"]["bandit_issues_count"] += len(
+                            bandit_issues
+                        )
+                        metrics["code_quality"]["detailed_issues"].extend(
+                            bandit_issues
+                        )
+                        self.file_analysis_cache[full_file_path]["bandit_issues"] = bandit_issues
+
+                    ast_security_issues = _run_ast_security_checks(
+                        content, full_file_path
+                    )
+                    if ast_security_issues:
+                        metrics["security"]["ast_security_issues_count"] += len(
+                            ast_security_issues
+                        )
+                        self.file_analysis_cache[full_file_path]["ast_security_issues"] = ast_security_issues
+                        metrics["code_quality"]["detailed_issues"].extend(
+                            ast_security_issues
                         )
 
-                        for func_metric in file_function_metrics:
-                            total_functions_across_codebase += 1
-                            total_complexity_across_functions += func_metric[
-                                "cyclomatic_complexity"
-                            ]
-                            total_loc_across_functions += func_metric["loc"]
-                            total_args_across_functions += func_metric["num_arguments"]
-                            total_nesting_depth_across_codebase += func_metric[
-                                "max_nesting_depth"
-                            ]
-                            metrics["code_quality"]["code_smells_count"] += func_metric[
-                                "code_smells"
-                            ]
-                            metrics["performance_efficiency"][
-                                "potential_bottlenecks_count"
-                            ] += func_metric["potential_bottlenecks"]
+                    file_function_metrics = self._analyze_python_file_ast(
+                        content, content_lines, full_file_path
+                    )
 
-                    except Exception as e:
-                        logger.error(
-                            f"Error collecting code metrics for {file_path}: {e}",
-                            exc_info=True,
-                        )
+                    for func_metric in file_function_metrics:
+                        total_functions_across_codebase += 1
+                        total_complexity_across_functions += func_metric[
+                            "cyclomatic_complexity"
+                        ]
+                        total_loc_across_functions += func_metric["loc"]
+                        total_args_across_functions += func_metric["num_arguments"]
+                        total_nesting_depth_across_codebase += func_metric[
+                            "max_nesting_depth"
+                        ]
+                        metrics["code_quality"]["code_smells_count"] += func_metric[
+                            "code_smells"
+                        ]
+                        metrics["performance_efficiency"][
+                            "potential_bottlenecks_count"
+                        ] += func_metric["potential_bottlenecks"]
+
+                except Exception as e:
+                    logger.error(
+                        f"Error collecting code metrics for {relative_file_path}: {e}",
+                        exc_info=True,
+                    )
 
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (

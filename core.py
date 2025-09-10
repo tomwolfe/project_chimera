@@ -74,7 +74,8 @@ class SocraticDebate:
         self,
         initial_prompt: str,
         api_key: str,
-        codebase_context: Optional[Dict[str, str]] = None,
+        structured_codebase_context: Optional[Dict[str, Any]] = None, # MODIFIED: Renamed and changed type
+        raw_file_contents: Optional[Dict[str, str]] = None, # NEW: Raw file contents
         settings: Optional[ChimeraSettings] = None,
         all_personas: Optional[Dict[str, PersonaConfig]] = None,
         persona_sets: Optional[Dict[str, List[str]]] = None,
@@ -107,20 +108,24 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        if is_self_analysis and codebase_context is None:
+        # MODIFIED: Handle structured_codebase_context and raw_file_contents
+        if is_self_analysis:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
             scanner = CodebaseScanner(project_root=str(PROJECT_ROOT)) # Ensure scanner is initialized with project root
-            self.codebase_context = scanner.scan_codebase()
+            full_codebase_analysis = scanner.scan_codebase() # This returns {"file_structure": ..., "raw_file_contents": ...}
+            self.structured_codebase_context = full_codebase_analysis.get("file_structure", {}) # Store file_structure as structured context
+            self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
             self.logger.info(
-                f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
+                f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned"
             )
-        else:
-            self.codebase_context = codebase_context or {}
+        else: # If not self-analysis, use provided contexts
+            self.structured_codebase_context = structured_codebase_context or {}
+            self.raw_file_contents = raw_file_contents or {}
 
         # NEW: Log if codebase_context is still empty after initialization
-        if not self.codebase_context:
+        if not self.raw_file_contents: # MODIFIED: Check raw_file_contents
             self.logger.warning(
                 "Codebase context is empty after SocraticDebate initialization. Context-aware features may be limited.",
                 extra=self._log_extra
@@ -196,7 +201,7 @@ class SocraticDebate:
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
-                codebase_context=self.codebase_context, # FIX: Pass the correctly populated self.codebase_context
+                raw_file_contents=self.raw_file_contents, # MODIFIED: Pass raw_file_contents
                 cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers")
             )
             if self.persona_router:
@@ -205,10 +210,10 @@ class SocraticDebate:
         # FIX: Ensure context_analyzer has computed embeddings if codebase_context is present
         # This is a safeguard in case ContextRelevanceAnalyzer was passed in without embeddings
         # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
-        if self.codebase_context and not self.context_analyzer.file_embeddings:
+        if self.raw_file_contents and not self.context_analyzer.file_embeddings: # MODIFIED: Check raw_file_contents
             try:
                 # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(self.codebase_context)
+                self.context_analyzer.compute_file_embeddings(self.raw_file_contents) # MODIFIED: Pass raw_file_contents
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context after SocraticDebate init.",
@@ -253,24 +258,6 @@ class SocraticDebate:
         # NEW: Declare instance variable for synthesis persona name and file analysis cache
         self.synthesis_persona_name_for_metrics: Optional[str] = None
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
-
-        # Compute embeddings if codebase_context is present but embeddings are not
-        # REMOVED: This block is now redundant due to the explicit check above
-        # if self.codebase_context and self.context_analyzer:
-        #     if isinstance(self.codebase_context, dict):
-        #         try:
-        #             if not self.context_analyzer.file_embeddings:
-        #                 self.context_analyzer.compute_file_embeddings(
-        #                     self.codebase_context
-        #                 )
-        #         except Exception as e:
-        #             self._log_with_context(
-        #                 "error", f"Error computing context embeddings: {e}[/red]"
-        #             )
-        #             if self.status_callback:
-        #                 self.status_callback(
-        #                     message=f"[red]Error computing context embeddings: {e}[/red]"
-        #                 )
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -949,7 +936,7 @@ class SocraticDebate:
         """
         Performs context analysis based on the initial prompt and codebase context.
         """
-        if not self.codebase_context or not self.context_analyzer:
+        if not self.raw_file_contents or not self.context_analyzer: # MODIFIED: Check raw_file_contents
             self._log_with_context(
                 "info",
                 "No codebase context or analyzer available. Skipping context analysis.",
@@ -957,13 +944,13 @@ class SocraticDebate:
             return None
 
         if (
-            self.codebase_context
+            self.raw_file_contents # MODIFIED: Check raw_file_contents
             and self.context_analyzer
             and not self.context_analyzer.file_embeddings
         ):
             try:
                 # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(self.codebase_context)
+                self.context_analyzer.compute_file_embeddings(self.raw_file_contents) # MODIFIED: Pass raw_file_contents
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context during context analysis phase.",
@@ -1158,7 +1145,7 @@ class SocraticDebate:
         context_prompt_content = ""
         if context_analysis_results and context_analysis_results.get("relevant_files"):
             for file_path, _ in context_analysis_results["relevant_files"]:
-                content = self.codebase_context.get(file_path, "")
+                content = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
                 if content:
                     context_prompt_content += (
                         f"### File: {file_path}\n```\n{content}\n```\n\n"
@@ -1830,12 +1817,11 @@ class SocraticDebate:
                 initial_prompt=self.initial_prompt,
                 debate_history=debate_persona_results,
                 intermediate_steps=self.intermediate_steps,
-                codebase_context=self.codebase_context,
+                codebase_raw_file_contents=self.raw_file_contents, # MODIFIED: Pass raw_file_contents
                 tokenizer=self.tokenizer,
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
-                # REMOVED: metrics_collector=self.metrics_collector, # This line was incorrectly added
             )
             # NEW: Expose the file_analysis_cache from the local metrics_collector
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache
@@ -2142,8 +2128,8 @@ class SocraticDebate:
         elif add_actions:
             return add_actions[0]
         elif modify_actions:
-            original_content = self.codebase_context.get(file_path, "")
-            final_content_for_diff = original_content
+            original_content = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
+            final_content_for_diff = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
             last_full_content_provided = None
 
             for mod_change in modify_actions:
