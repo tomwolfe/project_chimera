@@ -7,4 +7,9 @@ pydantic # Ensure pydantic is available for models (used in models.py)
 rich
 sentence-transformers # Ensure sentence-transformers is available
 python-json-logger
-pytest-cov # NEW: Required for test coverage metrics collection in production
+pytest-cov # Required for test coverage metrics collection in production
+
+# NEW: Code quality and security tools required by src/utils/code_validator.py in production
+pycodestyle
+ruff
+bandit
