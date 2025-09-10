@@ -55,7 +55,7 @@ from src.utils.prompt_analyzer import (
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # MODIFIED: Import SHARED_JSON_INSTRUCTIONS
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
 from src.utils.path_utils import PROJECT_ROOT # NEW: Import PROJECT_ROOT for CodebaseScanner initialization
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
@@ -74,7 +74,7 @@ class SocraticDebate:
         self,
         initial_prompt: str,
         api_key: str,
-        codebase_context: Optional[Dict[str, str]] = None,
+        codebase_context: Optional[Dict[str, Any]] = None, # This will now be a richer dict
         settings: Optional[ChimeraSettings] = None,
         all_personas: Optional[Dict[str, PersonaConfig]] = None,
         persona_sets: Optional[Dict[str, List[str]]] = None,
@@ -107,14 +107,16 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
+        # MODIFIED: If self-analysis and no codebase_context provided, trigger CodebaseScanner
         if is_self_analysis and codebase_context is None:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
-            scanner = CodebaseScanner(project_root=str(PROJECT_ROOT)) # Ensure scanner is initialized with project root
-            self.codebase_context = scanner.scan_codebase()
+            scanner = CodebaseScanner(project_root=str(PROJECT_ROOT))
+            # The load_own_codebase_context returns a dict with 'file_contents' and 'file_structure'
+            self.codebase_context = scanner.load_own_codebase_context()
             self.logger.info(
-                f"Codebase context gathered: {len(self.codebase_context.get('file_structure', {}))} directories scanned"
+                f"Codebase context gathered: {len(self.codebase_context.get('file_contents', {}))} files scanned"
             )
         else:
             self.codebase_context = codebase_context or {}
@@ -195,31 +197,32 @@ class SocraticDebate:
             self.logger.warning(
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
+            # MODIFIED: Pass the full codebase_context dict to ContextRelevanceAnalyzer
             self.context_analyzer = ContextRelevanceAnalyzer(
-                codebase_context=self.codebase_context, # FIX: Pass the correctly populated self.codebase_context
+                codebase_context=self.codebase_context,
                 cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers")
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
 
         # FIX: Ensure context_analyzer has computed embeddings if codebase_context is present
-        # This is a safeguard in case ContextRelevanceAnalyzer was passed in without embeddings
-        # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
-        if self.codebase_context and not self.context_analyzer.file_embeddings:
-            try:
-                self.context_analyzer.compute_file_embeddings(self.codebase_context)
-                self._log_with_context(
-                    "info",
-                    "Computed file embeddings for codebase context after SocraticDebate init.",
-                )
-            except Exception as e:
-                self._log_with_context(
-                    "error", f"Error computing context embeddings: {e}[/red]"
-                )
-                if self.status_callback:
-                    self.status_callback(
-                        message=f"[red]Error computing context embeddings: {e}[/red]"
+        # and file_contents are available within it.
+        if self.codebase_context and self.context_analyzer and self.context_analyzer.file_contents:
+            if not self.context_analyzer.file_embeddings:
+                try:
+                    self.context_analyzer.file_embeddings = self.context_analyzer._compute_file_embeddings(self.context_analyzer.file_contents)
+                    self._log_with_context(
+                        "info",
+                        "Computed file embeddings for codebase context after SocraticDebate init.",
                     )
+                except Exception as e:
+                    self._log_with_context(
+                        "error", f"Error computing context embeddings: {e}[/red]"
+                    )
+                    if self.status_callback:
+                        self.status_callback(
+                            message=f"[red]Error computing context embeddings: {e}[/red]"
+                        )
 
         # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
@@ -245,28 +248,6 @@ class SocraticDebate:
         # NEW: Declare instance variable for synthesis persona name and file analysis cache
         self.synthesis_persona_name_for_metrics: Optional[str] = None
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
-
-        # Compute embeddings if codebase_context is present but embeddings are not
-        # REMOVED: This block is now redundant due to the explicit check above
-        # if self.codebase_context and self.context_analyzer:
-        #     if isinstance(self.codebase_context, dict):
-        #         try:
-        #             if not self.context_analyzer.file_embeddings:
-        #                 self.context_analyzer.compute_file_embeddings(
-        #                     self.codebase_context
-        #                 )
-        #         except Exception as e:
-        #             self._log_with_context(
-        #                 "error", f"Error computing context embeddings: {e}[/red]"
-        #             )
-        #             if self.status_callback:
-        #                 self.status_callback(
-        #                     message=f"[red]Error computing context embeddings: {e}[/red]"
-        #                 )
-        #     else:
-        #         self.logger.warning(
-        #             "codebase_context was not a dictionary, skipping embedding computation."
-        #         )
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -572,7 +553,7 @@ class SocraticDebate:
             requested_model_name if requested_model_name else self.model_name
         )
         # Apply a small safety margin to max_output_tokens to ensure space for closing JSON syntax
-        safety_margin_factor = 0.98 # Request 98% of the actual max output tokens
+        safety_margin_factor = 0.98
         effective_max_output_tokens = int(min(
             max_output_tokens_for_turn, self.llm_provider.tokenizer.max_output_tokens
         ) * safety_margin_factor)
@@ -590,9 +571,8 @@ class SocraticDebate:
         effective_max_output_tokens: int,
         final_model_to_use: str,
         system_prompt_for_llm: str,
-    ) -> Tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
+    ) -> Tuple[str, int, int, bool]:
         """Executes the actual LLM API call and tracks tokens."""
-        # MODIFIED: Unpack all 4 return values from self.llm_provider.generate()
         raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = self.llm_provider.generate(
             prompt=current_prompt,
             system_prompt=system_prompt_for_llm,
@@ -600,6 +580,7 @@ class SocraticDebate:
             max_tokens=effective_max_output_tokens,
             persona_config=persona_config,
             requested_model_name=final_model_to_use,
+            output_schema=self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_config.name, GeneralOutput) # NEW: Pass schema
         )
         self.track_token_usage(
             "debate", input_tokens + output_tokens, persona_name=persona_config.name
@@ -610,12 +591,12 @@ class SocraticDebate:
         self.intermediate_steps[f"{persona_config.name}_Actual_Max_Tokens"] = (
             effective_max_output_tokens
         )
-        if is_truncated_from_llm: # MODIFIED: Use the unpacked variable
+        if is_truncated_from_llm:
             self._log_with_context(
                 "warning",
                 f"Output for {persona_config.name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({effective_max_output_tokens}).",
             )
-        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm # MODIFIED: Return 4 values
+        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm
 
     def _parse_and_track_llm_output(
         self, persona_name: str, raw_llm_output: str, output_schema: Type[BaseModel]
@@ -651,7 +632,7 @@ class SocraticDebate:
         full_validation_message = str(e)
 
         retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
-        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n" # Provide full validation message
+        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n"
         retry_feedback += "CRITICAL: Your output failed schema validation. You MUST correct this. "
         retry_feedback += "Ensure the JSON is perfectly formed, with correct types and no extra text or markdown fences. "
         retry_feedback += "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
@@ -875,7 +856,7 @@ class SocraticDebate:
                             token_budget_exceeded=False,
                         )
                     # NEW: Return a fallback output using the parser
-                    return LLMOutputParser()._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
+                    return LLMOutputParser()._create_fallback_output(
                         output_schema_class,
                         malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
                         raw_output_snippet=raw_llm_output,
@@ -951,13 +932,14 @@ class SocraticDebate:
             )
             return None
 
+        # MODIFIED: Ensure context_analyzer has file_contents before computing embeddings
         if (
-            self.codebase_context
+            self.codebase_context.get("file_contents")
             and self.context_analyzer
             and not self.context_analyzer.file_embeddings
         ):
             try:
-                self.context_analyzer.compute_file_embeddings(self.codebase_context)
+                self.context_analyzer.file_embeddings = self.context_analyzer._compute_file_embeddings(self.context_analyzer.file_contents)
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context during context analysis phase.",
@@ -1144,9 +1126,10 @@ class SocraticDebate:
             return {"error": "Context_Aware_Assistant config missing."}
 
         context_prompt_content = ""
-        if context_analysis_results and context_analysis_results.get("relevant_files"):
+        # MODIFIED: Access file_contents from self.codebase_context
+        if self.codebase_context.get("file_contents") and context_analysis_results and context_analysis_results.get("relevant_files"):
             for file_path, _ in context_analysis_results["relevant_files"]:
-                content = self.codebase_context.get(file_path, "")
+                content = self.codebase_context["file_contents"].get(file_path, "")
                 if content:
                     context_prompt_content += (
                         f"### File: {file_path}\n```\n{content}\n```\n\n"
@@ -1756,11 +1739,19 @@ class SocraticDebate:
                 }
             ]
 
+        # If after initial filtering, the history is still too long, use the prompt optimizer
+        # to dynamically summarize the remaining turns.
+        if self.tokenizer.count_tokens(json.dumps(summarized_history)) > max_tokens:
+            self._log_with_context("info", "Debate history still exceeds token limit after initial filtering. Applying dynamic summarization.")
+            summarized_history_str = json.dumps(summarized_history)
+            dynamically_summarized_str = self.prompt_optimizer.optimize_debate_history(summarized_history_str, max_tokens)
+            return json.loads(dynamically_summarized_str) # Return as list of dicts
+
         return summarized_history
 
     def _perform_synthesis_phase(
         self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Any], Optional[FocusedMetricsCollector]]: # MODIFIED: Return type to include metrics_collector
+    ) -> Tuple[Dict[str, Any], Optional[FocusedMetricsCollector]]:
         """
         Executes the final synthesis persona turn based on the debate history.
         """
@@ -1788,7 +1779,7 @@ class SocraticDebate:
         # NEW: Store the synthesis persona name as an instance variable
         self.synthesis_persona_name_for_metrics = synthesis_persona_name
 
-        local_metrics_collector: Optional[FocusedMetricsCollector] = None # NEW: Local variable for metrics collector
+        local_metrics_collector: Optional[FocusedMetricsCollector] = None
 
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
@@ -1814,16 +1805,16 @@ class SocraticDebate:
             )
 
         if synthesis_persona_name == "Self_Improvement_Analyst":
-            local_metrics_collector = FocusedMetricsCollector( # Keep local instantiation
+            # MODIFIED: Pass self.codebase_context.get("file_contents", {}) to metrics_collector
+            local_metrics_collector = FocusedMetricsCollector(
                 initial_prompt=self.initial_prompt,
                 debate_history=debate_persona_results,
                 intermediate_steps=self.intermediate_steps,
-                codebase_context=self.codebase_context,
+                codebase_context=self.codebase_context.get("file_contents", {}), # Pass only file_contents
                 tokenizer=self.tokenizer,
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
-                # REMOVED: metrics_collector=self.metrics_collector, # This line was incorrectly added
             )
             # NEW: Expose the file_analysis_cache from the local metrics_collector
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache
@@ -1898,7 +1889,7 @@ class SocraticDebate:
             max_output_tokens_for_turn,
         )
         self._log_with_context("info", "Final synthesis persona turn completed.")
-        return synthesis_output, local_metrics_collector # MODIFIED: Return local_metrics_collector
+        return synthesis_output, local_metrics_collector
 
     def _finalize_debate_results(
         self,
@@ -2058,9 +2049,9 @@ class SocraticDebate:
         self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
 
         # NEW: Record the outcome of the Self_Improvement_Analyst's suggestions
-        if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and metrics_collector_instance_from_synthesis_phase: # MODIFIED: Use instance variable and local metrics_collector
+        if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and metrics_collector_instance_from_synthesis_phase:
             is_successful_suggestion = not self._is_problematic_output(synthesis_persona_results)
-            metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome( # MODIFIED: Use local metrics_collector
+            metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome(
                 self.synthesis_persona_name_for_metrics, is_successful_suggestion, schema_failed=bool(synthesis_persona_results.get("malformed_blocks"))
             )
 
@@ -2130,7 +2121,8 @@ class SocraticDebate:
         elif add_actions:
             return add_actions[0]
         elif modify_actions:
-            original_content = self.codebase_context.get(file_path, "")
+            # MODIFIED: Access original_content from self.codebase_context.get("file_contents", {})
+            original_content = self.codebase_context.get("file_contents", {}).get(file_path, "")
             final_content_for_diff = original_content
             last_full_content_provided = None
 

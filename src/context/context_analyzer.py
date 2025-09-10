@@ -7,6 +7,14 @@ from sentence_transformers import SentenceTransformer # Needed for embeddings
 import re # For keyword matching
 import json # For potential JSON handling
 import numpy as np # Needed for semantic similarity calculation
+import toml # NEW: For parsing pyproject.toml
+import yaml # NEW: For parsing YAML files
+import subprocess # NEW: For running external tools
+import sys # NEW: For sys.executable
+
+from src.utils.command_executor import execute_command_safely # NEW: Import execute_command_safely
+from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks # NEW: Import code validation tools
+from src.utils.code_utils import _get_code_snippet, ComplexityVisitor # NEW: Import code utility functions
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +67,10 @@ class CodebaseScanner:
             return {"error": str(e)}
 
     def load_own_codebase_context(self) -> Dict[str, Any]:
-        """Loads Project Chimera's own codebase context for self-analysis."""
+        """
+        Loads Project Chimera's own codebase context for self-analysis.
+        This method performs a comprehensive scan and collects various metrics.
+        """
         project_root = self._find_project_root()
         if not project_root:
             logger.error("Could not locate Project Chimera root directory for self-analysis")
@@ -70,16 +81,80 @@ class CodebaseScanner:
         
         self._validate_project_structure(project_root)
         
-        # Collect context from relevant directories
+        file_contents: Dict[str, str] = {}
+        file_structure: Dict[str, Any] = {}
+        all_ruff_issues: List[Dict[str, Any]] = []
+        all_bandit_issues: List[Dict[str, Any]] = []
+        all_ast_security_issues: List[Dict[str, Any]] = []
+        all_complexity_metrics: List[Dict[str, Any]] = []
+
+        # 1. Scan file structure and read all relevant file contents
+        for root, dirs, files in os.walk(project_root):
+            # Exclude common non-code directories
+            dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', 'venv', '.venv', 'node_modules', 'data', 'docs', 'custom_frameworks']]
+            
+            for file in files:
+                # Include relevant code and config files
+                if file.endswith(('.py', '.yaml', '.yml', '.json', '.toml', '.md', 'Dockerfile', 'requirements.txt', 'requirements-prod.txt')):
+                    file_path = Path(root) / file
+                    relative_file_path = str(file_path.relative_to(project_root))
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            file_contents[relative_file_path] = content
+                    except Exception as e:
+                        logger.warning(f"Could not read file {relative_file_path}: {e}")
+            
+            # Build file structure representation
+            rel_path = str(Path(root).relative_to(project_root))
+            if rel_path == '.': rel_path = '/'
+            file_structure[rel_path] = {
+                "subdirectories": [d for d in dirs],
+                "files": [f for f in files if f.endswith(('.py', '.yaml', '.yml', '.json', '.toml', '.md', 'Dockerfile', 'requirements.txt', 'requirements-prod.txt'))],
+            }
+
+        # 2. Run static analysis tools on collected file contents
+        for relative_file_path, content in file_contents.items():
+            if relative_file_path.endswith('.py'):
+                # Run Ruff
+                ruff_issues = _run_ruff(content, relative_file_path)
+                all_ruff_issues.extend(ruff_issues)
+
+                # Run Bandit
+                bandit_issues = _run_bandit(content, relative_file_path)
+                all_bandit_issues.extend(bandit_issues)
+
+                # Run AST-based security checks
+                ast_security_issues = _run_ast_security_checks(content, relative_file_path)
+                all_ast_security_issues.extend(ast_security_issues)
+
+                # Run complexity analysis
+                content_lines = content.splitlines()
+                file_function_metrics = ComplexityVisitor(content_lines).function_metrics
+                all_complexity_metrics.extend(file_function_metrics)
+
+        # 3. Collect other metrics (test coverage, dependencies, config analysis, deployment analysis)
+        test_coverage_summary = self._assess_test_coverage() # This will run pytest with coverage
+        dependencies_info = self._gather_dependencies()
+        config_analysis = self._collect_configuration_analysis(str(project_root))
+        deployment_analysis = self._collect_deployment_robustness_metrics(str(project_root))
+
+        # Consolidate all collected data
         context = {
             "project_root": str(project_root),
-            "file_structure": self._scan_file_structure(),
-            "code_quality_metrics": self._analyze_code_quality(),
-            "security_issues": self._check_security_issues(),
-            "test_coverage": self._analyze_test_coverage(),
-            "dependencies": self._gather_dependencies()
+            "file_contents": file_contents, # Raw file contents
+            "file_structure": file_structure, # Structured directory/file list
+            "static_analysis_results": {
+                "ruff_issues": all_ruff_issues,
+                "bandit_issues": all_bandit_issues,
+                "ast_security_issues": all_ast_security_issues,
+                "complexity_metrics": all_complexity_metrics,
+            },
+            "test_coverage_summary": test_coverage_summary,
+            "dependencies_info": dependencies_info,
+            "configuration_analysis": config_analysis.model_dump(by_alias=True),
+            "deployment_analysis": deployment_analysis.model_dump(by_alias=True),
         }
-
         return context
 
     def _find_project_root(self) -> Optional[Path]:
@@ -101,7 +176,7 @@ class CodebaseScanner:
             "pyproject.toml",
             "personas.yaml",
             "src/__init__.py",
-            "src/core.py"
+            "core.py" # core.py is in the root
         ]
         
         missing = []
@@ -113,13 +188,42 @@ class CodebaseScanner:
             logger.warning(f"Missing critical files for self-analysis: {', '.join(missing)}")
     
     def _gather_dependencies(self) -> Dict[str, Any]:
-        """Placeholder to gather project dependencies."""
-        logger.info("Gathering dependencies (placeholder).")
-        return {
-            "python_dependencies": ["streamlit", "google-genai", "pydantic"],
-            "system_dependencies": [],
-            "package_manager": "pip",
+        """Gathers project dependencies from requirements.txt and requirements-prod.txt."""
+        dependencies = {
+            "requirements_txt": [],
+            "requirements_prod_txt": [],
+            "dev_prod_overlap": [],
         }
+
+        req_path = self.codebase_path / "requirements.txt"
+        prod_req_path = self.codebase_path / "requirements-prod.txt"
+
+        dev_deps = set()
+        if req_path.exists():
+            try:
+                with open(req_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            dependencies["requirements_txt"].append(line)
+                            dev_deps.add(re.split(r'[=~><]', line)[0].lower())
+            except OSError as e:
+                logger.warning(f"Could not read requirements.txt: {e}")
+
+        prod_deps = set()
+        if prod_req_path.exists():
+            try:
+                with open(prod_req_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            dependencies["requirements_prod_txt"].append(line)
+                            prod_deps.add(re.split(r'[=~><]', line)[0].lower())
+            except OSError as e:
+                logger.warning(f"Could not read requirements-prod.txt: {e}")
+        
+        dependencies["dev_prod_overlap"] = list(dev_deps.intersection(prod_deps))
+        return dependencies
 
     def _scan_file_structure(self) -> Dict[str, Any]:
         """Scan and document the file structure of the project."""
@@ -209,17 +313,96 @@ class CodebaseScanner:
             },
         ]
 
-    def _analyze_test_coverage(self) -> Dict[str, Any]:
-        """Analyze test coverage metrics (placeholder for coverage.py)."""
-        logger.info("Running placeholder test coverage analysis.")
-        return {
-            "overall_coverage_percentage": 85.0,
-            "files_covered": 50,
-            "total_files": 60,
-            "coverage_details": "High coverage in core modules, lower in utility scripts.",
-            "untested_files": ["src/utils/legacy_helper.py"],
-            "critical_paths_uncovered": [],
+    def _assess_test_coverage(self) -> Dict[str, Any]:
+        """
+        Assesses test coverage for the codebase.
+        Executes pytest with coverage and parses the generated JSON report.
+        """
+        coverage_data = {
+            "overall_coverage_percentage": 0.0,
+            "coverage_details": "Failed to run coverage tool.",
         }
+        try:
+            # Run pytest with coverage and generate a JSON report
+            command = [
+                "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
+            ]
+            # Use execute_command_safely for robustness
+            return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
+
+            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
+            # Only consider exit code 0 or 1 as valid execution for coverage reporting.
+            if return_code not in (0, 1):
+                logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
+                # Provide more detailed error info, including stdout for debugging.
+                coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
+                return coverage_data
+
+            coverage_json_path = Path("coverage.json")
+            # Check if the command actually produced the coverage.json file
+            # and if the return code indicates a successful or partially successful run (0 or 1 for pytest)
+            if coverage_json_path.exists() and return_code in (0, 1):
+                with open(coverage_json_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
+                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
+                coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
+                coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
+
+                coverage_data["coverage_details"] = "Coverage report generated successfully."
+                # NEW: Add a note if tests failed, even if coverage command ran
+                if return_code == 1:
+                    coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
+                coverage_json_path.unlink()
+            elif return_code not in (0, 1): # If command failed with unexpected code
+                coverage_data["coverage_details"] = "Coverage JSON report not found."
+
+        except Exception as e:
+            logger.error(f"Error assessing test coverage: {e}", exc_info=True)
+            coverage_data["coverage_details"] = f"Error during coverage assessment: {e}"
+
+        return coverage_data
+
+    @classmethod
+    def _analyze_python_file_ast(
+        cls, content: str, content_lines: List[str], file_path: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyzes a Python file's AST for complexity, lines of code in functions,
+        number of functions, code smells, and potential bottlenecks.
+        """
+        try:
+            tree = ast.parse(content)
+            visitor = ComplexityVisitor(content_lines)
+            visitor.visit(tree)
+            return visitor.function_metrics
+        except SyntaxError as e:
+            logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
+            return []
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during AST analysis for {file_path}: {e}",
+                exc_info=True,
+            )
+            return []
+
+    def _collect_configuration_analysis(self, codebase_path: str):
+        """Collects structured information about existing tool configurations."""
+        # This method is already implemented in FocusedMetricsCollector,
+        # but CodebaseScanner needs to call it to gather the data.
+        # We'll call the static method from FocusedMetricsCollector.
+        from src.self_improvement.metrics_collector import FocusedMetricsCollector
+        return FocusedMetricsCollector._collect_configuration_analysis(codebase_path)
+
+    def _collect_deployment_robustness_metrics(self, codebase_path: str):
+        """Collects metrics related to deployment robustness."""
+        # This method is already implemented in FocusedMetricsCollector,
+        # but CodebaseScanner needs to call it to gather the data.
+        # We'll call the static method from FocusedMetricsCollector.
+        from src.self_improvement.metrics_collector import FocusedMetricsCollector
+        return FocusedMetricsCollector._collect_deployment_robustness_metrics(codebase_path)
 
 
 # --- ContextRelevanceAnalyzer Class ---
@@ -230,13 +413,16 @@ class ContextRelevanceAnalyzer:
     """
 
     def __init__(
-        self, cache_dir: str, codebase_context: Optional[Dict[str, str]] = None
+        self, codebase_context: Dict[str, Any], cache_dir: str
     ):
         """
         Initializes the analyzer.
+        MODIFIED: codebase_context now expects the richer dict from CodebaseScanner.
         """
         self.cache_dir = cache_dir
         self.codebase_context = codebase_context if codebase_context is not None else {}
+        # NEW: Extract file_contents for embedding computation
+        self.file_contents = self.codebase_context.get("file_contents", {})
         self.logger = logger
         self.persona_router = None
 
@@ -253,8 +439,9 @@ class ContextRelevanceAnalyzer:
             )
             raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
 
-        if self.codebase_context:
-            self.file_embeddings = self._compute_file_embeddings(self.codebase_context)
+        # MODIFIED: Compute embeddings using self.file_contents
+        if self.file_contents:
+            self.file_embeddings = self._compute_file_embeddings(self.file_contents)
         else:
             self.file_embeddings = {}
 
@@ -263,26 +450,26 @@ class ContextRelevanceAnalyzer:
         self.persona_router = persona_router
         self.logger.info("Persona router set for context relevance analysis.")
 
-    def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+    def _compute_file_embeddings(self, file_contents: Dict[str, str]) -> Dict[str, Any]:
         """Computes embeddings for files in the codebase context."""
-        if not context:
+        if not file_contents:
             return {}
 
         embeddings = {}
         try:
-            files_with_content = {k: v for k, v in context.items() if v}
+            files_with_content = {k: v for k, v in file_contents.items() if v}
             if not files_with_content:
                 self.logger.warning("No file content found in context for embedding.")
                 return {}
 
             file_paths = list(files_with_content.keys())
-            file_contents = list(files_with_content.values())
+            file_contents_list = list(files_with_content.values())
 
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
             if not hasattr(self, "model") or self.model is None:
                 raise RuntimeError("SentenceTransformer model not loaded.")
 
-            file_embeddings_list = self.model.encode(file_contents)
+            file_embeddings_list = self.model.encode(file_contents_list)
 
             embeddings = dict(zip(file_paths, file_embeddings_list))
             self.logger.info(f"Computed embeddings for {len(embeddings)} files.")
@@ -367,9 +554,10 @@ class ContextRelevanceAnalyzer:
         for file_path in relevant_files:
             summary += f"- {file_path}\n"
 
-        if self.codebase_context and "critical_files_preview" in self.codebase_context:
+        # MODIFIED: Access file_structure from self.codebase_context
+        if self.codebase_context.get("file_structure") and "critical_files_preview" in self.codebase_context["file_structure"]:
             summary += "\nCritical Files Preview:\n"
-            for filename, snippet in self.codebase_context[
+            for filename, snippet in self.codebase_context["file_structure"][
                 "critical_files_preview"
             ].items():
                 summary += f"\n--- {filename} (first 50 lines) ---\n{snippet}\n--------------------\n"
@@ -386,6 +574,7 @@ class ContextRelevanceAnalyzer:
 
     def get_context_summary(self) -> str:
         """Returns the pre-computed or scanned context summary."""
-        if self.codebase_context:
-            return f"Codebase context available ({len(self.codebase_context)} files). See details in intermediate steps."
+        # MODIFIED: Check for 'file_contents' key in codebase_context
+        if self.codebase_context.get("file_contents"):
+            return f"Codebase context available ({len(self.codebase_context.get('file_contents', {}))} files). See details in intermediate steps."
         return "No codebase context provided or scanned."
