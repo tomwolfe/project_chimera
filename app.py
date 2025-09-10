@@ -747,14 +747,17 @@ for i, tab_name in enumerate(tab_names):
                 on_change=update_activity_timestamp,
             )
 
-            filtered_prompts_in_category = {
-                name: details
-                for name, details in category_options.items()
-                if not st.session_state[f"search_{tab_name}"]
-                or st.session_state[f"search_{tab_name}"].lower() in name.lower()
-                or st.session_state[f"search_{tab_name}"].lower()
-                in details["prompt"].lower()
-            }
+            # This block causes KeyError on pytest collection because st.session_state is not available.
+            # It should be moved into a function that is only called when the app is running.
+            def get_filtered_prompts(tab_name, category_options):
+                return {
+                    name: details
+                    for name, details in category_options.items()
+                    if not st.session_state.get(f"search_{tab_name}")
+                    or st.session_state.get(f"search_{tab_name}", "").lower() in name.lower()
+                    or st.session_state.get(f"search_{tab_name}", "").lower() in details["prompt"].lower()
+                }
+            filtered_prompts_in_category = get_filtered_prompts(tab_name, category_options)
 
             options_keys = list(filtered_prompts_in_category.keys())
 
@@ -1148,17 +1151,9 @@ with col2:
             and st.session_state.selected_example_name == "Custom Prompt"
         ):
             if st.session_state.codebase_context:
-                st.session_state.codebase_state.codebase_context = {}
+                st.session_state.codebase_context = {}
                 st.session_state.uploaded_files = []
                 st.info("Codebase context cleared for custom prompt.")
-
-    else:
-        st.info(
-            "Select the 'Software Engineering' framework to provide codebase context."
-        )
-        if st.session_state.codebase_context:
-            st.session_state.codebase_context = {}
-            st.session_state.uploaded_files = []
 
 # --- NEW: Persona Editing UI ---
 st.markdown("---")
@@ -1469,7 +1464,7 @@ def _run_socratic_debate_process():
                     domain_for_run = st.session_state.active_example_framework_hint
                     logger.debug(f"Using active example framework hint: '{domain_for_run}' for example '{st.session_state.selected_example_name}'.")
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-                    # FIX: Removed settings_instance.domain_keywords as an argument
+                    # FIX: Removed settings_instance.domain_keywords as an argument (already handled by PromptAnalyzer init)
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                         current_user_prompt_for_debate
                     )

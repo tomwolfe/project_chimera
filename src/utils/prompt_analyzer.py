@@ -202,27 +202,26 @@ class PromptAnalyzer:
         NEGATION_PROXIMITY = 50
 
         for domain, keywords_list in self.domain_keywords.items():
+            score = 0.0 # Reset score for each domain
             if not isinstance(keywords_list, list):
                 continue
 
-            score = 0.0
             for keyword in keywords_list:
                 keyword_lower = keyword.lower()
                 for match in re.finditer(
                     r"\b" + re.escape(keyword_lower) + r"\b", prompt_lower
                 ):
-                    keyword_start_pos = match.start() # Correct variable name
+                    negated = False # Initialize for each match
+                    keyword_start_pos = match.start()
 
-                    negated = False
                     search_window_start = max(0, keyword_start_pos - NEGATION_PROXIMITY)
-                    # FIX: Changed 'keyword_pos' to 'keyword_start_pos'
                     search_window = prompt_lower[search_window_start:keyword_start_pos]
 
                     for neg_pattern, penalty in NEGATION_PATTERNS:
                         if re.search(neg_pattern, search_window):
                             negated = True
                             score += DEFAULT_KEYWORD_WEIGHT * (1 - penalty)
-                            break
+                            break # Break from negation patterns loop, not keyword matches loop
 
                     if not negated:
                         score += DEFAULT_KEYWORD_WEIGHT

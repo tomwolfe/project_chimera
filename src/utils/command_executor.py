@@ -56,12 +56,12 @@ def execute_command_safely(
 
     except subprocess.TimeoutExpired:
         logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")
-        raise
+        return 1, "", f"Command timed out after {timeout} seconds." # MODIFIED
     except subprocess.CalledProcessError:  # Added this specific exception handler
         logger.error(
             f"Command failed with non-zero exit code (check=True): {' '.join(command)}"
         )
-        raise
+        return 1, "", "Command failed with non-zero exit code." # MODIFIED
     except Exception as e:
         logger.error(f"An error occurred while executing command: {e}", exc_info=True)
-        raise
+        return 1, "", f"An unexpected error occurred: {e}" # MODIFIED
