@@ -262,6 +262,7 @@ def handle_debate_errors(error: Exception):
 
         [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
         """)
+        logger.error(f"API Key Error: {error_str}", exc_info=True) # NEW: Log the error
     elif "429" in error_str or "rate limit" in error_str or "quota" in error_str:
         st.error("""
         ⏳ **API Rate Limit Exceeded**
@@ -277,6 +278,7 @@ def handle_debate_errors(error: Exception):
         - Request a quota increase in [Google Cloud Console](https://console.cloud.google.com/iam-admin/quotas).
         - Consider using a less capable but higher-quota model like `gemini-2.5-flash-lite`.
         """)
+        logger.error(f"API Rate Limit Exceeded: {error_str}", exc_info=True) # NEW: Log the error
     elif (
         "connection" in error_str
         or "timeout" in error_str
@@ -295,6 +297,7 @@ def handle_debate_errors(error: Exception):
 
         Google API status: [Cloud Status Dashboard](https://status.cloud.google.com/)
         """)
+        logger.error(f"Network Connection Issue: {error_str}", exc_info=True) # NEW: Log the error
     elif (
         "safety" in error_str
         or "blocked" in error_str
@@ -311,6 +314,7 @@ def handle_debate_errors(error: Exception):
         - Remove any code that might be interpreted as harmful.
         - Try a less detailed request first.
         """)
+        logger.error(f"Content Safety Filter Triggered: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, LLMProviderError):
         st.error(f"""
         🌐 **LLM Provider Error: Connection Issue**
@@ -321,6 +325,7 @@ def handle_debate_errors(error: Exception):
 
         Please try again in a moment. If the issue persists, check your internet connection or the [Gemini API status page](https://status.cloud.google.com/).
         """)
+        logger.error(f"LLM Provider Error: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, RateLimitExceededError):
         st.error(f"""
         ⏳ **Rate Limit Exceeded**
@@ -331,6 +336,7 @@ def handle_debate_errors(error: Exception):
 
         Please wait a few moments before trying again. If you require higher limits, consider deploying your own instance or upgrading your Google Cloud project's quota.
         """)
+        logger.error(f"Rate Limit Exceeded: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, TokenBudgetExceededError):
         st.error(f"""
         📈 **Token Budget Exceeded**
@@ -344,6 +350,7 @@ def handle_debate_errors(error: Exception):
         - Reducing the amount of codebase context provided.
         - Increasing the 'Max Total Tokens Budget' in the sidebar (use with caution, as this increases cost).
         """)
+        logger.error(f"Token Budget Exceeded: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, SchemaValidationError):
         st.error(f"""
         🚫 **Output Format Error: LLM Response Invalid**
@@ -357,6 +364,7 @@ def handle_debate_errors(error: Exception):
         - Reducing the complexity of the task.
         - Trying a different LLM model (e.g., `gemini-2.5-pro` for more complex tasks).
         """)
+        logger.error(f"Schema Validation Error: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, CircuitBreakerError):
         st.error(f"""
         ⛔ **Circuit Breaker Open: Service Temporarily Unavailable**
@@ -367,6 +375,7 @@ def handle_debate_errors(error: Exception):
 
         The circuit will attempt to reset itself after a short timeout. Please wait a minute and try again.
         """)
+        logger.error(f"Circuit Breaker Open: {error_str}", exc_info=True) # NEW: Log the error
     elif isinstance(error, ChimeraError):
         st.error(f"""
         🔥 **Project Chimera Internal Error**
@@ -377,6 +386,7 @@ def handle_debate_errors(error: Exception):
 
         Please report this issue if it persists.
         """)
+        logger.error(f"Project Chimera Internal Error: {error_str}", exc_info=True) # NEW: Log the error
     else:
         st.error(f"""
         ❌ **An Unexpected Error Occurred**
@@ -387,7 +397,7 @@ def handle_debate_errors(error: Exception):
 
         Please try again. If the issue persists, please report it with the prompt you used.
         """)
-    logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
+        logger.exception(f"Debate process failed with error: {error_type}", exc_info=True)
 
 
 # --- MODIFIED execute_command function for security ---

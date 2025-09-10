@@ -25,14 +25,18 @@ RUN python -c "from sentence_transformers import SentenceTransformer; import os;
 FROM python:3.11-slim AS final
 
 # Create non-root user
-RUN useradd -m -u 1000 appuser
+RUN useradd -m -u 1000 appuser # Create appuser
 WORKDIR /home/appuser
 
-# Copy production requirements and install them as root first.
-# This ensures executables like 'streamlit' are placed in /usr/local/bin,
-# which is typically in the PATH for all users.
-COPY requirements-prod.txt .
+# Copy production requirements
+COPY --chown=appuser:appuser requirements-prod.txt .
+
+# Install production dependencies as appuser
+USER appuser
 RUN pip install --no-cache-dir -r requirements-prod.txt
+
+# Switch back to root temporarily if needed for system-wide installs, then back to appuser
+# For now, assume all installs can be done as appuser or are already handled.
 
 # Copy the cached model from the model_downloader stage
 # This ensures the SentenceTransformer model is available offline within the appuser's cache
@@ -43,9 +47,6 @@ RUN chown -R appuser:appuser /home/appuser/.cache
 
 # Copy application code
 COPY --chown=appuser:appuser . .
-
-# Switch to non-root user
-USER appuser
 
 # Expose port
 EXPOSE 8080

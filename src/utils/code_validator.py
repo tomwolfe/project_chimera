@@ -219,6 +219,11 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 config_args = []
             else:
                 config_args = ["-c", str(bandit_config_path)]
+                # Ensure default high severity/confidence if not explicitly set in pyproject.toml for local runs
+                # This is a safeguard, CI should enforce stricter.
+                if "--severity-level" not in " ".join(config_args) and "--confidence-level" not in " ".join(config_args):
+                    config_args.extend(["--severity-level", "HIGH", "--confidence-level", "HIGH"])
+
 
             # FIX: Removed 'python', '-m' from the command list
             command = [

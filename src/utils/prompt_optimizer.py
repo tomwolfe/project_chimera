@@ -55,28 +55,116 @@ class PromptOptimizer:
         # Prioritize `persona_input_token_limit` from settings for input control.
         effective_input_limit = persona_input_token_limit
 
-        # --- REMOVED: Enhanced logic for Self_Improvement_Analyst ---
-        # The complex regex-based optimization for Self_Improvement_Analyst is removed.
-        # After cleaning personas.yaml, the system prompt will be concise enough
-        # that generic truncation is sufficient and more robust.
-        # --- End REMOVED logic ---
+        # If the prompt is already within limits, no optimization needed
+        if prompt_tokens <= effective_input_limit:
+            return prompt
 
-        if prompt_tokens > effective_input_limit:
-            logger.warning(
-                f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
+        logger.warning(
+            f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
+        )
+
+        # Strategy: Aggressively truncate less critical sections first.
+        # This requires parsing the prompt structure.
+        # For self-improvement prompts, the structure is well-defined.
+        # For other prompts, a more general approach is needed.
+
+        optimized_prompt_parts = []
+        current_tokens_after_optimization = 0
+
+        # Define sections and their priority for truncation (lower index = higher priority to keep)
+        # This is a heuristic and can be refined.
+        sections_to_optimize = {
+            "initial_problem": r"(Initial Problem:.*?)(?=\n\nRelevant Code Context:|\n\nDebate History:|\n\nObjective Metrics and Analysis:|\n\n---|\Z)",
+            "relevant_code_context": r"(Relevant Code Context:.*?)(?=\n\nDebate History:|\n\nObjective Metrics and Analysis:|\n\n---|\Z)",
+            "debate_history": r"(Debate History:.*?)(?=\n\nObjective Metrics and Analysis:|\n\n---|\Z)",
+            "objective_metrics": r"(Objective Metrics and Analysis:.*?)(?=\n\n---|\Z)",
+            "previous_debate_output_summary": r"(Previous Debate Output Summary \(with issues\):.*?)(?=\n\n---|\Z)",
+            "previous_debate_output": r"(Previous Debate Output:.*?)(?=\n\n---|\Z)",
+            "conflict_resolution_summary": r"(Conflict Resolution Summary:.*?)(?=\n\n---|\Z)",
+            "unresolved_conflict": r"(Unresolved Conflict:.*?)(?=\n\n---|\Z)",
+        }
+
+        # Extract sections in a defined order (e.g., keep initial problem and core instructions, truncate context/history)
+        extracted_sections: Dict[str, str] = {}
+        for key, pattern in sections_to_optimize.items():
+            match = re.search(pattern, prompt, re.DOTALL)
+            if match:
+                extracted_sections[key] = match.group(1).strip()
+                # Remove extracted part from prompt to avoid re-matching
+                prompt = prompt.replace(match.group(1), "", 1)
+
+        # Reconstruct the prompt, prioritizing critical parts
+        # 1. Initial Problem (always keep as much as possible)
+        if "initial_problem" in extracted_sections:
+            optimized_prompt_parts.append(extracted_sections["initial_problem"])
+
+        # 2. Conflict Resolution (important for self-correction)
+        if "conflict_resolution_summary" in extracted_sections:
+            optimized_prompt_parts.append(extracted_sections["conflict_resolution_summary"])
+        if "unresolved_conflict" in extracted_sections:
+            optimized_prompt_parts.append(extracted_sections["unresolved_conflict"])
+
+        # 3. Previous Debate Output (summarized if possible)
+        if "previous_debate_output_summary" in extracted_sections:
+            optimized_prompt_parts.append(extracted_sections["previous_debate_output_summary"])
+        elif "previous_debate_output" in extracted_sections:
+            # Attempt to summarize the previous output if it's too long
+            prev_output_content = extracted_sections["previous_debate_output"]
+            # Heuristic: allocate a small portion of the remaining budget for this
+            remaining_budget_for_prev_output = max(500, effective_input_limit // 5)
+            optimized_prev_output = self.tokenizer.truncate_to_token_limit(
+                prev_output_content, remaining_budget_for_prev_output,
+                truncation_indicator="\n[...previous output truncated...]"
             )
-            
-            optimized_prompt = self.tokenizer.truncate_to_token_limit(
-                prompt, effective_input_limit, 
+            optimized_prompt_parts.append(optimized_prev_output)
+
+        # 4. Objective Metrics (summarized if possible)
+        if "objective_metrics" in extracted_sections:
+            metrics_content = extracted_sections["objective_metrics"]
+            remaining_budget_for_metrics = max(500, effective_input_limit // 4)
+            optimized_metrics = self.tokenizer.truncate_to_token_limit(
+                metrics_content, remaining_budget_for_metrics,
+                truncation_indicator="\n[...metrics truncated...]"
+            )
+            optimized_prompt_parts.append(optimized_metrics)
+
+        # 5. Debate History (most aggressive truncation)
+        if "debate_history" in extracted_sections:
+            history_content = extracted_sections["debate_history"]
+            remaining_budget_for_history = max(200, effective_input_limit // 8)
+            optimized_history = self.optimize_debate_history(
+                history_content, remaining_budget_for_history
+            )
+            optimized_prompt_parts.append(optimized_history)
+
+        # 6. Relevant Code Context (truncate if still too long)
+        if "relevant_code_context" in extracted_sections:
+            context_content = extracted_sections["relevant_code_context"]
+            remaining_budget_for_context = max(1000, effective_input_limit // 3)
+            optimized_context = self.tokenizer.truncate_to_token_limit(
+                context_content, remaining_budget_for_context,
+                truncation_indicator="\n[...code context truncated...]"
+            )
+            optimized_prompt_parts.append(optimized_context)
+
+        # Combine and re-evaluate
+        final_optimized_prompt = "\n\n".join(optimized_prompt_parts)
+        final_optimized_prompt_tokens = self.tokenizer.count_tokens(final_optimized_prompt)
+
+        if final_optimized_prompt_tokens > effective_input_limit:
+            # If still too long after structured optimization, apply a final aggressive truncation
+            logger.warning(
+                f"Prompt for {persona_name} still exceeds limit after structured optimization ({final_optimized_prompt_tokens}/{effective_input_limit}). Applying final aggressive truncation."
+            )
+            final_optimized_prompt = self.tokenizer.truncate_to_token_limit(
+                final_optimized_prompt, effective_input_limit,
                 truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]"
             )
-            
-            logger.info(
-                f"Prompt for {persona_name} truncated from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
-            )
-            return optimized_prompt
-        
-        return prompt # Return original prompt if no truncation needed
+
+        logger.info(
+            f"Prompt for {persona_name} truncated from {prompt_tokens} to {self.tokenizer.count_tokens(final_optimized_prompt)} tokens."
+        )
+        return final_optimized_prompt
 
     def optimize_debate_history(self, debate_history_json_str: str, max_tokens: int) -> str:
         """

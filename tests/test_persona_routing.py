@@ -63,6 +63,7 @@ def test_determine_persona_sequence_with_context_analysis(persona_router_instanc
     domain = "Software Engineering"
     context_analysis_results = {
         "security_concerns": ["SQL Injection detected"],
+        "relevant_files": [("src/security.py", 0.8)], # Added relevant_files for _should_include_test_engineer
         "key_modules": []
     }
     sequence = persona_router_instance.determine_persona_sequence(prompt, domain, context_analysis_results=context_analysis_results)

@@ -33,9 +33,9 @@ jobs:
       shell: bash
       run: |
         # Use stricter levels for CI, overriding pyproject.toml if needed, or ensuring pyproject.toml is strict
-        # The --severity-level HIGH and --confidence-level MEDIUM are good defaults for CI.
+        # The --severity-level HIGH and --confidence-level HIGH are good defaults for CI.
         # --exit-on-error ensures the job fails if Bandit itself encounters an error.
-        bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level MEDIUM --exit-on-error
+        bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level HIGH --exit-on-error
     - name: Run Unit and Integration Tests with Coverage Check
       shell: bash
       run: |

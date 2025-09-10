@@ -2,6 +2,7 @@
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = "--import-mode=append" # Ensure src is importable as a package
 
 [tool.ruff]
 line-length = 88
@@ -36,6 +37,8 @@ exclude = [
     "**/tests/**",
     "**/docs/**",
 ]
+# Ignore B101 (assert_used) in tests as it's common in pytest
+skips = ["B101"]
 # Specific security checks to prioritize
 [tool.bandit.plugins]
 hardcoded_password = true

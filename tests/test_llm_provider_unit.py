@@ -74,8 +74,7 @@ def test_llm_provider_generate_content_success(mock_llm_client_success, prompt, 
         assert "Simulated response for" in response_text
         assert input_tokens > 0
         assert output_tokens > 0
-        if is_truncated is not False:
-            raise AssertionError("Expected is_truncated to be False")
+        assert is_truncated == False
 
         mock_llm_client_success.models.generate_content.assert_called_once()
         mock_llm_client_success.models.generate_content.reset_mock() # Reset for next iteration

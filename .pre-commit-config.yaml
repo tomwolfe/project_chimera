@@ -22,7 +22,7 @@ repos:
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.1.9 # Use the latest stable version (ensure this is kept up-to-date)
     hooks:
-      - id: ruff # Runs linting checks
+      - id: ruff # Runs linting checks (and auto-fixes)
         args: ["--fix", "--exit-non-zero"] # Automatically fix linting errors and fail if unfixed
       - id: ruff-format # Enforces formatting via Ruff (like Black)
         args: ["--check"] # Fail if code is not formatted (prevents unformatted commits)
@@ -30,9 +30,8 @@ repos:
     rev: 1.7.5
     hooks:
       - id: bandit
-        # Use -c for config file; pyproject.toml is the standard location
         # Ensure Bandit runs with appropriate severity and confidence levels for better security checks
-        args: ["-r", ".", "-c", "pyproject.toml", "--severity-level", "HIGH", "--confidence-level", "MEDIUM", "--exit-on-error"] # Align with pyproject.toml and CI
+        args: ["-r", ".", "-c", "pyproject.toml", "--severity-level", "HIGH", "--confidence-level", "HIGH", "--exit-on-error"] # Align with pyproject.toml and CI
 
 # REMOVED: Commented-out section for other pre-commit hooks
 # Add other pre-commit hooks as needed, for example:

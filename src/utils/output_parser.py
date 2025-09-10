@@ -786,6 +786,8 @@ class LLMOutputParser:
                 # Use the extracted_json_str for detecting potential single suggestion items
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
+                    if extracted_json_str is not None
+                    else raw_output_snippet
                 )
                 if (
                     detected_suggestion

@@ -67,7 +67,7 @@ def test_gemini_api_key_functional(api_key: str) -> Tuple[bool, str]:
     """Test if the Gemini API key is functional by making a minimal API call."""
     try:
         test_client = genai.Client(api_key=api_key)
-        test_client.models.list() # A simple call to verify authentication
+        test_client.models.list(timeout=5) # A simple call to verify authentication with a timeout
         return True, "API key is valid and functional"
     except APIError as e:
         logger.error(f"API key functional test failed: {e}")

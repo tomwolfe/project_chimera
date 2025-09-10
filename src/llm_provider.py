@@ -14,7 +14,7 @@ import google.genai as genai
 from google.genai.errors import APIError
 from google.genai import types # FIX: Added explicit import for 'types'
 import hashlib # Used in __hash__
-import random # Used in _generate_with_retry
+import secrets # NEW: Used for secure random number generation in _generate_with_retry
 import socket # Used in _generate_with_retry
 import json # Used for structured logging helper
 from pydantic import BaseModel, ValidationError # NEW: Import BaseModel and ValidationError
@@ -315,7 +315,7 @@ class GeminiProvider:
         )
 
         generated_text, input_tokens, output_tokens, is_truncated = self._generate_with_retry(
-            prompt, system_prompt, config, current_model_name
+            prompt, system_prompt, config, current_model_name, output_schema # NEW: Pass output_schema
         )
 
         # NEW: Enforce schema compliance if a schema is provided
@@ -346,6 +346,7 @@ class GeminiProvider:
         system_prompt: str,
         config: types.GenerateContentConfig,
         model_name_to_use: str = None,
+        output_schema: Optional[Type[BaseModel]] = None, # NEW: Add output_schema parameter
     ) -> tuple[str, int, int, bool]:
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
@@ -389,6 +390,25 @@ class GeminiProvider:
                     if content and content.parts and len(content.parts) > 0:
                         generated_text = content.parts[0].text
 
+                # NEW: Early schema validation before returning
+                if output_schema:
+                    try:
+                        cleaned_generated_text = self.output_parser._clean_llm_output(generated_text)
+                        if hasattr(output_schema, 'model_validate_json'):
+                            output_schema.model_validate_json(cleaned_generated_text)
+                        else:
+                            output_schema.parse_raw(cleaned_generated_text)
+                    except ValidationError as ve:
+                        # If validation fails here, it's a retryable error for the LLM
+                        self._log_with_context("warning", f"Early schema validation failed (retryable): {ve}", llm_output_snippet=generated_text[:200])
+                        # Re-raise as SchemaValidationError to trigger the retry logic in the outer loop
+                        raise SchemaValidationError(
+                            error_type="EARLY_SCHEMA_VALIDATION_FAILED",
+                            field_path="LLM_OUTPUT",
+                            invalid_value=generated_text[:500],
+                            original_exception=ve
+                        )
+
                 output_tokens = self.tokenizer.count_tokens(
                     generated_text
                 )
@@ -425,7 +445,7 @@ class GeminiProvider:
                         self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
                         self.MAX_BACKOFF_SECONDS,
                     )
-                    jitter = random.uniform(
+                    jitter = secrets.SystemRandom().uniform( # Use secrets for cryptographic-quality random numbers
                         0,
                         0.5
                         * min(
@@ -509,7 +529,7 @@ class GeminiProvider:
                         self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
                         self.MAX_BACKOFF_SECONDS,
                     )
-                    jitter = random.uniform(
+                    jitter = secrets.SystemRandom().uniform( # Use secrets for cryptographic-quality random numbers
                         0,
                         0.5
                         * min(

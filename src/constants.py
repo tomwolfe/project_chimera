@@ -53,12 +53,13 @@ SHARED_JSON_INSTRUCTIONS: str = """
 ---
 **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
 1. MUST BE A SINGLE, VALID JSON OBJECT. NO ARRAYS.
-2. NO NUMBERED ARRAY ELEMENTS.
-3. ABSOLUTELY NO CONVERSATIONAL TEXT, MARKDOWN FENCES (```json, ```python, ```), OR EXPLANATIONS OUTSIDE JSON.
+2. NO NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+3. ABSOLUTELY NO CONVERSATIONAL TEXT, MARKDOWN FENCES (```json, ```python, ```), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
 4. STRICTLY ADHERE TO THE PROVIDED SCHEMA.
-5. USE DOUBLE QUOTES for all keys and string values.
+5. USE ONLY DOUBLE QUOTES for all keys and string values.
 6. ENSURE COMMAS separate all properties in objects and elements in arrays.
 7. DO NOT include trailing commas.
+8. INCLUDE `malformed_blocks` FIELD (even if empty).
 ---
 
 **CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:

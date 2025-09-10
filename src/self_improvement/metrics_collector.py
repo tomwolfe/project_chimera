@@ -710,122 +710,113 @@ class FocusedMetricsCollector:
             "persona_token_usage": phase_token_usage,
         }
 
-    def _collect_reasoning_quality_metrics(self) -> Dict[str, Any]:
+    def _analyze_debate_efficiency(self) -> Dict[str, Any]:
         """
-        Collects metrics related to the quality of the Socratic debate process itself.
+        Analyzes the efficiency of the debate process.
         """
-        reasoning_metrics = {
-            "total_debate_turns": 0,
-            "unique_personas_involved": 0,
-            "schema_validation_failures_count": 0,
-            "content_misalignment_warnings": 0,
-            "debate_turn_errors": 0,
-            "conflict_resolution_attempts": 0,
-            "conflict_resolution_successes": 0,
-            "unresolved_conflict_present": False,
-            "average_persona_output_tokens": 0.0,
-            "persona_specific_performance": defaultdict(
-                lambda: {
-                    "success_rate": 0.0,
-                    "schema_failures": 0,
-                    "truncations": 0,
-                    "total_turns": 0,
-                }
+        efficiency_summary = {
+            "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
+            "malformed_blocks_count": len(
+                self.intermediate_steps.get("malformed_blocks", [])
             ),
-            "prompt_verbosity_score": 0.0,
-            "malformed_blocks_summary": defaultdict(int),
+            "conflict_resolution_attempts": 1
+            if self.intermediate_steps.get("Conflict_Resolution_Attempt")
+            else 0,
+            "unresolved_conflict": bool(
+                self.intermediate_steps.get("Unresolved_Conflict")
+            ),
+            "average_turn_tokens": 0.0,
+            "persona_token_breakdown": {},
         }
 
-        debate_history = self.intermediate_steps.get("Debate_History", [])
-        reasoning_metrics["total_debate_turns"] = len(debate_history)
+        total_debate_tokens = self.intermediate_steps.get("debate_Tokens_Used", 0)
+        num_turns = efficiency_summary["num_turns"]
+        if num_turns > 0:
+            efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
 
-        unique_personas = set()
-        for turn in debate_history:
-            if "persona" in turn:
-                unique_personas.add(turn["persona"])
-        reasoning_metrics["unique_personas_involved"] = len(unique_personas)
-
-        all_malformed_blocks = self.intermediate_steps.get("malformed_blocks", [])
-        reasoning_metrics["schema_validation_failures_count"] = sum(
-            1
-            for b in all_malformed_blocks
-            if b.get("type") == "SCHEMA_VALIDATION_ERROR"
-        )
-        reasoning_metrics["content_misalignment_warnings"] = sum(
-            1 for b in all_malformed_blocks if b.get("type") == "CONTENT_MISALIGNMENT"
-        )
-        reasoning_metrics["debate_turn_errors"] = sum(
-            1 for b in all_malformed_blocks if b.get("type") == "DEBATE_TURN_ERROR"
-        )
-
-        for block in all_malformed_blocks:
-            reasoning_metrics["malformed_blocks_summary"][
-                block.get("type", "UNKNOWN_MALFORMED_BLOCK")
-            ] += 1
-
-        if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
-            reasoning_metrics["conflict_resolution_attempts"] = 1
-            if self.intermediate_steps["Conflict_Resolution_Attempt"].get(
-                "conflict_resolved"
-            ):
-                reasoning_metrics["conflict_resolution_successes"] = 1
-        reasoning_metrics["unresolved_conflict_present"] = bool(
-            self.intermediate_steps.get("Unresolved_Conflict")
-        )
-
-        total_output_tokens = 0
         for key, value in self.intermediate_steps.items():
             if key.endswith("_Tokens_Used") and not key.startswith(
                 ("Total_", "context_", "synthesis_", "debate_")
             ):
-                total_output_tokens += value
+                persona_name = key.replace("_Tokens_Used", "")
+                efficiency_summary["persona_token_breakdown"][persona_name] = value
 
-        if reasoning_metrics["total_debate_turns"] > 0:
-            reasoning_metrics["average_persona_output_tokens"] = (
-                total_output_tokens / reasoning_metrics["total_debate_turns"]
-            )
+        return efficiency_summary
 
-        for persona_name in unique_personas:
-            persona_malformed_blocks = [
-                b for b in all_malformed_blocks if b.get("persona") == persona_name
+    def _assess_test_coverage(self) -> Dict[str, Any]:
+        """
+        Assesses test coverage for the codebase.
+        Executes pytest with coverage and parses the generated JSON report.
+        """
+        coverage_data = {
+            "overall_coverage_percentage": 0.0,
+            "coverage_details": "Failed to run coverage tool.",
+        }
+        try:
+            # Run pytest with coverage and generate a JSON report
+            command = [
+                "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
             ]
-            schema_failures = sum(
-                1
-                for b in persona_malformed_blocks
-                if b.get("type") == "SCHEMA_VALIDATION_ERROR"
+            # Use execute_command_safely for robustness
+            return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
+
+            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
+            # Only consider exit code 0 or 1 as valid execution for coverage reporting.
+            if return_code not in (0, 1):
+                logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
+                # Provide more detailed error info, including stdout for debugging.
+                coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
+                return coverage_data
+
+            coverage_json_path = Path("coverage.json")
+            # Check if the command actually produced the coverage.json file
+            # and if the return code indicates a successful or partially successful run (0 or 1 for pytest)
+            if coverage_json_path.exists() and return_code in (0, 1):
+                with open(coverage_json_path, "r", encoding="utf-8") as f:
+                    report = json.load(f)
+                
+                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
+                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0)
+                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
+                coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
+                coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
+
+                coverage_data["coverage_details"] = "Coverage report generated successfully."
+                # NEW: Add a note if tests failed, even if coverage command ran
+                if return_code == 1:
+                    coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
+                coverage_json_path.unlink()
+            elif return_code not in (0, 1): # If command failed with unexpected code
+                coverage_data["coverage_details"] = "Coverage JSON report not found."
+
+        except Exception as e:
+            logger.error(f"Error assessing test coverage: {e}", exc_info=True)
+            coverage_data["coverage_details"] = f"Error during coverage assessment: {e}"
+
+        return coverage_data
+
+    @classmethod
+    def _analyze_python_file_ast(
+        cls, content: str, content_lines: List[str], file_path: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyzes a Python file's AST for complexity, lines of code in functions,
+        number of functions, code smells, and potential bottlenecks.
+        """
+        try:
+            tree = ast.parse(content)
+            visitor = ComplexityVisitor(content_lines)
+            visitor.visit(tree)
+            return visitor.function_metrics
+        except SyntaxError as e:
+            logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
+            return []
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during AST analysis for {file_path}: {e}",
+                exc_info=True,
             )
-            content_misalignments = sum(
-                1
-                for b in persona_malformed_blocks
-                if b.get("type") == "CONTENT_MISALIGNMENT"
-            )
-
-            persona_turns = sum(
-                1 for turn in debate_history if turn.get("persona") == persona_name
-            )
-
-            reasoning_metrics["persona_specific_performance"][persona_name][
-                "total_turns"
-            ] = persona_turns
-            reasoning_metrics["persona_specific_performance"][persona_name][
-                "schema_failures"
-            ] = schema_failures
-            reasoning_metrics["persona_specific_performance"][persona_name][
-                "truncations"
-            ] = 0
-
-            if persona_turns > 0:
-                reasoning_metrics["persona_specific_performance"][persona_name][
-                    "success_rate"
-                ] = (
-                    persona_turns - schema_failures - content_misalignments
-                ) / persona_turns
-            else:
-                reasoning_metrics["persona_specific_performance"][persona_name][
-                    "success_rate"
-                ] = 0.0
-
-        return reasoning_metrics
+            return []
 
     def collect_all_metrics(self) -> Dict[str, Any]:
         """
@@ -870,10 +861,10 @@ class FocusedMetricsCollector:
                 ),
             },
             "maintainability": {"test_coverage_summary": self._assess_test_coverage()},
-            "configuration_analysis": self._collect_configuration_analysis(
+            "configuration_analysis": FocusedMetricsCollector._collect_configuration_analysis( # Call as class method
                 self.codebase_path
             ).model_dump(by_alias=True),
-            "deployment_robustness": self._collect_deployment_robustness_metrics(
+            "deployment_robustness": FocusedMetricsCollector._collect_deployment_robustness_metrics( # Call as class method
                 self.codebase_path
             ).model_dump(by_alias=True),
             "reasoning_quality": self.reasoning_quality_metrics, # Now this is safe
@@ -900,7 +891,7 @@ class FocusedMetricsCollector:
                     if full_file_path not in self.file_analysis_cache:
                         self.file_analysis_cache[full_file_path] = {}
 
-                    ruff_issues = _run_ruff(content, full_file_path)
+                    ruff_issues = _run_ruff(content, full_file_path) # Call directly
                     if ruff_issues:
                         metrics["code_quality"]["ruff_issues_count"] += len(
                             ruff_issues
@@ -913,7 +904,7 @@ class FocusedMetricsCollector:
                         )
                         self.file_analysis_cache[full_file_path]["ruff_issues"] = ruff_issues
 
-                    bandit_issues = _run_bandit(content, full_file_path)
+                    bandit_issues = _run_bandit(content, full_file_path) # Call directly
                     if bandit_issues:
                         metrics["security"]["bandit_issues_count"] += len(
                             bandit_issues
@@ -923,7 +914,7 @@ class FocusedMetricsCollector:
                         )
                         self.file_analysis_cache[full_file_path]["bandit_issues"] = bandit_issues
 
-                    ast_security_issues = _run_ast_security_checks(
+                    ast_security_issues = _run_ast_security_checks( # Call directly
                         content, full_file_path
                     )
                     if ast_security_issues:
@@ -964,7 +955,7 @@ class FocusedMetricsCollector:
 
         if total_functions_across_codebase > 0:
             metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (
-                total_complexity_across_functions / total_functions_across_codebase
+                total_complexity_across_codebase / total_functions_across_codebase
             )
             metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
                 total_loc_across_functions / total_functions_across_codebase

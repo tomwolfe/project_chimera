@@ -220,10 +220,10 @@ def test_get_adjusted_persona_config_truncated(persona_manager_instance):
     # Assert that the system prompt includes the truncation warning
     assert "CRITICAL: Be extremely concise" in truncated_config.system_prompt
 
-def test_record_persona_performance(persona_manager_instance):
+def test_record_persona_performance(persona_manager_for_metrics):
     """Tests recording persona performance metrics."""
-    pm = persona_manager_instance
-    pm._initialize_performance_metrics() # Ensure metrics are initialized for TestPersona
+    pm = persona_manager_for_metrics
+    # pm._initialize_performance_metrics() # Already called by fixture
     # Record a successful turn
     pm.record_persona_performance("TestPersona", 1, {}, True, "Valid output", schema_validation_failed=False, is_truncated=False)
     metrics = pm.persona_performance_metrics["TestPersona"]
@@ -272,9 +272,9 @@ def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(person
     assert "Visionary_Generator_TRUNCATED" in optimized_sequence
     assert "Skeptical_Generator" in optimized_sequence # Skeptical_Generator should remain as is
 
-def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_instance):
+def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_metrics):
     """Test adaptive temperature adjustment based on schema failures."""
-    pm = persona_manager_instance
+    pm = persona_manager_for_metrics
     original_temp = pm.all_personas["TestPersona"].temperature
     metrics = pm.persona_performance_metrics["TestPersona"]
 
@@ -288,9 +288,9 @@ def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_instan
     assert metrics["last_adjusted_temp"] == adjusted_config.temperature
     assert metrics["total_turns"] == 0 # Metrics should be reset after adjustment
 
-def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_instance):
+def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_metrics):
     """Test adaptive max_tokens adjustment based on truncation failures."""
-    pm = persona_manager_instance
+    pm = persona_manager_for_metrics
     original_max_tokens = pm.all_personas["TestPersona"].max_tokens
     metrics = pm.persona_performance_metrics["TestPersona"]
 

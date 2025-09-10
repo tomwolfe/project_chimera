@@ -9,7 +9,26 @@ from src.conflict_resolution import ConflictResolutionManager
 @pytest.fixture
 def conflict_manager():
     """Provides an instance of ConflictResolutionManager for testing."""
-    return ConflictResolutionManager()
+    # Mock llm_provider and persona_manager as they are now required for ConflictResolutionManager
+    mock_llm_provider = MagicMock()
+    mock_llm_provider.tokenizer = MagicMock()
+    mock_llm_provider.tokenizer.count_tokens.side_effect = lambda text: len(text) // 4
+    mock_llm_provider.tokenizer.max_output_tokens = 8192
+    mock_llm_provider.generate.return_value = ("{}", 10, 10, False) # Default for self-correction
+    
+    mock_persona_manager = MagicMock()
+    mock_persona_manager.get_adjusted_persona_config.return_value = MagicMock(
+        system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
+    )
+    mock_persona_manager.PERSONA_OUTPUT_SCHEMAS = {
+        "PersonaB": MagicMock(), # Mock a schema for PersonaB
+        "Constructive_Critic": MagicMock(), # Mock a schema for Constructive_Critic
+        "Devils_Advocate": MagicMock(), # Mock a schema for Devils_Advocate
+        "Self_Improvement_Analyst": MagicMock(), # Mock a schema for Self_Improvement_Analyst
+        "GeneralOutput": MagicMock(), # Mock GeneralOutput
+    }
+    
+    return ConflictResolutionManager(llm_provider=mock_llm_provider, persona_manager=mock_persona_manager)
 
 def test_resolve_conflict_with_malformed_string(conflict_manager):
     """Tests resolution when the latest output is a non-JSON string."""
@@ -22,53 +41,97 @@ def test_resolve_conflict_with_malformed_string(conflict_manager):
     # Expecting manual intervention as the string cannot be parsed
     assert result["resolution_strategy"] == "manual_intervention"
     assert "Automated resolution failed" in result["resolution_summary"]
-    assert "PARSED_STRING_OUTPUT" not in result["malformed_blocks"][0]["type"] # Ensure it wasn't parsed as valid JSON
+    assert "PARSED_STRING_OUTPUT" not in str(result["malformed_blocks"]) # Ensure it wasn't parsed as valid JSON
 
 def test_resolve_conflict_with_string_json(conflict_manager):
     """Tests resolution when the latest output is a valid JSON string."""
     history = [
         {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
-        {"persona": "PersonaB", "output": '{"CRITIQUE_SUMMARY": "This is valid JSON as a string"}'}
+        {"persona": "PersonaB", "output": '{"CRITIQUE_SUMMARY": "This is valid JSON as a string", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}'}
     ]
+    # Mock the schema for PersonaB to be CritiqueOutput for successful parsing
+    conflict_manager.persona_manager.PERSONA_OUTPUT_SCHEMAS["PersonaB"] = MagicMock(
+        __name__="CritiqueOutput",
+        model_json_schema=lambda: {"type": "object", "properties": {"CRITIQUE_SUMMARY": {"type": "string"}}}
+    )
+    
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
     # Expecting successful parsing
     assert result["resolution_strategy"] == "parsed_malformed_string"
     assert result["resolved_output"]["CRITIQUE_SUMMARY"] == "This is valid JSON as a string"
-    assert result["malformed_blocks"][0]["type"] == "PARSED_STRING_OUTPUT"
+    assert any(block["type"] == "PARSED_STRING_OUTPUT" for block in result["malformed_blocks"])
 
 def test_resolve_conflict_with_malformed_dict_no_summary(conflict_manager):
     """Tests resolution when the latest output is a dict but lacks expected keys."""
     history = [
         {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
-        {"persona": "PersonaB", "output": {"error": "Something failed", "details": "Missing CRITIQUE_SUMMARY"}}
+        {"persona": "PersonaB", "output": {"error": "Something failed", "details": "Missing CRITIQUE_SUMMARY", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}}
     ]
+    # Mock the persona manager to return a valid config for PersonaB
+    conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
+        system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
+    )
+    # Mock the LLM provider to return a valid self-corrected output
+    conflict_manager.llm_provider.generate.return_value = (
+        '{"CRITIQUE_SUMMARY": "Self-corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}',
+        100, 50, False
+    )
+    # Mock the parser for the self-correction attempt
+    conflict_manager.output_parser.parse_and_validate.return_value = {
+        "CRITIQUE_SUMMARY": "Self-corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []
+    }
+
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
-    # Expecting synthesis from history as the latest output is problematic but not a parsable string
-    assert result["resolution_strategy"] == "synthesis_from_history"
-    assert "Automated synthesis from previous valid debate turns." in result["resolution_summary"]
-    # Check if the synthesis incorporated information from the previous valid turn
-    assert "Valid output 1" in result["resolved_output"]["CONFLICT_RESOLUTION_ATTEMPT"]
+    # Expecting self-correction to succeed
+    assert result["resolution_strategy"] == "self_correction_retry"
+    assert "Persona 'PersonaB' self-corrected its output" in result["resolution_summary"]
+    assert result["resolved_output"]["CRITIQUE_SUMMARY"] == "Self-corrected output"
+
 
 def test_resolve_conflict_with_insufficient_history(conflict_manager):
     """Tests resolution when there's not enough valid history for synthesis."""
     history = [
         {"persona": "PersonaA", "output": {"error": "Failed", "malformed_blocks": [{"type": "SCHEMA_ERROR"}]}}
     ]
+    # Mock the persona manager to return a valid config for PersonaA
+    conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
+        system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
+    )
+    # Mock the LLM provider to return None for self-correction (simulating failure)
+    conflict_manager.llm_provider.generate.return_value = (
+        '{"invalid": "output"}', 10, 10, True # Still invalid after retry
+    )
+    conflict_manager.output_parser.parse_and_validate.return_value = {
+        "invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]
+    }
+
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
-    # Expecting manual intervention due to lack of valid history for synthesis
+    # Expecting manual intervention due to lack of valid history for synthesis AND self-correction failure
     assert result["resolution_strategy"] == "manual_intervention"
     assert "Automated resolution failed" in result["resolution_summary"]
 
 def test_resolve_conflict_with_valid_history_and_problematic_output(conflict_manager):
     """Tests resolution when there are valid turns and a problematic latest output."""
     history = [
-        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
-        {"persona": "PersonaB", "output": {"CRITIQUE_SUMMARY": "Valid output 2"}},
+        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
+        {"persona": "PersonaB", "output": {"CRITIQUE_SUMMARY": "Valid output 2", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
         {"persona": "PersonaC", "output": {"malformed_blocks": [{"type": "CONTENT_MISALIGNMENT"}]}}
     ]
+    # Mock the persona manager to return a valid config for PersonaC
+    conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
+        system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
+    )
+    # Mock the LLM provider to return None for self-correction (simulating failure)
+    conflict_manager.llm_provider.generate.return_value = (
+        '{"invalid": "output"}', 10, 10, True # Still invalid after retry
+    )
+    conflict_manager.output_parser.parse_and_validate.return_value = {
+        "invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]
+    }
+
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
     # Expecting synthesis from the last valid turn (PersonaB)
@@ -79,8 +142,8 @@ def test_resolve_conflict_with_valid_history_and_problematic_output(conflict_man
 def test_resolve_conflict_no_problem_in_latest_output(conflict_manager):
     """Tests the scenario where the latest output is valid."""
     history = [
-        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
-        {"persona": "PersonaB", "output": {"CRITIQUE_SUMMARY": "Valid output 2"}}
+        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
+        {"persona": "PersonaB", "output": {"CRITIQUE_SUMMARY": "Valid output 2", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}}
     ]
     # If the latest output is valid, the manager should still attempt synthesis based on the history.
     # The current implementation prioritizes synthesis if called.
