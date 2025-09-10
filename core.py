@@ -207,8 +207,8 @@ class SocraticDebate:
         # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
         if self.codebase_context and not self.context_analyzer.file_embeddings:
             try:
-                # FIX: Corrected method name from compute_file_embeddings to _compute_file_embeddings
-                self.context_analyzer._compute_file_embeddings(self.codebase_context)
+                # Call the public method for computing file embeddings
+                self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context after SocraticDebate init.",
@@ -217,10 +217,10 @@ class SocraticDebate:
                 self._log_with_context(
                     "error", f"Error computing context embeddings: {e}[/red]"
                 )
-                if self.status_callback:
-                    # FIX: Provide all required arguments to status_callback
+                if self.status_callback: # Ensure status_callback is callable
+                    # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        message=f"[red]Error computing context embeddings: {e}[/red]",
+                        f"[red]Error computing context embeddings: {e}[/red]", # message
                         state="error",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
@@ -758,8 +758,9 @@ class SocraticDebate:
         for attempt in range(max_retries + 1):
             try:
                 if self.status_callback:
+                    # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        message=f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...",
+                        f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...", # message
                         state="running",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
@@ -961,8 +962,8 @@ class SocraticDebate:
             and not self.context_analyzer.file_embeddings
         ):
             try:
-                # FIX: Corrected method name from compute_file_embeddings to _compute_file_embeddings
-                self.context_analyzer._compute_file_embeddings(self.codebase_context)
+                # Call the public method for computing file embeddings
+                self.context_analyzer.compute_file_embeddings(self.codebase_context)
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context during context analysis phase.",
@@ -973,9 +974,9 @@ class SocraticDebate:
                     exc_info=True,
                 )
                 if self.status_callback:
-                    # FIX: Provide all required arguments to status_callback
+                    # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        message=f"[red]Error computing context embeddings: {e}[/red]",
+                        f"[red]Error computing context embeddings: {e}[/red]", # message
                         state="error",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
@@ -1350,7 +1351,7 @@ class SocraticDebate:
                 persona=persona_name,
             )
             self.status_callback(
-                message=f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...",
+                f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...", # message
                 state="running",
                 current_total_tokens=self.token_tracker.current_usage,
                 current_total_cost=self.get_total_estimated_cost(),
@@ -2025,7 +2026,7 @@ class SocraticDebate:
         context_persona_turn_results = None
         if "Context_Aware_Assistant" in persona_sequence:
             self.status_callback(
-                message="Phase 2: Context-Aware Assistant Turn...",
+                "Phase 2: Context-Aware Assistant Turn...",
                 state="running",
                 current_total_tokens=self.token_tracker.current_usage,
                 current_total_cost=self.get_total_estimated_cost(),
@@ -2040,7 +2041,7 @@ class SocraticDebate:
             )
 
         self.status_callback(
-            message="Phase 3: Executing Debate Turns...",
+            "Phase 3: Executing Debate Turns...",
             state="running",
             current_total_tokens=self.token_tracker.current_usage,
             current_total_cost=self.get_total_estimated_cost(),
@@ -2055,7 +2056,7 @@ class SocraticDebate:
         self.intermediate_steps["Debate_History"] = debate_persona_results
 
         self.status_callback(
-            message="Phase 4: Synthesizing Final Answer...",
+            "Phase 4: Synthesizing Final Answer...",
             state="running",
             current_total_tokens=self.token_tracker.current_usage,
             current_total_cost=self.get_total_estimated_cost(),
@@ -2076,7 +2077,7 @@ class SocraticDebate:
             )
 
         self.status_callback(
-            message="Finalizing Results...",
+            "Finalizing Results...",
             state="running",
             current_total_tokens=self.token_tracker.current_usage,
             current_total_cost=self.get_total_estimated_cost(),
@@ -2089,7 +2090,7 @@ class SocraticDebate:
         )
 
         self.status_callback(
-            message="Socratic Debate Complete!",
+            "Socratic Debate Complete!",
             state="complete",
             current_total_tokens=self.token_tracker.current_usage,
             current_total_cost=self.get_total_estimated_cost(),

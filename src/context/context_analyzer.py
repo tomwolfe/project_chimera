@@ -241,6 +241,11 @@ class ContextRelevanceAnalyzer:
         self.persona_router = None
 
         try:
+            # Ensure the cache directory exists
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+            # Initialize SentenceTransformer model
+            # This will download the model if not already cached in self.cache_dir
+
             Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
             self.model = SentenceTransformer(
                 "all-MiniLM-L6-v2",
@@ -257,6 +262,11 @@ class ContextRelevanceAnalyzer:
             self.file_embeddings = self._compute_file_embeddings(self.codebase_context)
         else:
             self.file_embeddings = {}
+
+    def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+        """Public wrapper to compute embeddings for files in the codebase context."""
+        self.logger.info("Calling _compute_file_embeddings via public wrapper.")
+        return self._compute_file_embeddings(context)
 
     def set_persona_router(self, persona_router: Any):
         """Sets the persona router for context relevance scoring."""
