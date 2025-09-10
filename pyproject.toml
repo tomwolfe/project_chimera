@@ -1,11 +1,11 @@
 # pyproject.toml
 
 [tool.pytest.ini_options]
-pythonpath = [".", "src"] # MODIFIED: Added "src" to pythonpath
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311" # MODIFIED: Corrected from "null" to "py311"
+target-version = "py311" # FIXED: Corrected from "null" to "py311"
 
 [tool.ruff.lint]
 select = [
@@ -28,7 +28,7 @@ skip-magic-trailing-comma = false
 
 [tool.bandit]
 conf_file = "pyproject.toml"
-level = "info" # MODIFIED: Corrected from "null" to "info"
+level = "info" # Corrected from "null" to a valid Bandit level
                # The CI workflow explicitly overrides this to HIGH for its run.
 confidence = "MEDIUM"
 exclude = [
