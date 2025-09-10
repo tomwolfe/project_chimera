@@ -114,7 +114,7 @@ class ConflictResolutionManager:
                     "resolution_strategy": "synthesis_from_history",
                     "resolved_output": synthesized_output,
                     "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
-                    "malformed_blocks": [{"type": "SYNTHESIS_FROM_HISTORY", "message": "Synthesized from previous valid turns."}]
+                    "malformed_blocks": [{"type": "SYNTHESIS_FROM_HISTORY", "message": "Automated synthesis from history due to problematic output."}]
                 }
             else:
                 logger.warning("ConflictResolutionManager: Synthesis from history failed.")
@@ -172,8 +172,8 @@ class ConflictResolutionManager:
         """
         Re-invokes the persona with explicit feedback on its previous problematic output.
         """
-        if not self.llm_provider or not self.persona_manager:
-            logger.error("LLMProvider or PersonaManager not set in ConflictResolutionManager. Cannot self-correct.")
+        if not self.llm_provider or not self.llm_provider.tokenizer or not self.persona_manager:
+            logger.error("LLMProvider, Tokenizer, or PersonaManager not set in ConflictResolutionManager. Cannot self-correct.")
             return None
 
         # The initial prompt is typically the first entry in the debate history
@@ -257,10 +257,12 @@ class ConflictResolutionManager:
                     temperature=persona_config.temperature,
                     max_tokens=effective_max_output_tokens, # Use the calculated effective max tokens
                     persona_config=persona_config,
-                    requested_model_name=self.llm_provider.model_name # Use the provider's current model
+                    requested_model_name=self.llm_provider.model_name, # Use the provider's current model
+                    output_schema=output_schema_class # NEW: Pass the schema for early validation
                 )
                 
                 # Attempt to parse and validate the corrected output
+                # This call will now benefit from the early schema validation in llm_provider.generate
                 corrected_output = self.output_parser.parse_and_validate(raw_llm_output, output_schema_class)
                 
                 if not corrected_output.get('malformed_blocks'):

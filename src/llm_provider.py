@@ -76,6 +76,7 @@ class GeminiProvider:
     INITIAL_BACKOFF_SECONDS = 1
     BACKOFF_FACTOR = 2
     # MAX_BACKOFF_SECONDS = 60 # REMOVED: Will be set from settings - MODIFIED LINE
+
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -178,7 +179,7 @@ class GeminiProvider:
             (
                 self.model_name,
                 hashlib.sha256(self._api_key.encode()).hexdigest(),
-                tokenizer_type_hash, # No change here
+                tokenizer_type_hash,
             )
         )
 
@@ -255,7 +256,7 @@ class GeminiProvider:
         persona_config: PersonaConfig = None,
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
-    ) -> tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
+    ) -> tuple[str, int, int, bool]:
         """
         Generates content using the Gemini API, protected by a circuit breaker.
         """
@@ -267,7 +268,7 @@ class GeminiProvider:
         if current_model_spec:
             self.tokenizer.max_output_tokens = current_model_spec.max_output_tokens
 
-        if final_model_to_use and final_model_to_use != self.model_name: # No change here
+        if final_model_to_use and final_model_to_use != self.model_name:
             self._log_with_context(
                 "debug",
                 f"Requested model '{final_model_to_use}' differs from provider's initialized model '{self.model_name}'.",
@@ -312,7 +313,7 @@ class GeminiProvider:
             prompt, system_prompt, config, current_model_name
         )
 
-        # Enforce schema compliance if a schema is provided (NEW)
+        # NEW: Enforce schema compliance if a schema is provided
         if output_schema:
             try:
                 # Attempt to parse the LLM output into the Pydantic model
@@ -331,7 +332,7 @@ class GeminiProvider:
                     invalid_value=generated_text[:500], # Provide a snippet of the invalid output
                     original_exception=ve
                 )
-        return generated_text, input_tokens, output_tokens, is_truncated # MODIFIED: Return 4 values
+        return generated_text, input_tokens, output_tokens, is_truncated
 
     def _generate_with_retry(
         self,
@@ -339,7 +340,7 @@ class GeminiProvider:
         system_prompt: str,
         config: types.GenerateContentConfig,
         model_name_to_use: str = None,
-    ) -> tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
+    ) -> tuple[str, int, int, bool]:
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -409,7 +410,7 @@ class GeminiProvider:
                     full_generated_text=generated_text,
                 )
 
-                return generated_text, input_tokens, output_tokens, is_truncated # MODIFIED: Return 4 values
+                return generated_text, input_tokens, output_tokens, is_truncated
 
             except Exception as e:
                 error_msg = str(e)
