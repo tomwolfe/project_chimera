@@ -246,7 +246,7 @@ class ConflictResolutionManager:
             try:
                 # Ensure LLMProvider and Tokenizer are available
                 if not self.llm_provider or not self.llm_provider.tokenizer or not self.persona_manager:
-                    raise ChimeraError("LLM Provider or Tokenizer not available for self-correction.")
+                    raise ChimeraError("LLM Provider, Tokenizer, or PersonaManager not available for self-correction.")
 
                 actual_model_max_output_tokens = self.llm_provider.tokenizer.max_output_tokens
                 effective_max_output_tokens = min(persona_config.max_tokens, actual_model_max_output_tokens)

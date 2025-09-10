@@ -37,7 +37,7 @@ from src.exceptions import (
     LLMUnexpectedError,
     TokenBudgetExceededError,
     CircuitBreakerError,
-    SchemaValidationError,
+    SchemaValidationError, # NEW: Import SchemaValidationError
 )
 
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
@@ -79,6 +79,8 @@ class GeminiProvider:
 
     RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
     RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+    # NEW: Add SchemaValidationError to retryable exceptions for internal retry logic
+    RETRYABLE_LLM_EXCEPTIONS = (SchemaValidationError,)
 
     def __init__(
         self,
@@ -250,7 +252,7 @@ class GeminiProvider:
         self,
         prompt: str,
         system_prompt: str = "",
-        output_schema: Optional[Type[BaseModel]] = None, # MODIFIED: Add output_schema parameter
+        output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: int = 100,
         persona_config: PersonaConfig = None,
@@ -411,6 +413,41 @@ class GeminiProvider:
                 )
 
                 return generated_text, input_tokens, output_tokens, is_truncated
+
+            except self.RETRYABLE_LLM_EXCEPTIONS as e: # NEW: Explicitly catch retryable LLM exceptions
+                error_msg = str(e)
+                if attempt < self.MAX_RETRIES:
+                    backoff_time = min(
+                        self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
+                        self.MAX_BACKOFF_SECONDS,
+                    )
+                    jitter = random.uniform(
+                        0,
+                        0.5
+                        * min(
+                            self.INITIAL_BACKOFF_SECONDS
+                            * (self.BACKOFF_FACTOR**attempt),
+                            self.MAX_BACKOFF_SECONDS,
+                        ),
+                    )
+                    sleep_time = backoff_time + jitter
+
+                    log_message = f"Retryable LLM exception: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
+                    if self.rich_console:
+                        self.rich_console.print(f"[yellow]{log_message}[/yellow]")
+                    else:
+                        self._log_with_context(
+                            "warning", log_message, error_type=type(e).__name__
+                        )
+                    time.sleep(sleep_time)
+                else:
+                    self._log_with_context(
+                        "error",
+                        f"Max retries exceeded for retryable LLM exception: {error_msg}",
+                        error_type=type(e).__name__,
+                        exc_info=True,
+                    )
+                    raise e # Re-raise the original retryable exception if retries are exhausted
 
             except Exception as e:
                 error_msg = str(e)
