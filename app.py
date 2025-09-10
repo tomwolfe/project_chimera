@@ -747,17 +747,13 @@ for i, tab_name in enumerate(tab_names):
                 on_change=update_activity_timestamp,
             )
 
-            # This block causes KeyError on pytest collection because st.session_state is not available.
-            # It should be moved into a function that is only called when the app is running.
-            def get_filtered_prompts(tab_name, category_options):
-                return {
-                    name: details
-                    for name, details in category_options.items()
-                    if not st.session_state.get(f"search_{tab_name}")
-                    or st.session_state.get(f"search_{tab_name}", "").lower() in name.lower()
-                    or st.session_state.get(f"search_{tab_name}", "").lower() in details["prompt"].lower()
-                }
-            filtered_prompts_in_category = get_filtered_prompts(tab_name, category_options)
+            filtered_prompts_in_category = {
+                name: details
+                for name, details in category_options.items()
+                if (f"search_{tab_name}" not in st.session_state or not st.session_state[f"search_{tab_name}"])
+                or (st.session_state[f"search_{tab_name}"].lower() in name.lower())
+                or (st.session_state[f"search_{tab_name}"].lower() in details["prompt"].lower())
+            }
 
             options_keys = list(filtered_prompts_in_category.keys())
 
@@ -1151,7 +1147,7 @@ with col2:
             and st.session_state.selected_example_name == "Custom Prompt"
         ):
             if st.session_state.codebase_context:
-                st.session_state.codebase_context = {}
+                st.session_state.codebase_state.codebase_context = {}
                 st.session_state.uploaded_files = []
                 st.info("Codebase context cleared for custom prompt.")
 
@@ -1300,9 +1296,23 @@ def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
 
     debate_instance = None
-
     request_id = str(uuid.uuid4())[:8]
+    
+    codebase_context_for_debate = st.session_state.get("codebase_context", {})
+    is_self_analysis_prompt_detected = st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(user_prompt)
 
+    if is_self_analysis_prompt_detected and not codebase_context_for_debate:
+        st.info("Self-analysis prompt detected. Loading Project Chimera's codebase context...")
+        try:
+            scanner = get_codebase_scanner_instance()
+            codebase_context_for_debate = scanner.load_own_codebase_context()
+            st.session_state.codebase_context = codebase_context_for_debate # Update session state
+            logger.info("Successfully loaded Project Chimera's codebase context for self-analysis.")
+        except Exception as e:
+            st.error(f"❌ Error loading Project Chimera's codebase for self-analysis: {e}")
+            logger.error(f"Failed to load own codebase context: {e}", exc_info=True)
+            return # Abort if critical context cannot be loaded
+    
     logger.info(
         "Starting Socratic Debate process.",
         extra={"request_id": request_id, "user_prompt": user_prompt},
@@ -1464,7 +1474,7 @@ def _run_socratic_debate_process():
                     domain_for_run = st.session_state.active_example_framework_hint
                     logger.debug(f"Using active example framework hint: '{domain_for_run}' for example '{st.session_state.selected_example_name}'.")
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-                    # FIX: Removed settings_instance.domain_keywords as an argument (already handled by PromptAnalyzer init)
+                    # FIX: Removed settings_instance.domain_keywords as an argument
                     suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
                         current_user_prompt_for_debate
                     )
@@ -1508,7 +1518,7 @@ def _run_socratic_debate_process():
                     domain=domain_for_run,
                     status_callback=update_status_with_realtime_metrics,
                     rich_console=rich_console_instance,
-                    codebase_context=st.session_state.get("codebase_context", {}),
+                    codebase_context=codebase_context_for_debate, # NEW: Pass the loaded codebase context
                     context_analyzer=st.session_state.context_analyzer,
                     # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
                     is_self_analysis=st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
