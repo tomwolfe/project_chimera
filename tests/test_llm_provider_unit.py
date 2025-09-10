@@ -6,7 +6,7 @@ from google.genai.errors import APIError
 import socket # NEW: Import socket for network error tests
 
 from src.llm_provider import GeminiProvider
-from src.tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # MODIFIED: Updated import path
 from src.config.settings import ChimeraSettings
 from src.exceptions import LLMUnexpectedError, SchemaValidationError, GeminiAPIError # NEW: Import GeminiAPIError
 from src.models import GeneralOutput # NEW: Import GeneralOutput for schema validation tests

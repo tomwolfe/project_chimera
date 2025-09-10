@@ -7,6 +7,7 @@ from src.token_tracker import TokenUsageTracker
 from src.persona_manager import PersonaManager
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.llm_provider import GeminiProvider
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # MODIFIED: Updated import path
 from src.conflict_resolution import ConflictResolutionManager
 from src.utils.output_parser import LLMOutputParser # Keep LLMOutputParser
 from src.self_improvement.metrics_collector import FocusedMetricsCollector # Import FocusedMetricsCollector
@@ -422,7 +423,7 @@ def test_socratic_debate_context_aware_assistant_turn(socratic_debate_instance, 
 def mock_llm_client_for_debate_tests():
     client = MagicMock()
     # Mock a basic LLM response structure
-    client.models.generate_content.return_value.candidates[0].content.parts[0].text = "{ \"response\": \"This is a mock response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }"
+    client.models.generate_content.return_value.candidates[0].content.parts[0].text = "{ \"general_output\": \"This is a mock response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }" # MODIFIED: Changed 'response' to 'general_output'
     # Mock count_tokens for the tokenizer
     client.models.count_tokens.return_value.total_tokens = 10 # Arbitrary small number
     return client
@@ -477,7 +478,7 @@ def debate_manager_for_new_tests(mock_llm_client_for_debate_tests, mock_persona_
             # Mock the output parser on the debate instance
             mock_output_parser = MagicMock(spec=LLMOutputParser)
             mock_output_parser.parse_and_validate.side_effect = lambda raw, schema: json.loads(raw) if isinstance(raw, str) else raw
-            mock_output_parser._create_fallback_output.side_effect = lambda schema, blocks, raw, partial, extracted: {"response": "Fallback response", "malformed_blocks": blocks}
+            mock_output_parser._create_fallback_output.side_effect = lambda schema, blocks, raw, partial, extracted: {"general_output": "Fallback response", "malformed_blocks": blocks}
 
             debate_manager_instance = SocraticDebate( # Use SocraticDebate directly
                 initial_prompt="Start the debate on topic X.",
@@ -500,14 +501,14 @@ def test_socratic_debate_flow(debate_manager_for_new_tests):
     # The run_debate method is the entry point, it handles initialization and turns
     final_answer, intermediate_steps = debate_manager_for_new_tests.run_debate()
 
-    assert len(intermediate_steps.get('Debate_History', [])) > 0
+    assert len(intermediate_steps.get('Debate_History', [])) == 1 # Only one persona in sequence
     # Add more assertions to check the content and structure of the debate history
     # For example, check if responses are parsed correctly, if reasoning steps are present, etc.
     assert "Mocked LLM response" in final_answer.get('general_output', '')
 
 def test_llm_response_parsing(debate_manager_for_new_tests):
     # Test the parsing of LLM responses, ensuring it handles valid JSON and extracts key fields
-    mock_response_content = "{ \"response\": \"Parsed response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }"
+    mock_response_content = "{ \"general_output\": \"Parsed response.\", \"reasoning_steps\": [ \"Premise 1\", \"Conclusion 1\" ] }" # MODIFIED: Changed 'response' to 'general_output'
     
     # Directly call the parser with the mock content and a generic schema
     # For this test, we'll use GeneralOutput as a stand-in for a simple dict response

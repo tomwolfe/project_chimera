@@ -1,9 +1,9 @@
-# src/tokenizers/gemini_tokenizer.py
+# src/llm_tokenizers/gemini_tokenizer.py
 """Gemini-specific tokenizer implementation."""
 
 import logging
 from typing import Optional, Dict, Any, TYPE_CHECKING
-from .base import Tokenizer
+from .base import Tokenizer # This import is relative, so it remains the same
 import hashlib
 import re
 import sys

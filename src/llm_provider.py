@@ -11,8 +11,8 @@ import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
-from google.genai import types
 from google.genai.errors import APIError
+from google.genai import types # FIX: Added explicit import for 'types'
 import hashlib # Used in __hash__
 import random # Used in _generate_with_retry
 import socket # Used in _generate_with_retry
@@ -22,8 +22,8 @@ from pydantic import BaseModel, ValidationError # NEW: Import BaseModel and Vali
 from rich.console import Console
 
 # --- Tokenizer Interface and Implementation ---
-from src.tokenizers.base import Tokenizer
-from src.tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.llm_tokenizers.base import Tokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 
 # --- MODIFICATION: Import PersonaConfig from src.models ---
 from src.models import PersonaConfig
@@ -48,12 +48,14 @@ from src.resilience.circuit_breaker import CircuitBreaker
 from src.utils.error_handler import handle_errors
 # --- END NEW IMPORT ---
 
-from src.config.model_registry import ModelRegistry, ModelSpecification # NEW: Import ModelRegistry
+# FIX: Import ModelSpecification explicitly
+from src.config.model_registry import ModelRegistry, ModelSpecification # MODIFIED: Added ModelSpecification
 from src.config.settings import ChimeraSettings
 
 # NEW IMPORTS: From src/utils/api_key_validator.py
 from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional, fetch_api_key # MODIFIED: Import fetch_api_key
 import os # NEW: Import os for environment variables
+from src.utils.output_parser import LLMOutputParser # NEW: Import LLMOutputParser
 
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
@@ -100,6 +102,7 @@ class GeminiProvider:
         self._log_extra = {
             "request_id": self.request_id or "N/A"
         }
+        self.output_parser = LLMOutputParser() # NEW: Instantiate LLMOutputParser
         self.settings = settings or ChimeraSettings()
 
         try:
@@ -318,12 +321,13 @@ class GeminiProvider:
         # NEW: Enforce schema compliance if a schema is provided
         if output_schema:
             try:
+                cleaned_generated_text = self.output_parser._clean_llm_output(generated_text) # NEW: Clean output
                 # Attempt to parse the LLM output into the Pydantic model
                 # Use model_validate_json for Pydantic v2, parse_raw for v1
                 if hasattr(output_schema, 'model_validate_json'):
-                    output_schema.model_validate_json(generated_text)
+                    output_schema.model_validate_json(cleaned_generated_text) # Use cleaned text
                 else:
-                    output_schema.parse_raw(generated_text)
+                    output_schema.parse_raw(cleaned_generated_text) # Use cleaned text
             except ValidationError as ve:
                 error_msg = f"LLM output failed schema validation: {ve}"
                 self._log_with_context("warning", error_msg, llm_output_snippet=generated_text[:200])

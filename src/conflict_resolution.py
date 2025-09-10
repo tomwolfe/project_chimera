@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from src.llm_provider import GeminiProvider
 from src.models import PersonaConfig, GeneralOutput, LLMOutput, CritiqueOutput, ConflictReport, SelfImprovementAnalysisOutputV1, ContextAnalysisOutput, ConfigurationAnalysisOutput, DeploymentAnalysisOutput
 from src.utils.output_parser import LLMOutputParser
-from src.tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # MODIFIED: Updated import path
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError # Import ChimeraError for raising
@@ -168,7 +168,7 @@ class ConflictResolutionManager:
             "malformed_blocks": [{"type": "MANUAL_INTERVENTION_REQUIRED", "message": message}]
         }
 
-    def _retry_persona_with_feedback(self, persona_name: str, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _retry_persona_with_feedback(self0, persona_name: str, debate_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
         Re-invokes the persona with explicit feedback on its previous problematic output.
         """
@@ -210,7 +210,7 @@ class ConflictResolutionManager:
             else:
                 error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
         elif isinstance(problematic_output, str):
-            error_message = f"Previous output was a malformed string: '{problematic_output[:200]}...'"
+            error_message = f"Previous output was a malformed string: '{self.output_parser._clean_llm_output(problematic_output)[:200]}...'" # MODIFIED: Clean string output
         
         # Construct the feedback prompt
         feedback_prompt = f"""
@@ -221,7 +221,7 @@ class ConflictResolutionManager:
 
         Your Previous Output (which failed validation):
         ```
-        {str(problematic_output)[:1000]}
+        {self.output_parser._clean_llm_output(str(problematic_output))[:1000]} # MODIFIED: Use cleaned output here
         ```
 
         CRITICAL ERROR FEEDBACK:

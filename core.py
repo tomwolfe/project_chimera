@@ -49,9 +49,7 @@ from src.persona_manager import PersonaManager # Persona management
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
-from src.utils.prompt_analyzer import (
-    PromptAnalyzer,
-)
+from src.utils.prompt_analyzer import PromptAnalyzer
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
@@ -62,6 +60,10 @@ from src.utils.path_utils import PROJECT_ROOT # NEW: Import PROJECT_ROOT for Cod
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.conflict_resolution import ConflictResolutionManager
 from src.config.model_registry import ModelRegistry # NEW: Import ModelRegistry
+
+# --- Tokenizer Interface and Implementation ---
+from src.llm_tokenizers.base import Tokenizer # MODIFIED: Updated import path
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # MODIFIED: Updated import path
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +110,7 @@ class SocraticDebate:
 
         self.initial_prompt = initial_prompt
         # MODIFIED: If self-analysis and no codebase_context provided, trigger CodebaseScanner
-        if is_self_analysis and codebase_context is None:
+        if is_self_analysis and not codebase_context: # FIX: Changed condition to check for empty dict
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
@@ -272,7 +274,7 @@ class SocraticDebate:
             logger_method(message, extra=log_data)
 
     def _determine_optimal_model(self, preferred_model_name: str) -> str:
-        """Determine the best model to use based on requirements and availability"""
+        """Determine the best model to use based on requirements and availability."""
         requirements = ["reasoning"]
         if "coding" in self.domain.lower():
             requirements.append("coding")
@@ -889,11 +891,11 @@ class SocraticDebate:
                     original_exception=e,
                 ) from e
 
-        self.intermediate_steps[f"{persona_name}_Output"] = parsed_output
-        self.intermediate_steps[f"{persona_name}_Tokens_Used"] = (
+        self.intermediate_steps[f"{persona_config.name}_Output"] = parsed_output
+        self.intermediate_steps[f"{persona_config.name}_Tokens_Used"] = (
             input_tokens + output_tokens
         )
-        self.intermediate_steps[f"{persona_name}_Estimated_Cost_USD"] = (
+        self.intermediate_steps[f"{persona_config.name}_Estimated_Cost_USD"] = (
             self.llm_provider.calculate_usd_cost(input_tokens, output_tokens)
         )
 

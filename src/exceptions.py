@@ -114,6 +114,7 @@ class ValidationPhaseError(ChimeraError):
     def __init__(
         self,
         message: str,
+        error_code: str = "VALIDATION_PHASE_ERROR", # ADDED: error_code parameter
         invalid_response: Any = None,
         expected_schema: str = None,
         details: Optional[dict] = None,
@@ -124,8 +125,8 @@ class ValidationPhaseError(ChimeraError):
             {"invalid_response": invalid_response, "expected_schema": expected_schema}
         )
         super().__init__(
-            message,
-            error_code="VALIDATION_PHASE_ERROR",
+            message, # Pass message first
+            error_code=error_code, # Pass the new error_code parameter
             details=full_details,
             original_exception=original_exception,
         )
@@ -153,14 +154,14 @@ class SchemaValidationError(ValidationPhaseError):
         )
         super().__init__(
             message,
-            error_code="SCHEMA_VALIDATION_ERROR",
+            error_code="SCHEMA_VALIDATION_ERROR", # Pass error_code to parent
             details=full_details,
             original_exception=original_exception,
         )
 
 
 class TokenBudgetExceededError(ChimeraError):
-    """Raised when token usage exceeds budget"""
+    """Raised when token usage exceeds budget."""
 
     def __init__(
         self,

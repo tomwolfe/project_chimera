@@ -59,7 +59,20 @@ SHARED_JSON_INSTRUCTIONS: str = """
 5. USE DOUBLE QUOTES for all keys and string values.
 6. ENSURE COMMAS separate all properties in objects and elements in arrays.
 7. DO NOT include trailing commas.
----"""
+---
+
+**CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:
+```diff
+--- a/src/example.py
++++ b/src/example.py
+@@ -1,3 +1,4 @@
+ def old_func():
+-    print("old")
++    print("new")
++    print("added")
+```
+**CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+"""
 
 # --- Other potential constants could be added here ---
 # e.g., default file paths, common error messages, etc.
