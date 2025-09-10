@@ -3,11 +3,12 @@ import pytest
 from unittest.mock import MagicMock, patch
 import google.genai as genai
 from google.genai.errors import APIError
+import socket # NEW: Import socket for network error tests
 
 from src.llm_provider import GeminiProvider
 from src.tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
-from src.exceptions import LLMUnexpectedError, SchemaValidationError # NEW: Import LLMUnexpectedError, SchemaValidationError
+from src.exceptions import LLMUnexpectedError, SchemaValidationError, GeminiAPIError # NEW: Import GeminiAPIError
 from src.models import GeneralOutput # NEW: Import GeneralOutput for schema validation tests
 
 @pytest.fixture
@@ -286,3 +287,51 @@ def test_llm_provider_generate_with_schema_validation_failure():
                 max_tokens=100,
             )
         mock_client.models.generate_content.assert_called_once()
+
+# Add these new test functions to tests/test_llm_provider_unit.py
+
+def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
+    """Tests that a 401 APIError (Unauthorized) raises GeminiAPIError."""
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError("Invalid API Key", code=401)
+    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
+        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=ChimeraSettings()
+        )
+        with pytest.raises(GeminiAPIError, match="Invalid API Key"):
+            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+        mock_llm_client_api_error.models.generate_content.assert_called_once()
+
+def test_llm_provider_generate_api_error_429_exhausted_retries(mock_llm_client_rate_limit):
+    """Tests that a 429 APIError (Rate Limit) raises GeminiAPIError after retries are exhausted."""
+    # mock_llm_client_rate_limit is already configured to raise APIError(code=429)
+    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_rate_limit):
+        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_rate_limit)
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=ChimeraSettings(max_retries=1, max_backoff_seconds=1) # Short retries for test
+        )
+        with pytest.raises(GeminiAPIError, match="Rate Limit Exceeded after retries"):
+            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+        # Should be called max_retries + 1 times (initial + retries)
+        assert mock_llm_client_rate_limit.models.generate_content.call_count == 2 # 1 initial + 1 retry
+
+def test_llm_provider_generate_network_error(mock_llm_client_success):
+    """Tests that a network error (e.g., socket.gaierror) raises LLMUnexpectedError."""
+    mock_llm_client_success.models.generate_content.side_effect = socket.gaierror("Name or service not known")
+    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_success):
+        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_success)
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=ChimeraSettings(max_retries=1, max_backoff_seconds=1) # Short retries for test
+        )
+        with pytest.raises(LLMUnexpectedError, match="Name or service not known"): # Match the specific error message
+            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+        assert mock_llm_client_success.models.generate_content.call_count == 2 # 1 initial + 1 retry

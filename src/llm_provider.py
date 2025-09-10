@@ -52,8 +52,8 @@ from src.config.model_registry import ModelRegistry, ModelSpecification # NEW: I
 from src.config.settings import ChimeraSettings
 
 # NEW IMPORTS: From src/utils/api_key_validator.py
-# REMOVED: Old imports for file_operations and direct re/genai/APIError
 from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional
+import os # NEW: Import os for environment variables
 
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
@@ -90,7 +90,6 @@ class GeminiProvider:
         request_id: Optional[str] = None,
         settings: Optional[Any] = None,
     ):
-        self._api_key = api_key
         self.model_name = model_name
         self.model_registry = ModelRegistry() # Initialize ModelRegistry
         self.rich_console = rich_console or Console(stderr=True)
@@ -101,6 +100,20 @@ class GeminiProvider:
         self.settings = settings or ChimeraSettings()
 
         try:
+            # Prioritize API key from environment variable if not explicitly provided
+            if not api_key:
+                api_key = os.getenv("GEMINI_API_KEY")
+                if not api_key:
+                    logger.critical("GEMINI_API_KEY environment variable is not set. LLMProvider will not function.", extra={'event': 'startup_failure'})
+                    raise ValueError("LLM API Key is not configured.")
+            
+            self._api_key = api_key # Store the resolved API key
+
+            # Validate API key format and functionality early
+            is_valid_format, format_message = validate_gemini_api_key_format(self._api_key)
+            if not is_valid_format:
+                logger.critical(f"Invalid API key format: {format_message}", extra={'event': 'startup_failure'})
+                raise ValueError(f"Invalid API key format: {format_message}")
             self.client = genai.Client(api_key=self._api_key)
         except (
             APIError,
@@ -400,12 +413,34 @@ class GeminiProvider:
                 return generated_text, input_tokens, output_tokens, is_truncated # MODIFIED: Return 4 values
 
             except Exception as e:
-                error_msg = str(e).encode("utf-8", "replace").decode("utf-8")
-
+                error_msg = str(e)
+                
                 should_retry = False
                 error_details = {}
 
+                # Specific handling for common critical errors
                 if isinstance(e, APIError):
+                    if e.code == 401: # Unauthorized - likely invalid API key
+                        raise GeminiAPIError(f"Invalid API Key: {error_msg}", code=e.code, original_exception=e) from e
+                    elif e.code == 403: # Forbidden - permissions issue
+                        raise GeminiAPIError(f"API Key lacks permissions: {error_msg}", code=e.code, original_exception=e) from e
+                    elif e.code == 429: # Rate Limit Exceeded
+                        # This is typically handled by the retry logic, but if retries are exhausted, it should be a specific error
+                        if attempt >= self.MAX_RETRIES:
+                            raise GeminiAPIError(f"Rate Limit Exceeded after retries: {error_msg}", code=e.code, original_exception=e) from e
+                        should_retry = True
+                    elif e.code == 400 and ("context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower()):
+                        self._log_with_context(
+                            "error",
+                            f"LLM context window exceeded: {error_msg}",
+                            **error_details,
+                        )
+                        raise LLMUnexpectedError(
+                            f"LLM context window exceeded: {error_msg}",
+                            original_exception=e,
+                        ) from e
+                
+                if isinstance(e, APIError): # Existing APIError handling
                     error_details["api_error_code"] = getattr(e, "code", None)
                     if e.code in self.RETRYABLE_ERROR_CODES:
                         should_retry = True
@@ -414,20 +449,10 @@ class GeminiProvider:
                         error_details["http_status_code"] = http_status_code.status_code
                         if http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
                             should_retry = True
-                elif isinstance(e, socket.gaierror):
+                elif isinstance(e, socket.gaierror): # Existing network error handling
                     should_retry = True
                     error_details["network_error"] = "socket.gaierror"
-                elif ( # NEW: Added block for access/permission denied errors
-                    "access denied" in error_msg.lower()
-                    or "permission" in error_msg.lower()
-                ):
-                    should_retry = True
-                    error_details["permission_error"] = "access denied"
-                elif (
-                    "context window exceeded" in error_msg.lower()
-                    or "prompt too large" in error_msg.lower()
-                    or "max_input_tokens" in error_msg.lower()
-                ):
+                elif "context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower(): # Existing context window exceeded check
                     self._log_with_context(
                         "error",
                         f"LLM context window exceeded: {error_msg}",
@@ -471,8 +496,3 @@ class GeminiProvider:
                         raise LLMUnexpectedError(error_msg, original_exception=e) from e
 
             raise LLMUnexpectedError("Max retries exceeded for generate call.")
-
-    def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
-        """Estimates tokens for a context and prompt combination."""
-        combined_text = f"{context_str}\n\n{prompt}"
-        return self.tokenizer.count_tokens(combined_text)
