@@ -1,4 +1,3 @@
-# src/utils/api_key_validator.py
 import re
 import logging
 from typing import Tuple
@@ -24,6 +23,10 @@ def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
     if 'github' in api_key.lower() or 'gitlab' in api_key.lower() or 'repo' in api_key.lower():
         return False, "API key appears to contain repository information, indicating potential exposure"
     
+    # Check for standard Google API key prefix
+    if not api_key.startswith('AIza'):
+        return False, "API key is missing the standard 'AIza' prefix for Google API keys."
+
     return True, "API key format validated"
 
 

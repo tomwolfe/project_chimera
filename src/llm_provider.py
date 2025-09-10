@@ -17,6 +17,7 @@ import hashlib # Used in __hash__
 import random # Used in _generate_with_retry
 import socket # Used in _generate_with_retry
 import json # Used for structured logging helper
+from pydantic import BaseModel, ValidationError # NEW: Import BaseModel and ValidationError
 
 from rich.console import Console
 
@@ -235,9 +236,10 @@ class GeminiProvider:
     def generate(
         self,
         prompt: str,
-        system_prompt: str,
-        temperature: float,
-        max_tokens: int,
+        system_prompt: str = "",
+        output_schema: Optional[Type[BaseModel]] = None, # MODIFIED: Add output_schema parameter
+        temperature: float = 0.7,
+        max_tokens: int = 100,
         persona_config: PersonaConfig = None,
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
@@ -294,9 +296,30 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
-        return self._generate_with_retry(
+        generated_text, input_tokens, output_tokens, is_truncated = self._generate_with_retry(
             prompt, system_prompt, config, current_model_name
         )
+
+        # Enforce schema compliance if a schema is provided (NEW)
+        if output_schema:
+            try:
+                # Attempt to parse the LLM output into the Pydantic model
+                # Use model_validate_json for Pydantic v2, parse_raw for v1
+                if hasattr(output_schema, 'model_validate_json'):
+                    output_schema.model_validate_json(generated_text)
+                else:
+                    output_schema.parse_raw(generated_text)
+            except ValidationError as ve:
+                error_msg = f"LLM output failed schema validation: {ve}"
+                self._log_with_context("warning", error_msg, llm_output_snippet=generated_text[:200])
+                # Raise SchemaValidationError directly to trigger core.py's retry mechanism
+                raise SchemaValidationError(
+                    error_type="SCHEMA_VALIDATION_FAILED",
+                    field_path="LLM_OUTPUT", # Generic field path for overall schema failure
+                    invalid_value=generated_text[:500], # Provide a snippet of the invalid output
+                    original_exception=ve
+                )
+        return generated_text, input_tokens, output_tokens, is_truncated # MODIFIED: Return 4 values
 
     def _generate_with_retry(
         self,
