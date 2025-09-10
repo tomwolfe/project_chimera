@@ -62,7 +62,7 @@ def test_llm_provider_generate_content_success(mock_llm_client_success, prompt, 
         mock_llm_client_success.models.generate_content.return_value.candidates[0].content.parts[0].text = "Simulated response for " + prompt
         mock_llm_client_success.models.count_tokens.return_value.total_tokens = len(prompt) // 4 # Simulate token count
 
-        response_text, input_tokens, output_tokens, is_truncated = provider.generate( # MODIFIED: Unpack is_truncated
+        response_text, input_tokens, output_tokens, is_truncated = provider.generate(
             prompt=prompt,
             system_prompt="You are a helpful assistant.",
             temperature=0.7,
@@ -74,7 +74,8 @@ def test_llm_provider_generate_content_success(mock_llm_client_success, prompt, 
         assert "Simulated response for" in response_text
         assert input_tokens > 0
         assert output_tokens > 0
-        assert is_truncated == False # Assuming output is not truncated in this mock
+        if is_truncated is not False:
+            raise AssertionError("Expected is_truncated to be False")
 
         mock_llm_client_success.models.generate_content.assert_called_once()
         mock_llm_client_success.models.generate_content.reset_mock() # Reset for next iteration

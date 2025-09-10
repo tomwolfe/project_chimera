@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 import subprocess
 import sys
 from pathlib import Path
+import pytest # NEW: Import pytest for pytest.raises
 
 # Assuming src/utils/command_executor.py contains the execute_command_safely function
 from src.utils.command_executor import execute_command_safely

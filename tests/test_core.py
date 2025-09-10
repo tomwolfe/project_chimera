@@ -10,10 +10,13 @@ from src.persona_manager import PersonaManager
 def test_debate_orchestrator_initialization():
     """Test that the DebateOrchestrator initializes correctly."""
     mock_persona_manager = MagicMock(spec=PersonaManager)
-    orchestrator = DebateOrchestrator(persona_manager=mock_persona_manager)
-    assert orchestrator.persona_manager == mock_persona_manager
-    assert orchestrator.debate_history == []
-    assert orchestrator.current_turn == 0
+    orchestrator = DebateOrchestrator(persona_manager=mock_persona_manager) # nosec B101
+    if orchestrator.persona_manager != mock_persona_manager:
+        raise AssertionError("Persona manager not correctly initialized")
+    if orchestrator.debate_history != []:
+        raise AssertionError("Debate history not empty")
+    if orchestrator.current_turn != 0:
+        raise AssertionError("Current turn not 0")
 
 def test_debate_orchestrator_run_debate_basic():
     """Test a basic debate flow with mock personas."""
@@ -39,15 +42,18 @@ def test_debate_orchestrator_run_debate_basic():
     orchestrator.run_debate(max_turns=2)
 
     # Assertions
-    assert len(orchestrator.debate_history) == 4 # 2 turns * 2 personas per turn
-    assert mock_analyst.get_response.call_count == 2
-    assert mock_critic.get_response.call_count == 2
+    if len(orchestrator.debate_history) != 4: # 2 turns * 2 personas per turn
+        raise AssertionError("Debate history length mismatch")
+    if mock_analyst.get_response.call_count != 2:
+        raise AssertionError("Analyst response call count mismatch")
+    if mock_critic.get_response.call_count != 2:
+        raise AssertionError("Critic response call count mismatch")
     
     # Check history content (basic check)
     for entry in orchestrator.debate_history:
-        assert 'persona_name' in entry
-        assert 'response' in entry
-        assert 'turn' in entry
+        if 'persona_name' not in entry: raise AssertionError("Missing 'persona_name' in history entry")
+        if 'response' not in entry: raise AssertionError("Missing 'response' in history entry")
+        if 'turn' not in entry: raise AssertionError("Missing 'turn' in history entry")
 
 def test_debate_orchestrator_persona_selection_logic():
     """Test if the orchestrator correctly selects personas based on some logic (simplified)."""
@@ -69,15 +75,11 @@ def test_debate_orchestrator_persona_selection_logic():
     
     # Run a single turn to test persona selection
     orchestrator.run_debate(max_turns=1)
-
-    # Assert that the correct personas were called in sequence
-    # This test assumes a simple round-robin or sequential selection for demonstration
-    # Actual routing logic in core.py would need to be reflected here.
-    assert mock_persona1.get_response.call_count == 1
-    assert mock_persona2.get_response.call_count == 1
     
-    # A more sophisticated test would inspect the order of calls or the history entries
-    # to verify the sequence of persona engagement.
+    if mock_persona1.get_response.call_count != 1:
+        raise AssertionError("Persona1 response call count mismatch")
+    if mock_persona2.get_response.call_count != 1:
+        raise AssertionError("Persona2 response call count mismatch")
 
 # Add more tests for:
 # - Handling of errors during persona response generation

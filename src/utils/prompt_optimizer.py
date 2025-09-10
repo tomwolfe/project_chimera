@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from src.tokenizers import Tokenizer
 from src.config.settings import ChimeraSettings # Import ChimeraSettings
 import re # Added for prompt section parsing
+import json # NEW: Import json for debate history optimization
 
 logger = logging.getLogger(__name__)
 
@@ -117,28 +118,28 @@ class PromptOptimizer:
         }
 
         # Regex to extract sections based on headings/markers
-        # More robust regex patterns to capture sections based on common markdown headings or explicit markers
-        core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)(?=\n---|\Z)", prompt, re.DOTALL)
+        # Using more specific markers to capture sections accurately.
+        core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)(?=\n\n---|\Z)", prompt, re.DOTALL)
         if core_mission_match:
             sections["core_mission"] = core_mission_match.group(1).strip()
 
-        critical_instruction_match = re.search(r"(---\n\s*\*\*CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
+        critical_instruction_match = re.search(r"(---\n\s*\*\*CRITICAL: Your goal is to generate suggestions that are not only impactful but also \*actionable and valid\*\..*?)(?=\n\n---|\Z)", prompt, re.DOTALL)
         if critical_instruction_match:
             sections["critical_instruction_absolute_adherence"] = critical_instruction_match.group(1).strip()
 
-        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
+        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n\n---|\Z)", prompt, re.DOTALL)
         if security_analysis_match:
             sections["security_analysis"] = security_analysis_match.group(1).strip()
 
-        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
+        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n\n---|\Z)", prompt, re.DOTALL)
         if token_optimization_match:
             sections["token_optimization"] = token_optimization_match.group(1).strip()
         
-        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n---|\Z)", prompt, re.DOTALL)
+        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|\n\n---|\Z)", prompt, re.DOTALL)
         if testing_strategy_match:
             sections["testing_strategy"] = testing_strategy_match.group(1).strip()
 
-        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
+        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n\n---|\Z)", prompt, re.DOTALL)
         if ai_reasoning_match:
             sections["ai_reasoning_quality"] = ai_reasoning_match.group(1).strip()
 
@@ -177,3 +178,27 @@ class PromptOptimizer:
         )
         
         return final_optimized_prompt
+
+    def optimize_debate_history(self, debate_history_json_str: str, max_tokens: int) -> str:
+        """
+        Dynamically optimizes debate history by summarizing or prioritizing turns.
+        This is a conceptual implementation that would involve an LLM call for summarization
+        or more advanced heuristics.
+        """
+        current_tokens = self.tokenizer.count_tokens(debate_history_json_str)
+        if current_tokens <= max_tokens:
+            return debate_history_json_str
+
+        # Placeholder for actual intelligent summarization logic
+        # In a real scenario, this would involve:
+        # 1. Sending the debate_history_json_str to a smaller LLM for summarization.
+        # 2. Using semantic search to pick the most relevant turns.
+        # 3. Prioritizing turns with 'conflict_found' or 'CODE_CHANGES_SUGGESTED'.
+
+        # For now, a simple truncation as a fallback
+        logger.warning(f"Debate history too long ({current_tokens} tokens). Applying aggressive truncation to fit {max_tokens} tokens.")
+        return self.tokenizer.truncate_to_token_limit(
+            debate_history_json_str,
+            max_tokens,
+            truncation_indicator="\n[...debate history further summarized/truncated...]\\n"
+        )
