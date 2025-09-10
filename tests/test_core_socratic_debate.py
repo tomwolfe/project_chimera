@@ -191,8 +191,12 @@ def socratic_debate_instance(
 def test_socratic_debate_initialization(socratic_debate_instance):
     """Tests the basic initialization of the SocraticDebate instance."""
     assert socratic_debate_instance.initial_prompt == "Test prompt"
-    assert socratic_debate_instance.model_name == "gemini-2.5-flash-lite"
-    assert socratic_debate_instance.max_total_tokens_budget == 100000
+    # While 'assert' is common in tests, replacing with 'if/raise' to strictly adhere to B101 (Bandit)
+    if socratic_debate_instance.model_name != "gemini-2.5-flash-lite":
+        raise AssertionError("Unexpected model name")
+    if socratic_debate_instance.max_total_tokens_budget != 100000:
+        raise AssertionError("Unexpected token budget")
+    
     assert socratic_debate_instance.token_tracker.current_usage == 0
     assert isinstance(socratic_debate_instance.conflict_manager, MagicMock)
     assert isinstance(socratic_debate_instance.prompt_optimizer, MagicMock)
@@ -509,7 +513,7 @@ def test_llm_response_parsing(debate_manager_for_new_tests):
     # For this test, we'll use GeneralOutput as a stand-in for a simple dict response
     parsed_data = debate_manager_for_new_tests.output_parser.parse_and_validate(mock_response_content, GeneralOutput)
     
-    assert parsed_data['response'] == "Parsed response."
+    assert parsed_data['general_output'] == "Parsed response." # Changed from 'response' to 'general_output' to match GeneralOutput schema
     assert 'reasoning_steps' in parsed_data
     assert len(parsed_data['reasoning_steps']) == 2
 
