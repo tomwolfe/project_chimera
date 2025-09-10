@@ -52,7 +52,7 @@ from src.config.model_registry import ModelRegistry, ModelSpecification # NEW: I
 from src.config.settings import ChimeraSettings
 
 # NEW IMPORTS: From src/utils/api_key_validator.py
-from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional
+from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional, fetch_api_key # MODIFIED: Import fetch_api_key
 import os # NEW: Import os for environment variables
 
 
@@ -100,14 +100,13 @@ class GeminiProvider:
         self.settings = settings or ChimeraSettings()
 
         try:
-            # Prioritize API key from environment variable if not explicitly provided
-            if not api_key:
-                api_key = os.getenv("GEMINI_API_KEY")
-                if not api_key:
-                    logger.critical("GEMINI_API_KEY environment variable is not set. LLMProvider will not function.", extra={'event': 'startup_failure'})
-                    raise ValueError("LLM API Key is not configured.")
+            # Prioritize API key from fetch_api_key, which handles secrets manager and env var fallback
+            resolved_api_key = api_key or fetch_api_key() # Use provided key first, then fetch
+            if not resolved_api_key:
+                logger.critical("GEMINI_API_KEY environment variable is not set. LLMProvider will not function.", extra={'event': 'startup_failure'})
+                raise ValueError("LLM API Key is not configured.")
             
-            self._api_key = api_key # Store the resolved API key
+            self._api_key = resolved_api_key # Store the resolved API key
 
             # Validate API key format and functionality early
             is_valid_format, format_message = validate_gemini_api_key_format(self._api_key)

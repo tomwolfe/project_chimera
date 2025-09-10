@@ -64,6 +64,7 @@ from src.context.context_analyzer import CodebaseScanner # Instantiated
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes # NEW: Import from report_generator
 from src.utils.session_manager import _initialize_session_state, update_activity_timestamp, reset_app_state, check_session_expiration, SESSION_TIMEOUT_SECONDS # NEW: Import from session_manager
 from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key # NEW: Import from ui_helpers
+from src.utils.api_key_validator import fetch_api_key # NEW: Import fetch_api_key
 
 # --- Configuration Loading ---
 # REMOVED: @st.cache_resource def load_config(...) function
@@ -162,6 +163,7 @@ EXAMPLE_PROMPTS = {
 # --- Session State Initialization Call ---
 if "initialized" not in st.session_state:
     _initialize_session_state(settings_instance, EXAMPLE_PROMPTS) # MODIFIED: Pass settings_instance
+    st.session_state.api_key_input = fetch_api_key() or "" # Initialize with fetched key
 # --- END Session State Initialization Call ---
 
 # --- NEW: Session Expiration Check ---
@@ -451,6 +453,12 @@ with st.sidebar:
                 else:
                     st.error(f"❌ {st.session_state.api_key_format_message}")
             else:
+                # NEW: Add warning if API key is only from environment variable in production
+                if os.getenv("ENVIRONMENT") == "production" and st.session_state.api_key_input:
+                    st.warning("⚠️ API key is sourced from environment variable. Consider using a secrets manager for production.")
+                elif os.getenv("ENVIRONMENT") == "production" and not st.session_state.api_key_input:
+                    st.error("❌ No API key found. In production, API key should be from secrets manager or environment variable.")
+
                 st.info("Please enter your Gemini API Key.")
 
         with api_key_col2:

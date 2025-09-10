@@ -1,10 +1,43 @@
+# src/utils/api_key_validator.py
 import re
 import logging
-from typing import Tuple
+import os # NEW: Import os for environment variables
+from typing import Tuple, Optional
 import google.genai as genai
 from google.genai.errors import APIError
 
 logger = logging.getLogger(__name__)
+
+# NEW: Placeholder for a secrets manager client (e.g., AWS Secrets Manager, Google Secret Manager)
+# In a real application, this would be configured to interact with a specific service.
+class MockSecretsManager:
+    def get_secret(self, secret_name: str) -> Optional[str]:
+        # Simulate fetching a secret. In production, this would call a real secrets manager API.
+        if secret_name == "GEMINI_API_KEY_SECRET":
+            return os.getenv("GEMINI_API_KEY_FROM_SECRETS_MANAGER") # For testing, can use another env var
+        return None
+
+_secrets_manager_client = MockSecretsManager() # Initialize a mock/real client
+
+def fetch_api_key() -> Optional[str]:
+    """
+    Fetches the Gemini API key, prioritizing a secrets manager if configured,
+    then falling back to environment variables.
+    """
+    # 1. Try to fetch from a secrets manager
+    secrets_manager_key = _secrets_manager_client.get_secret("GEMINI_API_KEY_SECRET")
+    if secrets_manager_key:
+        logger.info("API key fetched from secrets manager.")
+        return secrets_manager_key
+
+    # 2. Fallback to environment variable
+    env_api_key = os.getenv("GEMINI_API_KEY")
+    if env_api_key:
+        logger.info("API key fetched from environment variable.")
+        return env_api_key
+
+    logger.warning("No Gemini API key found in secrets manager or environment variables.")
+    return None
 
 def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
     """Validate Gemini API key format with multiple security layers."""

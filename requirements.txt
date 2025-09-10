@@ -9,12 +9,9 @@ sentence-transformers
 python-json-logger
 
 # Code quality and security tools (used in core logic and pre-commit)
-pycodestyle
+pycodestyle # Keep as it's used by src/utils/code_validator.py
 bandit
 
 # Development, linting, formatting, and testing tools
-typer[all]
-black
 ruff
-flake8
 pytest

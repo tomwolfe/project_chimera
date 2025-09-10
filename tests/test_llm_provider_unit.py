@@ -335,3 +335,18 @@ def test_llm_provider_generate_network_error(mock_llm_client_success):
         with pytest.raises(LLMUnexpectedError, match="Name or service not known"): # Match the specific error message
             provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
         assert mock_llm_client_success.models.generate_content.call_count == 2 # 1 initial + 1 retry
+
+def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
+    """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError("API Key lacks permissions", code=403)
+    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
+        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=ChimeraSettings()
+        )
+        with pytest.raises(GeminiAPIError, match="API Key lacks permissions"):
+            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+        mock_llm_client_api_error.models.generate_content.assert_called_once()
