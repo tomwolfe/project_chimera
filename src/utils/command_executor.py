@@ -40,28 +40,30 @@ def execute_command_safely(
             capture_output=True,
             text=True,
             check=check,  # Pass the 'check' argument to subprocess.run
-            shell=False,  # Explicitly set to False for security
+            shell=False,  # Explicitly set to False for security # nosec B603
             timeout=timeout,
         )
 
         if process.returncode != 0:
             logger.error(f"Command failed: {command}")
             if process.stderr:
-                logger.error(f"Stderr: {process.stderr}")
+                logger.error(f"Stderr: {process.stderr.strip()}") # Strip whitespace
             else:
                 # MODIFIED: Include stdout in the error message if stderr is empty
                 logger.error(f"Command failed with non-zero exit code {process.returncode}, but stderr was empty. This might indicate an environment or execution path issue. Stdout: {process.stdout.strip()}")
         else:
             logger.info(f"Command executed successfully. STDOUT:\n{process.stdout}")
 
+        return process.returncode, process.stdout, process.stderr
+
     except subprocess.TimeoutExpired:
         logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")
-        return 1, "", f"Command timed out after {timeout} seconds." # MODIFIED
-    except subprocess.CalledProcessError:  # Added this specific exception handler
+        return 1, "", f"Command timed out after {timeout} seconds."
+    except subprocess.CalledProcessError as e:  # Added this specific exception handler
         logger.error(
-            f"Command failed with non-zero exit code (check=True): {' '.join(command)}"
+            f"Command failed with non-zero exit code (check=True): {' '.join(command)}. Stderr: {e.stderr.strip()}"
         )
-        return 1, "", "Command failed with non-zero exit code." # MODIFIED
+        return e.returncode, e.stdout, e.stderr # Return actual stdout/stderr from CalledProcessError
     except Exception as e:
         logger.error(f"An error occurred while executing command: {e}", exc_info=True)
-        return 1, "", f"An unexpected error occurred: {e}" # MODIFIED
+        return 1, "", f"An unexpected error occurred: {e}"

@@ -65,10 +65,9 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        # REMOVED: metrics_collector: Any, # This argument was incorrectly added and caused the TypeError
     ):
         """Initialize with debate context for analysis."""
-        self.initial_prompt = initial_prompt # FIXED: Corrected from 'self.metrics = metrics'
+        self.initial_prompt = initial_prompt
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_context = codebase_context
@@ -76,7 +75,6 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        # REMOVED: self.metrics_collector = metrics_collector # This was incorrectly stored
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
@@ -881,11 +879,11 @@ class FocusedMetricsCollector:
             "historical_analysis": self.analyze_historical_effectiveness(),
         }
 
-        total_functions_across_codebase = 0 # NEW: Initialize
-        total_loc_across_functions = 0 # NEW: Initialize
-        total_complexity_across_functions = 0 # NEW: Initialize
-        total_args_across_functions = 0 # NEW: Initialize
-        total_nesting_depth_across_codebase = 0 # NEW: Initialize
+        total_functions_across_codebase = 0
+        total_loc_across_functions = 0
+        total_complexity_across_functions = 0
+        total_args_across_functions = 0
+        total_nesting_depth_across_codebase = 0
 
         for root, _, files in os.walk(self.codebase_path):
             for file in files:
@@ -1042,8 +1040,6 @@ class FocusedMetricsCollector:
         }
         try:
             # Run pytest with coverage and generate a JSON report
-            # FIX: Construct the command without the python executable,
-            # allowing execute_command_safely to handle it.
             command = [
                 "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
             ]
@@ -1051,16 +1047,17 @@ class FocusedMetricsCollector:
             return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
 
             # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
-            # FIX: Only consider exit code 0 as full success for the command itself.
-            # Test failures (exit code 1) are still a valid execution for coverage reporting.
-            if return_code not in (0, 1): # Keep 0 or 1 as valid for coverage report generation
+            # Only consider exit code 0 or 1 as valid execution for coverage reporting.
+            if return_code not in (0, 1):
                 logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
                 # Provide more detailed error info, including stdout for debugging.
                 coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
                 return coverage_data
 
             coverage_json_path = Path("coverage.json")
-            if coverage_json_path.exists():
+            # Check if the command actually produced the coverage.json file
+            # and if the return code indicates a successful or partially successful run (0 or 1 for pytest)
+            if coverage_json_path.exists() and return_code in (0, 1):
                 with open(coverage_json_path, "r", encoding="utf-8") as f:
                     report = json.load(f)
                 
@@ -1075,7 +1072,7 @@ class FocusedMetricsCollector:
                 if return_code == 1:
                     coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
                 coverage_json_path.unlink()
-            else:
+            elif return_code not in (0, 1): # If command failed with unexpected code
                 coverage_data["coverage_details"] = "Coverage JSON report not found."
 
         except Exception as e:
@@ -1381,7 +1378,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         ruff_detailed_issues = [
             issue
-            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", []) # Use self.collected_metrics
+            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", [])
             if issue.get("source") == "ruff_lint"
             or issue.get("source") == "ruff_format"
         ]
@@ -1398,7 +1395,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         bandit_detailed_issues = [
             issue
-            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", []) # Use self.collected_metrics
+            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", [])
             if issue.get("source") == "bandit"
         ]
         for issue in bandit_detailed_issues[:3]:
@@ -1412,7 +1409,7 @@ This document outlines the refined methodology for identifying and implementing 
                     f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
                 )
 
-        ruff_issues_count = self.collected_metrics.get("code_quality", {}).get( # Use self.collected_metrics
+        ruff_issues_count = self.collected_metrics.get("code_quality", {}).get(
             "ruff_issues_count", 0
         )
         if ruff_issues_count > 100:
@@ -1481,12 +1478,12 @@ This document outlines the refined methodology for identifying and implementing 
                 }
             )
 
-        bandit_issues_count = self.collected_metrics.get("security", {}).get( # Use self.collected_metrics
+        bandit_issues_count = self.collected_metrics.get("security", {}).get(
             "bandit_issues_count", 0
         )
         pyproject_config_error = any(
             block.get("type") == "PYPROJECT_CONFIG_PARSE_ERROR"
-            for block in self.collected_metrics.get("configuration_analysis", {}).get( # Use self.collected_metrics
+            for block in self.collected_metrics.get("configuration_analysis", {}).get(
                 "malformed_blocks", []
             )
         )
@@ -1555,7 +1552,7 @@ This document outlines the refined methodology for identifying and implementing 
             )
 
         zero_test_coverage = (
-            self.collected_metrics.get("maintainability", {}) # Use self.collected_metrics
+            self.collected_metrics.get("maintainability", {})
             .get("test_coverage_summary", {})
             .get("overall_coverage_percentage", 0)
             == 0
@@ -1612,46 +1609,46 @@ def llm_provider_instance():
 
 def test_llm_provider_initialization(llm_provider_instance):
     \"\"\"Test that the GeminiProvider initializes correctly.\"\"\"
-    assert llm_provider_instance.model_name == "mock-model"
+    assert llm_provider_instance.model_name == \"mock-model\"
 
 def test_llm_provider_generate_content_summary(llm_provider_instance):
     \"\"\"Test content generation for a summarization prompt.\"\"\"
-    prompt = "Please summarize the following text: ..."
+    prompt = \"Please summarize the following text: ...\"
     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
         prompt=prompt,
-        system_prompt="You are a helpful assistant.",
+        system_prompt=\"You are a helpful assistant.\",
         temperature=0.7,
         max_tokens=100,
     )
-    assert response_text == "This is a simulated summary."
+    assert response_text == \"This is a simulated summary.\"
     assert input_tokens > 0
     assert output_tokens > 0
     assert is_truncated == False
 
 def test_llm_provider_generate_content_analysis(llm_provider_instance):
     \"\"\"Test content generation for an analysis prompt.\"\"\"
-    prompt = "Analyze the provided data: ..."
+    prompt = \"Analyze the provided data: ...\"
     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
         prompt=prompt,
-        system_prompt="You are a helpful assistant.",
+        system_prompt=\"You are a helpful assistant.\",
         temperature=0.7,
         max_tokens=100,
     )
-    assert response_text == "this is a simulated analysis."
+    assert response_text == \"this is a simulated analysis.\"
     assert input_tokens > 0
     assert output_tokens > 0
     assert is_truncated == False
 
 def test_llm_provider_generate_content_default(llm_provider_instance):
-    \"\"\"Test content generation for a general prompt.\"\"\"
-    prompt = "What is the capital of France?"
+    \"\"\"Test content generation for a general prompt.\"\"\"\
+    prompt = \"What is the capital of France?\"
     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
         prompt=prompt,
-        system_prompt="You are a helpful assistant.",
+        system_prompt=\"You are a helpful assistant.\",
         temperature=0.7,
         max_tokens=100,
     )
-    assert response_text == "This is a simulated default response."
+    assert response_text == \"This is a simulated default response.\"
     assert input_tokens > 0
     assert output_tokens > 0
     assert is_truncated == False
@@ -1687,34 +1684,34 @@ def mock_app_config():
 
 def test_format_prompt_basic(prompt_manager):
     \"\"\"Test format_prompt with basic variable substitution.\"\"\"
-    template = "Hello, {name}!"
-    kwargs = {"name": "World"}
+    template = \"Hello, {name}!\"
+    kwargs = {\"name\": \"World\"}
     result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
-    assert result == "Hello, World!"
+    assert result == \"Hello, World!\"
 
 def test_format_prompt_with_codebase_context_self_analysis(prompt_manager):
     \"\"\"Test format_prompt with codebase context for self-analysis.\"\"\"
-    template = "Analyze this: {issue}"
+    template = \"Analyze this: {issue}\"
     codebase_context = {
-        "file_structure": {
-            "critical_files_preview": {
-                "file1.py": "def func(): pass"
+        \"file_structure\": {
+            \"critical_files_preview\": {
+                \"file1.py\": \"def func(): pass\"
             }
         }
     }
-    kwargs = {"issue": "bug"}
+    kwargs = {\"issue\": \"bug\"}
     result = prompt_manager.format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs) # Use prompt_manager instance
-    assert "CODEBASE CONTEXT" in result
-    assert "file1.py" in result
-    assert "bug" in result
+    assert \"CODEBASE CONTEXT\" in result
+    assert \"file1.py\" in result
+    assert \"bug\" in result
 
 def test_format_prompt_missing_key(prompt_manager):
-    \"\"\"Test format_prompt handles missing keys gracefully.\"\"\"
-    template = "Hello, {name}!"
-    kwargs = {"age": 30} # Missing 'name'
+    \"\"\"Test format_prompt handles missing keys gracefully.\"\"\"\
+    template = \"Hello, {name}!\"
+    kwargs = {\"age\": 30} # Missing 'name'
     result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
-    assert "Missing key for prompt formatting" in result # Check for warning message
-    assert "{name}" in result # The placeholder should remain if not formatted
+    assert \"Missing key for prompt formatting\" in result # Check for warning message
+    assert \"{name}\" in result # The placeholder should remain if not formatted
 """,
                         },
                     ],
@@ -1722,7 +1719,7 @@ def test_format_prompt_missing_key(prompt_manager):
             )
 
         high_token_personas = (
-            self.collected_metrics.get("performance_efficiency", {}) # Use self.collected_metrics
+            self.collected_metrics.get("performance_efficiency", {})
             .get("debate_efficiency_summary", {})
             .get("persona_token_breakdown", {})
         )
@@ -1741,7 +1738,7 @@ def test_format_prompt_missing_key(prompt_manager):
                 }
             )
 
-        content_misalignment_warnings = self.collected_metrics.get("reasoning_quality", {}).get( # Use self.collected_metrics
+        content_misalignment_warnings = self.collected_metrics.get("reasoning_quality", {}).get(
             "content_misalignment_warnings", 0
         )
         if content_misalignment_warnings > 3:
