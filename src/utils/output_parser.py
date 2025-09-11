@@ -186,57 +186,57 @@ class LLMOutputParser:
     def _repair_json_string(self, json_str: str) -> Tuple[str, List[str]]:
         """Applies common JSON repair heuristics and logs repairs."""
         repair_log = []
+        original_str = json_str
 
-        # 1. Handle the specific numbered array element issue (e.g., "0:{")
+        # Heuristic 1: Remove trailing commas
+        temp_str = re.sub(r",\s*([\}\]])", r"\1", json_str)
+        if temp_str != json_str:
+            repair_log.append("Removed trailing commas.")
+            json_str = temp_str
+
+        # Heuristic 2: Add missing closing braces/brackets
+        open_braces = json_str.count('{')
+        close_braces = json_str.count('}')
+        if open_braces > close_braces:
+            json_str += '}' * (open_braces - close_braces)
+            repair_log.append(f"Added {open_braces - close_braces} missing closing braces.")
+
+        open_brackets = json_str.count('[')
+        close_brackets = json_str.count(']')
+        if open_brackets > close_brackets:
+            json_str += ']' * (open_brackets - close_brackets)
+            repair_log.append(f"Added {open_brackets - close_brackets} missing closing brackets.")
+
+        # Heuristic 3: Handle the specific numbered array element issue (e.g., "0:{")
         temp_str = re.sub(r"\d+\s*:\s*{", "{", json_str)
         temp_str = re.sub(r",\s*\d+\s*:\s*{", ", {", temp_str)
         if temp_str != json_str:
             repair_log.append("Fixed numbered array elements (e.g., '0:{' -> '{').")
             json_str = temp_str
 
-        # 2. Handle cases where entire array is wrapped in quotes
-        temp_str = re.sub(r'"\[\s*{', "[{", json_str)
-        temp_str = re.sub(r'}\s*\]"', "}]", temp_str)
-        if temp_str != json_str:
-            repair_log.append("Fixed array incorrectly wrapped in quotes.")
-            json_str = temp_str
-
-        # 3. Replace single quotes with double quotes (careful not to break escaped quotes)
+        # Heuristic 4: Replace single quotes with double quotes (careful not to break escaped quotes)
         temp_str = re.sub(r"(?<!\\)\'", '"', json_str)
         if temp_str != json_str:
             repair_log.append("Replaced single quotes with double quotes.")
             json_str = temp_str
 
-        # 4. Handle unquoted keys (simple heuristic, might fail on complex cases)
+        # Heuristic 5: Handle unquoted keys (simple heuristic, might fail on complex cases)
         temp_str = re.sub(
             r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', json_str
         )
         if temp_str != json_str:
             repair_log.append("Added quotes to unquoted keys.")
             json_str = temp_str
-
-        # 5. Handle trailing commas in objects/arrays
-        temp_str = re.sub(r",\s*([\}\]])", r"\1", json_str)
+        
+        # Heuristic 6: Handle cases where entire array is wrapped in quotes
+        temp_str = re.sub(r'"\[\s*{', "[{", json_str)
+        temp_str = re.sub(r'}\s*\]"', "}]", temp_str)
         if temp_str != json_str:
-            repair_log.append("Removed trailing commas in objects/arrays.")
+            repair_log.append("Fixed array incorrectly wrapped in quotes.")
             json_str = temp_str
 
-        # 6. Balance braces and brackets (add missing closers at the end)
-        open_braces = json_str.count("{")
-        close_braces = json_str.count("}")
-        if open_braces > close_braces:
-            json_str += "}" * (open_braces - close_braces)
-            repair_log.append(
-                f"Added {open_braces - close_braces} missing closing braces."
-            )
-
-        open_brackets = json_str.count("[")
-        close_brackets = json_str.count("]")
-        if open_brackets > close_brackets:
-            json_str += "]" * (open_brackets - close_brackets)
-            repair_log.append(
-                f"Added {open_brackets - close_brackets} missing closing brackets."
-            )
+        if original_str != json_str:
+            self.logger.info(f"Repaired JSON string. Repairs: {', '.join(repair_log)}")
 
         return json_str, repair_log
 
@@ -281,6 +281,15 @@ class LLMOutputParser:
         """Attempts to parse JSON with incremental repair strategies."""
         repair_log = []
         current_json_str = json_str
+
+        # Attempt 0: Apply simple repairs before first parse attempt
+        repaired_first_pass, initial_repairs = self._repair_json_string(current_json_str)
+        if initial_repairs:
+            repair_log.extend([{"action": "pre_parse_repair", "details": r} for r in initial_repairs])
+            try:
+                return json.loads(repaired_first_pass), repair_log
+            except json.JSONDecodeError:
+                current_json_str = repaired_first_pass # Use repaired string for next steps
 
         # Attempt 1: Apply all standard repairs and try to load
         repaired_text, current_repairs = self._repair_json_string(current_json_str)
@@ -787,7 +796,7 @@ class LLMOutputParser:
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
                     if extracted_json_str is not None
-                    else raw_output_snippet
+                    else raw_output[:500] # Use raw_output_snippet for detection if extracted_json_str is None
                 )
                 if (
                     detected_suggestion

@@ -29,14 +29,14 @@ def mock_llm_client_success():
 @pytest.fixture
 def mock_llm_client_api_error():
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = APIError("Simulated API Error", code=500)
+    mock_client.models.generate_content.side_effect = APIError("Simulated API Error")
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 
 @pytest.fixture
 def mock_llm_client_rate_limit():
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = APIError("Rate limit exceeded", code=429)
+    mock_client.models.generate_content.side_effect = APIError("Rate limit exceeded")
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 

@@ -196,7 +196,7 @@ class CodebaseScanner:
             ".git/", "__pycache__/", "venv/", ".venv/", "node_modules/",
             "*.pyc", "*.log", "*.sqlite3", "*.db", "*.DS_Store",
             "data/", # Exclude data directory contents by default
-            "docs/", # Exclude docs directory contents by default, unless explicitly needed
+            # "docs/", # Exclude docs directory contents by default, unless explicitly needed (now included)
             "repo_contents.txt", "repo_to_single_file.sh", # Specific files
             ".env", # Exclude environment files
             "*.bak", # Exclude backup files
@@ -204,8 +204,8 @@ class CodebaseScanner:
         include_extensions = [
             ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".txt", ".sh",
             ".dockerignore", ".gitignore", ".pre-commit-config.yaml", "Dockerfile",
-            "requirements.txt", "requirements-prod.txt", "LICENSE", "README.md",
             ".github/workflows/*.yml", # Include GitHub Actions workflows
+            "requirements.txt", "requirements-prod.txt", "LICENSE", "README.md",
         ]
         
         for root, dirs, files in os.walk(self.project_root):
@@ -348,6 +348,10 @@ class ContextRelevanceAnalyzer:
             if not files_with_content:
                 self.logger.warning("No non-empty file content found in context for embedding.")
                 return {}
+            
+            # NEW: Log if the model.encode call fails
+            if not hasattr(self, "model") or self.model is None:
+                raise RuntimeError("SentenceTransformer model not loaded for embedding.")
 
             file_paths = list(files_with_content.keys())
             file_contents = list(files_with_content.values())
@@ -355,7 +359,10 @@ class ContextRelevanceAnalyzer:
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
             if not hasattr(self, "model") or self.model is None:
                 raise RuntimeError("SentenceTransformer model not loaded.")
-
+            
+            # Ensure file_contents are not empty before encoding
+            if not file_contents:
+                self.logger.warning("No file contents to encode for embeddings.")
             file_embeddings_list = self.model.encode(file_contents)
 
             embeddings = dict(zip(file_paths, file_embeddings_list))

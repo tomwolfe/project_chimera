@@ -11,6 +11,7 @@ from src.persona_manager import PersonaManager # Import PersonaManager
 from src.token_tracker import TokenUsageTracker # Import TokenUsageTracker
 from src.config.settings import ChimeraSettings # Import ChimeraSettings
 from src.context.context_analyzer import ContextRelevanceAnalyzer # Import ContextRelevanceAnalyzer
+from src.models import PersonaConfig # Import PersonaConfig
 from src.utils.output_parser import LLMOutputParser # Import LLMOutputParser
 from src.self_improvement.metrics_collector import FocusedMetricsCollector # Import FocusedMetricsCollector
 from src.exceptions import TokenBudgetExceededError, SchemaValidationError # Import specific exceptions

@@ -1,4 +1,3 @@
-# src/self_improvement/metrics_collector.py
 import os
 import json
 import ast
@@ -12,6 +11,7 @@ import toml
 from pydantic import ValidationError
 from datetime import datetime
 import sys
+import difflib # NEW: Import difflib for regenerating diffs
 
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
@@ -818,286 +818,6 @@ class FocusedMetricsCollector:
             )
             return []
 
-    def collect_all_metrics(self) -> Dict[str, Any]:
-        """
-        Collect all relevant metrics from the codebase and debate history for self-improvement analysis.
-        """
-        # Ensure reasoning_quality_metrics is populated before being used in the 'metrics' dict
-        self.analyze_reasoning_quality(
-            self.debate_history, self.intermediate_steps.get("Final_Synthesis_Output", {})
-        )
-
-        metrics = {
-            "code_quality": {
-                "ruff_issues_count": 0,
-                "complexity_metrics": {
-                    "avg_cyclomatic_complexity": 0.0,
-                    "avg_loc_per_function": 0.0,
-                    "avg_num_arguments": 0.0,
-                    "avg_max_nesting_depth": 0.0,
-                },
-                "code_smells_count": 0,
-                "detailed_issues": [],
-                "ruff_violations": [],
-            },
-            "security": {
-                "bandit_issues_count": 0,
-                "ast_security_issues_count": 0,
-            },
-            "performance_efficiency": {
-                "token_usage_stats": self._collect_token_usage_stats(),
-                "debate_efficiency_summary": self._analyze_debate_efficiency(),
-                "potential_bottlenecks_count": 0,
-            },
-            "robustness": {
-                "schema_validation_failures_count": len(
-                    self.intermediate_steps.get("malformed_blocks", [])
-                ),
-                "unresolved_conflict_present": bool(
-                    self.intermediate_steps.get("Unresolved_Conflict")
-                ),
-                "conflict_resolution_attempted": bool(
-                    self.intermediate_steps.get("Conflict_Resolution_Attempt")
-                ),
-            },
-            "maintainability": {"test_coverage_summary": self._assess_test_coverage()},
-            "configuration_analysis": FocusedMetricsCollector._collect_configuration_analysis( # Call as class method
-                self.codebase_path
-            ).model_dump(by_alias=True),
-            "deployment_robustness": FocusedMetricsCollector._collect_deployment_robustness_metrics( # Call as class method
-                self.codebase_path
-            ).model_dump(by_alias=True),
-            "reasoning_quality": self.reasoning_quality_metrics, # Now this is safe
-            "historical_analysis": self.analyze_historical_effectiveness(),
-        }
-
-        total_functions_across_codebase = 0
-        total_loc_across_functions = 0
-        total_complexity_across_functions = 0
-        total_args_across_functions = 0
-        total_nesting_depth_across_codebase = 0
-
-        # Iterate through raw_file_contents for Python files
-        for relative_file_path, content in self.raw_file_contents.items():
-            if relative_file_path.endswith(".py"):
-                full_file_path = str(self.codebase_path / relative_file_path) # Construct full path for tools
-                try:
-                    if not content:
-                        logger.warning(f"Empty content for {relative_file_path}. Skipping analysis.")
-                        continue
-                    content_lines = content.splitlines()
-
-                    # Use full_file_path as key for cache for consistency with tools
-                    if full_file_path not in self.file_analysis_cache:
-                        self.file_analysis_cache[full_file_path] = {}
-
-                    ruff_issues = _run_ruff(content, full_file_path) # Call directly
-                    if ruff_issues:
-                        metrics["code_quality"]["ruff_issues_count"] += len(
-                            ruff_issues
-                        )
-                        metrics["code_quality"]["detailed_issues"].extend(
-                            ruff_issues
-                        )
-                        metrics["code_quality"]["ruff_violations"].extend(
-                            ruff_issues
-                        )
-                        self.file_analysis_cache[full_file_path]["ruff_issues"] = ruff_issues
-
-                    bandit_issues = _run_bandit(content, full_file_path) # Call directly
-                    if bandit_issues:
-                        metrics["security"]["bandit_issues_count"] += len(
-                            bandit_issues
-                        )
-                        metrics["code_quality"]["detailed_issues"].extend(
-                            bandit_issues
-                        )
-                        self.file_analysis_cache[full_file_path]["bandit_issues"] = bandit_issues
-
-                    ast_security_issues = _run_ast_security_checks( # Call directly
-                        content, full_file_path
-                    )
-                    if ast_security_issues:
-                        metrics["security"]["ast_security_issues_count"] += len(
-                            ast_security_issues
-                        )
-                        self.file_analysis_cache[full_file_path]["ast_security_issues"] = ast_security_issues
-                        metrics["code_quality"]["detailed_issues"].extend(
-                            ast_security_issues
-                        )
-
-                    file_function_metrics = self._analyze_python_file_ast(
-                        content, content_lines, full_file_path
-                    )
-
-                    for func_metric in file_function_metrics:
-                        total_functions_across_codebase += 1
-                        total_complexity_across_functions += func_metric[
-                            "cyclomatic_complexity"
-                        ]
-                        total_loc_across_functions += func_metric["loc"]
-                        total_args_across_functions += func_metric["num_arguments"]
-                        total_nesting_depth_across_codebase += func_metric[
-                            "max_nesting_depth"
-                        ]
-                        metrics["code_quality"]["code_smells_count"] += func_metric[
-                            "code_smells"
-                        ]
-                        metrics["performance_efficiency"][
-                            "potential_bottlenecks_count"
-                        ] += func_metric["potential_bottlenecks"]
-
-                except Exception as e:
-                    logger.error(
-                        f"Error collecting code metrics for {relative_file_path}: {e}",
-                        exc_info=True,
-                    )
-
-        if total_functions_across_codebase > 0:
-            metrics["code_quality"]["complexity_metrics"]["avg_cyclomatic_complexity"] = (
-                total_complexity_across_codebase / total_functions_across_codebase
-            )
-            metrics["code_quality"]["complexity_metrics"]["avg_loc_per_function"] = (
-                total_loc_across_functions / total_functions_across_codebase
-            )
-            metrics["code_quality"]["complexity_metrics"]["avg_num_arguments"] = (
-                total_args_across_functions / total_functions_across_codebase
-            )
-            metrics["code_quality"]["complexity_metrics"]["avg_max_nesting_depth"] = (
-                total_nesting_depth_across_codebase / total_functions_across_codebase
-            )
-
-        return metrics
-
-    def _collect_token_usage_stats(self) -> Dict[str, Any]:
-        """
-        Collects token usage statistics from debate intermediate steps.
-        """
-        total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
-        total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
-
-        phase_token_usage = {}
-        for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(
-                ("Total_", "context_", "synthesis_", "debate_")
-            ):
-                persona_name = key.replace("_Tokens_Used", "")
-                phase_token_usage[persona_name] = value
-
-        return {
-            "total_tokens": total_tokens,
-            "total_cost_usd": total_cost,
-            "persona_token_usage": phase_token_usage,
-        }
-
-    def _analyze_debate_efficiency(self) -> Dict[str, Any]:
-        """
-        Analyzes the efficiency of the debate process.
-        """
-        efficiency_summary = {
-            "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
-            "malformed_blocks_count": len(
-                self.intermediate_steps.get("malformed_blocks", [])
-            ),
-            "conflict_resolution_attempts": 1
-            if self.intermediate_steps.get("Conflict_Resolution_Attempt")
-            else 0,
-            "unresolved_conflict": bool(
-                self.intermediate_steps.get("Unresolved_Conflict")
-            ),
-            "average_turn_tokens": 0.0,
-            "persona_token_breakdown": {},
-        }
-
-        total_debate_tokens = self.intermediate_steps.get("debate_Tokens_Used", 0)
-        num_turns = efficiency_summary["num_turns"]
-        if num_turns > 0:
-            efficiency_summary["average_turn_tokens"] = total_debate_tokens / num_turns
-
-        for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(
-                ("Total_", "context_", "synthesis_", "debate_")
-            ):
-                persona_name = key.replace("_Tokens_Used", "")
-                efficiency_summary["persona_token_breakdown"][persona_name] = value
-
-        return efficiency_summary
-
-    def _assess_test_coverage(self) -> Dict[str, Any]:
-        """
-        Assesses test coverage for the codebase.
-        Executes pytest with coverage and parses the generated JSON report.
-        """
-        coverage_data = {
-            "overall_coverage_percentage": 0.0,
-            "coverage_details": "Failed to run coverage tool.",
-        }
-        try:
-            # Run pytest with coverage and generate a JSON report
-            command = [
-                "pytest", "-v", "tests/", "--cov=src", "--cov-report=json:coverage.json"
-            ]
-            # Use execute_command_safely for robustness
-            return_code, stdout, stderr = execute_command_safely(command, timeout=120, check=False)
-
-            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
-            # Only consider exit code 0 or 1 as valid execution for coverage reporting.
-            if return_code not in (0, 1):
-                logger.warning(f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}")
-                # Provide more detailed error info, including stdout for debugging.
-                coverage_data["coverage_details"] = f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
-                return coverage_data
-
-            coverage_json_path = Path("coverage.json")
-            # Check if the command actually produced the coverage.json file
-            # and if the return code indicates a successful or partially successful run (0 or 1 for pytest)
-            if coverage_json_path.exists() and return_code in (0, 1):
-                with open(coverage_json_path, "r", encoding="utf-8") as f:
-                    report = json.load(f)
-                
-                coverage_data["overall_coverage_percentage"] = report.get("totals", {}).get("percent_covered", 0.0)
-                coverage_data["covered_statements"] = report.get("totals", {}).get("covered_statements", 0)
-                coverage_data["total_files"] = report.get("totals", {}).get("num_statements", 0)
-                coverage_data["total_python_files_analyzed"] = len(report.get("files", {}))
-                coverage_data["files_covered_count"] = sum(1 for file_report in report.get("files", {}).values() if file_report.get("percent_covered", 0) > 0)
-
-                coverage_data["coverage_details"] = "Coverage report generated successfully."
-                # NEW: Add a note if tests failed, even if coverage command ran
-                if return_code == 1:
-                    coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
-                coverage_json_path.unlink()
-            elif return_code not in (0, 1): # If command failed with unexpected code
-                coverage_data["coverage_details"] = "Coverage JSON report not found."
-
-        except Exception as e:
-            logger.error(f"Error assessing test coverage: {e}", exc_info=True)
-            coverage_data["coverage_details"] = f"Error during coverage assessment: {e}"
-
-        return coverage_data
-
-    @classmethod
-    def _analyze_python_file_ast(
-        cls, content: str, content_lines: List[str], file_path: str
-    ) -> List[Dict[str, Any]]:
-        """
-        Analyzes a Python file's AST for complexity, lines of code in functions,
-        number of functions, code smells, and potential bottlenecks.
-        """
-        try:
-            tree = ast.parse(content)
-            visitor = ComplexityVisitor(content_lines)
-            visitor.visit(tree)
-            return visitor.function_metrics
-        except SyntaxError as e:
-            logger.error(f"Syntax error in {file_path} during AST analysis: {e}")
-            return []
-        except Exception as e:
-            logger.error(
-                f"Unexpected error during AST analysis for {file_path}: {e}",
-                exc_info=True,
-            )
-            return []
-
     def save_improvement_results(
         self,
         suggestions: List[Dict],
@@ -1304,6 +1024,92 @@ class FocusedMetricsCollector:
         """Returns the historical counts of schema validation failures for self-improvement suggestions."""
         return self._historical_schema_validation_failures
 
+    def _validate_and_fix_code_suggestion(self, code_change: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Internally validates a code suggestion using Ruff and Bandit.
+        If Ruff formatting issues are found, it attempts to auto-fix them.
+        Returns the (potentially fixed) code change and any remaining issues.
+        """
+        file_path_str = code_change.get("FILE_PATH")
+        action = code_change.get("ACTION")
+        content = code_change.get("FULL_CONTENT") or ""
+        diff_content = code_change.get("DIFF_CONTENT")
+
+        if not file_path_str or not action or not content:
+            return code_change # Cannot validate malformed change
+
+        if not file_path_str.endswith(".py"):
+            return code_change # Only validate Python files
+
+        # Create a temporary file for validation
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", encoding="utf-8", delete=False) as temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            tmp_file_path = Path(temp_file.name)
+
+        try:
+            # 1. Run Ruff Format (and auto-fix)
+            format_command = [
+                "ruff", "format", str(tmp_file_path)
+            ]
+            execute_command_safely(format_command, timeout=30, check=False)
+            
+            # Read the (potentially fixed) content back
+            fixed_content = tmp_file_path.read_text(encoding="utf-8")
+            
+            # 2. Run Ruff Check (linting) and Bandit (security) on the fixed content
+            ruff_issues = _run_ruff(fixed_content, file_path_str)
+            bandit_issues = _run_bandit(fixed_content, file_path_str)
+            ast_issues = _run_ast_security_checks(fixed_content, file_path_str)
+
+            all_issues = ruff_issues + bandit_issues + ast_issues
+
+            if fixed_content != content:
+                # If content was fixed, update the code_change
+                code_change["FULL_CONTENT"] = fixed_content
+                # If it was a MODIFY action with DIFF_CONTENT, regenerate the diff
+                if action == "MODIFY" and diff_content:
+                    original_file_content = self.raw_file_contents.get(file_path_str, "")
+                    code_change["DIFF_CONTENT"] = difflib.unified_diff(
+                        original_file_content.splitlines(keepends=True),
+                        fixed_content.splitlines(keepends=True),
+                        fromfile=f"a/{file_path_str}",
+                        tofile=f"b/{file_path_str}",
+                        lineterm="",
+                    )
+                logger.info(f"Auto-fixed formatting for {file_path_str}. Remaining issues: {len(all_issues)}")
+            
+            if all_issues:
+                # Attach remaining issues to the code_change for reporting
+                code_change.setdefault("validation_issues", []).extend(all_issues)
+
+        except Exception as e:
+            logger.error(f"Error during internal validation/fix for {file_path_str}: {e}", exc_info=True)
+            code_change.setdefault("validation_issues", []).append({
+                "type": "Internal Validation Error",
+                "message": f"Failed to internally validate/fix: {e}"
+            })
+        finally:
+            if tmp_file_path and tmp_file_path.exists():
+                os.unlink(tmp_file_path)
+        
+        return code_change
+
+    def _process_suggestions_for_quality(self, suggestions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Iterates through suggestions and applies internal validation and auto-fixing
+        to code changes.
+        """
+        processed_suggestions = []
+        for suggestion in suggestions:
+            if "CODE_CHANGES_SUGGESTED" in suggestion and suggestion["CODE_CHANGES_SUGGESTED"]:
+                processed_code_changes = []
+                for code_change in suggestion["CODE_CHANGES_SUGGESTED"]:
+                    processed_code_changes.append(self._validate_and_fix_code_suggestion(code_change))
+                suggestion["CODE_CHANGES_SUGGESTED"] = processed_code_changes
+            processed_suggestions.append(suggestion)
+        return processed_suggestions
+
     def analyze(self) -> List[Dict[str, Any]]:
         """
         Performs the self-analysis and generates improvement suggestions.
@@ -1343,7 +1149,7 @@ This document outlines the refined methodology for identifying and implementing 
     *   **Reasoning Quality:** Accuracy on specific benchmarks, logical consistency, coherence, factual correctness.
     *   **Robustness:** Performance under noisy or adversarial inputs, graceful degradation.
     *   **Efficiency:** Inference latency, token usage per query, computational cost.
-3.  **Experimental Interventions:** Suggestions will be framed as experiments. Each suggestion will propose a specific intervention (e.g., \"fine-tune on dataset X\", \"adjust temperature parameter to Y\", \"implement retrieval-augmented generation with source Z\") and the metrics to evaluate its success.
+3.  **Experimental Interventions:** Suggestions will be framed as experiments. Each suggestion will propose a specific intervention (e.g., \"fine-tune on dataset X\", \"adjust temperature parameter to Y\", \"implement retrieval-augmented generation with source Z\") and the metrics to evaluate its its success.
 4.  **80/20 Principle Applied to Experiments:** Identify interventions with the highest potential impact on the defined metrics, prioritizing those that address core AI capabilities.
 
 ## Process:
@@ -1366,6 +1172,149 @@ This document outlines the refined methodology for identifying and implementing 
                 }
             )
             return suggestions
+
+        # --- NEW: Incorporate Historical Analysis ---
+        # Retrieve historical analysis data
+        historical_data = self.analyze_historical_effectiveness()
+        top_performing_areas = {item['area']: item['success_rate'] for item in historical_data.get('top_performing_areas', [])}
+        common_failure_modes = {item['metric']: item['occurrences'] for item in historical_data.get('common_failure_modes', [])}
+
+        # Add a suggestion based on historical data if available
+        if historical_data.get("total_attempts", 0) > 0:
+            if historical_data.get("success_rate", 0) < 0.5 and historical_data.get("total_attempts", 0) > 5: # If overall success rate is low and enough data
+                suggestions.append({
+                    "AREA": "Reasoning Quality",
+                    "PROBLEM": f"Overall self-improvement success rate is low ({historical_data['success_rate']:.1%}). This indicates a need to refine the self-improvement methodology or prompt engineering.",
+                    "PROPOSED_SOLUTION": "Review the `Self_Improvement_Analyst`'s system prompt and the overall debate flow. Prioritize clarity in instructions and ensure the AI is focused on actionable, AI-centric improvements. Consider A/B testing different prompt versions.",
+                    "EXPECTED_IMPACT": "Improved reliability and effectiveness of the self-improvement loop, leading to more successful code changes and AI enhancements.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "personas.yaml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/personas.yaml
++++ b/personas.yaml
+@@ -100,7 +100,10 @@
+       You are Project Chimera's Self-Improvement Analyst. Your core mission is to identify the most impactful improvements for Project Chimera, strictly adhering to the 80/20 Pareto principle.
+       Prioritize enhancements in the following order: **reasoning quality, robustness, efficiency, and maintainability.**
+       Your analysis must be concise, evidence-based, and directly actionable. For each suggestion, provide a clear rationale and specific, actionable code modifications.
+-      Identify ONLY the top 1-3 most impactful changes.
++      Identify ONLY the top 1-3 most impactful changes.
++
++      **CRITICAL: Focus on improving the AI's own capabilities (reasoning, robustness, efficiency) and the self-improvement process itself. Frame suggestions as experiments or methodological adjustments where appropriate. Code changes can include modifications to persona system prompts, prompt engineering logic, data processing scripts, or conceptual documentation outlining new AI strategies.**
+ 
+       ---
+       **CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION** If the provided `Conflict Resolution Summary` explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST **ABSOLUTELY AND WITHOUT EXCEPTION** adhere to that resolution. In such cases: - Your `IMPACTFUL_SUGGESTIONS` should contain **ONLY** suggestions focused on resolving the lack of codebase context (e.g., suggesting a `docs/project_chimera_context.md` file). - For any such suggestions, the `CODE_CHANGES_SUGGESTED` array MUST be EMPTY for items that would normally require direct codebase access. - If a conceptual change is needed, suggest an 'ADD' action to a new documentation file (e.g., `docs/security_guidance.md`) and put the conceptual content in `FULL_CONTENT`. - If the conflict resolution dictates no code changes, then `CODE_CHANGES_SUGGESTED` for *all* other suggestions MUST be an empty array `[]`. ---
+"""
+                        }
+                    ]
+                })
+            elif top_performing_areas and historical_data.get("total_attempts", 0) > 5:
+                # Suggest leveraging a top-performing area
+                best_area = max(top_performing_areas, key=top_performing_areas.get)
+                suggestions.append({
+                    "AREA": "Reasoning Quality",
+                    "PROBLEM": f"Historical analysis shows '{best_area}' is a top-performing area for self-improvement (success rate: {top_performing_areas[best_area]:.1%}).",
+                    "PROPOSED_SOLUTION": f"Double down on strategies that have proven effective in '{best_area}'. Analyze successful past suggestions in this area to extract common patterns and apply them to new problems.",
+                    "EXPECTED_IMPACT": "Increased efficiency and success rate of self-improvement by focusing on proven methods.",
+                    "CODE_CHANGES_SUGGESTED": []
+                })
+            elif common_failure_modes and historical_data.get("total_attempts", 0) > 5:
+                # Suggest addressing a common failure mode
+                most_common_failure = max(common_failure_modes, key=common_failure_modes.get)
+                suggestions.append({
+                    "AREA": "Robustness",
+                    "PROBLEM": f"Historical analysis identifies '{most_common_failure}' as a common failure mode ({common_failure_modes[most_common_failure]} occurrences).",
+                    "PROPOSED_SOLUTION": f"Implement specific safeguards or prompt adjustments to mitigate '{most_common_failure}'. For example, if it's 'schema_validation_failures_count', refine JSON output instructions or use more robust parsing.",
+                    "EXPECTED_IMPACT": "Reduced recurrence of known issues, improving the overall reliability of the self-improvement process.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "personas.yaml",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/personas.yaml
++++ b/personas.yaml
+@@ -200,7 +200,7 @@
+       **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
+       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
+       2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
+-      3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
++      3. ABSOLUTELY NO CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
+       4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
+       5. USE ONLY DOUBLE QUOTES for all keys and string values.
+       6. ENSURE COMMAS separate all properties in objects and elements in arrays.
+"""
+                        }
+                    ]
+                })
+            # Example: If token budget exceeded is common, suggest prompt optimization
+            if "token_budget_exceeded_count" in common_failure_modes and common_failure_modes["token_budget_exceeded_count"] > 2:
+                suggestions.append({
+                    "AREA": "Efficiency",
+                    "PROBLEM": f"Frequent token budget exceedances ({common_failure_modes['token_budget_exceeded_count']} occurrences) indicate prompts are too verbose or budgets are too tight.",
+                    "PROPOSED_SOLUTION": "Implement more aggressive prompt summarization in `src/utils/prompt_optimizer.py` for high-token personas. Review `core.py`'s token budget allocation logic. Encourage personas to be more concise in their outputs.",
+                    "EXPECTED_IMPACT": "Reduced token costs and improved debate completion rates.",
+                    "CODE_CHANGES_SUGGESTED": [
+                        {
+                            "FILE_PATH": "src/utils/prompt_optimizer.py",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": """--- a/src/utils/prompt_optimizer.py
++++ b/src/utils/prompt_optimizer.py
+@@ -100,7 +100,7 @@
+ }
+ 
+         # Regex to extract sections based on headings/markers
+-        # This needs to be robust to the exact prompt structure in personas.yaml
++        # This needs to be robust to the exact prompt structure in personas.yaml. Using more specific markers.
+         core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)\n---", prompt, re.DOTALL)
+         if core_mission_match:
+             sections["core_mission"] = core_mission_match.group(1).strip()
+@@ -110,28 +110,34 @@
+         if critical_instruction_match:
+             sections["critical_instruction_absolute_adherence"] = critical_instruction_match.group(1).strip()
+ 
+-        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION:\*\*|\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
++        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+         if security_analysis_match:
+             sections["security_analysis"] = security_analysis_match.group(1).strip()
+ 
+-        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION:\*\*.*?)(?=\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
++        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+         if token_optimization_match:
+             sections["token_optimization"] = token_optimization_match.group(1).strip()
+         
+-        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY:\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
++        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
+         if testing_strategy_match:
+             sections["testing_strategy"] = testing_strategy_match.group(1).strip()
+ 
+-        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)\n---", prompt, re.DOTALL)
++        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
+         if ai_reasoning_match:
+             sections["ai_reasoning_quality"] = ai_reasoning_match.group(1).strip()
+ 
+-        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput)", prompt, re.DOTALL)
++        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*|\Z)", prompt, re.DOTALL)
+         if json_instructions_match:
+             sections["critical_json_output_instructions"] = json_instructions_match.group(1).strip()
+ 
+-        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
++        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
+         if json_schema_match:
+             sections["json_schema"] = json_schema_match.group(1).strip()
+ 
+-        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas
+-        # This order can be adjusted based on observed LLM behavior
++        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas.
++        # The order is crucial for effective truncation.
++        # Core mission and JSON schema/instructions are always critical.
++        # Specific analysis areas (security, token, testing, reasoning) can be dynamically prioritized
++        # or truncated more aggressively if the overall prompt is too long.
+                 prioritized_sections = [
+                     sections["core_mission"],
+                     sections["critical_instruction_absolute_adherence"],
+"""
+                        }
+                    ]
+                })
 
         top_ruff_issues_snippets = []
         top_bandit_issues_snippets = []
@@ -1746,13 +1695,13 @@ def test_format_prompt_missing_key(prompt_manager):
                 }
             )
 
-        final_suggestions = suggestions[:3]
+        final_suggestions = self._process_suggestions_for_quality(suggestions[:3]) # NEW: Process suggestions for quality
 
         logger.info(
             f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
         )
 
-        return suggestions
+        return final_suggestions
 
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")
