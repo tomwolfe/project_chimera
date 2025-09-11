@@ -1611,11 +1611,28 @@ class SocraticDebate:
             "warning",
             "Metrics still too large after aggressive truncation. Converting to high-level summary string.",
         )
+        # Get performance efficiency metrics with safe access
+        perf_metrics = metrics.get('performance_efficiency', {})
+        token_usage = perf_metrics.get('token_usage_stats', {})
+        
+        # Safely extract values with defaults
+        total_tokens = token_usage.get('total_tokens', 'N/A')
+        total_cost_usd = token_usage.get('total_cost_usd', 0.0)
+        
+        # Get security metrics with safe access
+        security_metrics = metrics.get('security', {})
+        high_severity_issues = security_metrics.get('high_severity_issues', 0)
+        medium_severity_issues = security_metrics.get('medium_severity_issues', 0)
+        
+        # Get code quality metrics with safe access
+        code_quality_metrics = metrics.get('code_quality', {})
+        ruff_issues = code_quality_metrics.get('ruff_issues_count', 0)
+        maintainability_index = code_quality_metrics.get('maintainability_index', 'N/A') # Assuming this might exist
+        
         summary_str = (
-            f"Code Quality: Ruff: {metrics['code_quality']['ruff_issues_count']}, Smells: {metrics['code_quality']['code_smells_count']}. "
-            f"Security: Bandit: {metrics['security']['bandit_issues_count']}, AST: {metrics['security']['ast_security_issues_count']}. "
-            f"Tokens: {metrics['performance_efficiency']['token_usage_stats']['total_tokens']}, Cost: ${metrics['performance_efficiency']['token_usage_stats']['total_cost_usd']:.4f}. "
-            f"Robustness: Schema failures: {metrics['robustness']['schema_validation_failures_count']}."
+            f"Tokens: {total_tokens}, Cost: ${total_cost_usd:.4f}. "
+            f"Security: {high_severity_issues} high, {medium_severity_issues} medium severity issues. "
+            f"Code Quality: {ruff_issues} Ruff issues, Maintainability Index: {maintainability_index}."
         )
         trimmed_summary_str = self.tokenizer.truncate_to_token_limit(
             summary_str, max(100, int(max_tokens * 0.5))
@@ -1673,7 +1690,7 @@ class SocraticDebate:
 
         if current_tokens > max_tokens:
             return self._create_fallback_metrics_summary_string(
-                metrics, max_tokens
+                summarized_metrics, max_tokens # MODIFIED: Pass summarized_metrics here, not original metrics
             )
 
         return summarized_metrics

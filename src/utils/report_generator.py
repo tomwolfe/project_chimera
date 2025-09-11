@@ -68,6 +68,18 @@ def generate_markdown_report(
     md_content += strip_ansi_codes(process_log_output)
     md_content += "\n```\n\n"
 
+    # Helper function to convert Pydantic models to dicts
+    def convert_to_serializable(obj):
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        elif hasattr(obj, 'dict'): # Fallback for Pydantic v1 if model_dump is not present
+            return obj.dict()
+        elif isinstance(obj, dict):
+            return {k: convert_to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_to_serializable(item) for item in obj]
+        return obj
+
     if config_params.get("show_intermediate_steps", True):
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
@@ -103,29 +115,26 @@ def generate_markdown_report(
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
             md_content += f"### {display_name}\n\n"
-            if isinstance(content, dict):
+            # Convert to serializable format before dumping
+            content_serializable = convert_to_serializable(content)
+            if isinstance(content_serializable, dict):
                 md_content += "```json\n"
-                md_content += json.dumps(content, indent=2)
+                md_content += json.dumps(content_serializable, indent=2)
                 md_content += "\n```\n"
             else:
-                md_content += f"```markdown\n{content}\n```\n"
+                md_content += f"```markdown\n{content_serializable}\n```\n"
             md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
     md_content += "---\n\n"
     md_content += "## Final Synthesized Answer\n\n"
     
-    def convert_final_answer(final_answer_input):
-        """Converts Pydantic models to dictionaries using model_dump()."""
-        if hasattr(final_answer_input, 'model_dump'):
-            return final_answer_input.model_dump()
-        return final_answer_input
-
-    converted_final_answer = convert_final_answer(final_answer)
+    # Convert final answer to serializable format
+    final_answer_serializable = convert_to_serializable(final_answer)
     
-    if isinstance(converted_final_answer, dict):
+    if isinstance(final_answer_serializable, dict):
         md_content += "```json\n"
-        md_content += json.dumps(converted_final_answer, indent=2)
+        md_content += json.dumps(final_answer_serializable, indent=2)
     else:
-        md_content += f"{converted_final_answer}\n\n"
+        md_content += f"{final_answer_serializable}\n\n"
     
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
