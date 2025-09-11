@@ -1,14 +1,18 @@
-# src/utils/report_generator.py
+import datetime # Needed for report_date
+import json     # Needed for json.dumps
+import re       # Needed for strip_ansi_codes
+from typing import Any, Dict, List # Needed for type hints
 
-import datetime
-import json
-import re
-from typing import Any, Dict, List
-from pydantic import BaseModel # NEW: Import BaseModel
+# No other imports are needed for the functions in this file.
+# The previous imports from src.utils.path_utils, src.utils.output_parser,
+# src.utils.code_utils, and many standard library modules were unnecessary.
 
-def strip_ansi_codes(text):
+
+def strip_ansi_codes(text: str) -> str:
+    """Removes ANSI escape codes from text."""
     ansi_escape_re = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     return ansi_escape_re.sub("", text)
+
 
 def generate_markdown_report(
     user_prompt: str,
@@ -18,6 +22,9 @@ def generate_markdown_report(
     config_params: Dict[str, Any],
     persona_audit_log: List[Dict[str, Any]],
 ) -> str:
+    """
+    Generates a comprehensive Markdown report from the analysis results.
+    """
     report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     md_content = f"# Project Chimera Socratic Debate Report\n\n"
     md_content += f"**Date:** {report_date}\n"
@@ -98,26 +105,28 @@ def generate_markdown_report(
             md_content += f"### {display_name}\n\n"
             if isinstance(content, dict):
                 md_content += "```json\n"
-                # FIX: Convert Pydantic models to dict before dumping
-                if isinstance(content, BaseModel):
-                    md_content += json.dumps(content.model_dump(by_alias=True), indent=2)
-                else:
-                    md_content += json.dumps(content, indent=2)
+                md_content += json.dumps(content, indent=2)
                 md_content += "\n```\n"
             else:
                 md_content += f"```markdown\n{content}\n```\n"
             md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
     md_content += "---\n\n"
     md_content += "## Final Synthesized Answer\n\n"
-    if isinstance(final_answer, dict):
+    
+    def convert_final_answer(final_answer_input):
+        """Converts Pydantic models to dictionaries using model_dump()."""
+        if hasattr(final_answer_input, 'model_dump'):
+            return final_answer_input.model_dump()
+        return final_answer_input
+
+    converted_final_answer = convert_final_answer(final_answer)
+    
+    if isinstance(converted_final_answer, dict):
         md_content += "```json\n"
-        # FIX: Convert Pydantic models to dict before dumping
-        if isinstance(final_answer, BaseModel):
-            md_content += json.dumps(final_answer.model_dump(by_alias=True), indent=2)
-        else:
-            md_content += json.dumps(final_answer, indent=2)
+        md_content += json.dumps(converted_final_answer, indent=2)
     else:
-        md_content += f"{final_answer}\n\n"
+        md_content += f"{converted_final_answer}\n\n"
+    
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"

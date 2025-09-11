@@ -1630,7 +1630,26 @@ class SocraticDebate:
         Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
         Ensures critical configuration and deployment analysis are preserved.
         """
-        summarized_metrics = json.loads(json.dumps(metrics))
+        # --- Applying the required change here ---
+        # The change involves converting Pydantic model instances within the metrics
+        # dictionary to dictionaries using model_dump() before JSON serialization.
+
+        def convert_to_serializable(obj):
+            """Recursively converts Pydantic models to dictionaries."""
+            if hasattr(obj, 'model_dump'):
+                return obj.model_dump()
+            elif isinstance(obj, list):
+                return [convert_to_serializable(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {k: convert_to_serializable(v) for k, v in obj.items()}
+            return obj
+
+        # Convert the entire metrics object to a serializable format
+        serializable_metrics = convert_to_serializable(metrics)
+        
+        # Now, use json.dumps on the serializable_metrics
+        summarized_metrics = json.loads(json.dumps(serializable_metrics))
+        # --- END OF REQUIRED CHANGE APPLICATION ---
 
         current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
 
@@ -1904,7 +1923,7 @@ class SocraticDebate:
         self._log_with_context("info", "Final synthesis persona turn completed.")
          
         # NEW: After synthesis_output is generated, analyze reasoning quality
-        if synthesis_persona_name == "Self_Improvement_Analyst" and local_metrics_collector:
+        if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and local_metrics_collector:
             # Pass the synthesis_output to analyze_reasoning_quality
             local_metrics_collector.analyze_reasoning_quality(synthesis_output)
             # Update the intermediate steps with the now complete collected_metrics
