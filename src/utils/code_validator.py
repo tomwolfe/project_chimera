@@ -1,5 +1,4 @@
 # src/utils/code_validator.py
-
 import io
 from typing import List, Tuple, Dict, Any, Optional, Union
 import subprocess
@@ -13,10 +12,9 @@ import logging
 from pathlib import Path
 import pycodestyle
 import ast
-import json  # Added for Bandit output parsing
-from collections import defaultdict # Used in validate_code_output_batch
+import json
+from collections import defaultdict
 
-# Import necessary utilities and models
 from src.utils.command_executor import execute_command_safely
 from src.utils.path_utils import (
     is_within_base_dir,
@@ -26,7 +24,7 @@ from src.utils.path_utils import (
 from src.models import (
     CodeChange,
 )
-from src.utils.code_utils import _get_code_snippet # NEW: Import for code snippets
+from src.utils.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,6 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             tmp_file_path = Path(temp_file.name)
 
             # 1. Run Ruff Linter
-            # Use execute_command_safely which prepends sys.executable -m
             lint_command = [
                 "ruff",
                 "check",
@@ -61,74 +58,60 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 str(tmp_file_path),
             ]
 
-            try:
-                # MODIFIED: Use execute_command_safely
-                return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
-                    lint_command,
-                    timeout=30,
-                    check=False, # Ruff returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
-                )
+            return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
+                lint_command,
+                timeout=30,
+                check=False,
+            )
 
-                if stdout_lint:
-                    if return_code_lint == 0 or return_code_lint == 1: # Ruff returns 1 for issues found
-                        try:
-                            lint_results = json.loads(stdout_lint)
-                            for issue in lint_results:
-                                line_num = issue.get("location", {}).get("row")
-                                issues.append(
-                                    {
-                                        "type": "Ruff Linting Issue",
-                                        "file": filename,
-                                        "line": line_num,
-                                        "column": issue.get("location", {}).get("column"),
-                                        "code": issue.get("code"),
-                                        "message": issue.get("message"),
-                                        "source": "ruff_lint",
-                                        "code_snippet": _get_code_snippet(
-                                            content_lines, line_num
-                                        ),
-                                    }
-                                )
-                        except json.JSONDecodeError as jde:
-                            logger.error(
-                                f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}",
-                                exc_info=True,
-                            )
+            if stdout_lint:
+                if return_code_lint == 0 or return_code_lint == 1:
+                    try:
+                        lint_results = json.loads(stdout_lint)
+                        for issue in lint_results:
+                            line_num = issue.get("location", {}).get("row")
                             issues.append(
                                 {
-                                    "type": "Validation Tool Error",
+                                    "type": "Ruff Linting Issue",
                                     "file": filename,
-                                    "message": f"Failed to parse Ruff lint output: {jde}",
+                                    "line": line_num,
+                                    "column": issue.get("location", {}).get("column"),
+                                    "code": issue.get("code"),
+                                    "message": issue.get("message"),
+                                    "source": "ruff_lint",
+                                    "code_snippet": _get_code_snippet(
+                                        content_lines, line_num
+                                    ),
                                 }
                             )
-                    else: # Ruff returned an unexpected non-zero exit code (not 0 or 1)
+                    except json.JSONDecodeError as jde:
                         logger.error(
-                            f"Ruff lint execution failed for {filename} with return code {return_code_lint}. Stderr: {stderr_lint}"
+                            f"Failed to parse Ruff lint JSON output for {filename}: {jde}. Output: {stdout_lint}",
+                            exc_info=True,
                         )
                         issues.append(
                             {
                                 "type": "Validation Tool Error",
                                 "file": filename,
-                                "message": f"Ruff lint command failed with unexpected exit code {return_code_lint}: {stderr_lint}",
+                                "message": f"Failed to parse Ruff lint output: {jde}",
                             }
                         )
-
-            except subprocess.CalledProcessError as e: # This block is now less likely to be hit for linting issues
-                logging.error(f"Ruff check failed: {e}")
-                issues.append(
-                    {
-                        "type": "Ruff Linting Issue",
-                        "message": f"Ruff command failed: {e.stderr}",
-                    }
-                )
-                stdout_lint = ""
-                stderr_lint = e.stderr
+                else:
+                    logger.error(
+                        f"Ruff lint execution failed for {filename} with return code {return_code_lint}. Stderr: {stderr_lint}"
+                    )
+                    issues.append(
+                        {
+                            "type": "Validation Tool Error",
+                            "file": filename,
+                            "message": f"Ruff lint command failed with unexpected exit code {return_code_lint}: {stderr_lint}",
+                        }
+                    )
 
             if stderr_lint:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
 
             # 2. Run Ruff Formatter Check
-            # Use execute_command_safely which prepends sys.executable -m
             format_command = [
                 "ruff",
                 "format",
@@ -186,7 +169,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     finally:
         if tmp_file_path and tmp_file_path.exists():
             try:
-                os.unlink(tmp_file_path) # Use os.unlink for Path objects
+                os.unlink(tmp_file_path)
             except OSError as e:
                 logger.warning(
                     f"Failed to delete temporary Ruff file {tmp_file_path}: {e}"
@@ -194,7 +177,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     return issues
 
 
-def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", confidence_level: str = "MEDIUM") -> List[Dict[str, Any]]: # MODIFIED: Added severity_level and confidence_level parameters
+def _run_bandit(content: str, filename: str, severity_level: str = "medium", confidence_level: str = "medium") -> List[Dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     tmp_file_path = None
@@ -212,15 +195,14 @@ def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", con
                 logger.warning(
                     f"Bandit config file not found at {bandit_config_path}. Running Bandit without explicit config."
                 )
-                config_args = ["--severity-level", severity_level, "--confidence-level", confidence_level] # MODIFIED: Use passed levels
+                # Use the provided lowercase severity_level and confidence_level
+                config_args = ["--severity-level", severity_level, "--confidence-level", confidence_level]
             else:
                 config_args = ["-c", str(bandit_config_path)]
-                # Ensure default high severity/confidence if not explicitly set in pyproject.toml for local runs
-                # This is a safeguard, CI should enforce stricter.
-                config_args.extend(["--severity-level", severity_level, "--confidence-level", confidence_level]) # MODIFIED: Use passed levels
+                # Use the provided lowercase severity_level and confidence_level
+                config_args.extend(["--severity-level", severity_level, "--confidence-level", confidence_level])
 
 
-            # Use execute_command_safely which prepends sys.executable -m
             command = [
                 "bandit",
                 "-q",
@@ -232,12 +214,12 @@ def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", con
             return_code, stdout, stderr = execute_command_safely(
                 command,
                 timeout=30,
-                check=False, # Bandit returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
+                check=False,
             )
 
             if (
                 return_code not in (0, 1)
-            ): # Bandit returns 1 for issues found, 0 for no issues
+            ):
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )
@@ -270,7 +252,7 @@ def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", con
                             )
                     if (
                         not bandit_results and stderr
-                    ): # If no JSON output but there was stderr, it's an error
+                    ):
                         logger.error(
                             f"Bandit produced no JSON output but had stderr: {stderr}"
                         )
@@ -328,7 +310,7 @@ def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", con
         )
     except (
         subprocess.CalledProcessError
-    ) as e: # This block will now only catch true failures (e.g., bad config, not just issues found)
+    ) as e:
         logger.error(
             f"Bandit execution failed with non-zero exit code: {e.returncode}. Stderr: {e.stderr.strip()}"
         )
@@ -480,7 +462,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                         if (
                             keyword.arg == "parser"
                             and isinstance(keyword.value, ast.Constant)
-                            and keyword.value.value is True
+                            and keyword.value.value is None
                         ):
                             has_parser_none = True
                             break
@@ -510,7 +492,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                 "type": "Security Vulnerability (AST)",
                                 "file": self.filename,
                                 "line": node.lineno,
-                                "message": "pickle.loads() with potentially untrusted data can execute arbitrary code. Use a safe serialization format like JSON.",
+                                "message": "pickle.loads() with untrusted data is dangerous; it can execute arbitrary code.",
                                 "code_snippet": snippet,
                             }
                         )
@@ -626,7 +608,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 def validate_code_output(
     parsed_change: Dict[str, Any],
     original_content: str = None,
-    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None, # NEW: Add cache parameter
+    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get("FILE_PATH")
@@ -649,7 +631,6 @@ def validate_code_output(
     is_python = file_path.suffix.lower() == ".py"
 
     if action == "ADD":
-        # For ADD, ensure the file does NOT exist already
         if file_path.exists():
             issues.append(
                 {
@@ -673,7 +654,6 @@ def validate_code_output(
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == "MODIFY":
-        # For MODIFY, ensure the file DOES exist
         if not file_path.exists():
             issues.append(
                 {
@@ -705,7 +685,6 @@ def validate_code_output(
                     }
                 )
             
-            # NEW: If cache is available, add pre-computed issues for original content
             if file_analysis_cache and file_path_str in file_analysis_cache:
                 cached_analysis = file_analysis_cache[file_path_str]
                 if "ruff_issues" in cached_analysis:
@@ -714,26 +693,21 @@ def validate_code_output(
                     issues.extend(cached_analysis["bandit_issues"])
                 if "ast_security_issues" in cached_analysis:
                     issues.extend(cached_analysis["ast_security_issues"])
-                logger.debug(f"Added pre-computed issues for original content of {file_path_str} from cache.")
-            else:
-                # If no cache or not in cache, the original content's issues would not be added here.
-                # This is fine, as the primary goal of this function is to validate the *proposed change*.
-                pass
+                logger.debug(
+                    f"Added pre-computed issues for original content of {file_path_str} from cache."
+                )
 
-            # Always run tools on the NEW content for MODIFY actions
             if is_python:
                 issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
         else:
-            # If no original content provided, just run tools on the new content
             if is_python:
                 issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == "REMOVE":
-        # For REMOVE, ensure the file DOES exist
         if not file_path.exists():
             issues.append(
                 {
@@ -772,7 +746,7 @@ def validate_code_output(
 def validate_code_output_batch(
     parsed_data: Dict,
     original_contents: Dict[str, str] = None,
-    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None, # NEW: Add cache parameter
+    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Validates a batch of code changes and aggregates issues per file."""
     if original_contents is None:
@@ -837,7 +811,7 @@ def validate_code_output_batch(
         if file_path:
             try:
                 original_content = original_contents.get(file_path)
-                # NEW: Pass the file_analysis_cache to validate_code_output
+                # Pass the file_analysis_cache to validate_code_output
                 validation_result = validate_code_output(change_entry, original_content, file_analysis_cache)
 
                 all_validation_results[file_path] = validation_result.get("issues", [])
@@ -869,7 +843,7 @@ def validate_code_output_batch(
                 }
             )
 
-    # --- New: Unit Test Presence Check ---
+    # --- Unit Test Presence Check ---
     python_files_modified_or_added = {
         change["FILE_PATH"]
         for change in code_changes_list

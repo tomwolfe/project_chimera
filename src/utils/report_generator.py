@@ -1,7 +1,10 @@
+# src/utils/report_generator.py
+
 import datetime
 import json
 import re
 from typing import Any, Dict, List
+from pydantic import BaseModel # NEW: Import BaseModel
 
 def strip_ansi_codes(text):
     ansi_escape_re = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -95,7 +98,11 @@ def generate_markdown_report(
             md_content += f"### {display_name}\n\n"
             if isinstance(content, dict):
                 md_content += "```json\n"
-                md_content += json.dumps(content, indent=2)
+                # FIX: Convert Pydantic models to dict before dumping
+                if isinstance(content, BaseModel):
+                    md_content += json.dumps(content.model_dump(by_alias=True), indent=2)
+                else:
+                    md_content += json.dumps(content, indent=2)
                 md_content += "\n```\n"
             else:
                 md_content += f"```markdown\n{content}\n```\n"
@@ -104,7 +111,11 @@ def generate_markdown_report(
     md_content += "## Final Synthesized Answer\n\n"
     if isinstance(final_answer, dict):
         md_content += "```json\n"
-        md_content += json.dumps(final_answer, indent=2)
+        # FIX: Convert Pydantic models to dict before dumping
+        if isinstance(final_answer, BaseModel):
+            md_content += json.dumps(final_answer.model_dump(by_alias=True), indent=2)
+        else:
+            md_content += json.dumps(final_answer, indent=2)
     else:
         md_content += f"{final_answer}\n\n"
     md_content += "---\n\n"
