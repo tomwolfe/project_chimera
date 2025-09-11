@@ -80,7 +80,7 @@ class GeminiAPIError(LLMProviderError):
         self,
         message: str,
         code: int = None,
-        response_details: Any = None,
+        response_details: Any = None, # MODIFIED: Renamed from response_json to response_details for broader use
         original_exception: Optional[Exception] = None,
     ):
         super().__init__(

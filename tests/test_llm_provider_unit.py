@@ -29,14 +29,14 @@ def mock_llm_client_success():
 @pytest.fixture
 def mock_llm_client_api_error():
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = APIError("Simulated API Error")
+    mock_client.models.generate_content.side_effect = APIError(message="Simulated API Error", response_json={"error": "Simulated API Error"}) # MODIFIED: Pass message and response_json
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 
 @pytest.fixture
 def mock_llm_client_rate_limit():
     mock_client = MagicMock()
-    mock_client.models.generate_content.side_effect = APIError("Rate limit exceeded")
+    mock_client.models.generate_content.side_effect = APIError(message="Rate limit exceeded", code=429, response_json={"error": "Rate limit exceeded"}) # MODIFIED: Pass message, code, and response_json
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 
@@ -292,7 +292,7 @@ def test_llm_provider_generate_with_schema_validation_failure():
 
 def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
     """Tests that a 401 APIError (Unauthorized) raises GeminiAPIError."""
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError("Invalid API Key", code=401)
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError(message="Invalid API Key", code=401, response_json={"error": "Invalid API Key"}) # MODIFIED: Pass message, code, response_json
     with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
         provider = GeminiProvider(
@@ -338,7 +338,7 @@ def test_llm_provider_generate_network_error(mock_llm_client_success):
 
 def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
     """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError("API Key lacks permissions", code=403)
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError(message="API Key lacks permissions", code=403, response_json={"error": "API Key lacks permissions"}) # MODIFIED: Pass message, code, response_json
     with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
         provider = GeminiProvider(

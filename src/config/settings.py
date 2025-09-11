@@ -60,7 +60,7 @@ class ChimeraSettings(BaseModel):
     )
     self_analysis_debate_ratio: float = Field(
         default=0.40,
-        ge=0.4,
+        ge=0.1, # MODIFIED: Lowered min to allow more flexibility
         le=0.9,
         description="Proportion of total budget for debate turns during self-analysis.",
     )
@@ -150,8 +150,8 @@ class ChimeraSettings(BaseModel):
             # Fallback for self-analysis ratios (ensure they sum to 1.0)
             # MODIFIED: Fallback values to match new defaults
             self.self_analysis_context_ratio = 0.45
-            self.self_analysis_debate_ratio = 0.40
-            self.self_analysis_synthesis_ratio = 0.15
+            self.self_analysis_debate_ratio = 0.30
+            self.self_analysis_synthesis_ratio = 0.25
 
         return self
 

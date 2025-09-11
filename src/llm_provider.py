@@ -12,12 +12,12 @@ from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
 from google.genai.errors import APIError
-from google.genai import types # FIX: Added explicit import for 'types'
-import hashlib # Used in __hash__
-import secrets # NEW: Used for secure random number generation in _generate_with_retry
-import socket # Used in _generate_with_retry
-import json # Used for structured logging helper
-from pydantic import BaseModel, ValidationError # NEW: Import BaseModel and ValidationError
+from google.genai import types
+import hashlib
+import secrets
+import socket
+import json
+from pydantic import BaseModel, ValidationError
 
 from rich.console import Console
 
@@ -37,7 +37,7 @@ from src.exceptions import (
     LLMUnexpectedError,
     TokenBudgetExceededError,
     CircuitBreakerError,
-    SchemaValidationError, # NEW: Import SchemaValidationError
+    SchemaValidationError,
 )
 
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
@@ -49,13 +49,13 @@ from src.utils.error_handler import handle_errors
 # --- END NEW IMPORT ---
 
 # FIX: Import ModelSpecification explicitly
-from src.config.model_registry import ModelRegistry, ModelSpecification # MODIFIED: Added ModelSpecification
+from src.config.model_registry import ModelRegistry, ModelSpecification
 from src.config.settings import ChimeraSettings
 
 # NEW IMPORTS: From src/utils/api_key_validator.py
-from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional, fetch_api_key # MODIFIED: Import fetch_api_key
-import os # NEW: Import os for environment variables
-from src.utils.output_parser import LLMOutputParser # NEW: Import LLMOutputParser
+from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional, fetch_api_key
+import os
+from src.utils.output_parser import LLMOutputParser
 
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
@@ -96,23 +96,23 @@ class GeminiProvider:
         settings: Optional[Any] = None,
     ):
         self.model_name = model_name
-        self.model_registry = ModelRegistry() # Initialize ModelRegistry
+        self.model_registry = ModelRegistry()
         self.rich_console = rich_console or Console(stderr=True)
         self.request_id = request_id
         self._log_extra = {
             "request_id": self.request_id or "N/A"
         }
-        self.output_parser = LLMOutputParser() # NEW: Instantiate LLMOutputParser
+        self.output_parser = LLMOutputParser()
         self.settings = settings or ChimeraSettings()
 
         try:
             # Prioritize API key from fetch_api_key, which handles secrets manager and env var fallback
-            resolved_api_key = api_key or fetch_api_key() # Use provided key first, then fetch
+            resolved_api_key = api_key or fetch_api_key()
             if not resolved_api_key:
                 logger.critical("GEMINI_API_KEY environment variable is not set. LLMProvider will not function.", extra={'event': 'startup_failure'})
                 raise ValueError("LLM API Key is not configured.")
             
-            self._api_key = resolved_api_key # Store the resolved API key
+            self._api_key = resolved_api_key
 
             # Validate API key format and functionality early
             is_valid_format, format_message = validate_gemini_api_key_format(self._api_key)
@@ -315,27 +315,27 @@ class GeminiProvider:
         )
 
         generated_text, input_tokens, output_tokens, is_truncated = self._generate_with_retry(
-            prompt, system_prompt, config, current_model_name, output_schema # NEW: Pass output_schema
+            prompt, system_prompt, config, current_model_name, output_schema
         )
 
         # NEW: Enforce schema compliance if a schema is provided
         if output_schema:
             try:
-                cleaned_generated_text = self.output_parser._clean_llm_output(generated_text) # NEW: Clean output
+                cleaned_generated_text = self.output_parser._clean_llm_output(generated_text)
                 # Attempt to parse the LLM output into the Pydantic model
                 # Use model_validate_json for Pydantic v2, parse_raw for v1
                 if hasattr(output_schema, 'model_validate_json'):
-                    output_schema.model_validate_json(cleaned_generated_text) # Use cleaned text
+                    output_schema.model_validate_json(cleaned_generated_text)
                 else:
-                    output_schema.parse_raw(cleaned_generated_text) # Use cleaned text
+                    output_schema.parse_raw(cleaned_generated_text)
             except ValidationError as ve:
                 error_msg = f"LLM output failed schema validation: {ve}"
                 self._log_with_context("warning", error_msg, llm_output_snippet=generated_text[:200])
                 # Raise SchemaValidationError directly to trigger core.py's retry mechanism
                 raise SchemaValidationError(
                     error_type="SCHEMA_VALIDATION_FAILED",
-                    field_path="LLM_OUTPUT", # Generic field path for overall schema failure
-                    invalid_value=generated_text[:500], # Provide a snippet of the invalid output
+                    field_path="LLM_OUTPUT",
+                    invalid_value=generated_text[:500],
                     original_exception=ve
                 )
         return generated_text, input_tokens, output_tokens, is_truncated
@@ -346,7 +346,7 @@ class GeminiProvider:
         system_prompt: str,
         config: types.GenerateContentConfig,
         model_name_to_use: str = None,
-        output_schema: Optional[Type[BaseModel]] = None, # NEW: Add output_schema parameter
+        output_schema: Optional[Type[BaseModel]] = None,
     ) -> tuple[str, int, int, bool]:
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
@@ -438,14 +438,14 @@ class GeminiProvider:
 
                 return generated_text, input_tokens, output_tokens, is_truncated
 
-            except self.RETRYABLE_LLM_EXCEPTIONS as e: # NEW: Explicitly catch retryable LLM exceptions
+            except self.RETRYABLE_LLM_EXCEPTIONS as e:
                 error_msg = str(e)
                 if attempt < self.MAX_RETRIES:
                     backoff_time = min(
                         self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
                         self.MAX_BACKOFF_SECONDS,
                     )
-                    jitter = secrets.SystemRandom().uniform( # Use secrets for cryptographic-quality random numbers
+                    jitter = secrets.SystemRandom().uniform(
                         0,
                         0.5
                         * min(
@@ -471,7 +471,7 @@ class GeminiProvider:
                         error_type=type(e).__name__,
                         exc_info=True,
                     )
-                    raise e # Re-raise the original retryable exception if retries are exhausted
+                    raise e
 
             except Exception as e:
                 error_msg = str(e)
@@ -481,14 +481,13 @@ class GeminiProvider:
 
                 # Specific handling for common critical errors
                 if isinstance(e, APIError):
-                    if e.code == 401: # Unauthorized - likely invalid API key
-                        raise GeminiAPIError(f"Invalid API Key: {error_msg}", code=e.code, original_exception=e) from e
-                    elif e.code == 403: # Forbidden - permissions issue
-                        raise GeminiAPIError(f"API Key lacks permissions: {error_msg}", code=e.code, original_exception=e) from e
-                    elif e.code == 429: # Rate Limit Exceeded
-                        # This is typically handled by the retry logic, but if retries are exhausted, it should be a specific error
+                    if e.code == 401:
+                        raise GeminiAPIError(f"Invalid API Key: {error_msg}", code=e.code, response_details=e.response_json, original_exception=e) from e
+                    elif e.code == 403:
+                        raise GeminiAPIError(f"API Key lacks permissions: {error_msg}", code=e.code, response_details=e.response_json, original_exception=e) from e
+                    elif e.code == 429:
                         if attempt >= self.MAX_RETRIES:
-                            raise GeminiAPIError(f"Rate Limit Exceeded after retries: {error_msg}", code=e.code, original_exception=e) from e
+                            raise GeminiAPIError(f"Rate Limit Exceeded after retries: {error_msg}", code=e.code, response_details=e.response_json, original_exception=e) from e
                         should_retry = True
                     elif e.code == 400 and ("context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower()):
                         self._log_with_context(
@@ -501,7 +500,7 @@ class GeminiProvider:
                             original_exception=e,
                         ) from e
                 
-                if isinstance(e, APIError): # Existing APIError handling
+                if isinstance(e, APIError):
                     error_details["api_error_code"] = getattr(e, "code", None)
                     if e.code in self.RETRYABLE_ERROR_CODES:
                         should_retry = True
@@ -510,10 +509,10 @@ class GeminiProvider:
                         error_details["http_status_code"] = http_status_code.status_code
                         if http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
                             should_retry = True
-                elif isinstance(e, socket.gaierror): # Existing network error handling
+                elif isinstance(e, socket.gaierror):
                     should_retry = True
                     error_details["network_error"] = "socket.gaierror"
-                elif "context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower(): # Existing context window exceeded check
+                elif "context window exceeded" in error_msg.lower() or "prompt too large" in error_msg.lower():
                     self._log_with_context(
                         "error",
                         f"LLM context window exceeded: {error_msg}",
@@ -529,7 +528,7 @@ class GeminiProvider:
                         self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
                         self.MAX_BACKOFF_SECONDS,
                     )
-                    jitter = secrets.SystemRandom().uniform( # Use secrets for cryptographic-quality random numbers
+                    jitter = secrets.SystemRandom().uniform(
                         0,
                         0.5
                         * min(
@@ -551,7 +550,7 @@ class GeminiProvider:
                 else:
                     if isinstance(e, APIError):
                         raise GeminiAPIError(
-                            error_msg, getattr(e, "code", None), original_exception=e
+                            error_msg, getattr(e, "code", None), response_details=e.response_json, original_exception=e
                         ) from e
                     else:
                         raise LLMUnexpectedError(error_msg, original_exception=e) from e

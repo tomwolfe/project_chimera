@@ -15,7 +15,7 @@ from src.models import PersonaConfig # Import PersonaConfig
 from src.utils.output_parser import LLMOutputParser # Import LLMOutputParser
 from src.self_improvement.metrics_collector import FocusedMetricsCollector # Import FocusedMetricsCollector
 from src.exceptions import TokenBudgetExceededError, SchemaValidationError # Import specific exceptions
-from src.models import GeneralOutput, CritiqueOutput # Import specific models
+from src.models import GeneralOutput, CritiqueOutput, SelfImprovementAnalysisOutputV1 # Import specific models
 
 @pytest.fixture
 def mock_settings():
@@ -92,7 +92,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Impartial_Arbitrator": GeneralOutput,
         "Context_Aware_Assistant": GeneralOutput,
         "Constructive_Critic": CritiqueOutput,
-        "Self_Improvement_Analyst": GeneralOutput,
+        "Self_Improvement_Analyst": SelfImprovementAnalysisOutputV1, # Corrected schema for Self_Improvement_Analyst
         "Devils_Advocate": GeneralOutput,
         "Visionary_Generator": GeneralOutput,
         "Skeptical_Generator": GeneralOutput,
@@ -134,7 +134,18 @@ def mock_conflict_manager():
 def mock_metrics_collector():
     """Provides a mock FocusedMetricsCollector instance."""
     collector = MagicMock(spec=FocusedMetricsCollector)
-    collector.collect_all_metrics.return_value = {"code_quality": {"ruff_issues_count": 0}}
+    # MODIFIED: Mock the full structure of the return value to prevent KeyError
+    collector.collect_all_metrics.return_value = {
+        "code_quality": {"ruff_issues_count": 0, "complexity_metrics": {}, "code_smells_count": 0, "detailed_issues": [], "ruff_violations": []},
+        "security": {"bandit_issues_count": 0, "ast_security_issues_count": 0},
+        "performance_efficiency": {"token_usage_stats": {}, "debate_efficiency_summary": {}, "potential_bottlenecks_count": 0},
+        "robustness": {"schema_validation_failures_count": 0, "unresolved_conflict_present": False, "conflict_resolution_attempted": False},
+        "maintainability": {"test_coverage_summary": {}},
+        "reasoning_quality": {"argument_strength_score": 0.0, "debate_effectiveness": 0.0, "conflict_resolution_quality": 0.0, "80_20_adherence_score": 0.0, "reasoning_depth": 0, "critical_thinking_indicators": {}, "self_improvement_suggestion_success_rate_historical": 0.0, "schema_validation_failures_historical": {}},
+        "historical_analysis": {"total_attempts": 0, "success_rate": 0.0, "top_performing_areas": [], "common_failure_modes": {}, "historical_total_suggestions_processed": 0, "historical_successful_suggestions": 0, "historical_schema_validation_failures": {}},
+        "configuration_analysis": {"ci_workflow": {}, "pre_commit_hooks": [], "pyproject_toml": {}},
+        "deployment_robustness": {},
+    }
     collector.analyze_historical_effectiveness.return_value = {"total_attempts": 0, "success_rate": 0.0}
     collector.record_self_improvement_suggestion_outcome.return_value = None
     collector.file_analysis_cache = {} # Ensure this attribute exists

@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.llm_tokenizers.base import Tokenizer
+import json # NEW: Import json
 from src.config.settings import ChimeraSettings
 
 @pytest.fixture
@@ -57,9 +58,9 @@ def test_optimize_prompt_exceeds_default_limit(prompt_optimizer_instance):
         long_prompt, persona_name, max_output_tokens_for_turn
     )
     
-    expected_truncated_length_chars = prompt_optimizer_instance.mock_settings.default_max_input_tokens_per_persona
+    expected_truncated_tokens = prompt_optimizer_instance.settings.default_max_input_tokens_per_persona // 4 # MODIFIED: Use settings and convert to tokens
     assert len(optimized_prompt) < len(long_prompt)
-    assert prompt_optimizer_instance.tokenizer.count_tokens(optimized_prompt) <= (expected_truncated_length_chars // 4)
+    assert prompt_optimizer_instance.tokenizer.count_tokens(optimized_prompt) <= expected_truncated_tokens
     prompt_optimizer_instance.tokenizer.truncate_to_token_limit.assert_called_once()
     assert "[TRUNCATED - focusing on most critical aspects]" in optimized_prompt
 

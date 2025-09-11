@@ -51,7 +51,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             tmp_file_path = Path(temp_file.name)
 
             # 1. Run Ruff Linter
-            # FIX: Removed 'python', '-m' from the command list
+            # Use execute_command_safely which prepends sys.executable -m
             lint_command = [
                 "ruff",
                 "check",
@@ -62,19 +62,15 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             ]
 
             try:
-                process = subprocess.run(
+                # MODIFIED: Use execute_command_safely
+                return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
                     lint_command,
-                    capture_output=True,
-                    text=True,
-                    check=False, # Ruff returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
-                    shell=False,
                     timeout=30,
+                    check=False, # Ruff returns 1 for issues found, 0 for no issues. Set to False to parse output regardless.
                 )
-                stdout_lint = process.stdout
-                stderr_lint = process.stderr
 
                 if stdout_lint:
-                    if process.returncode == 0 or process.returncode == 1: # Ruff returns 1 for issues found
+                    if return_code_lint == 0 or return_code_lint == 1: # Ruff returns 1 for issues found
                         try:
                             lint_results = json.loads(stdout_lint)
                             for issue in lint_results:
@@ -107,13 +103,13 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                             )
                     else: # Ruff returned an unexpected non-zero exit code (not 0 or 1)
                         logger.error(
-                            f"Ruff lint execution failed for {filename} with return code {process.returncode}. Stderr: {stderr_lint}"
+                            f"Ruff lint execution failed for {filename} with return code {return_code_lint}. Stderr: {stderr_lint}"
                         )
                         issues.append(
                             {
                                 "type": "Validation Tool Error",
                                 "file": filename,
-                                "message": f"Ruff lint command failed with unexpected exit code {process.returncode}: {stderr_lint}",
+                                "message": f"Ruff lint command failed with unexpected exit code {return_code_lint}: {stderr_lint}",
                             }
                         )
 
@@ -132,7 +128,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                 logger.warning(f"Ruff lint stderr for {filename}: {stderr_lint}")
 
             # 2. Run Ruff Formatter Check
-            # FIX: Removed 'python', '-m' from the command list
+            # Use execute_command_safely which prepends sys.executable -m
             format_command = [
                 "ruff",
                 "format",
@@ -198,7 +194,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     return issues
 
 
-def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_bandit(content: str, filename: str, severity_level: str = "MEDIUM", confidence_level: str = "MEDIUM") -> List[Dict[str, Any]]: # MODIFIED: Added severity_level and confidence_level parameters
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     tmp_file_path = None
@@ -216,16 +212,15 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
                 logger.warning(
                     f"Bandit config file not found at {bandit_config_path}. Running Bandit without explicit config."
                 )
-                config_args = []
+                config_args = ["--severity-level", severity_level, "--confidence-level", confidence_level] # MODIFIED: Use passed levels
             else:
                 config_args = ["-c", str(bandit_config_path)]
                 # Ensure default high severity/confidence if not explicitly set in pyproject.toml for local runs
                 # This is a safeguard, CI should enforce stricter.
-                if "--severity-level" not in " ".join(config_args) and "--confidence-level" not in " ".join(config_args):
-                    config_args.extend(["--severity-level", "HIGH", "--confidence-level", "HIGH"])
+                config_args.extend(["--severity-level", severity_level, "--confidence-level", confidence_level]) # MODIFIED: Use passed levels
 
 
-            # FIX: Removed 'python', '-m' from the command list
+            # Use execute_command_safely which prepends sys.executable -m
             command = [
                 "bandit",
                 "-q",

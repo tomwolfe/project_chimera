@@ -6,7 +6,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT_MARKERS = [".git", "config.yaml", "pyproject.toml", "Dockerfile"]
+PROJECT_ROOT_MARKERS = [".git", "config.yaml", "pyproject.toml", "Dockerfile", "app.py", "core.py", "src/", "tests/", "docs/", "personas.yaml"] # MODIFIED: Added more markers for robustness
 
 
 def _find_project_root_internal(start_path: Path) -> Optional[Path]:
@@ -72,7 +72,8 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
     if not raw_path:
         raise ValueError("File path cannot be empty.")
 
-    sanitized_path_str = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "", raw_path)
+    # MODIFIED: Allow forward slashes in sanitized_path_str as they are valid path separators
+    sanitized_path_str = re.sub(r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path) # Removed '/' from invalid chars
     sanitized_path_str = re.sub(r"\.\./", "", sanitized_path_str)
     sanitized_path_str = re.sub(r"//+", "/", sanitized_path_str)
 

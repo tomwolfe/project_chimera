@@ -38,6 +38,7 @@ jobs:
         bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level HIGH --exit-on-error
     - name: Run Unit and Integration Tests with Coverage Check
       shell: bash
+      id: run_tests # Added ID to reference outcome
       run: |
         # Run pytest, collect coverage data, generate XML report for upload, and fail if coverage is below 80%
         pytest tests/ --cov=src --cov-report=xml --junitxml=report.xml --cov-fail-under=80
@@ -49,5 +50,11 @@ jobs:
           report.xml
           coverage.xml
           coverage.json # Also upload coverage.json for potential further analysis
+
+    - name: Fail build on coverage threshold violation
+      if: steps.run_tests.outcome == 'failure'
+      run: |
+        echo "Test coverage is below the required threshold (80%). Failing the build."
+        exit 1
 
     # You could add more steps here, e.g., for deployment, etc.

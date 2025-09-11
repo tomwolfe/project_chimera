@@ -5,6 +5,7 @@ from src.models import PersonaConfig
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.config.persistence import ConfigPersistence
+from src.config.settings import ChimeraSettings # NEW: Import ChimeraSettings
 import time
 
 @pytest.fixture
@@ -48,13 +49,28 @@ def mock_config_persistence():
     return cp
 
 @pytest.fixture
-def persona_manager_instance(mock_token_tracker, mock_prompt_analyzer, mock_config_persistence):
+def mock_settings():
+    """Provides a mock ChimeraSettings instance."""
+    settings = MagicMock(spec=ChimeraSettings)
+    settings.default_max_input_tokens_per_persona = 4000
+    settings.max_tokens_per_persona = {
+        "TestPersona": 1024, # Default for TestPersona
+        "Visionary_Generator": 1024,
+        "Skeptical_Generator": 1024,
+        "Impartial_Arbitrator": 4096,
+        "Test_Engineer": 4096,
+    }
+    return settings
+
+@pytest.fixture
+def persona_manager_instance(mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings): # MODIFIED: Added mock_settings
     """Provides a PersonaManager instance with mocked dependencies."""
     # Patch ConfigPersistence to return our mock during PersonaManager initialization
     with patch('src.persona_manager.ConfigPersistence', return_value=mock_config_persistence):
         pm = PersonaManager(
             domain_keywords={"General": ["general"], "Software Engineering": ["code"]},
-            token_tracker=mock_token_tracker
+            token_tracker=mock_token_tracker,
+            settings=mock_settings # MODIFIED: Pass mock_settings
         )
         # Manually set the mock prompt_analyzer as it's used by PersonaRouter internally
         pm.prompt_analyzer = mock_prompt_analyzer
@@ -64,12 +80,13 @@ def persona_manager_instance(mock_token_tracker, mock_prompt_analyzer, mock_conf
         return pm
 
 @pytest.fixture
-def persona_manager_for_metrics(mock_token_tracker, mock_prompt_analyzer, mock_config_persistence):
+def persona_manager_for_metrics(mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings): # MODIFIED: Added mock_settings
     """Provides a PersonaManager instance specifically for testing metrics, ensuring 'TestPersona' is available."""
     with patch('src.persona_manager.ConfigPersistence', return_value=mock_config_persistence):
         pm = PersonaManager(
             domain_keywords={"General": ["general"]},
-            token_tracker=mock_token_tracker
+            token_tracker=mock_token_tracker,
+            settings=mock_settings # MODIFIED: Pass mock_settings
         )
         # Ensure TestPersona is in all_personas for metrics tracking
         if "TestPersona" not in pm.all_personas:
@@ -167,7 +184,7 @@ def test_load_framework_into_session_custom(persona_manager_instance, mock_confi
         "framework_name": "LoadedCustom",
         "description": "Loaded framework",
         "personas": {
-            "NewPersona": {"name": "NewPersona", "system_prompt": "New", "temperature": 0.5, "max_tokens": 512}
+            "NewPersona": {"name": "NewPersona", "system_prompt": "New", "temperature": 0.5, "max_tokens": 512, "description": "A new persona."} # MODIFIED: Added description
         },
         "persona_sets": {"LoadedCustom": ["NewPersona"]}
     }

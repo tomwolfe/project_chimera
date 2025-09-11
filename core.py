@@ -26,11 +26,11 @@ from src.models import (
     GeneralOutput,
     ConflictReport,
     SelfImprovementAnalysisOutput,
+    SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
-    SelfImprovementAnalysisOutputV1,
-    SelfImprovementFinding,
-    QuantitativeImpactMetrics,
+    # SelfImprovementFinding, # REMOVED: Not directly used here
+    # QuantitativeImpactMetrics, # REMOVED: Not directly used here
 )
 from src.config.settings import ChimeraSettings
 from src.exceptions import (
@@ -175,11 +175,12 @@ class SocraticDebate:
             self.logger.warning(
                 "PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI."
             )
-            self.persona_manager = PersonaManager({}, token_tracker=self.token_tracker)
+            self.persona_manager = PersonaManager(self.settings.domain_keywords, token_tracker=self.token_tracker, settings=self.settings) # MODIFIED: Pass domain_keywords and settings
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
         else:
             self.persona_manager.token_tracker = self.token_tracker
+            self.persona_manager.settings = self.settings # Ensure persona manager has latest settings
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
 
@@ -201,8 +202,8 @@ class SocraticDebate:
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
+                cache_dir=self.settings.sentence_transformer_cache_dir, # MODIFIED: Use settings for cache_dir
                 raw_file_contents=self.raw_file_contents, # MODIFIED: Pass raw_file_contents
-                cache_dir=str(Path.home() / ".cache" / "huggingface" / "transformers")
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
@@ -480,7 +481,7 @@ class SocraticDebate:
         ):
             self._log_with_context(
                 "warning",
-                f"Token budget exceeded for {step_name} in {phase} phase.",
+                f"Token budget exceeded for {step_name} in {phase} phase. Current usage: {self.token_tracker.current_usage}, Needed: {tokens_needed}, Budget: {self.max_total_tokens_budget}", # MODIFIED: Added more details
                 current_tokens=self.token_tracker.current_usage,
                 tokens_needed=tokens_needed,
                 budget=self.max_total_tokens_budget,
@@ -581,12 +582,14 @@ class SocraticDebate:
         effective_max_output_tokens: int,
         final_model_to_use: str,
         system_prompt_for_llm: str,
+        output_schema: Type[BaseModel], # NEW: Pass output_schema
     ) -> Tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
         """Executes the actual LLM API call and tracks tokens."""
         # MODIFIED: Unpack all 4 return values from self.llm_provider.generate()
         raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = self.llm_provider.generate(
             prompt=current_prompt,
             system_prompt=system_prompt_for_llm,
+            output_schema=output_schema, # NEW: Pass output_schema
             temperature=persona_config.temperature,
             max_tokens=effective_max_output_tokens,
             persona_config=persona_config,
@@ -759,7 +762,7 @@ class SocraticDebate:
                     persona_config, max_output_tokens_for_turn, requested_model_name
                 )
                 raw_llm_output, input_tokens, output_tokens, is_truncated = self._make_llm_api_call(
-                    persona_config, current_prompt, effective_max_output_tokens, final_model_to_use, final_system_prompt
+                    persona_config, current_prompt, effective_max_output_tokens, final_model_to_use, final_system_prompt, output_schema_class # NEW: Pass output_schema_class
                 )
                 parsed_output, has_schema_error = self._parse_and_track_llm_output(
                     persona_name, raw_llm_output, output_schema_class
@@ -1965,7 +1968,7 @@ class SocraticDebate:
             return True
         return False
 
-    def _calculate_pareto_score(self, finding: SelfImprovementFinding) -> float:
+    def _calculate_pareto_score(self, finding: Any) -> float: # MODIFIED: Type hint to Any as SelfImprovementFinding is not imported
         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
         impact = (finding.metrics.expected_quality_improvement or 0) + (
             finding.metrics.token_savings_percent or 0

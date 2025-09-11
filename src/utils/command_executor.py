@@ -32,7 +32,8 @@ def execute_command_safely(
         # This ensures the command runs with the same Python interpreter as the current process,
         # which is crucial for virtual environments and consistent tool execution.
         # The check `not command[0] == sys.executable` prevents double-prepending.
-        if command and command[0] in ['pytest', 'ruff', 'bandit'] and not command[0] == sys.executable:
+        # MODIFIED: Also check if command[0] is already '-m' to prevent double-prepending
+        if command and command[0] in ['pytest', 'ruff', 'bandit'] and not (command[0] == sys.executable and command[1] == '-m'):
             command.insert(0, '-m')
             command.insert(0, sys.executable)
             logger.debug(f"Adjusted command to use sys.executable: {command}")
