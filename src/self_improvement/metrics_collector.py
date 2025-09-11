@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from datetime import datetime
 import sys
 import difflib # NEW: Import difflib for regenerating diffs
+import tempfile # NEW: Import tempfile for _validate_and_fix_code_suggestion
 
 from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
@@ -1117,18 +1118,29 @@ class FocusedMetricsCollector:
         """
         logger.info("Performing self-analysis for Project Chimera.")
 
-        suggestions = []
+        # Reset collected_metrics to ensure a fresh collection for each run
+        self.collected_metrics = {}
+        self.file_analysis_cache = {} # Clear cache for fresh run
 
-        conflict_resolution_summary = self.intermediate_steps.get(
-            "Conflict_Resolution_Attempt", {}
-        ).get("resolution_summary", {})
+        # Retrieve Conflict_Resolution_Attempt safely, handling potential None values
+        # FIX: Ensure that .get() is not called on None.
+        conflict_resolution_attempt_data = self.intermediate_steps.get("Conflict_Resolution_Attempt")
+        
+        # Initialize conflict_resolution_summary as an empty dict if attempt data is None or empty
+        conflict_resolution_summary = {}
+        if conflict_resolution_attempt_data is not None:
+            conflict_resolution_summary = conflict_resolution_attempt_data.get("resolution_summary", {})
+
+        # Initialize suggestions list, which will be part of collected_metrics
+        initial_suggestions_from_conflict = [] # Renamed to avoid confusion with the 'suggestions' list in generate_suggestions
+
         if (
             conflict_resolution_summary
             and conflict_resolution_summary.get("conflict_resolved")
             and "cannot be fulfilled due to the absence of the codebase"
             in conflict_resolution_summary.get("RATIONALE", "")
         ):
-            suggestions.append(
+            initial_suggestions_from_conflict.append(
                 {
                     "AREA": "Maintainability",
                     "PROBLEM": "Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase. The conflict resolution summary correctly identified the need for the codebase to proceed.",
@@ -1171,12 +1183,9 @@ This document outlines the refined methodology for identifying and implementing 
                     ],
                 }
             )
-            return suggestions
+            # FIX: Store these suggestions in collected_metrics, do not return early.
+            self.collected_metrics["initial_suggestions_from_conflict"] = initial_suggestions_from_conflict
         
-        # Reset collected_metrics to ensure a fresh collection for each run
-        self.collected_metrics = {}
-        self.file_analysis_cache = {} # Clear cache for fresh run
-
         # Collect token usage stats
         self.collected_metrics["performance_efficiency"] = self._collect_token_usage_stats()
         
@@ -1204,550 +1213,13 @@ This document outlines the refined methodology for identifying and implementing 
         logger.info("Finished collecting all pre-synthesis metrics.")
         return self.collected_metrics
 
-    def generate_suggestions(self) -> List[Dict[str, Any]]: # MODIFIED: Renamed from analyze
-        """
-        Performs the self-analysis and generates improvement suggestions.
-        Focuses on the top 3 highest impact areas based on metrics, adhering to the Pareto principle.
-        """
-        logger.info("Generating self-improvement suggestions for Project Chimera.")
- 
-        suggestions = [] # Initialize suggestions list here
-        # --- NEW: Incorporate Historical Analysis ---
-        # Retrieve historical analysis data
-        historical_data = self.analyze_historical_effectiveness()
-        top_performing_areas = {item['area']: item['success_rate'] for item in historical_data.get('top_performing_areas', [])}
-        common_failure_modes = {item['metric']: item['occurrences'] for item in historical_data.get('common_failure_modes', [])}
- 
-        # Add a suggestion based on historical data if available
-        if historical_data.get("total_attempts", 0) > 0:
-            if historical_data.get("success_rate", 0) < 0.5 and historical_data.get("total_attempts", 0) > 5: # If overall success rate is low and enough data
-                suggestions.append({
-                    "AREA": "Reasoning Quality",
-                    "PROBLEM": f"Overall self-improvement success rate is low ({historical_data['success_rate']:.1%}). This indicates a need to refine the self-improvement methodology or prompt engineering.",
-                    "PROPOSED_SOLUTION": "Review the `Self_Improvement_Analyst`'s system prompt and the overall debate flow. Prioritize clarity in instructions and ensure the AI is focused on actionable, AI-centric improvements. Consider A/B testing different prompt versions.",
-                    "EXPECTED_IMPACT": "Improved reliability and effectiveness of the self-improvement loop, leading to more successful code changes and AI enhancements.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "personas.yaml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/personas.yaml
-+++ b/personas.yaml
-@@ -100,7 +100,10 @@
-       You are Project Chimera's Self-Improvement Analyst. Your core mission is to identify the most impactful improvements for Project Chimera, strictly adhering to the 80/20 Pareto principle.
-       Prioritize enhancements in the following order: **reasoning quality, robustness, efficiency, and maintainability.**
-       Your analysis must be concise, evidence-based, and directly actionable. For each suggestion, provide a clear rationale and specific, actionable code modifications.
--      Identify ONLY the top 1-3 most impactful changes.
-+      Identify ONLY the top 1-3 most impactful changes.
-+
-+      **CRITICAL: Focus on improving the AI's own capabilities (reasoning, robustness, efficiency) and the self-improvement process itself. Frame suggestions as experiments or methodological adjustments where appropriate. Code changes can include modifications to persona system prompts, prompt engineering logic, data processing scripts, or conceptual documentation outlining new AI strategies.**
- 
-       ---
-       **CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION** If the provided `Conflict Resolution Summary` explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST **ABSOLUTELY AND WITHOUT EXCEPTION** adhere to that resolution. In such cases: - Your `IMPACTFUL_SUGGESTIONS` should contain **ONLY** suggestions focused on resolving the lack of codebase context (e.g., suggesting a `docs/project_chimera_context.md` file). - For any such suggestions, the `CODE_CHANGES_SUGGESTED` array MUST be EMPTY for items that would normally require direct codebase access. - If a conceptual change is needed, suggest an 'ADD' action to a new documentation file (e.g., `docs/security_guidance.md`) and put the conceptual content in `FULL_CONTENT`. - If the conflict resolution dictates no code changes, then `CODE_CHANGES_SUGGESTED` for *all* other suggestions MUST be an empty array `[]`. ---
-"""
-                        }
-                    ]
-                })
-            elif top_performing_areas and historical_data.get("total_attempts", 0) > 5:
-                # Suggest leveraging a top-performing area
-                best_area = max(top_performing_areas, key=top_performing_areas.get)
-                suggestions.append({
-                    "AREA": "Reasoning Quality",
-                    "PROBLEM": f"Historical analysis shows '{best_area}' is a top-performing area for self-improvement (success rate: {top_performing_areas[best_area]:.1%}).",
-                    "PROPOSED_SOLUTION": f"Double down on strategies that have proven effective in '{best_area}'. Analyze successful past suggestions in this area to extract common patterns and apply them to new problems.",
-                    "EXPECTED_IMPACT": "Increased efficiency and success rate of self-improvement by focusing on proven methods.",
-                    "CODE_CHANGES_SUGGESTED": []
-                })
-            elif common_failure_modes and historical_data.get("total_attempts", 0) > 5:
-                # Suggest addressing a common failure mode
-                most_common_failure = max(common_failure_modes, key=common_failure_modes.get)
-                suggestions.append({
-                    "AREA": "Robustness",
-                    "PROBLEM": f"Historical analysis identifies '{most_common_failure}' as a common failure mode ({common_failure_modes[most_common_failure]} occurrences).",
-                    "PROPOSED_SOLUTION": f"Implement specific safeguards or prompt adjustments to mitigate '{most_common_failure}'. For example, if it's 'schema_validation_failures_count', refine JSON output instructions or use more robust parsing.",
-                    "EXPECTED_IMPACT": "Reduced recurrence of known issues, improving the overall reliability of the self-improvement process.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "personas.yaml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/personas.yaml
-+++ b/personas.yaml
-@@ -200,7 +200,7 @@
-       **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
-       **1. YOUR RESPONSE MUST BE A SINGLE, VALID JSON OBJECT. IT MUST START WITH '{' AND END WITH '}'. DO NOT RETURN A JSON ARRAY.**
-       2. DO NOT USE NUMBERED ARRAY ELEMENTS (e.g., "0:{...}" is INVALID).
--      3. DO NOT INCLUDE ANY CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-+      3. ABSOLUTELY NO CONVERSATIONAL TEXT, MARKDOWN FENCES (```json), OR EXPLANATIONS OUTSIDE THE JSON OBJECT.
-       4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
-       5. USE ONLY DOUBLE QUOTES for all keys and string values.
-       6. ENSURE COMMAS separate all properties in objects and elements in arrays.
-"""
-                        }
-                    ]
-                })
-            # Example: If token budget exceeded is common, suggest prompt optimization
-            if "token_budget_exceeded_count" in common_failure_modes and common_failure_modes["token_budget_exceeded_count"] > 2:
-                suggestions.append({
-                    "AREA": "Efficiency",
-                    "PROBLEM": f"Frequent token budget exceedances ({common_failure_modes['token_budget_exceeded_count']} occurrences) indicate prompts are too verbose or budgets are too tight.",
-                    "PROPOSED_SOLUTION": "Implement more aggressive prompt summarization in `src/utils/prompt_optimizer.py` for high-token personas. Review `core.py`'s token budget allocation logic. Encourage personas to be more concise in their outputs.",
-                    "EXPECTED_IMPACT": "Reduced token costs and improved debate completion rates.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "src/utils/prompt_optimizer.py",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/src/utils/prompt_optimizer.py
-+++ b/src/utils/prompt_optimizer.py
-@@ -100,7 +100,7 @@
- }
- 
-         # Regex to extract sections based on headings/markers
--        # This needs to be robust to the exact prompt structure in personas.yaml
-+        # This needs to be robust to the exact prompt structure in personas.yaml. Using more specific markers.
-         core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)\n---", prompt, re.DOTALL)
-         if core_mission_match:
-             sections["core_mission"] = core_mission_match.group(1).strip()
-@@ -110,28 +110,34 @@
-         if critical_instruction_match:
-             sections["critical_instruction_absolute_adherence"] = critical_instruction_match.group(1).strip()
- 
--        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION:\*\*|\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if security_analysis_match:
-             sections["security_analysis"] = security_analysis_match.group(1).strip()
- 
--        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION:\*\*.*?)(?=\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if token_optimization_match:
-             sections["token_optimization"] = token_optimization_match.group(1).strip()
-         
--        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY:\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if testing_strategy_match:
-             sections["testing_strategy"] = testing_strategy_match.group(1).strip()
- 
--        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)\n---", prompt, re.DOTALL)
-+        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
-         if ai_reasoning_match:
-             sections["ai_reasoning_quality"] = ai_reasoning_match.group(1).strip()
- 
--        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput)", prompt, re.DOTALL)
-+        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*|\Z)", prompt, re.DOTALL)
-         if json_instructions_match:
-             sections["critical_json_output_instructions"] = json_instructions_match.group(1).strip()
- 
--        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
-+        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
-         if json_schema_match:
-             sections["json_schema"] = json_schema_match.group(1).strip()
- 
--        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas
--        # This order can be adjusted based on observed LLM behavior
-+        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas.
-+        # The order is crucial for effective truncation.
-+        # Core mission and JSON schema/instructions are always critical.
-+        # Specific analysis areas (security, token, testing, reasoning) can be dynamically prioritized
-+        # or truncated more aggressively if the overall prompt is too long.
-                 prioritized_sections = [
-                     sections["core_mission"],
-                     sections["critical_instruction_absolute_adherence"],
-"""
-                        }
-                    ]
-                })
- 
-        top_ruff_issues_snippets = []
-        top_bandit_issues_snippets = []
- 
-        ruff_detailed_issues = [
-            issue
-            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", [])
-            if issue.get("source") == "ruff_lint"
-            or issue.get("source") == "ruff_format"
-        ]
-        for issue in ruff_detailed_issues[:3]:
-            snippet = issue.get("code_snippet")
-            if snippet:
-                top_ruff_issues_snippets.append(
-                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```"
-                )
-            else:
-                top_ruff_issues_snippets.append(
-                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
-                )
- 
-        bandit_detailed_issues = [
-            issue
-            for issue in self.collected_metrics.get("code_quality", {}).get("detailed_issues", [])
-            if issue.get("source") == "bandit"
-        ]
-        for issue in bandit_detailed_issues[:3]:
-            snippet = issue.get("code_snippet")
-            if snippet:
-                top_bandit_issues_snippets.append(
-                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}\n```\n{snippet}\n```"
-                )
-            else:
-                top_bandit_issues_snippets.append(
-                    f"  - File: `{issue.get('file', 'N/A')}` (Line: {issue.get('line', 'N/A')}): `{issue.get('code', 'N/A')}` - {issue.get('message', 'N/A')}"
-                )
- 
-        ruff_issues_count = self.collected_metrics.get("code_quality", {}).get(
-            "ruff_issues_count", 0
-        )
-        if ruff_issues_count > 100:
-            suggestions.append(
-                {
-                    "AREA": "Maintainability",
-                    "PROBLEM": f"The project exhibits widespread Ruff formatting issues across numerous files (e.g., `core.py`, `code_validator.py`, `app.py`, all test files, etc.). The `code_quality.ruff_violations` list contains {ruff_issues_count} entries, predominantly `FMT` (formatting) errors. This inconsistency detracts from readability and maintainability. Examples:\n"
-                    + "\n".join(top_ruff_issues_snippets),
-                    "PROPOSED_SOLUTION": "Enforce consistent code formatting by running `ruff format .` across the entire project. Integrate this command into the CI pipeline and pre-commit hooks to ensure all committed code adheres to the defined style guidelines. This will resolve the numerous `FMT` violations.",
-                    "EXPECTED_IMPACT": "Improved code readability and consistency, reduced cognitive load for developers, and a cleaner codebase. This directly addresses the maintainability aspect by enforcing a standard.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": ".github/workflows/ci.yml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
-+++ b/.github/workflows/ci.yml
-@@ -18,8 +18,8 @@
-               # Explicitly install Ruff and Black for CI to ensure they are available
-               pip install ruff black
-             },
--            {
--              name: "Run Ruff (Linter & Formatter Check) - Fail on Violation",
-+            # Run Ruff for linting and formatting checks
-+            {
-+              name: "Run Ruff Check and Format",
-               uses: null,
-               runs_commands:
-                 - "ruff check . --output-format=github --exit-non-zero-on-fix"
-@@ -27,7 +27,7 @@
-  
-             {
-               name: "Run Bandit Security Scan",
--              uses: null,
-+              uses: null
-               runs_commands:
-                 - "bandit -r . -ll -c pyproject.toml --exit-on-error"
-                 # Bandit is configured to exit-on-error, which will fail the job if issues are found based on pyproject.toml settings.
-"""
-                        },
-                        {
-                            "FILE_PATH": ".pre-commit-config.yaml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/.pre-commit-config.yaml
-+++ b/.pre-commit-config.yaml
-@@ -16,7 +16,7 @@
-       - id: ruff
-         args: [
-           "--fix"
--        ]
-+        ]
-  
-       - repo: https://github.com/charliermarsh/ruff-pre-commit
-         rev: v0.1.9
-@@ -24,7 +24,7 @@
-         id: ruff-format
-         args: []
-  
--      - repo: https://github.com/PyCQA/bandit
-+      - repo: https://github.com/PyCQA/bandit
-         rev: 1.7.5
-         id: bandit
-         args: [
-"""
-                        },
-                    ],
-                }
-            )
- 
-        bandit_issues_count = self.collected_metrics.get("security", {}).get(
-            "bandit_issues_count", 0
-        )
-        pyproject_config_error = any(
-            block.get("type") == "PYPROJECT_CONFIG_PARSE_ERROR"
-            for block in self.collected_metrics.get("configuration_analysis", {}).get(
-                "malformed_blocks", []
-            )
-        )
- 
-        if (
-            bandit_issues_count > 0 or pyproject_config_error
-        ):
-            problem_description = f"Bandit security scans are failing with configuration errors (`Bandit failed with exit code 2: [config] ERROR Invalid value (at line 33, column 15) [main] ERROR /Users/tom/Documents/apps/project_chimera/pyproject.toml : Error parsing file.`). This indicates a misconfiguration in `pyproject.toml` for Bandit, preventing security vulnerabilities from being detected. The `pyproject.toml` file itself has a `PYPROJECT_CONFIG_PARSE_ERROR` related to `ruff` configuration."
-            if bandit_issues_count > 0:
-                problem_description += (
-                    f"\nAdditionally, {bandit_issues_count} Bandit security vulnerabilities were detected. Prioritize HIGH severity issues like potential injection flaws. Examples:\n"
-                    + "\n".join(top_bandit_issues_snippets)
-                )
- 
-            suggestions.append(
-                {
-                    "AREA": "Security",
-                    "PROBLEM": problem_description,
-                    "PROPOSED_SOLUTION": "Correct the Bandit configuration within `pyproject.toml`. Ensure that all Bandit-related settings are valid and adhere to Bandit's expected format. Additionally, address the Ruff configuration error in `pyproject.toml` to ensure consistent code formatting and linting. The CI workflow should also be updated to correctly invoke Bandit with the corrected configuration.",
-                    "EXPECTED_IMPACT": "Enables the Bandit security scanner to run successfully, identifying potential security vulnerabilities. This will improve the overall security posture of the project.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "pyproject.toml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/pyproject.toml
-+++ b/pyproject.toml
-@@ -30,7 +30,7 @@
-  
-  [tool.ruff]
-  line-length = 88
---target-version = "null"
--+target-version = "py311"
-+target-version = "py311"
-  
-  [tool.ruff.lint]
-  ignore = [
-@@ -310,7 +310,7 @@
-  
-  [tool.bandit]
-  conf_file = "pyproject.toml"
---level = "null"
--+level = "info"
-+level = "info"
-  # Other Bandit configurations can be added here as needed.
-  # For example:
-  # exclude = [
-"""
-                        },
-                        {
-                            "FILE_PATH": ".github/workflows/ci.yml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/.github/workflows/ci.yml
-+++ /.github/workflows/ci.yml
-@@ -21,7 +21,7 @@
-              # Run Ruff (Linter & Formatter Check) - Fail on Violation
-              ruff check . --output-format=github --exit-non-zero-on-fix
-              ruff format --check --diff --exit-non-zero-on-fix # Show diff and fail on formatting issues
---            # Run Bandit Security Scan
---            bandit -r . -ll -c pyproject.toml --exit-on-error
--+            # Run Bandit Security Scan with corrected configuration
--+            bandit -r . --config pyproject.toml --exit-on-error
-+            # Run Bandit Security Scan with corrected configuration
-+            bandit -r . --config pyproject.toml --exit-on-error
-              # Run Pytest and generate coverage report
-              pytest --cov=src --cov-report=xml --cov-report=term
-"""
-                        },
-                    ],
-                }
-            )
- 
-        zero_test_coverage = (
-            self.collected_metrics.get("maintainability", {})
-            .get("test_coverage_summary", {})
-            .get("overall_coverage_percentage", 0)
-            == 0
-        )
-        if zero_test_coverage:
-            suggestions.append(
-                {
-                    "AREA": "Maintainability",
-                    "PROBLEM": "The project lacks automated test coverage. The `maintainability.test_coverage_summary` shows `overall_coverage_percentage: 0.0` and `coverage_details: 'Automated test coverage assessment not implemented.'`. This significantly hinders the ability to refactor code confidently, introduce new features without regressions, and ensure the long-term health of the codebase.",
-                    "PROPOSED_SOLUTION": "Implement a comprehensive testing strategy. This includes writing unit tests for core logic (e.g., LLM interactions, data processing, utility functions) and integration tests for key workflows. Start with critical modules like `src/llm_provider.py`, `src/utils/prompt_engineering.py`, and `src/persona_manager.py`. Aim for a minimum of 70% test coverage within the next iteration.",
-                    "EXPECTED_IMPACT": "Improved code stability, reduced regression bugs, increased developer confidence during changes, and a clearer understanding of code behavior. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "tests/test_llm_provider.py",
-                            "ACTION": "ADD",
-                            "FULL_CONTENT": """import pytest
- from src.llm_provider import GeminiProvider # Corrected import
- 
- # Mocking the LLM API for testing
- class MockLLMClient:
-     def __init__(self, model_name):
-         self.model_name = model_name
- 
-     def generate_content(self, contents, config): # Updated signature to match genai.Client
-         # Simulate a response based on prompt content
-         prompt_content = contents # Assuming 'contents' is the prompt string
-         if "summarize" in prompt_content.lower():
-             return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="This is a simulated summary.")]))])
-         elif "analyze" in prompt_content.lower():
-             return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="this is a simulated analysis.")]))])
-         else:
-             return MagicMock(candidates=[MagicMock(content=MagicMock(parts=[MagicMock(text="This is a simulated default response.")]))])
- 
-     def count_tokens(self, model, contents): # Updated signature to match genai.Client
-         return MagicMock(total_tokens=len(contents) // 4) # Simulate token count
- 
- @pytest.fixture
- def llm_provider_instance():
-     # Use the mock client for testing
-     mock_client = MockLLMClient(model_name="mock-model")
-     mock_tokenizer = MagicMock() # Mock tokenizer
-     mock_tokenizer.count_tokens.side_effect = lambda text: len(text) // 4 # Simple token count
-     mock_tokenizer.max_output_tokens = 8192 # Set a default max_output_tokens
-     
-     # Patch genai.Client during fixture creation
-     with patch('src.llm_provider.genai.Client', return_value=mock_client):
-         provider = GeminiProvider(
-             api_key="mock-key",
-             model_name="mock-model",
-             tokenizer=mock_tokenizer,
-             settings=MagicMock() # Mock settings
-         )
-         return provider
- 
- def test_llm_provider_initialization(llm_provider_instance):
-     \"\"\"Test that the GeminiProvider initializes correctly.\"\"\"
-     assert llm_provider_instance.model_name == \"mock-model\"
- 
- def test_llm_provider_generate_content_summary(llm_provider_instance):
-     \"\"\"Test content generation for a summarization prompt.\"\"\"
-     prompt = \"Please summarize the following text: ...\"
-     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
-         prompt=prompt,
-         system_prompt=\"You are a helpful assistant.\",
-         temperature=0.7,
-         max_tokens=100,
-     )
-     assert response_text == \"This is a simulated summary.\"
-     assert input_tokens > 0
-     assert output_tokens > 0
-     assert is_truncated == False
- 
- def test_llm_provider_generate_content_analysis(llm_provider_instance):
-     \"\"\"Test content generation for an analysis prompt.\"\"\"
-     prompt = \"Analyze the provided data: ...\"
-     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
-         prompt=prompt,
-         system_prompt=\"You are a helpful assistant.\",
-         temperature=0.7,
-         max_tokens=100,
-     )
-     assert response_text == \"this is a simulated analysis.\"
-     assert input_tokens > 0
-     assert output_tokens > 0
-     assert is_truncated == False
- 
- def test_llm_provider_generate_content_default(llm_provider_instance):
-     \"\"\"Test content generation for a general prompt.\"\"\"\
-     prompt = \"What is the capital of France?\"
-     response_text, input_tokens, output_tokens, is_truncated = llm_provider_instance.generate(
-         prompt=prompt,
-         system_prompt=\"You are a helpful assistant.\",
-         temperature=0.7,
-         max_tokens=100,
-     )
-     assert response_text == \"This is a simulated default response.\"
-     assert input_tokens > 0
-     assert output_tokens > 0
-     assert is_truncated == False
- 
- # Add more tests for different scenarios and edge cases
- """
-                        },
-                        {
-                            "FILE_PATH": "tests/test_prompt_engineering.py",
-                            "ACTION": "ADD",
-                            "FULL_CONTENT": """import pytest
- from src.utils.prompt_engineering import format_prompt
- from src.persona_manager import PersonaManager # Needed for mocking in session_manager
- from unittest.mock import MagicMock # Import MagicMock
- 
- # Mock app_config and EXAMPLE_PROMPTS for session_manager initialization
- @pytest.fixture
- def mock_app_config():
-     return MagicMock(
-         total_budget=2000000,
-         context_token_budget_ratio=0.25,
-         domain_keywords={"General": ["general"], "Software Engineering": ["code"]},
-         example_prompts={
-             "Coding & Implementation": {
-                 "Implement Python API Endpoint": {
-                     "prompt": "Implement a new FastAPI endpoint.",
-                     "description": "Generate an API endpoint.",
-                     "framework_hint": "Software Engineering",
-                 }
-             }
-         }
-     )
- 
- def test_format_prompt_basic(prompt_manager):
-     \"\"\"Test format_prompt with basic variable substitution.\"\"\"
-     template = \"Hello, {name}!\"
-     kwargs = {\"name\": \"World\"}
-     result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
-     assert result == \"Hello, World!\"
- 
- def test_format_prompt_with_codebase_context_self_analysis(prompt_manager):
-     \"\"\"Test format_prompt with codebase context for self-analysis.\"\"\"
-     template = \"Analyze this: {issue}\"
-     codebase_context = {
-         \"file_structure\": {
-             \"critical_files_preview\": {
-                 \"file1.py\": \"def func(): pass\"
-             }
-         }
-     }
-     kwargs = {\"issue\": \"bug\"}
-     result = prompt_manager.format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs) # Use prompt_manager instance
-     assert \"CODEBASE CONTEXT\" in result
-     assert \"file1.py\" in result
-     assert \"bug\" in result
- 
- def test_format_prompt_missing_key(prompt_manager):
-     \"\"\"Test format_prompt handles missing keys gracefully.\"\"\"\
-     template = \"Hello, {name}!\"
-     kwargs = {\"age\": 30} # Missing 'name'
-     result = prompt_manager.format_prompt(template, **kwargs) # Use prompt_manager instance
-     assert \"Missing key for prompt formatting\" in result # Check for warning message
-     assert \"{name}\" in result # The placeholder should remain if not formatted
- """
-                        },
-                    ],
-                }
-            )
- 
-        high_token_personas = (
-            self.collected_metrics.get("performance_efficiency", {})
-            .get("debate_efficiency_summary", {})
-            .get("persona_token_breakdown", {})
-        )
-        high_token_consumers = {
-            p: t for p, t in high_token_personas.items() if t > 2000
-        }
- 
-        if high_token_consumers:
-            suggestions.append(
-                {
-                    "AREA": "Efficiency",
-                    "PROBLEM": f"High token consumption by personas: {', '.join(high_token_consumers.keys())}. This indicates potentially verbose or repetitive analysis patterns.",
-                    "PROPOSED_SOLUTION": "Optimize prompts for high-token personas. Implement prompt truncation strategies where appropriate, focusing on summarizing or prioritizing key information. For 'Self_Improvement_Analyst', focus on direct actionable insights rather than exhaustive analysis. For technical personas, ensure they are provided with concise, targeted information relevant to their specific task.",
-                    "EXPECTED_IMPACT": "Reduces overall token consumption, leading to lower operational costs and potentially faster response times. Improves the efficiency of the self-analysis process.",
-                    "CODE_CHANGES_SUGGESTED": [],
-                }
-            )
- 
-        content_misalignment_warnings = self.collected_metrics.get("reasoning_quality", {}).get(
-            "content_misalignment_warnings", 0
-        )
-        if content_misalignment_warnings > 3:
-            suggestions.append(
-                {
-                    "AREA": "Reasoning Quality",
-                    "PROBLEM": f"Content misalignment warnings ({content_misalignment_warnings}) indicate potential issues in persona reasoning or prompt engineering.",
-                    "PROPOSED_SOLUTION": "Refine prompts for clarity and specificity. Review persona logic for consistency and accuracy. Ensure personas stay focused on the core task and domain.",
-                    "EXPECTED_IMPACT": "Enhances the quality and relevance of persona outputs, leading to more coherent and accurate final answers.",
-                    "CODE_CHANGES_SUGGESTED": [],
-                }
-            )
- 
-        final_suggestions = self._process_suggestions_for_quality(suggestions[:self.llm_provider.settings.self_improvement.max_suggestions])
- 
-        logger.info(f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}.")
- 
-        return final_suggestions
- 
+    # REMOVED: The entire generate_suggestions method (lines 1090-1293 in the original file)
+    # Its logic is now handled by the Self_Improvement_Analyst persona via LLM.
+
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")
         return {"summary": "Codebase structure analysis is a placeholder."}
- 
+
     def analyze_performance_bottlenecks(self) -> Dict[str, Any]:
         logger.info("Analyzing performance bottlenecks.")
         return {"summary": "Performance bottleneck analysis is a placeholder."}
