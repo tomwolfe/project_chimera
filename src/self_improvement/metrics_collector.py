@@ -1126,21 +1126,20 @@ class FocusedMetricsCollector:
         # FIX: Ensure that .get() is not called on None.
         conflict_resolution_attempt_data = self.intermediate_steps.get("Conflict_Resolution_Attempt")
         
-        # Initialize conflict_resolution_summary as an empty dict if attempt data is None or empty
-        conflict_resolution_summary = {}
-        if conflict_resolution_attempt_data is not None:
-            conflict_resolution_summary = conflict_resolution_attempt_data.get("resolution_summary", {})
-
         # Initialize suggestions list, which will be part of collected_metrics
         initial_suggestions_from_conflict = [] # Renamed to avoid confusion with the 'suggestions' list in generate_suggestions
 
+        # FIX: Correctly access conflict_resolved from conflict_resolution_attempt_data
+        # and check the 'resolved_output' for the specific rationale string.
         if (
-            conflict_resolution_summary
-            and conflict_resolution_summary.get("conflict_resolved")
-            and "cannot be fulfilled due to the absence of the codebase"
-            in conflict_resolution_summary.get("RATIONALE", "")
+            conflict_resolution_attempt_data
+            and conflict_resolution_attempt_data.get("conflict_resolved")
         ):
-            initial_suggestions_from_conflict.append(
+            resolved_output_content = conflict_resolution_attempt_data.get("resolved_output")
+            if (
+                isinstance(resolved_output_content, dict) and "cannot be fulfilled due to the absence of the codebase" in resolved_output_content.get("RATIONALE", "")
+            ):
+                initial_suggestions_from_conflict.append(
                 {
                     "AREA": "Maintainability",
                     "PROBLEM": "Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase. The conflict resolution summary correctly identified the need for the codebase to proceed.",
