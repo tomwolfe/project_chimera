@@ -1,4 +1,4 @@
-=== tests/test_app_logic.py ===
+# tests/test_app_logic.py
 # tests/test_app_logic.py
 import unittest
 from app import sanitize_user_input  # Import the function from app.py
