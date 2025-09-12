@@ -95,14 +95,48 @@ from src.utils.ui_helpers import (
 )  # NEW: Import from ui_helpers
 from src.utils.api_key_validator import fetch_api_key  # NEW: Import fetch_api_key
 
+# --- Constants ---
+MAX_DEBATE_RETRIES = 3
+DEBATE_RETRY_DELAY_SECONDS = 5
+
 # --- Configuration Loading ---
-# REMOVED: @st.cache_resource def load_config(...) function
-# NEW: Load ChimeraSettings directly
 try:
     settings_instance = ChimeraSettings.from_yaml("config.yaml")
 except Exception as e:
     st.error(f"❌ Application configuration error: {e}")
     st.stop()
+
+# NEW: Initialize the global logger object using st.cache_resource for robustness
+@st.cache_resource
+def get_app_logger():
+    """Initializes and returns the structured logger, cached by Streamlit."""
+    try:
+        configured_logger = setup_structured_logging()
+        if configured_logger is None:
+            # Fallback to a basic logger if setup_structured_logging returns None
+            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            fallback_logger = logging.getLogger(__name__)
+            fallback_logger.warning("setup_structured_logging returned None. Using basic fallback logger.")
+            return fallback_logger
+        return configured_logger
+    except Exception as e:
+        st.error(f"❌ Error setting up structured logging: {e}")
+        # Fallback to a basic logger if setup fails
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        fallback_logger = logging.getLogger(__name__)
+        fallback_logger.exception("Failed to set up structured logging. Using basic fallback logger.")
+        return fallback_logger
+
+logger = get_app_logger()
+
+# Add a quick check to ensure logger is not None, though st.cache_resource should prevent this
+if logger is None:
+    st.error("❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py.")
+    # As a last resort, create a very basic logger if all else fails
+    logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.critical("Final fallback logger activated due to primary and secondary logger initialization failure.")
+
 
 # REMOVED: DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
 # REMOVED: CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25)
@@ -1748,14 +1782,6 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get(
                     "Total_Estimated_Cost_USD", 0.0
                 )
-
-            if "malformed_blocks" not in final_answer:
-                final_answer["malformed_blocks"] = []
-            if "malformed_blocks" not in intermediate_steps:
-                intermediate_steps["malformed_blocks"] = []
-
-            intermediate_steps["Total_Tokens_Used"] = final_total_tokens
-            intermediate_steps["Total_Estimated_Cost_USD"] = final_total_cost
 
 
 # --- END OF NEW FUNCTION ---
