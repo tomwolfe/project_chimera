@@ -1,14 +1,14 @@
 # src/utils/api_key_validator.py
 import re
 import logging
-import os # NEW: Import os for environment variables
+import os
 from typing import Tuple, Optional
 import google.genai as genai
 from google.genai.errors import APIError
 
 logger = logging.getLogger(__name__)
 
-# NEW: Placeholder for a secrets manager client (e.g., AWS Secrets Manager, Google Secret Manager)
+# Placeholder for a secrets manager client (e.g., AWS Secrets Manager, Google Secret Manager)
 # In a real application, this would be configured to interact with a specific service.
 class MockSecretsManager:
     def get_secret(self, secret_name: str) -> Optional[str]:
@@ -44,10 +44,17 @@ def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
     if not api_key or not isinstance(api_key, str):
         return False, "API key is empty or invalid type"
     
-    # Format validation (basic regex)
-    if not re.match(r"^[A-Za-z0-9_-]{35,}$", api_key):
-        return False, "API key format is invalid (expected 35+ alphanumeric/hyphen/underscore characters)"
+    # Check length requirement
+    if len(api_key) < 35:
+        return False, "API key must be at least 35 characters long"
     
+    # Check character set
+    if not all(c.isalnum() or c in '-_' for c in api_key):
+        return False, "API key must contain only alphanumeric characters, hyphens, or underscores"
+    
+    # The original regex check `if not re.match(r"^[A-Za-z0-9_-]{35,}$", api_key):`
+    # is now redundant with the explicit length and character set checks above, so it is removed.
+
     # Check for common secret patterns that indicate exposure (heuristic)
     if 'AIza' not in api_key and 'AIza' not in api_key[:10]: # Common prefix for Google API keys
         return False, "API key appears to be missing standard prefix (e.g., 'AIza')"
