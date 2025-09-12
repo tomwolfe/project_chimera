@@ -1,3 +1,5 @@
+# tests/test_persona_manager.py
+
 import pytest
 from unittest.mock import MagicMock, patch
 from src.persona_manager import PersonaManager

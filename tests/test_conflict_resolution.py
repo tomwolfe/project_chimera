@@ -5,6 +5,7 @@ from unittest.mock import MagicMock # Import MagicMock for potential future use 
 
 # Assuming ConflictResolutionManager is in src/conflict_resolution.py
 from src.conflict_resolution import ConflictResolutionManager
+from src.models import CritiqueOutput # NEW: Import CritiqueOutput for schema mocking
 
 @pytest.fixture
 def conflict_manager():
@@ -21,8 +22,8 @@ def conflict_manager():
         system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
     )
     mock_persona_manager.PERSONA_OUTPUT_SCHEMAS = {
-        "PersonaB": MagicMock(), # Mock a schema for PersonaB
-        "Constructive_Critic": MagicMock(), # Mock a schema for Constructive_Critic
+        "PersonaB": CritiqueOutput, # Mock a schema for PersonaB
+        "Constructive_Critic": CritiqueOutput, # Mock a schema for Constructive_Critic
         "Devils_Advocate": MagicMock(), # Mock a schema for Devils_Advocate
         "Self_Improvement_Analyst": MagicMock(), # Mock a schema for Self_Improvement_Analyst
         "GeneralOutput": MagicMock(), # Mock GeneralOutput
@@ -33,7 +34,7 @@ def conflict_manager():
 def test_resolve_conflict_with_malformed_string(conflict_manager):
     """Tests resolution when the latest output is a non-JSON string."""
     history = [
-        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
+        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
         {"persona": "PersonaB", "output": "This is not JSON, but some text."}
     ]
     result = conflict_manager.resolve_conflict(history)
@@ -46,14 +47,11 @@ def test_resolve_conflict_with_malformed_string(conflict_manager):
 def test_resolve_conflict_with_string_json(conflict_manager):
     """Tests resolution when the latest output is a valid JSON string."""
     history = [
-        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
+        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
         {"persona": "PersonaB", "output": '{"CRITIQUE_SUMMARY": "This is valid JSON as a string", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}'}
     ]
     # Mock the schema for PersonaB to be CritiqueOutput for successful parsing
-    conflict_manager.persona_manager.PERSONA_OUTPUT_SCHEMAS["PersonaB"] = MagicMock(
-        __name__="CritiqueOutput",
-        model_json_schema=lambda: {"type": "object", "properties": {"CRITIQUE_SUMMARY": {"type": "string"}}}
-    )
+    conflict_manager.persona_manager.PERSONA_OUTPUT_SCHEMAS["PersonaB"] = CritiqueOutput
     
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
@@ -65,18 +63,17 @@ def test_resolve_conflict_with_string_json(conflict_manager):
 def test_resolve_conflict_with_malformed_dict_no_summary(conflict_manager):
     """Tests resolution when the latest output is a dict but lacks expected keys."""
     history = [
-        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1"}},
+        {"persona": "PersonaA", "output": {"CRITIQUE_SUMMARY": "Valid output 1", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}},
         {"persona": "PersonaB", "output": {"error": "Something failed", "details": "Missing CRITIQUE_SUMMARY", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}}
     ]
     # Mock the persona manager to return a valid config for PersonaB
     conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
         system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
     )
-    # Mock the LLM provider to return a valid self-corrected output
-    conflict_manager.llm_provider.generate.return_value = (
-        '{"CRITIQUE_SUMMARY": "Self-corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}',
-        100, 50, False
-    )
+    # FIX: Mock the generate method to return a valid output for self-correction
+    conflict_manager.llm_provider.generate.side_effect = [
+        ('{"CRITIQUE_SUMMARY": "Self-corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}', 100, 50, False)
+    ]
     # Mock the parser for the self-correction attempt
     conflict_manager.output_parser.parse_and_validate.return_value = {
         "CRITIQUE_SUMMARY": "Self-corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []
@@ -99,10 +96,10 @@ def test_resolve_conflict_with_insufficient_history(conflict_manager):
     conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
         system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
     )
-    # Mock the LLM provider to return None for self-correction (simulating failure)
-    conflict_manager.llm_provider.generate.return_value = (
-        '{"invalid": "output"}', 10, 10, True # Still invalid after retry
-    )
+    # FIX: Mock the generate method to return an invalid output for self-correction
+    conflict_manager.llm_provider.generate.side_effect = [
+        ('{"invalid": "output"}', 10, 10, True)
+    ]
     conflict_manager.output_parser.parse_and_validate.return_value = {
         "invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]
     }
@@ -124,10 +121,10 @@ def test_resolve_conflict_with_valid_history_and_problematic_output(conflict_man
     conflict_manager.persona_manager.get_adjusted_persona_config.return_value = MagicMock(
         system_prompt="Mock system prompt", temperature=0.1, max_tokens=4096
     )
-    # Mock the LLM provider to return None for self-correction (simulating failure)
-    conflict_manager.llm_provider.generate.return_value = (
-        '{"invalid": "output"}', 10, 10, True # Still invalid after retry
-    )
+    # FIX: Mock the generate method to return an invalid output for self-correction
+    conflict_manager.llm_provider.generate.side_effect = [
+        ('{"invalid": "output"}', 10, 10, True)
+    ]
     conflict_manager.output_parser.parse_and_validate.return_value = {
         "invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]
     }

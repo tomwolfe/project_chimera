@@ -259,6 +259,9 @@ class SocraticDebate:
         # NEW: Declare instance variable for synthesis persona name and file analysis cache
         self.synthesis_persona_name_for_metrics: Optional[str] = None
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
+        # FIX: Ensure output_parser is set on the instance
+        self.output_parser = LLMOutputParser()
+
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -870,7 +873,7 @@ class SocraticDebate:
                             token_budget_exceeded=False,
                         )
                     # NEW: Return a fallback output using the parser
-                    return LLMOutputParser()._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
+                    return self.output_parser._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
                         output_schema_class,
                         malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
                         raw_output_snippet=raw_llm_output,
@@ -1873,7 +1876,7 @@ class SocraticDebate:
             effective_metrics_budget = max(
                 300,
                 min(
-                    int(self.phase_budgets["synthesis"] * 0.2),
+                    int(self.phase_budgets["synthesis"] * 0.3), # MODIFIED: Increased from 0.2 to 0.3
                     self.phase_budgets["synthesis"] // 3,
                 ),
             )

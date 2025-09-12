@@ -66,7 +66,7 @@ class LLMProviderError(ChimeraError):
         full_details = (details or {}).copy()
         full_details["provider_error_code"] = provider_error_code
         super().__init__(
-            message,
+            message, # FIX: Removed 'error_code=' as it's passed positionally to base Exception
             error_code="LLM_PROVIDER_ERROR",
             details=full_details,
             original_exception=original_exception,

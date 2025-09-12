@@ -178,6 +178,8 @@ def socratic_debate_instance(mock_gemini_provider, mock_persona_manager, mock_to
         debate.conflict_manager = mock_conflict_manager
         # Ensure the metrics collector mock is assigned to the instance
         debate.metrics_collector = mock_metrics_collector
+        # FIX: Ensure output_parser is set on the instance
+        debate.output_parser = mock_output_parser
         return debate
 
 def test_socratic_debate_initialization(socratic_debate_instance):
@@ -189,10 +191,11 @@ def test_socratic_debate_initialization(socratic_debate_instance):
     assert socratic_debate_instance.token_tracker is not None
     assert socratic_debate_instance.context_analyzer is not None
     assert socratic_debate_instance.settings is not None
+    assert socratic_debate_instance.output_parser is not None # FIX: Assert output_parser is set
 
 def test_socratic_debate_run_debate_success(socratic_debate_instance, mock_gemini_provider, mock_output_parser):
     """Tests a successful end-to-end debate run."""
-    mock_gemini_provider.generate.return_value = ("{}", 100, 50, False) # Mock LLM output
+    mock_gemini_provider.generate.return_value = ('{"general_output": "Final Answer"}', 100, 50, False) # Mock LLM output
     mock_output_parser.parse_and_validate.return_value = {"general_output": "Final Answer", "malformed_blocks": []}
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
@@ -222,7 +225,7 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(socratic_deb
     # Mock the parser to return malformed for the critic, then valid for others
     socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
         {"general_output": "Visionary idea", "malformed_blocks": []}, # Visionary
-        {"CRITIQUE_SUMMARY": "Malformed output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}, # Critic
+        {"CRITIQUE_SUMMARY": "Malformed output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR", "message": "Invalid field"}]}, # Critic
         {"general_output": "Final synthesis from resolved conflict", "malformed_blocks": []}, # Arbitrator
     ]
 
@@ -242,7 +245,7 @@ def test_socratic_debate_token_budget_exceeded(socratic_debate_instance, mock_ge
     """Tests that a TokenBudgetExceededError is raised when budget is exceeded."""
     mock_token_tracker.current_usage = 990000 # Near budget limit
     mock_token_tracker.budget = 1000000
-    mock_gemini_provider.generate.return_value = ("{}", 50000, 10000, False) # This will exceed budget
+    mock_gemini_provider.generate.return_value = ('{"general_output": "Exceeded"}', 50000, 10000, False) # This will exceed budget
 
     with pytest.raises(TokenBudgetExceededError):
         socratic_debate_instance.run_debate()
@@ -276,7 +279,6 @@ def test_execute_llm_turn_schema_validation_retry(socratic_debate_instance, mock
     # Assert that the final output is the valid one
     assert output["CRITIQUE_SUMMARY"] == "Valid critique"
     # Assert that a malformed block for retry was recorded (if applicable, depends on mock behavior)
-    # The core logic should handle recording this, not necessarily the test directly asserting it.
     # For this test, we primarily care that the retry mechanism works and a valid output is eventually produced.
 
 def test_socratic_debate_self_analysis_flow(socratic_debate_instance, mock_gemini_provider, mock_persona_manager, mock_metrics_collector):

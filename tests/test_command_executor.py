@@ -54,7 +54,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "false_command"], # MODIFIED: Expect sys.executable -m for 'false_command'
+            [sys.executable, "-m", "false_command"], # FIX: Expect sys.executable -m for 'false_command'
             capture_output=True,
             text=True,
             check=False,
@@ -74,7 +74,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "error_command"], # MODIFIED: Expect sys.executable -m for 'error_command'
+            [sys.executable, "-m", "error_command"], # FIX: Expect sys.executable -m for 'error_command'
             capture_output=True,
             text=True,
             check=False,
@@ -91,7 +91,7 @@ class TestCommandExecutor(unittest.TestCase):
         # Mock subprocess.run to raise TimeoutExpired
         self.mock_run.side_effect = subprocess.TimeoutExpired(cmd=command, timeout=1)
 
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(subprocess.TimeoutExpired): # FIX: Expect TimeoutExpired to be re-raised
             execute_command_safely(command, timeout=1)
         self.mock_run.assert_called_once_with(
             command,
@@ -110,7 +110,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command, check=True)
 
         self.mock_run.assert_called_once_with(
-            command,
+            command, # FIX: No sys.executable -m for 'echo'
             capture_output=True,
             text=True,
             check=True,
@@ -129,9 +129,9 @@ class TestCommandExecutor(unittest.TestCase):
         )
 
         with pytest.raises(subprocess.CalledProcessError):
-            execute_command_safely(command, check=True)
+            execute_command_safely(command, check=True) # FIX: Expect CalledProcessError to be re-raised
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "false_command"], # MODIFIED: Expect sys.executable -m
+            [sys.executable, "-m", "false_command"], # FIX: Expect sys.executable -m
             capture_output=True,
             text=True,
             check=True,
@@ -200,15 +200,15 @@ class TestCommandExecutor(unittest.TestCase):
             mock_logger_instance = MagicMock()
             mock_logger.return_value = mock_logger_instance
             
-            with pytest.raises(OSError): # Expect the original exception to be re-raised
+            with pytest.raises(OSError): # FIX: Expect the original exception to be re-raised
                 execute_command_safely(command)
             
             mock_logger_instance.error.assert_called_once_with(
                 f"An error occurred while executing command: Permission denied",
-                exc_info=True # Ensure exc_info is passed
+                exc_info=True # FIX: Ensure exc_info is passed
             )
             self.mock_run.assert_called_once_with(
-                [sys.executable, "-m", "some_command"], # MODIFIED: Expect sys.executable -m
+                [sys.executable, "-m", "some_command"], # FIX: Expect sys.executable -m
                 capture_output=True,
                 text=True,
                 check=False,

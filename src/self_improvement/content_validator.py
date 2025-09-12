@@ -340,11 +340,11 @@ class ContentAlignmentValidator:
             )
 
         # Threshold for alignment
-        # Adjusted threshold for individual personas, as they have a narrower focus
-        # Increased threshold slightly for better detection of misalignment
-        alignment_threshold = (
-            0.3 if persona_name != "Self_Improvement_Analyst" else 0.4
-        )
+        # Increased threshold for Self_Improvement_Analyst and Devils_Advocate for stricter alignment
+        if persona_name == "Self_Improvement_Analyst" or persona_name == "Devils_Advocate":
+            alignment_threshold = 0.5 # Stricter for these critical personas
+        else:
+            alignment_threshold = 0.3 # Default for others
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False

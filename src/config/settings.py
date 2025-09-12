@@ -91,7 +91,7 @@ class ChimeraSettings(BaseModel):
     )
     max_tokens_per_persona: Dict[str, int] = Field(
         default_factory=lambda: {
-            "Self_Improvement_Analyst": 4000, "Security_Auditor": 3800, "Code_Architect": 3500, "Test_Engineer": 3000, "DevOps_Engineer": 3000, "Devils_Advocate": 3500, "Generalist_Assistant": 3000, "Constructive_Critic": 3500, "Impartial_Arbitrator": 4000
+            "Self_Improvement_Analyst": 4000, "Security_Auditor": 3800, "Code_Architect": 3500, "Test_Engineer": 3000, "DevOps_Engineer": 4000, "Devils_Advocate": 4000, "Generalist_Assistant": 3000, "Constructive_Critic": 3500, "Impartial_Arbitrator": 4000
         },
         description="Specific maximum input tokens for individual personas.",
     )

@@ -558,6 +558,23 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                             "code_snippet": snippet,
                                         }
                                     )
+                
+                # NEW: Check for weak cryptographic hashes (e.g., MD5)
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "hashlib"
+                    and node.func.attr == "md5"
+                ):
+                    self.issues.append(
+                        {
+                            "type": "Security Vulnerability (AST)",
+                            "file": self.filename,
+                            "line": node.lineno,
+                            "message": "Use of weak MD5 hash for security is discouraged. Consider stronger algorithms like SHA256 or SHA3.",
+                            "code_snippet": snippet,
+                        }
+                    )
 
                 self.generic_visit(node)
 

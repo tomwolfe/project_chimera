@@ -804,14 +804,14 @@ class FocusedMetricsCollector:
     @staticmethod
     def _generate_suggestion_id(suggestion: Dict) -> str:
         """Generates a consistent ID for a suggestion to track its impact over time."""
-        import hashlib
+        import hashlib # Ensure hashlib is imported
         
         hash_input = (
             suggestion.get("AREA", "") + 
             suggestion.get("PROBLEM", "") + 
             suggestion.get("EXPECTED_IMPACT", "")
         )
-        return hashlib.md5(hash_input.encode()).hexdigest()[:8]
+        return hashlib.sha256(hash_input.encode()).hexdigest()[:8] # FIX: Use SHA256 instead of MD5
     
     def analyze_historical_effectiveness(self) -> Dict[str, Any]:
         """Analyzes historical improvement data to identify patterns of success."""

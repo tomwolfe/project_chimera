@@ -81,10 +81,11 @@ class SelfImprovementAnalyst:
 
     def __init__(
         self,
+        initial_prompt: str,
         metrics: Dict[str, Any],
         debate_history: List[Dict],
         intermediate_steps: Dict[str, Any],
-        codebase_context: Dict[str, str],
+        codebase_raw_file_contents: Dict[str, str],
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
@@ -94,10 +95,11 @@ class SelfImprovementAnalyst:
         """
         Initializes the analyst with collected metrics and context.
         """
+        self.initial_prompt = initial_prompt
         self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.codebase_context = codebase_context
+        self.codebase_raw_file_contents = codebase_raw_file_contents # NEW: Renamed for clarity
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
@@ -230,19 +232,6 @@ Summarize findings concisely.
                     "PROBLEM": f"Historical analysis identifies '{most_common_failure}' as a common failure mode ({common_failure_modes[most_common_failure]} occurrences).",
                     "PROPOSED_SOLUTION": f"Implement specific safeguards or prompt adjustments to mitigate '{most_common_failure}'. For example, if it's 'schema_validation_failures_count', refine JSON output instructions or use more robust parsing.",
                     "EXPECTED_IMPACT": "Reduced recurrence of known issues, improving the overall reliability of the self-improvement process.",
-                    "CODE_CHANGES_SUGGESTED": []
-                })
-        # --- MODIFICATION END ---
-        
-        # --- NEW: Prioritize suggestions based on historical failure modes ---
-        if common_failure_modes:
-            # Example: If schema validation failures are common, suggest prompt refinement
-            if "schema_validation_failures_count" in common_failure_modes and common_failure_modes["schema_validation_failures_count"] > 3:
-                suggestions.append({
-                    "AREA": "Robustness",
-                    "PROBLEM": f"Frequent schema validation failures ({common_failure_modes['schema_validation_failures_count']} occurrences) indicate LLMs struggle with output format adherence.",
-                    "PROPOSED_SOLUTION": "Refine JSON output instructions in persona prompts (e.g., `Constructive_Critic`, `Impartial_Arbitrator`). Emphasize strict JSON format, no conversational text, and correct array/object syntax. Consider adding more explicit examples in prompts.",
-                    "EXPECTED_IMPACT": "Reduced schema validation errors, leading to more reliable and parseable LLM outputs.",
                     "CODE_CHANGES_SUGGESTED": [
                         {
                             "FILE_PATH": "personas.yaml",
@@ -262,76 +251,6 @@ Summarize findings concisely.
                         }
                     ]
                 })
-            # Example: If token budget exceeded is common, suggest prompt optimization
-            if "token_budget_exceeded_count" in common_failure_modes and common_failure_modes["token_budget_exceeded_count"] > 2:
-                suggestions.append({
-                    "AREA": "Efficiency",
-                    "PROBLEM": f"Frequent token budget exceedances ({common_failure_modes['token_budget_exceeded_count']} occurrences) indicate prompts are too verbose or budgets are too tight.",
-                    "PROPOSED_SOLUTION": "Implement more aggressive prompt summarization in `src/utils/prompt_optimizer.py` for high-token personas. Review `core.py`'s token budget allocation logic. Encourage personas to be more concise in their outputs.",
-                    "EXPECTED_IMPACT": "Reduced token costs and improved debate completion rates.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "src/utils/prompt_optimizer.py",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/src/utils/prompt_optimizer.py
-+++ b/src/utils/prompt_optimizer.py
-@@ -100,7 +100,7 @@
- }
- 
-         # Regex to extract sections based on headings/markers
--        # This needs to be robust to the exact prompt structure in personas.yaml
-+        # This needs to be robust to the exact prompt structure in personas.yaml. Using more specific markers.
-         core_mission_match = re.search(r"(You are Project Chimera's Self-Improvement Analyst.*?)\n---", prompt, re.DOTALL)
-         if core_mission_match:
-             sections["core_mission"] = core_mission_match.group(1).strip()
-@@ -110,28 +110,34 @@
-         if critical_instruction_match:
-             sections["critical_instruction_absolute_adherence"] = critical_instruction_match.group(1).strip()
- 
--        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION:\*\*|\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        security_analysis_match = re.search(r"(\*\*SECURITY ANALYSIS:\*\*.*?)(?=\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*|\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if security_analysis_match:
-             sections["security_analysis"] = security_analysis_match.group(1).strip()
- 
--        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION:\*\*.*?)(?=\*\*TESTING STRATEGY:\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        token_optimization_match = re.search(r"(\*\*TOKEN OPTIMIZATION \(AI Efficiency\):\*\*.*?)(?=\*\*TESTING STRATEGY \(AI Robustness\):\*\*|\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if token_optimization_match:
-             sections["token_optimization"] = token_optimization_match.group(1).strip()
-         
--        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY:\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-+        testing_strategy_match = re.search(r"(\*\*TESTING STRATEGY \(AI Robustness\):\*\*.*?)(?=\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*|---)", prompt, re.DOTALL)
-         if testing_strategy_match:
-             sections["testing_strategy"] = testing_strategy_match.group(1).strip()
- 
--        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)\n---", prompt, re.DOTALL)
-+        ai_reasoning_match = re.search(r"(\*\*AI REASONING QUALITY & DEBATE PROCESS IMPROVEMENT:\*\*.*?)(?=\n---|\Z)", prompt, re.DOTALL)
-         if ai_reasoning_match:
-             sections["ai_reasoning_quality"] = ai_reasoning_match.group(1).strip()
- 
--        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput)", prompt, re.DOTALL)
-+        json_instructions_match = re.search(r"(---\n\s*\*\*CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED\. STRICTLY ADHERE TO THE SCHEMA AND CODE CHANGE GUIDELINES\*\*.*?)(?=\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*|\Z)", prompt, re.DOTALL)
-         if json_instructions_match:
-             sections["critical_json_output_instructions"] = json_instructions_match.group(1).strip()
- 
--        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
-+        json_schema_match = re.search(r"(\*\*JSON Schema for SelfImprovementAnalysisOutput \(V1 data structure\):\*\*.*?)(?=\*\*Synthesize the following feedback into the specified JSON format:\*\*|\Z)", prompt, re.DOTALL)
-         if json_schema_match:
-             sections["json_schema"] = json_schema_match.group(1).strip()
- 
--        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas
--        # This order can be adjusted based on observed LLM behavior
-+        # Prioritize sections: Core mission, JSON instructions/schema, then specific analysis areas.
-+        # The order is crucial for effective truncation.
-+        # Core mission and JSON schema/instructions are always critical.
-+        # Specific analysis areas (security, token, testing, reasoning) can be dynamically prioritized
-+        # or truncated more aggressively if the overall prompt is too long.
-                 prioritized_sections = [
-                     sections["core_mission"],
-                     sections["critical_instruction_absolute_adherence"],
-"""
-                        }
-                    ]
-                })
 
         final_suggestions = suggestions[:3]
 
@@ -339,7 +258,7 @@ Summarize findings concisely.
             f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
         )
 
-        return final_suggestions
+        return self.metrics_collector._process_suggestions_for_quality(final_suggestions) # NEW: Process suggestions for quality
 
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")

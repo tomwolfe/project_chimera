@@ -243,6 +243,13 @@ class LLMOutputParser:
             repair_log.append({"action": "initial_repair", "details": "Fixed array incorrectly wrapped in quotes."})
             json_str = temp_str
 
+        # Heuristic 8: Remove or escape invalid control characters (e.g., \u0000-\x1F)
+        # This is a common issue with LLM outputs.
+        temp_str = re.sub(r'[\x00-\x1F\x7F]', '', json_str) # Remove non-printable ASCII characters
+        if temp_str != json_str:
+            repair_log.append({"action": "initial_repair", "details": "Removed invalid control characters."})
+            json_str = temp_str
+
         if original_str != json_str:
             self.logger.info(f"Repaired JSON string. Repairs: {', '.join([r['details'] for r in repair_log])}")
 
@@ -695,10 +702,30 @@ class LLMOutputParser:
                     )
                     data_to_validate = {
                         "CRITIQUE_SUMMARY": "LLM returned a list of dicts as critique points.",
-                        "CRITIQUE_POINTS": parsed_data,
+                        "CRITIQUE_POINTS": [], # FIX: CritiqueOutput expects a list of dicts for CRITIQUE_POINTS, not raw dicts
                         "SUGGESTIONS": [],
                         "malformed_blocks": malformed_blocks_list,
                     }
+                    # Attempt to validate each item as a SuggestionItem or a generic dict for CritiquePoints
+                    processed_critique_points = []
+                    processed_suggestions = []
+                    for item in parsed_data:
+                        if isinstance(item, dict):
+                            try:
+                                # Try to validate as SuggestionItem first
+                                validated_suggestion = SuggestionItem.model_validate(item)
+                                processed_suggestions.append(validated_suggestion.model_dump(by_alias=True))
+                            except ValidationError:
+                                # If not a SuggestionItem, treat as a generic critique point
+                                processed_critique_points.append(item)
+                        else:
+                            malformed_blocks_list.append({
+                                "type": "MALFORMED_CRITIQUE_ITEM",
+                                "message": f"Critique item is not a dictionary: {str(item)[:100]}",
+                                "raw_string_snippet": str(item)[:100]
+                            })
+                    data_to_validate["CRITIQUE_POINTS"] = processed_critique_points
+                    data_to_validate["SUGGESTIONS"] = processed_suggestions
                 else:
                     self.logger.warning(
                         "LLM returned a mixed/unexpected list for CritiqueOutput. Creating generic fallback."
