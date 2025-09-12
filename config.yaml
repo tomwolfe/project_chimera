@@ -8,10 +8,10 @@ context_token_budget_ratio: 0.25
 max_tokens_limit: 2000000 # NEW: Added for configurable max_value in UI
 
 # ADDED: Self-improvement specific constraints
-self_improvement:
+self_analysis:
   max_suggestions: 5  # Enforce 80/20 principle by limiting to highest-impact items
   max_tokens_per_suggestion: 8000  # Prevent overly verbose suggestions
   # MODIFIED: Reallocated budget from debate to synthesis
-  self_analysis_context_ratio: 0.45
-  self_analysis_debate_ratio: 0.30 # Decreased from 0.40
-  self_analysis_synthesis_ratio: 0.25 # Increased from 0.15
+  self_analysis_context_ratio: 0.45 # MODIFIED: Changed from 0.40 to 0.45
+  self_analysis_debate_ratio: 0.30 # MODIFIED: Changed from 0.30 to 0.30 (no change from original suggestion, but reflects reallocation)
+  self_analysis_synthesis_ratio: 0.25 # MODIFIED: Changed from 0.15 to 0.25

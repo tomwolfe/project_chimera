@@ -8,8 +8,9 @@ rich
 sentence-transformers # Ensure sentence-transformers is available
 python-json-logger
 pytest-cov # Required for test coverage metrics collection in production
+tiktoken # ADDED: For token counting
 
-# NEW: Code quality and security tools required by src/utils/code_validator.py in production
+# Code quality and security tools required by src/utils/code_validator.py in production
 pycodestyle
 ruff
 bandit

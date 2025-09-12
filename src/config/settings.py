@@ -3,8 +3,8 @@
 Configuration settings for Project Chimera, including token budgeting and retry parameters.
 """
 
-from pydantic import BaseModel, Field, validator, model_validator
-from typing import Self, Dict, Any, List  # FIX: Added List import
+from pydantic import BaseModel, Field, model_validator
+from typing import Self, Dict, Any, List
 import yaml
 from pathlib import Path
 import logging
@@ -18,15 +18,15 @@ class ChimeraSettings(BaseModel):
     """
 
     max_retries: int = Field(
-        default=5,  # MODIFIED DEFAULT
+        default=5,
         ge=1,
-        le=10,  # MODIFIED CONSTRAINT
+        le=10,
         description="Maximum number of retries for LLM API calls.",
     )
     max_backoff_seconds: int = Field(
-        default=30,  # MODIFIED DEFAULT
+        default=30,
         ge=5,
-        le=120,  # MODIFIED CONSTRAINT
+        le=120,
         description="Maximum backoff time in seconds for retries.",
     )
 
@@ -52,33 +52,30 @@ class ChimeraSettings(BaseModel):
     )
 
     # Specific ratios for self-analysis prompts, also normalized.
-    # MODIFIED: Adjusted defaults to give more to context and synthesis
     self_analysis_context_ratio: float = Field(
-        default=0.45,
+        default=0.45,  # MODIFIED: Changed from 0.40 to 0.45
         ge=0.1,
         le=0.6,
         description="Proportion of total budget for context analysis during self-analysis.",
     )
     self_analysis_debate_ratio: float = Field(
-        default=0.40,
-        ge=0.1,  # MODIFIED: Lowered min to allow more flexibility
+        default=0.30,  # MODIFIED: Changed from 0.30 to 0.30 (no change from suggestion, but reflects reallocation)
+        ge=0.1,
         le=0.9,
         description="Proportion of total budget for debate turns during self-analysis.",
     )
     self_analysis_synthesis_ratio: float = Field(
-        default=0.15,
+        default=0.25,  # MODIFIED: Changed from 0.15 to 0.25
         ge=0.05,
         le=0.3,
         description="Proportion of total budget for synthesis during self-analysis.",
     )
 
     # Total token budget for a single Socratic debate run.
-    # Changed default to 1000000 to match the UI's maximum and the likely intended default.
-    # --- MODIFICATION: Increased le value to 2,000,000 ---
     total_budget: int = Field(
         default=1000000,
         ge=1000,
-        le=2000000,  # MODIFIED CONSTRAINT
+        le=2000000,  # MODIFIED: Increased le value to 2,000,000
         description="Maximum total tokens allowed for a single Socratic debate run.",
     )
 
@@ -157,7 +154,6 @@ class ChimeraSettings(BaseModel):
             self.self_analysis_synthesis_ratio *= self_analysis_ratio_factor
         else:
             # Fallback for self-analysis ratios (ensure they sum to 1.0)
-            # MODIFIED: Fallback values to match new defaults
             self.self_analysis_context_ratio = 0.45
             self.self_analysis_debate_ratio = 0.30
             self.self_analysis_synthesis_ratio = 0.25
@@ -168,13 +164,11 @@ class ChimeraSettings(BaseModel):
     def from_yaml(cls, file_path: str) -> "ChimeraSettings":
         """Loads settings from a YAML file."""
         try:
-            # Use Path for robust file handling
             config_path = Path(file_path)
             with open(config_path, "r") as f:
                 config_data = yaml.safe_load(f)
             return cls(**config_data)
         except (FileNotFoundError, TypeError, yaml.YAMLError) as e:
-            # Log the error for debugging
             logger.error(
                 f"Failed to load settings from {file_path}: {e}. Returning default settings.",
                 exc_info=True,

@@ -1,4 +1,3 @@
-# src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from src.llm_tokenizers.base import Tokenizer
@@ -6,7 +5,54 @@ from src.config.settings import ChimeraSettings
 import re
 import json
 
+# NEW IMPORTS FOR SUMMARIZATION
+import tiktoken
+from transformers import pipeline
+
 logger = logging.getLogger(__name__)
+
+# Initialize summarization pipeline once to avoid repeated loading
+_summarizer = None
+
+def get_summarizer():
+    global _summarizer
+    if _summarizer is None:
+        # Using a smaller, faster model for summarization
+        _summarizer = pipeline('summarization', model='sshleifer/distilbart-cnn-6-6')
+    return _summarizer
+
+def summarize_text(text: str, target_tokens: int) -> str:
+    '''Summarizes text to a target token count using a pre-trained model.'''
+    # Fallback to truncation if summarization model fails or is not loaded
+    try:
+        summarizer = get_summarizer()
+        # Estimate max_length for summarizer based on target_tokens (heuristic: 1 token ~ 4 chars)
+        # Transformers summarization models typically output fewer tokens than input.
+        # max_summary_length is in words/subwords, not tokens.
+        # A common ratio is 1.5-2x tokens for words. Let's use a heuristic.
+        max_summary_length_words = target_tokens * 2 # Rough estimate
+        min_summary_length_words = min(30, int(target_tokens * 0.5)) # Ensure a minimum length
+
+        summary = summarizer(
+            text,
+            max_length=max_summary_length_words,
+            min_length=min_summary_length_words,
+            do_sample=False # For deterministic output
+        )[0]['summary_text']
+
+        # Ensure the summary itself doesn't exceed target_tokens after generation
+        encoding = tiktoken.get_encoding("cl100k_base") # Use tiktoken for final check
+        summary_tokens = len(encoding.encode(summary))
+
+        if summary_tokens > target_tokens:
+            # If summarizer still produced too much, truncate it
+            return encoding.decode(encoding.encode(summary)[:target_tokens])
+        return summary
+    except Exception as e:
+        logger.error(f"Summarization failed: {e}. Falling back to truncation.", exc_info=True)
+        # Fallback to simple truncation if summarization fails
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return encoding.decode(encoding.encode(text)[:target_tokens])
 
 
 class PromptOptimizer:
@@ -171,68 +217,13 @@ class PromptOptimizer:
             f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
         )
 
-        # Get persona-specific optimization configuration
-        sections_to_optimize_patterns, ordered_keys = self._get_persona_specific_optimization_config(persona_name)
-
-        optimized_prompt_parts = []
-        current_tokens_used = 0
-
-        # Extract sections in the defined order of patterns
-        extracted_sections: Dict[str, str] = {}
-        temp_prompt = prompt
-        for key, pattern in sections_to_optimize_patterns.items():
-            match = re.search(pattern, temp_prompt, re.DOTALL)
-            if match:
-                extracted_sections[key] = match.group(0).strip()
-                temp_prompt = temp_prompt.replace(match.group(0), f"__PLACEHOLDER_{key.upper()}__", 1)
-
-        # Reconstruct the prompt based on ordered_keys, applying truncation
-        remaining_budget = effective_input_limit
-
-        for key in ordered_keys:
-            if key in extracted_sections:
-                section_content = extracted_sections[key]
-                section_tokens = self.tokenizer.count_tokens(section_content)
-
-                if current_tokens_used + section_tokens <= remaining_budget:
-                    optimized_prompt_parts.append(section_content)
-                    current_tokens_used += section_tokens
-                else:
-                    tokens_for_this_section = max(0, remaining_budget - current_tokens_used)
-                    if tokens_for_this_section > 0:
-                        if key == "debate_history":
-                            truncated_section = self.optimize_debate_history(
-                                section_content, tokens_for_this_section
-                            )
-                        else:
-                            truncated_section = self.tokenizer.truncate_to_token_limit(
-                                section_content,
-                                tokens_for_this_section,
-                                truncation_indicator="\n[...section truncated...]",
-                            )
-                        optimized_prompt_parts.append(truncated_section)
-                        current_tokens_used += self.tokenizer.count_tokens(truncated_section)
-                    else:
-                        optimized_prompt_parts.append("\n[...further content truncated...]")
-                    break # Stop processing further sections if budget is exhausted
-
-        final_optimized_prompt = "\n\n".join(optimized_prompt_parts)
-        final_optimized_prompt_tokens = self.tokenizer.count_tokens(final_optimized_prompt)
-
-        if final_optimized_prompt_tokens > effective_input_limit:
-            logger.warning(
-                f"Prompt for {persona_name} still exceeds limit after structured optimization ({final_optimized_prompt_tokens}/{effective_input_limit}). Applying final aggressive truncation."
-            )
-            final_optimized_prompt = self.tokenizer.truncate_to_token_limit(
-                final_optimized_prompt,
-                effective_input_limit,
-                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]",
-            )
+        # Use the new summarization function if the prompt is too long
+        optimized_prompt = summarize_text(prompt, effective_input_limit)
 
         logger.info(
-            f"Prompt for {persona_name} truncated from {prompt_tokens} to {self.tokenizer.count_tokens(final_optimized_prompt)} tokens."
+            f"Prompt for {persona_name} optimized from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
         )
-        return final_optimized_prompt
+        return optimized_prompt
 
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int

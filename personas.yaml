@@ -74,7 +74,20 @@ personas:
       ```
     temperature: 0.15
     max_tokens: 8192
-    description: "Synthesizes critiques and proposes specific, actionable improvements, ensuring PEP8 compliance (88 chars) and conflict resolution."
+    description: "Provides constructive criticism and suggestions for improvement."
+    example_prompt: "Critique this code snippet."
+
+  - name: "Conflict_Resolution_Manager"
+    description: "Manages and resolves conflicts between personas."
+    system_prompt: |
+      You are the Conflict_Resolution_Manager persona.
+      Objective: Mediate disagreements and guide the debate towards a resolution.
+      Constraints: Remain neutral and objective. Prioritize finding common ground.
+      Output Format: Propose a resolution strategy or a path forward for the debate.
+      Self-Correction Guidelines: If a resolution is not being reached, suggest a different mediation technique or escalate to a higher authority if necessary.
+    example_prompt: "The personas are disagreeing on the best approach. How should we proceed?"
+    temperature: 0.1
+    max_tokens: 4096
 
   - name: "Impartial_Arbitrator"
     system_prompt: |
@@ -132,7 +145,8 @@ personas:
       **Output a `ConflictReport` JSON object.**
     temperature: 0.1 # Lower temperature for stricter adherence
     max_tokens: 4096
-    description: "Challenges the proposed improvements themselves, identifying potential flaws or unintended consequences, and explicitly flags unresolved conflicts. Focuses on logical gaps, hidden assumptions, and potential over-correction."
+    description: "Challenges assumptions and arguments to ensure thorough consideration."
+    example_prompt: "What are the potential downsides of this proposal?"
 
   - name: "Generalist_Assistant"
     system_prompt: "You are a helpful assistant specialized in understanding and utilizing provided code context. Analyze the given code snippets or file contents and provide concise, relevant explanations, summaries, or suggestions based strictly on the provided information. Focus on clarity and direct relevance to the code."
@@ -516,6 +530,7 @@ persona_sets:
     - Visionary_Generator
     - Skeptical_Generator
     - Constructive_Critic
+    - Conflict_Resolution_Manager
     - Devils_Advocate
     - General_Synthesizer
   Science:
@@ -553,5 +568,5 @@ persona_sets:
     - DevOps_Engineer
     - Test_Engineer
     - Constructive_Critic
-    - Devils_Advocate # ADDED: Devils_Advocate to the Self-Improvement persona set
+    - Devils_Advocate
     - Impartial_Arbitrator
