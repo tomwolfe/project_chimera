@@ -14,14 +14,15 @@ from src.models import (
     ContextAnalysisOutput,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
+    SuggestionItem, # NEW: Import SuggestionItem for conflict detection
 )
 from src.utils.output_parser import LLMOutputParser
 from src.llm_tokenizers.gemini_tokenizer import (
     GeminiTokenizer,
-)  # MODIFIED: Updated import path
+)
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
-from src.exceptions import ChimeraError  # Import ChimeraError for raising
+from src.exceptions import ChimeraError
 
 # Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
@@ -44,9 +45,50 @@ class ConflictResolutionManager:
         logger.info("ConflictResolutionManager initialized.")
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
-        self.max_self_correction_retries = 2  # Max retries for self-correction
-        self.settings = ChimeraSettings()  # Initialize settings
-        self.output_parser = LLMOutputParser()  # Initialize parser here
+        self.max_self_correction_retries = 2
+        self.settings = ChimeraSettings()
+        self.output_parser = LLMOutputParser()
+
+    # NEW METHOD: _detect_conflict_type
+    def _detect_conflict_type(self, debate_history: List[Dict]) -> str:
+        """Detect the type of conflict between personas."""
+        logger.info("Attempting to detect conflict type.")
+
+        # Look for fundamental disagreements in key areas
+        security_auditor_output = next((t["output"] for t in debate_history if t["persona"] == "Security_Auditor"), None)
+        code_architect_output = next((t["output"] for t in debate_history if t["persona"] == "Code_Architect"), None)
+        devils_advocate_output = next((t["output"] for t in debate_history if t["persona"] == "Devils_Advocate"), None)
+
+        # Check for SECURITY_VS_ARCHITECTURE conflict
+        if security_auditor_output and code_architect_output:
+            # Assuming CritiqueOutput structure for Security_Auditor and Code_Architect
+            security_suggestions = security_auditor_output.get("SUGGESTIONS", [])
+            architect_suggestions = code_architect_output.get("SUGGESTIONS", [])
+
+            security_problems_identified = [
+                s.get("PROBLEM", "").lower() for s in security_suggestions
+                if s.get("AREA", "").lower() == "security"
+            ]
+            architect_solutions_proposed = [
+                s.get("PROPOSED_SOLUTION", "").lower() for s in architect_suggestions
+                if s.get("AREA", "").lower() == "architecture" or s.get("AREA", "").lower() == "maintainability"
+            ]
+
+            # If security issues are identified but not adequately addressed by architect's solutions
+            if any(p for p in security_problems_identified) and not any(
+                "security" in sol for sol in architect_solutions_proposed
+            ):
+                logger.info("Detected conflict type: SECURITY_VS_ARCHITECTURE")
+                return "SECURITY_VS_ARCHITECTURE"
+
+        # Check for FUNDAMENTAL_FLAW_DETECTION by Devils_Advocate
+        if devils_advocate_output and isinstance(devils_advocate_output, dict):
+            if devils_advocate_output.get("conflict_found", False):
+                logger.info("Detected conflict type: FUNDAMENTAL_FLAW_DETECTION")
+                return "FUNDAMENTAL_FLAW_DETECTION"
+
+        logger.info("Detected conflict type: GENERAL_DISAGREEMENT")
+        return "GENERAL_DISAGREEMENT"
 
     def resolve_conflict(
         self, debate_history: List[Dict[str, Any]]
@@ -76,7 +118,7 @@ class ConflictResolutionManager:
         latest_output = latest_turn.get("output")
         latest_persona_name = latest_turn.get("persona", "Unknown")
 
-        # NEW: Check if the latest output is problematic (malformed_blocks or conflict_found)
+        # Check if the latest output is problematic (malformed_blocks or conflict_found)
         is_problematic = False
         if isinstance(latest_output, dict):
             if latest_output.get("malformed_blocks") or (
@@ -84,7 +126,6 @@ class ConflictResolutionManager:
             ):
                 is_problematic = True
         elif isinstance(latest_output, str):
-            # If it's a string, it's problematic unless it can be parsed as valid JSON
             try:
                 json.loads(latest_output)
             except json.JSONDecodeError:
@@ -95,7 +136,6 @@ class ConflictResolutionManager:
                 f"ConflictResolutionManager: Detected problematic output from {latest_persona_name}. Attempting self-correction."
             )
 
-            # Attempt self-correction by re-invoking the persona with feedback
             resolved_output = self._retry_persona_with_feedback(
                 latest_persona_name, debate_history
             )
@@ -124,7 +164,7 @@ class ConflictResolutionManager:
             try:
                 parsed_latest_output = json.loads(
                     latest_output
-                )  # Assuming this is a valid JSON string
+                )
                 logger.info(
                     f"ConflictResolutionManager: Successfully parsed string output from {latest_persona_name}."
                 )
@@ -143,43 +183,79 @@ class ConflictResolutionManager:
                 logger.debug(
                     f"ConflictResolutionManager: Latest output from {latest_persona_name} is a malformed string, cannot parse directly."
                 )
-                # If parsing fails, fall through to the next strategy
 
-        # Strategy 2: Synthesize from previous valid turns
-        # Look for at least two previous valid, structured outputs to synthesize from
-        valid_turns = [
-            turn
-            for turn in debate_history[:-1]  # Exclude the latest problematic turn
-            if isinstance(turn.get("output"), dict)
-            and not turn["output"].get("malformed_blocks")
-        ]
+        # NEW: Conflict resolution strategy based on type
+        conflict_type = self._detect_conflict_type(debate_history)
+        logger.info(f"Detected conflict type: {conflict_type}")
 
-        if len(valid_turns) >= 2:
-            logger.info(
-                f"ConflictResolutionManager: Found {len(valid_turns)} previous valid turns. Attempting synthesis."
-            )
-            synthesized_output = self._synthesize_from_history(
-                latest_output, valid_turns
-            )
+        if conflict_type == "SECURITY_VS_ARCHITECTURE":
+            logger.info("Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict.")
+            # Example logic: Prioritize security concerns, ask for architectural solutions that address them
+            resolution_summary = "Security concerns were identified by Security_Auditor but not adequately addressed by Code_Architect. Prioritizing security in the resolution."
+            # This would typically involve another LLM call to synthesize a solution that balances both.
+            # For now, we'll synthesize from history, but with a specific summary.
+            synthesized_output = self._synthesize_from_history(latest_output, debate_history[:-1], resolution_summary)
             if synthesized_output:
-                logger.info(
-                    "ConflictResolutionManager: Successfully synthesized from history."
-                )
                 return {
-                    "resolution_strategy": "synthesis_from_history",
+                    "resolution_strategy": "security_vs_architecture_synthesis",
                     "resolved_output": synthesized_output,
-                    "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
-                    "malformed_blocks": [
-                        {
-                            "type": "SYNTHESIS_FROM_HISTORY",
-                            "message": "Automated synthesis from history due to problematic output.",
-                        }
-                    ],
+                    "resolution_summary": resolution_summary,
+                    "malformed_blocks": [{"type": "SECURITY_VS_ARCHITECTURE_RESOLVED", "message": resolution_summary}],
                 }
             else:
-                logger.warning(
-                    "ConflictResolutionManager: Synthesis from history failed."
+                logger.warning("SECURITY_VS_ARCHITECTURE synthesis failed. Falling back to general resolution.")
+
+        elif conflict_type == "FUNDAMENTAL_FLAW_DETECTION":
+            logger.info("Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict.")
+            # Example logic: If Devils_Advocate found a fundamental flaw, it needs to be addressed directly.
+            resolution_summary = "Devils_Advocate identified a fundamental flaw. The resolution focuses on addressing this core issue."
+            # This might involve re-prompting a persona to fix the flaw, or a synthesis that explicitly incorporates the flaw.
+            synthesized_output = self._synthesize_from_history(latest_output, debate_history[:-1], resolution_summary)
+            if synthesized_output:
+                return {
+                    "resolution_strategy": "fundamental_flaw_resolution_synthesis",
+                    "resolved_output": synthesized_output,
+                    "resolution_summary": resolution_summary,
+                    "malformed_blocks": [{"type": "FUNDAMENTAL_FLAW_RESOLVED", "message": resolution_summary}],
+                }
+            else:
+                logger.warning("FUNDAMENTAL_FLAW_DETECTION synthesis failed. Falling back to general resolution.")
+        else:
+            logger.info("Applying general conflict resolution strategy.")
+            # Strategy 2: Synthesize from previous valid turns (General Disagreement)
+            valid_turns = [
+                turn
+                for turn in debate_history[:-1]
+                if isinstance(turn.get("output"), dict)
+                and not turn["output"].get("malformed_blocks")
+            ]
+
+            if len(valid_turns) >= 2:
+                logger.info(
+                    f"ConflictResolutionManager: Found {len(valid_turns)} previous valid turns. Attempting synthesis."
                 )
+                synthesized_output = self._synthesize_from_history(
+                    latest_output, valid_turns
+                )
+                if synthesized_output:
+                    logger.info(
+                        "ConflictResolutionManager: Successfully synthesized from history."
+                    )
+                    return {
+                        "resolution_strategy": "synthesis_from_history",
+                        "resolved_output": synthesized_output,
+                        "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
+                        "malformed_blocks": [
+                            {
+                                "type": "SYNTHESIS_FROM_HISTORY",
+                                "message": "Automated synthesis from history due to problematic output.",
+                            }
+                        ],
+                    }
+                else:
+                    logger.warning(
+                        "ConflictResolutionManager: Synthesis from history failed."
+                    )
 
         # Strategy 3: Fallback to a generic placeholder or flag for manual intervention
         logger.warning(
@@ -190,22 +266,15 @@ class ConflictResolutionManager:
         )
 
     def _synthesize_from_history(
-        self, problematic_output: Any, valid_turns: List[Dict[str, Any]]
+        self, problematic_output: Any, valid_turns: List[Dict[str, Any]], custom_summary: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        (Placeholder) Attempts to synthesize a coherent output from previous valid turns.
-        In a real implementation, this would involve another LLM call or a sophisticated
-        rule-based system to combine insights.
+        Attempts to synthesize a coherent output from previous valid turns.
         """
-        # For now, a simple heuristic: try to combine summaries or take the most recent valid one.
-        # This could be an LLM call to an "Impartial_Arbitrator" or "General_Synthesizer" persona.
-
-        # Simple approach: take the last valid output and append a note about the conflict.
         if valid_turns:
             last_valid_output = valid_turns[-1]["output"]
-            resolution_summary = f"Conflict detected after {valid_turns[-1]['persona']}'s turn. Automated synthesis from previous turns was attempted. Original problematic output: {str(problematic_output)[:100]}..."
+            resolution_summary = custom_summary if custom_summary else f"Conflict detected after {valid_turns[-1]['persona']}'s turn. Automated synthesis from previous turns was attempted. Original problematic output: {str(problematic_output)[:100]}..."
 
-            # Try to merge or append to the last valid output
             if isinstance(last_valid_output, dict):
                 synthesized = last_valid_output.copy()
                 synthesized["CONFLICT_RESOLUTION_ATTEMPT"] = resolution_summary
@@ -261,12 +330,6 @@ class ConflictResolutionManager:
             )
             return None
 
-        # The initial prompt is typically the first entry in the debate history
-        # or can be passed explicitly to the SocraticDebate constructor.
-        # For this context, we'll assume the initial prompt is available from the SocraticDebate instance
-        # that initialized this ConflictResolutionManager.
-        # Since this method is called from core.py, core.py should provide the initial prompt.
-        # For now, we'll try to extract it from the first turn if available.
         initial_prompt_from_history = (
             "Original task context not explicitly captured in history."
         )
@@ -275,18 +338,15 @@ class ConflictResolutionManager:
             and debate_history[0].get("output")
             and isinstance(debate_history[0]["output"], dict)
         ):
-            # Assuming the first turn's output might contain the initial prompt if it's a ContextAnalysisOutput or similar
             initial_prompt_from_history = debate_history[0]["output"].get(
                 "initial_prompt", initial_prompt_from_history
             )
-        # Fallback to a more general summary of the debate if initial_prompt is still not found
         if (
             initial_prompt_from_history
             == "Original task context not explicitly captured in history."
         ):
             initial_prompt_from_history = f"The debate started with the goal of: {debate_history[0].get('initial_prompt', 'analyzing a problem.')}"
 
-        # Get the persona's original system prompt and config
         persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
         if not persona_config:
             logger.error(
@@ -294,7 +354,6 @@ class ConflictResolutionManager:
             )
             return None
 
-        # Get the problematic output and its error details
         problematic_turn = debate_history[-1]
         problematic_output = problematic_turn.get("output")
 
@@ -302,7 +361,6 @@ class ConflictResolutionManager:
         if isinstance(problematic_output, dict) and problematic_output.get(
             "malformed_blocks"
         ):
-            # NEW: Make feedback more direct by extracting the core error message.
             validation_error_block = next(
                 (
                     b
@@ -316,18 +374,17 @@ class ConflictResolutionManager:
             else:
                 error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
         elif isinstance(problematic_output, str):
-            error_message = f"Previous output was a malformed string: '{self.output_parser._clean_llm_output(problematic_output)[:200]}...'"  # MODIFIED: Clean string output
+            error_message = f"Previous output was a malformed string: '{self.output_parser._clean_llm_output(problematic_output)[:200]}...'"
 
-        # Construct the feedback prompt
         feedback_prompt = f"""
         Your previous response for the persona '{persona_name}' was problematic.
-        
+
         Original Request Context:
         {initial_prompt_from_history}
 
         Your Previous Output (which failed validation):
         ```
-        {self.output_parser._clean_llm_output(str(problematic_output))[:1000]} # MODIFIED: Use cleaned output here
+        {self.output_parser._clean_llm_output(str(problematic_output))[:1000]}
         ```
 
         CRITICAL ERROR FEEDBACK:
@@ -337,8 +394,6 @@ class ConflictResolutionManager:
         DO NOT include any conversational text or markdown fences outside the JSON. Focus solely on providing a correct, valid response.
         """
 
-        # Get the schema for the persona's output
-        # This requires persona_manager to have access to PERSONA_OUTPUT_SCHEMAS
         output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
             persona_name.replace("_TRUNCATED", ""), GeneralOutput
         )
@@ -350,13 +405,11 @@ class ConflictResolutionManager:
         )
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
-        # Re-invoke the LLM for self-correction
         for retry_attempt in range(self.max_self_correction_retries):
             logger.info(
                 f"Attempting self-correction for {persona_name} (Retry {retry_attempt + 1}/{self.max_self_correction_retries})."
             )
             try:
-                # Ensure LLMProvider and Tokenizer are available
                 if (
                     not self.llm_provider
                     or not self.llm_provider.tokenizer
@@ -378,15 +431,13 @@ class ConflictResolutionManager:
                         prompt=feedback_prompt,
                         system_prompt=final_system_prompt,
                         temperature=persona_config.temperature,
-                        max_tokens=effective_max_output_tokens,  # Use the calculated effective max tokens
+                        max_tokens=effective_max_output_tokens,
                         persona_config=persona_config,
-                        requested_model_name=self.llm_provider.model_name,  # Use the provider's current model
-                        output_schema=output_schema_class,  # NEW: Pass the schema for early validation
+                        requested_model_name=self.llm_provider.model_name,
+                        output_schema=output_schema_class,
                     )
                 )
 
-                # Attempt to parse and validate the corrected output
-                # This call will now benefit from the early schema validation in llm_provider.generate
                 corrected_output = self.output_parser.parse_and_validate(
                     raw_llm_output, output_schema_class
                 )
@@ -400,7 +451,6 @@ class ConflictResolutionManager:
                     logger.warning(
                         f"Self-correction attempt {retry_attempt + 1} for {persona_name} still resulted in malformed blocks: {corrected_output.get('malformed_blocks')}"
                     )
-                    # Append new errors to the feedback prompt for the next retry
                     feedback_prompt += f"\n\nPrevious self-correction attempt also failed. New errors: {json.dumps(corrected_output['malformed_blocks'], indent=2)}\nCRITICAL: You MUST fix these new errors."
 
             except Exception as e:
