@@ -1,7 +1,7 @@
-import datetime # Needed for report_date
-import json     # Needed for json.dumps
-import re       # Needed for strip_ansi_codes
-from typing import Any, Dict, List # Needed for type hints
+import datetime  # Needed for report_date
+import json  # Needed for json.dumps
+import re  # Needed for strip_ansi_codes
+from typing import Any, Dict, List  # Needed for type hints
 
 # No other imports are needed for the functions in this file.
 # The previous imports from src.utils.path_utils, src.utils.output_parser,
@@ -70,9 +70,11 @@ def generate_markdown_report(
 
     # Helper function to convert Pydantic models to dicts
     def convert_to_serializable(obj):
-        if hasattr(obj, 'model_dump'):
+        if hasattr(obj, "model_dump"):
             return obj.model_dump()
-        elif hasattr(obj, 'dict'): # Fallback for Pydantic v1 if model_dump is not present
+        elif hasattr(
+            obj, "dict"
+        ):  # Fallback for Pydantic v1 if model_dump is not present
             return obj.dict()
         elif isinstance(obj, dict):
             return {k: convert_to_serializable(v) for k, v in obj.items()}
@@ -126,16 +128,16 @@ def generate_markdown_report(
             md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
     md_content += "---\n\n"
     md_content += "## Final Synthesized Answer\n\n"
-    
+
     # Convert final answer to serializable format
     final_answer_serializable = convert_to_serializable(final_answer)
-    
+
     if isinstance(final_answer_serializable, dict):
         md_content += "```json\n"
         md_content += json.dumps(final_answer_serializable, indent=2)
     else:
         md_content += f"{final_answer_serializable}\n\n"
-    
+
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
     md_content += f"**Total Tokens Consumed:** {intermediate_steps.get('Total_Tokens_Used', 0):,}\n"

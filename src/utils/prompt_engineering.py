@@ -17,6 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple  # Added Tuple
 
 logger = logging.getLogger(__name__)
 
+
 # --- MODIFICATION: Add format_prompt function ---
 def format_prompt(
     template: str,
@@ -54,17 +55,13 @@ def format_prompt(
                     context_summary += "Preview of critical files analyzed:\n"
                     for filename, content in critical_files_preview.items():
                         context_summary += f"\n--- {filename} (first 50 lines) ---\n"
-                        context_summary += (
-                            content.strip()
-                        )
+                        context_summary += content.strip()
                         context_summary += "\n--------------------------------\n"
                 else:
                     context_summary += "No critical files preview available.\n"
 
                 formatted_prompt += context_summary
-                kwargs["codebase_context_summary"] = (
-                    context_summary
-                )
+                kwargs["codebase_context_summary"] = context_summary
 
         except Exception as e:
             logger.error(f"Error formatting prompt with codebase context: {str(e)}")

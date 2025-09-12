@@ -2,14 +2,16 @@
 import sqlite3
 from typing import Dict, Any, Optional
 
+
 # Placeholder for a database connection function
 def get_db_connection():
     """Establishes and returns a SQLite database connection."""
     # In a real application, this would connect to a more robust database
     # and handle connection pooling.
     conn = sqlite3.connect("chimera.db")
-    conn.row_factory = sqlite3.Row # Return rows as dict-like objects
+    conn.row_factory = sqlite3.Row  # Return rows as dict-like objects
     return conn
+
 
 def get_user_data(user_id: int) -> Optional[Dict[str, Any]]:
     """Retrieves user data from the database using parameterized queries."""
@@ -21,6 +23,7 @@ def get_user_data(user_id: int) -> Optional[Dict[str, Any]]:
     user_data = cursor.fetchone()
     conn.close()
     return dict(user_data) if user_data else None
+
 
 def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
     """Updates user profile information using parameterized queries."""
@@ -34,6 +37,7 @@ def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
     conn.commit()
     conn.close()
     return True
+
 
 def create_users_table():
     """Creates a simple users table if it doesn't exist."""
@@ -49,6 +53,7 @@ def create_users_table():
     """)
     conn.commit()
     conn.close()
+
 
 # Call to create table on module import (for simple setup)
 create_users_table()

@@ -1,6 +1,7 @@
 import pytest
 from src.utils.prompt_engineering import format_prompt
-from src.persona_manager import PersonaManager # Needed for mocking in session_manager
+from src.persona_manager import PersonaManager  # Needed for mocking in session_manager
+
 
 # Mock app_config and EXAMPLE_PROMPTS for session_manager initialization
 @pytest.fixture
@@ -17,8 +18,9 @@ def mock_app_config():
                     "framework_hint": "Software Engineering",
                 }
             }
-        }
+        },
     }
+
 
 def test_format_prompt_basic():
     """Test format_prompt with basic variable substitution."""
@@ -27,26 +29,26 @@ def test_format_prompt_basic():
     result = format_prompt(template, **kwargs)
     assert result == "Hello, World!"
 
+
 def test_format_prompt_with_codebase_context_self_analysis():
     """Test format_prompt with codebase context for self-analysis."""
     template = "Analyze this: {issue}"
     codebase_context = {
-        "file_structure": {
-            "critical_files_preview": {
-                "file1.py": "def func(): pass"
-            }
-        }
+        "file_structure": {"critical_files_preview": {"file1.py": "def func(): pass"}}
     }
     kwargs = {"issue": "bug"}
-    result = format_prompt(template, codebase_context=codebase_context, is_self_analysis=True, **kwargs)
+    result = format_prompt(
+        template, codebase_context=codebase_context, is_self_analysis=True, **kwargs
+    )
     assert "CODEBASE CONTEXT" in result
     assert "file1.py" in result
     assert "bug" in result
 
+
 def test_format_prompt_missing_key():
     """Test format_prompt handles missing keys gracefully."""
     template = "Hello, {name}!"
-    kwargs = {"age": 30} # Missing 'name'
+    kwargs = {"age": 30}  # Missing 'name'
     result = format_prompt(template, **kwargs)
-    assert "Missing key for prompt formatting" in result # Check for warning message
-    assert "{name}" in result # The placeholder should remain if not formatted
+    assert "Missing key for prompt formatting" in result  # Check for warning message
+    assert "{name}" in result  # The placeholder should remain if not formatted

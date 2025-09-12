@@ -6,15 +6,21 @@ based on prompt analysis and intermediate results.
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING # Added TYPE_CHECKING
+from typing import (
+    List,
+    Dict,
+    Set,
+    Optional,
+    Any,
+    Tuple,
+    TYPE_CHECKING,
+)  # Added TYPE_CHECKING
 import re
 import logging
 from functools import lru_cache
 
 from src.models import PersonaConfig
-from src.constants import (
-    SELF_ANALYSIS_PERSONA_SEQUENCE,
-)
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 from src.utils.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -22,6 +28,7 @@ logger = logging.getLogger(__name__)
 # NEW: Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
+
 
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
@@ -153,14 +160,17 @@ class PersonaRouter:
         return embeddings
 
     def _should_include_test_engineer(
-        self, prompt_lower: str, context_analysis_results: Optional[Dict[str, Any]], domain: str
+        self,
+        prompt_lower: str,
+        context_analysis_results: Optional[Dict[str, Any]],
+        domain: str,
     ) -> bool:
         """
         Determine if Test_Engineer persona is needed based on prompt, context, and domain.
         For 'Self-Improvement' domain, Test_Engineer is always relevant.
         """
         if domain == "self-improvement":
-            return True # Test_Engineer is always relevant for self-improvement
+            return True  # Test_Engineer is always relevant for self-improvement
 
         testing_keywords = [
             "test",
@@ -180,8 +190,8 @@ class PersonaRouter:
             "test suite",
             "pytest",
             "unittest",
-            "robustness", # Added for broader relevance
-            "maintainability", # Added for broader relevance
+            "robustness",  # Added for broader relevance
+            "maintainability",  # Added for broader relevance
         ]
         if any(keyword in prompt_lower for keyword in testing_keywords):
             return True
@@ -227,17 +237,13 @@ class PersonaRouter:
                 ) / len(key_modules)
 
             if security_concerns:
-                self._insert_persona_before_arbitrator(
-                    sequence, "Security_Auditor"
-                )
+                self._insert_persona_before_arbitrator(sequence, "Security_Auditor")
                 logger.info(
                     "Prioritized Security_Auditor due to security concerns from context analysis."
                 )
 
             if avg_code_quality < 0.7 or avg_complexity > 0.7:
-                self._insert_persona_before_arbitrator(
-                    sequence, "Code_Architect"
-                )
+                self._insert_persona_before_arbitrator(sequence, "Code_Architect")
                 logger.info(
                     "Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis."
                 )
@@ -290,9 +296,7 @@ class PersonaRouter:
                         adjusted_sequence, "Creative_Thinker"
                     )
 
-        if (
-            domain == "Software Engineering" or domain == "Self-Improvement"
-        ):
+        if domain == "Software Engineering" or domain == "Self-Improvement":
             # MODIFIED: Pass domain to _should_include_test_engineer
             if (
                 "Test_Engineer" in adjusted_sequence
@@ -357,13 +361,9 @@ class PersonaRouter:
         arbitrator_index = len(sequence)
         if "Impartial_Arbitrator" in sequence:
             arbitrator_index = sequence.index("Impartial_Arbitrator")
-        elif (
-            "Self_Improvement_Analyst" in sequence
-        ):
+        elif "Self_Improvement_Analyst" in sequence:
             arbitrator_index = sequence.index("Self_Improvement_Analyst")
-        elif (
-            "General_Synthesizer" in sequence
-        ):
+        elif "General_Synthesizer" in sequence:
             arbitrator_index = sequence.index("General_Synthesizer")
 
         sequence.insert(arbitrator_index, persona)
@@ -383,9 +383,7 @@ class PersonaRouter:
         """
         prompt_lower = prompt.lower()
 
-        if self.prompt_analyzer.is_self_analysis_prompt(
-            prompt
-        ):
+        if self.prompt_analyzer.is_self_analysis_prompt(prompt):
             logger.info(
                 "Detected self-analysis prompt. Applying dynamic persona sequence from 'Self-Improvement' set."
             )
@@ -449,9 +447,7 @@ class PersonaRouter:
             ):
                 if "Code_Architect" in base_sequence:
                     base_sequence.remove("Code_Architect")
-                    base_sequence.insert(
-                        0, "Code_Architect"
-                    )
+                    base_sequence.insert(0, "Code_Architect")
                 else:
                     self._insert_persona_before_arbitrator(
                         base_sequence, "Code_Architect"
@@ -489,9 +485,7 @@ class PersonaRouter:
             else:
                 base_sequence.insert(insert_pos_for_advocate, "Devils_Advocate")
 
-            final_sequence = (
-                base_sequence
-            )
+            final_sequence = base_sequence
             logger.info(f"Self-analysis persona sequence: {final_sequence}")
 
         else:
@@ -505,9 +499,7 @@ class PersonaRouter:
 
                 domain_personas = self.persona_sets.get(domain, [])
                 for p_name in domain_personas:
-                    semantic_scores[p_name] = (
-                        semantic_scores.get(p_name, 0.0) + 0.2
-                    )
+                    semantic_scores[p_name] = semantic_scores.get(p_name, 0.0) + 0.2
 
                 top_semantic_personas = sorted(
                     semantic_scores.items(), key=lambda x: x[1], reverse=True
@@ -555,9 +547,7 @@ class PersonaRouter:
                         "Impartial_Arbitrator",
                     ]
 
-            final_sequence = (
-                base_sequence.copy()
-            )
+            final_sequence = base_sequence.copy()
 
         final_sequence = self._apply_dynamic_adjustment(
             final_sequence,

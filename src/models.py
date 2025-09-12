@@ -13,6 +13,7 @@ from pathlib import Path
 from enum import Enum
 from typing import Self
 
+
 # --- Pydantic Models for Schema Validation ---
 class PersonaConfig(BaseModel):
     name: str
@@ -205,7 +206,9 @@ class ContextAnalysisOutput(BaseModel):
 # Moved LLMOutput and CodeChange definitions here for centralization.
 class CodeChange(BaseModel):
     file_path: str = Field(..., alias="FILE_PATH")
-    action: Literal["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"] = Field(..., alias="ACTION")
+    action: Literal["ADD", "MODIFY", "REMOVE", "CREATE", "CREATE_DIRECTORY"] = Field(
+        ..., alias="ACTION"
+    )
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
     lines: List[str] = Field(default_factory=list, alias="LINES")
     diff_content: Optional[str] = Field(
@@ -284,9 +287,7 @@ class CodeChange(BaseModel):
                 raise ValueError(
                     f"LINES must be a non-empty list for action 'REMOVE' on file '{self.file_path}'."
                 )
-            if (
-                self.full_content is not None or self.diff_content is not None
-            ):
+            if self.full_content is not None or self.diff_content is not None:
                 raise ValueError(
                     f"FULL_CONTENT or DIFF_CONTENT should not be provided for action 'REMOVE' on file '{self.file_path}'."
                 )
@@ -357,14 +358,33 @@ class SelfImprovementFinding(BaseModel):
         ge=0.0, le=1.0, description="80/20 Pareto principle score (impact/effort)"
     )
 
+
 # NEW: Model for structured suggestions within CritiqueOutput
 class SuggestionItem(BaseModel):
-    area: str = Field(..., alias="AREA", description="Category of the suggestion (e.g., Reasoning Quality, Robustness).")
+    area: str = Field(
+        ...,
+        alias="AREA",
+        description="Category of the suggestion (e.g., Reasoning Quality, Robustness).",
+    )
     problem: str = Field(..., alias="PROBLEM", description="Specific issue identified.")
-    proposed_solution: str = Field(..., alias="PROPOSED_SOLUTION", description="Concrete solution to the identified problem.")
-    expected_impact: str = Field(..., alias="EXPECTED_IMPACT", description="Expected benefits of implementing the solution.")
-    code_changes_suggested: List[CodeChange] = Field(default_factory=list, alias="CODE_CHANGES_SUGGESTED", description="Details of suggested code modifications.")
-    rationale: Optional[str] = Field(None, alias="RATIONALE", description="Detailed rationale for the suggestion.")
+    proposed_solution: str = Field(
+        ...,
+        alias="PROPOSED_SOLUTION",
+        description="Concrete solution to the identified problem.",
+    )
+    expected_impact: str = Field(
+        ...,
+        alias="EXPECTED_IMPACT",
+        description="Expected benefits of implementing the solution.",
+    )
+    code_changes_suggested: List[CodeChange] = Field(
+        default_factory=list,
+        alias="CODE_CHANGES_SUGGESTED",
+        description="Details of suggested code modifications.",
+    )
+    rationale: Optional[str] = Field(
+        None, alias="RATIONALE", description="Detailed rationale for the suggestion."
+    )
 
 
 # NEW: Pydantic model for general critique output
@@ -472,7 +492,10 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
         description="List of structured suggestions for improvement.",
     )
     estimated_impact_score: Optional[float] = Field(
-        None, ge=0.0, le=1.0, description="AI's self-estimated impact score for the overall analysis (0.0 to 1.0)."
+        None,
+        ge=0.0,
+        le=1.0,
+        description="AI's self-estimated impact score for the overall analysis (0.0 to 1.0).",
     )
     malformed_blocks: List[Dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"

@@ -1,12 +1,13 @@
 # src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional
-from src.llm_tokenizers.base import Tokenizer # MODIFIED: Updated import path
-from src.config.settings import ChimeraSettings # Import ChimeraSettings
-import re # Added for prompt section parsing
-import json # NEW: Import json for debate history optimization
+from src.llm_tokenizers.base import Tokenizer  # MODIFIED: Updated import path
+from src.config.settings import ChimeraSettings  # Import ChimeraSettings
+import re  # Added for prompt section parsing
+import json  # NEW: Import json for debate history optimization
 
 logger = logging.getLogger(__name__)
+
 
 class PromptOptimizer:
     """Optimizes prompts for various personas based on context and token limits."""
@@ -16,10 +17,7 @@ class PromptOptimizer:
         self.settings = settings
 
     def optimize_prompt(
-        self,
-        prompt: str,
-        persona_name: str,
-        max_output_tokens_for_turn: int,
+        self, prompt: str, persona_name: str, max_output_tokens_for_turn: int
     ) -> str:
         """
         Optimizes a prompt for a specific persona based on actual token usage and persona-specific limits.
@@ -28,7 +26,7 @@ class PromptOptimizer:
         """
         # Calculate current prompt tokens
         prompt_tokens = self.tokenizer.count_tokens(prompt)
-        
+
         # Get persona-specific token limits from settings
         # Use a default if not explicitly defined for the persona
         # Note: max_output_tokens_for_turn is already passed, so we use that as the target output.
@@ -44,14 +42,14 @@ class PromptOptimizer:
         # then we should aggressively optimize the input.
         # The `max_output_tokens_for_turn` is the *actual` budget for the output,
         # so we should consider it.
-        
+
         # Calculate a soft limit for the input prompt based on the persona's overall capacity
         # and the expected output size.
         # A persona's total capacity is its max_tokens (from PersonaConfig, which is passed to _execute_llm_turn)
         # We want to ensure input + output fits within that.
         # Let's assume `max_output_tokens_for_turn` is the effective max output.
         # So, the input should ideally be `persona_total_capacity - max_output_tokens_for_turn`.
-        
+
         # Prioritize `persona_input_token_limit` from settings for input control.
         effective_input_limit = persona_input_token_limit
 
@@ -98,13 +96,17 @@ class PromptOptimizer:
 
         # Extract sections in a defined order (higher priority first)
         extracted_sections: Dict[str, str] = {}
-        temp_prompt = prompt # Use a temporary variable to extract sections
+        temp_prompt = prompt  # Use a temporary variable to extract sections
         for key, pattern in sections_to_optimize.items():
             match = re.search(pattern, temp_prompt, re.DOTALL)
             if match:
-                extracted_sections[key] = match.group(0).strip() # Capture the full matched section
+                extracted_sections[key] = match.group(
+                    0
+                ).strip()  # Capture the full matched section
                 # Replace the matched section with a placeholder to avoid re-matching
-                temp_prompt = temp_prompt.replace(match.group(0), f"__PLACEHOLDER_{key.upper()}__", 1)
+                temp_prompt = temp_prompt.replace(
+                    match.group(0), f"__PLACEHOLDER_{key.upper()}__", 1
+                )
 
         # Define the order of sections to reconstruct the prompt, with truncation priority
         # Core instructions and schema are highest priority.
@@ -139,7 +141,16 @@ class PromptOptimizer:
         remaining_budget = effective_input_limit
 
         # First, add high-priority, non-truncatable sections (e.g., core instructions, schema)
-        for key in ["core_mission", "critical_instruction_absolute_adherence", "critical_instruction_general", "json_instructions", "diff_instructions", "remove_instructions", "json_schema", "synthesis_feedback_instruction"]:
+        for key in [
+            "core_mission",
+            "critical_instruction_absolute_adherence",
+            "critical_instruction_general",
+            "json_instructions",
+            "diff_instructions",
+            "remove_instructions",
+            "json_schema",
+            "synthesis_feedback_instruction",
+        ]:
             if key in extracted_sections:
                 section_content = extracted_sections[key]
                 section_tokens = self.tokenizer.count_tokens(section_content)
@@ -148,11 +159,19 @@ class PromptOptimizer:
                     current_tokens_used += section_tokens
                 else:
                     # This should ideally not happen for critical instructions if budget is reasonable
-                    logger.warning(f"Critical section '{key}' could not fit in prompt. Truncating.")
-                    truncated_section = self.tokenizer.truncate_to_token_limit(section_content, remaining_budget - current_tokens_used, truncation_indicator="\n[...critical section truncated...]")
+                    logger.warning(
+                        f"Critical section '{key}' could not fit in prompt. Truncating."
+                    )
+                    truncated_section = self.tokenizer.truncate_to_token_limit(
+                        section_content,
+                        remaining_budget - current_tokens_used,
+                        truncation_indicator="\n[...critical section truncated...]",
+                    )
                     final_optimized_prompt_parts.append(truncated_section)
-                    current_tokens_used += self.tokenizer.count_tokens(truncated_section)
-                    break # Stop adding if critical section itself was truncated
+                    current_tokens_used += self.tokenizer.count_tokens(
+                        truncated_section
+                    )
+                    break  # Stop adding if critical section itself was truncated
 
         # Then, add other sections with dynamic truncation based on remaining budget
         # Order of keys here determines truncation priority (later keys are truncated more aggressively)
@@ -163,7 +182,7 @@ class PromptOptimizer:
             "previous_debate_output_summary",
             "previous_debate_output",
             "objective_metrics",
-            "security_analysis", # Specific analysis sections
+            "security_analysis",  # Specific analysis sections
             "token_optimization",
             "testing_strategy",
             "ai_reasoning_quality",
@@ -181,24 +200,35 @@ class PromptOptimizer:
                     current_tokens_used += section_tokens
                 else:
                     # Calculate how many tokens are left for this section
-                    tokens_for_this_section = max(0, remaining_budget - current_tokens_used)
+                    tokens_for_this_section = max(
+                        0, remaining_budget - current_tokens_used
+                    )
                     if tokens_for_this_section > 0:
                         if key == "debate_history":
-                            truncated_section = self.optimize_debate_history(section_content, tokens_for_this_section)
+                            truncated_section = self.optimize_debate_history(
+                                section_content, tokens_for_this_section
+                            )
                         else:
                             truncated_section = self.tokenizer.truncate_to_token_limit(
-                                section_content, tokens_for_this_section,
-                                truncation_indicator="\n[...section truncated...]"
+                                section_content,
+                                tokens_for_this_section,
+                                truncation_indicator="\n[...section truncated...]",
                             )
                         final_optimized_prompt_parts.append(truncated_section)
-                        current_tokens_used += self.tokenizer.count_tokens(truncated_section)
+                        current_tokens_used += self.tokenizer.count_tokens(
+                            truncated_section
+                        )
                     else:
                         # If no tokens left, just add a truncation indicator
-                        final_optimized_prompt_parts.append("\n[...further content truncated...]")
-                    break # Stop processing further sections if budget is exhausted
+                        final_optimized_prompt_parts.append(
+                            "\n[...further content truncated...]"
+                        )
+                    break  # Stop processing further sections if budget is exhausted
 
         final_optimized_prompt = "\n\n".join(final_optimized_prompt_parts)
-        final_optimized_prompt_tokens = self.tokenizer.count_tokens(final_optimized_prompt)
+        final_optimized_prompt_tokens = self.tokenizer.count_tokens(
+            final_optimized_prompt
+        )
 
         if final_optimized_prompt_tokens > effective_input_limit:
             # If still too long after structured optimization, apply a final aggressive truncation
@@ -206,8 +236,9 @@ class PromptOptimizer:
                 f"Prompt for {persona_name} still exceeds limit after structured optimization ({final_optimized_prompt_tokens}/{effective_input_limit}). Applying final aggressive truncation."
             )
             final_optimized_prompt = self.tokenizer.truncate_to_token_limit(
-                final_optimized_prompt, effective_input_limit,
-                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]"
+                final_optimized_prompt,
+                effective_input_limit,
+                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]",
             )
 
         logger.info(
@@ -215,7 +246,9 @@ class PromptOptimizer:
         )
         return final_optimized_prompt
 
-    def optimize_debate_history(self, debate_history_json_str: str, max_tokens: int) -> str:
+    def optimize_debate_history(
+        self, debate_history_json_str: str, max_tokens: int
+    ) -> str:
         """
         Dynamically optimizes debate history by summarizing or prioritizing turns.
         This is a conceptual implementation that would involve an LLM call for summarization
@@ -232,9 +265,11 @@ class PromptOptimizer:
         # 3. Prioritizing turns with 'conflict_found' or 'CODE_CHANGES_SUGGESTED'.
 
         # For now, a simple truncation as a fallback
-        logger.warning(f"Debate history too long ({current_tokens} tokens). Applying aggressive truncation to fit {max_tokens} tokens.")
+        logger.warning(
+            f"Debate history too long ({current_tokens} tokens). Applying aggressive truncation to fit {max_tokens} tokens."
+        )
         return self.tokenizer.truncate_to_token_limit(
             debate_history_json_str,
             max_tokens,
-            truncation_indicator="\n[...debate history further summarized/truncated...]\\n"
+            truncation_indicator="\n[...debate history further summarized/truncated...]\\n",
         )

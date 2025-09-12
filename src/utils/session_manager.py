@@ -17,16 +17,22 @@ logger = logging.getLogger(__name__)
 
 SESSION_TIMEOUT_SECONDS = 1800  # 30 minutes of inactivity
 
+
 def update_activity_timestamp():
     st.session_state.last_activity_timestamp = time.time()
     logger.debug("Activity timestamp updated.")
 
-def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
+
+def _initialize_session_state(
+    app_config: ChimeraSettings, example_prompts: Dict[str, Any]
+):
     """Initializes or resets all session state variables to their default values."""
     # MODIFIED: Access total_budget directly from app_config (ChimeraSettings instance)
     MAX_TOKENS_LIMIT = app_config.total_budget
     CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.context_token_budget_ratio
-    DOMAIN_KEYWORDS = app_config.domain_keywords # NEW: Access domain_keywords from app_config
+    DOMAIN_KEYWORDS = (
+        app_config.domain_keywords
+    )  # NEW: Access domain_keywords from app_config
 
     defaults = {
         "initialized": True,
@@ -43,7 +49,7 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         "intermediate_steps_output": {},
         "process_log_output_text": "",
         "last_config_params": {},
-        "codebase_context": {}, # This will now hold raw_file_contents for UI display/download
+        "codebase_context": {},  # This will now hold raw_file_contents for UI display/download
         "uploaded_files": [],
         "persona_audit_log": [],
         "persona_edit_mode": False,
@@ -61,8 +67,8 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         "current_debate_tokens_used": 0,
         "current_debate_cost_usd": 0.0,
         "last_activity_timestamp": time.time(),
-        "structured_codebase_context": {}, # NEW: For structured analysis from CodebaseScanner
-        "raw_file_contents": {}, # NEW: For raw file contents used by ContextRelevanceAnalyzer
+        "structured_codebase_context": {},  # NEW: For structured analysis from CodebaseScanner
+        "raw_file_contents": {},  # NEW: For raw file contents used by ContextRelevanceAnalyzer
         "context_ratio_user_modified": False,
     }
 
@@ -117,7 +123,9 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
 
     # Initial API key validation
     if st.session_state.api_key_input:
-        is_valid_format, message = validate_gemini_api_key_format(st.session_state.api_key_input)
+        is_valid_format, message = validate_gemini_api_key_format(
+            st.session_state.api_key_input
+        )
         st.session_state.api_key_valid_format = is_valid_format
         st.session_state.api_key_format_message = message
 
@@ -148,15 +156,22 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
             default_example_category
         ][default_example_name].get("framework_hint")
 
+
 def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
     """Resets all session state variables to their default values."""
     _initialize_session_state(app_config, example_prompts)
     st.rerun()
 
-def check_session_expiration(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
+
+def check_session_expiration(
+    app_config: ChimeraSettings, example_prompts: Dict[str, Any]
+):
     """Checks for session expiration due to inactivity."""
     if "initialized" in st.session_state and st.session_state.initialized:
-        if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:
+        if (
+            time.time() - st.session_state.last_activity_timestamp
+            > SESSION_TIMEOUT_SECONDS
+        ):
             st.warning(
                 "Your session has expired due to inactivity. Resetting the application."
             )

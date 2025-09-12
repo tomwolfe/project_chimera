@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-import difflib # NEW: Import difflib for applying diffs
+import difflib  # NEW: Import difflib for applying diffs
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ def _create_file_backup(file_path: Path) -> Optional[Path]:
         logger.error(f"An unexpected error occurred during backup of {file_path}: {e}")
         return None
 
+
 def _apply_unified_diff(original_content: str, diff_content: str) -> str:
     """
     Applies a unified diff to the original content.
@@ -59,29 +60,33 @@ def _apply_unified_diff(original_content: str, diff_content: str) -> str:
     # This is a very basic diff application. A robust solution would use a library like `patch`
     # or `diff_match_patch` or call the system's `patch` utility.
     # For the scope of this project, we'll assume simple diffs that can be applied line-by-line.
-    
+
     # Split diff into lines
     diff_lines = diff_content.splitlines(keepends=True)
     original_lines = original_content.splitlines(keepends=True)
-    
+
     patched_lines = []
     original_idx = 0
     diff_idx = 0
-    
+
     while diff_idx < len(diff_lines):
         line = diff_lines[diff_idx]
-        if line.startswith('--- a/') or line.startswith('+++ b/') or line.startswith('@@'):
+        if (
+            line.startswith("--- a/")
+            or line.startswith("+++ b/")
+            or line.startswith("@@")
+        ):
             # Skip diff headers and hunk headers
             diff_idx += 1
             continue
-        
-        if line.startswith('-'):
+
+        if line.startswith("-"):
             # Line removed, skip it in original content
             original_idx += 1
-        elif line.startswith('+'):
+        elif line.startswith("+"):
             # Line added, append to patched content
             patched_lines.append(line[1:])
-        elif line.startswith(' '):
+        elif line.startswith(" "):
             # Context line, append from original content
             patched_lines.append(original_lines[original_idx])
             original_idx += 1
@@ -91,7 +96,7 @@ def _apply_unified_diff(original_content: str, diff_content: str) -> str:
                 patched_lines.append(original_lines[original_idx])
                 original_idx += 1
         diff_idx += 1
-        
+
     # Append any remaining original lines if the diff ended prematurely
     while original_idx < len(original_lines):
         patched_lines.append(original_lines[original_idx])
@@ -145,12 +150,12 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
                 # to call 'patch' or a Python library like 'patch'.
                 # For now, we log the intent and skip actual diff application.
                 if change["DIFF_CONTENT"].strip():
-                    logger.info(
-                        f"Applying diff content to file: {file_path}."
-                    )
+                    logger.info(f"Applying diff content to file: {file_path}.")
                     try:
                         original_content = file_path.read_text(encoding="utf-8")
-                        patched_content = _apply_unified_diff(original_content, change["DIFF_CONTENT"])
+                        patched_content = _apply_unified_diff(
+                            original_content, change["DIFF_CONTENT"]
+                        )
                         with open(file_path, "w", encoding="utf-8") as f:
                             f.write(patched_content)
                         logger.info(f"Successfully applied diff to {file_path}")

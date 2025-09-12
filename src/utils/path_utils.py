@@ -1,12 +1,23 @@
 # src/utils/path_utils.py
-import logging # Used for logger
-import re # Used for regex in sanitize_and_validate_file_path
-from pathlib import Path # Used for Path objects
+import logging  # Used for logger
+import re  # Used for regex in sanitize_and_validate_file_path
+from pathlib import Path  # Used for Path objects
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT_MARKERS = [".git", "config.yaml", "pyproject.toml", "Dockerfile", "app.py", "core.py", "src/", "tests/", "docs/", "personas.yaml"] # MODIFIED: Added more markers for robustness
+PROJECT_ROOT_MARKERS = [
+    ".git",
+    "config.yaml",
+    "pyproject.toml",
+    "Dockerfile",
+    "app.py",
+    "core.py",
+    "src/",
+    "tests/",
+    "docs/",
+    "personas.yaml",
+]  # MODIFIED: Added more markers for robustness
 
 
 def _find_project_root_internal(start_path: Path) -> Optional[Path]:
@@ -20,10 +31,10 @@ def _find_project_root_internal(start_path: Path) -> Optional[Path]:
             return current_dir
 
         parent_path = current_dir.parent
-        if parent_path == current_dir: # Reached the filesystem root
+        if parent_path == current_dir:  # Reached the filesystem root
             break
         current_dir = parent_path
-    return None # Return None if not found
+    return None  # Return None if not found
 
 
 # --- Define PROJECT_ROOT dynamically ---
@@ -34,7 +45,7 @@ if _found_root:
     PROJECT_ROOT = _found_root
     logger.info(f"Project root identified at: {PROJECT_ROOT}")
 else:
-    PROJECT_ROOT = Path.cwd() # Fallback to current working directory
+    PROJECT_ROOT = Path.cwd()  # Fallback to current working directory
     logger.warning(
         f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
     )
@@ -46,7 +57,7 @@ def is_within_base_dir(file_path: Path) -> bool:
         resolved_path = file_path.resolve()
         resolved_path.relative_to(
             PROJECT_ROOT
-        ) # This will raise ValueError if not a subpath
+        )  # This will raise ValueError if not a subpath
         return True
     except ValueError:
         logger.debug(
@@ -73,7 +84,9 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
         raise ValueError("File path cannot be empty.")
 
     # MODIFIED: Allow forward slashes in sanitized_path_str as they are valid path separators
-    sanitized_path_str = re.sub(r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path) # Removed '/' from invalid chars
+    sanitized_path_str = re.sub(
+        r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path
+    )  # Removed '/' from invalid chars
     sanitized_path_str = re.sub(r"\.\./", "", sanitized_path_str)
     sanitized_path_str = re.sub(r"//+", "/", sanitized_path_str)
 

@@ -1,11 +1,13 @@
 import abc
 from typing import Any, Dict, List
 
+
 class LLMClient(abc.ABC):
     """
     Abstract Base Class for LLM clients.
     Defines the interface for interacting with various Large Language Models.
     """
+
     @abc.abstractmethod
     def generate_response(self, prompt: str, **kwargs) -> Dict[str, Any]:
         """Generates a response from the LLM based on the given prompt."""
@@ -16,13 +18,19 @@ class LLMClient(abc.ABC):
         """Counts the number of tokens in the given text."""
         pass
 
+
 class MockLLMClient(LLMClient):
     """
     A mock implementation of LLMClient for testing purposes.
     Returns predefined responses and token counts.
     """
+
     def __init__(self, mock_response: Dict[str, Any] = None, mock_token_count: int = 0):
-        self.mock_response = mock_response if mock_response is not None else {"choices": [{"message": {"content": "This is a mock response."}}]}
+        self.mock_response = (
+            mock_response
+            if mock_response is not None
+            else {"choices": [{"message": {"content": "This is a mock response."}}]}
+        )
         self.mock_token_count = mock_token_count
 
     def generate_response(self, prompt: str, **kwargs) -> Dict[str, Any]:
@@ -38,6 +46,7 @@ class MockLLMClient(LLMClient):
         Simulates counting tokens.
         """
         return self.mock_token_count
+
 
 # Placeholder for actual LLM client implementation (e.g., OpenAI, Anthropic)
 # class OpenAICLient(LLMClient):

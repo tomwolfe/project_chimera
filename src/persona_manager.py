@@ -11,12 +11,23 @@ import copy
 import time
 
 from src.persona.routing import PersonaRouter
-from src.models import PersonaConfig, ReasoningFrameworkConfig, LLMOutput, CritiqueOutput, GeneralOutput, ConflictReport, SelfImprovementAnalysisOutputV1, ContextAnalysisOutput, ConfigurationAnalysisOutput, DeploymentAnalysisOutput
+from src.models import (
+    PersonaConfig,
+    ReasoningFrameworkConfig,
+    LLMOutput,
+    CritiqueOutput,
+    GeneralOutput,
+    ConflictReport,
+    SelfImprovementAnalysisOutputV1,
+    ContextAnalysisOutput,
+    ConfigurationAnalysisOutput,
+    DeploymentAnalysisOutput,
+)
 from src.config.persistence import ConfigPersistence
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 from src.exceptions import SchemaValidationError
-from src.config.settings import ChimeraSettings # NEW: Import ChimeraSettings
+from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +71,14 @@ class PersonaManager:
         self,
         domain_keywords: Dict[str, List[str]],
         token_tracker: Optional[TokenUsageTracker] = None,
-        settings: Optional[ChimeraSettings] = None, # NEW: Add settings parameter
+        settings: Optional[ChimeraSettings] = None,  # NEW: Add settings parameter
     ):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
         self.available_domains: List[str] = []
         self.all_custom_frameworks_data: Dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
-        self._original_personas: Dict[str, PersonaConfig] = {} # Store original configs
+        self._original_personas: Dict[str, PersonaConfig] = {}  # Store original configs
 
         # For Adaptive LLM Parameter Adjustment
         self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
@@ -75,7 +86,7 @@ class PersonaManager:
         self.min_turns_for_adjustment = 5  # Minimum turns before considering adjustment
 
         self.config_persistence = ConfigPersistence()
-        self.settings = settings or ChimeraSettings() # NEW: Store settings
+        self.settings = settings or ChimeraSettings()  # NEW: Store settings
 
         # Initialize PromptAnalyzer first
         self.prompt_analyzer = PromptAnalyzer(domain_keywords)
@@ -88,12 +99,15 @@ class PersonaManager:
             # For now, we'll proceed with potentially empty or minimal data, logging the error.
 
         self._load_custom_frameworks_on_init()
-        self._load_original_personas() # Load original personas after all others are loaded
+        self._load_original_personas()  # Load original personas after all others are loaded
 
         # Initialize PersonaRouter with all loaded personas and persona_sets, and the prompt_analyzer
         # This ensures the router always has the correct prompt_analyzer instance.
         self.persona_router: Optional[PersonaRouter] = PersonaRouter(
-            self.all_personas, self.persona_sets, self.prompt_analyzer, persona_manager=self # Pass self
+            self.all_personas,
+            self.persona_sets,
+            self.prompt_analyzer,
+            persona_manager=self,  # Pass self
         )
 
         # Initialize performance metrics after all personas are loaded
@@ -151,21 +165,21 @@ class PersonaManager:
                     system_prompt="You are a visionary.",
                     temperature=0.7,
                     max_tokens=1024,
-                    description="Generates innovative solutions." # MODIFIED: Added description
+                    description="Generates innovative solutions.",  # MODIFIED: Added description
                 ),
                 "Skeptical_Generator": PersonaConfig(
                     name="Skeptical_Generator",
                     system_prompt="You are a skeptic.",
                     temperature=0.3,
                     max_tokens=1024,
-                    description="Identifies flaws." # MODIFIED: Added description
+                    description="Identifies flaws.",  # MODIFIED: Added description
                 ),
                 "Impartial_Arbitrator": PersonaConfig(
                     name="Impartial_Arbitrator",
                     system_prompt="You are an arbitrator.",
-                    temperature=0.2, # MODIFIED: Changed temperature to 0.2
+                    temperature=0.2,  # MODIFIED: Changed temperature to 0.2
                     max_tokens=1024,
-                    description="Synthesizes outcomes." # MODIFIED: Added description
+                    description="Synthesizes outcomes.",  # MODIFIED: Added description
                 ),
             }
             self.persona_sets = {
@@ -541,7 +555,11 @@ class PersonaManager:
         if not base_config:
             logger.warning(f"Persona '{base_persona_name}' not found for adjustment.")
             return PersonaConfig(
-                name="Fallback", system_prompt="Error", temperature=0.7, max_tokens=1024, description="Fallback persona." # MODIFIED: Added description
+                name="Fallback",
+                system_prompt="Error",
+                temperature=0.7,
+                max_tokens=1024,
+                description="Fallback persona.",  # MODIFIED: Added description
             )  # Fallback
 
         adjusted_config = copy.deepcopy(base_config)
@@ -631,20 +649,18 @@ class PersonaManager:
         persona_name: str,
         turn_number: int,
         output: Any,
-        is_aligned: bool, # Renamed from is_valid to be more precise
+        is_aligned: bool,  # Renamed from is_valid to be more precise
         validation_message: str,
         is_truncated: bool = False,
-        schema_validation_failed: bool = False, # NEW: Explicitly track schema failures
-        token_budget_exceeded: bool = False, # NEW: Explicitly track token budget exceedances
+        schema_validation_failed: bool = False,  # NEW: Explicitly track schema failures
+        token_budget_exceeded: bool = False,  # NEW: Explicitly track token budget exceedances
     ):
         """Record performance metrics for a persona's turn."""
-        base_persona_name = persona_name.replace(
-            "_TRUNCATED", ""
-        )
+        base_persona_name = persona_name.replace("_TRUNCATED", "")
         metrics = self.persona_performance_metrics.get(base_persona_name)
         if metrics:
             metrics["total_turns"] += 1
-            if schema_validation_failed: # Use the new explicit flag
+            if schema_validation_failed:  # Use the new explicit flag
                 metrics["schema_failures"] += 1
             if is_truncated:
                 metrics["truncation_failures"] += 1
@@ -665,7 +681,7 @@ class PersonaManager:
         optimized_sequence = []
 
         global_token_consumption_high = False
-        truncation_rate = 0.0 # Initialize truncation_rate
+        truncation_rate = 0.0  # Initialize truncation_rate
         if self.token_tracker:
             global_token_consumption_high = (
                 self.token_tracker.get_consumption_rate()
@@ -673,9 +689,7 @@ class PersonaManager:
             )
 
         for p_name in persona_sequence:
-            base_p_name = p_name.replace(
-                "_TRUNCATED", ""
-            )
+            base_p_name = p_name.replace("_TRUNCATED", "")
 
             persona_truncation_prone = False
             metrics = self.persona_performance_metrics.get(base_p_name)
@@ -690,7 +704,7 @@ class PersonaManager:
                 if "_TRUNCATED" not in p_name:
                     optimized_sequence.append(f"{base_p_name}_TRUNCATED")
                     logger.info(
-                        f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f}) or high global token consumption." # MODIFIED: Removed "if calculated"
+                        f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f}) or high global token consumption."  # MODIFIED: Removed "if calculated"
                     )
                 else:
                     optimized_sequence.append(p_name)
@@ -704,7 +718,10 @@ class PersonaManager:
         return self.prompt_analyzer.analyze_complexity(prompt)
 
     def parse_raw_llm_output(
-        self, raw_llm_output: str, persona_name: str, schema: Optional[Dict[str, Any]] = None
+        self,
+        raw_llm_output: str,
+        persona_name: str,
+        schema: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Parses raw LLM output, attempts JSON decoding, and validates against a schema.
@@ -713,28 +730,36 @@ class PersonaManager:
         try:
             # Attempt to parse as JSON first
             raw_output = json.loads(raw_llm_output)
-            
+
             # Use Pydantic for validation where appropriate
             if persona_name == "Self_Improvement_Analyst":
                 try:
                     # Use the actual model defined in the codebase
                     from src.models import SelfImprovementAnalysisOutput
+
                     validated = SelfImprovementAnalysisOutput(**raw_output)
-                    return validated.model_dump(by_alias=True) # Use model_dump for Pydantic v2
+                    return validated.model_dump(
+                        by_alias=True
+                    )  # Use model_dump for Pydantic v2
                 except ValidationError as ve:
                     logger.error(f"Pydantic validation failed for {persona_name}: {ve}")
                     # Extract specific field errors for better diagnostics
-                    error_details = [{"field": err["loc"][0], "error": err["msg"]} 
-                                    for err in ve.errors()]
+                    error_details = [
+                        {"field": err["loc"][0], "error": err["msg"]}
+                        for err in ve.errors()
+                    ]
                     raise SchemaValidationError(
-                        f"Validation failed: {str(ve)}", 
-                        error_details
+                        f"Validation failed: {str(ve)}", error_details
                     ) from None
-            
+
             return raw_output
         except json.JSONDecodeError as e:
             logger.error(f"JSON decoding failed for {persona_name}: {e}")
             raise SchemaValidationError(f"Invalid JSON: {str(e)}") from None
-        except Exception as e: # Catch any other parsing/validation errors
-            logger.error(f"An unexpected error occurred during parsing/validation for {persona_name}: {e}")
-            raise SchemaValidationError(f"Parsing/validation failed: {str(e)}") from None
+        except Exception as e:  # Catch any other parsing/validation errors
+            logger.error(
+                f"An unexpected error occurred during parsing/validation for {persona_name}: {e}"
+            )
+            raise SchemaValidationError(
+                f"Parsing/validation failed: {str(e)}"
+            ) from None

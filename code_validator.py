@@ -35,8 +35,7 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
     try:
         style_guide = pycodestyle.StyleGuide(quiet=True, format="default")
         checker = pycodestyle.Checker(
-            filename=filename,
-            lines=content.splitlines(keepends=True),
+            filename=filename, lines=content.splitlines(keepends=True)
         )
 
         errors = checker.check_all()

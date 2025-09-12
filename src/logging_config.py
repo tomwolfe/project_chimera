@@ -1,9 +1,10 @@
 # src/logging_config.py
 import logging
+
 # REMOVED: import json # Not directly used in this file
 # REMOVED: import uuid # Not directly used in this file
 from pythonjsonlogger import jsonlogger
-import re # NEW: Import re for redaction filter
+import re  # NEW: Import re for redaction filter
 from pathlib import Path
 import sys
 
@@ -28,26 +29,28 @@ class RequestIDFilter(logging.Filter):
         record.request_id = getattr(record, "request_id", "N/A")
         return True
 
+
 # NEW: RedactingFilter to mask sensitive information in logs
 class RedactingFilter(logging.Filter):
     """A logging filter to redact sensitive information like API keys from log messages."""
+
     def filter(self, record):
         # Define patterns for secrets (API keys, tokens, etc.)
         # These patterns are examples and should be comprehensive for all potential secrets.
         secret_patterns = [
-            r'API_KEY=[^,\s]+', # Matches API_KEY= followed by non-comma/whitespace characters
-            r'token\s*[:=]\s*[^\s]+', # Matches token : or = followed by non-whitespace characters
-            r'sk-[A-Za-z0-9]{32,}', # Common pattern for API keys (e.g., OpenAI, Gemini)
+            r"API_KEY=[^,\s]+",  # Matches API_KEY= followed by non-comma/whitespace characters
+            r"token\s*[:=]\s*[^\s]+",  # Matches token : or = followed by non-whitespace characters
+            r"sk-[A-Za-z0-9]{32,}",  # Common pattern for API keys (e.g., OpenAI, Gemini)
             # Add more patterns as needed, e.g., for specific headers, passwords, etc.
         ]
         for pattern in secret_patterns:
-            record.msg = re.sub(pattern, '***REDACTED***', record.msg)
+            record.msg = re.sub(pattern, "***REDACTED***", record.msg)
         return True
 
 
 def setup_structured_logging(log_level=logging.INFO):
     """Confgures the root logger for structured JSON output."""
-    logger = logging.getLogger() # Get the root logger
+    logger = logging.getLogger()  # Get the root logger
 
     # Prevent adding handlers multiple times if this function is called more than once
     if logger.handlers:
@@ -69,7 +72,7 @@ def setup_structured_logging(log_level=logging.INFO):
             "levelname": "level",
             "name": "logger_name",
         },
-        datefmt="%Y-%m-%dT%H:%M:%S%z", # ISO 8601 format for timestamps
+        datefmt="%Y-%m-%dT%H:%M:%S%z",  # ISO 8601 format for timestamps
     )
     log_handler.setFormatter(formatter)
 
@@ -91,6 +94,6 @@ def setup_structured_logging(log_level=logging.INFO):
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("streamlit").setLevel(
         logging.WARNING
-    ) # Streamlit's own logs can be quite verbose
+    )  # Streamlit's own logs can be quite verbose
 
     logger.info("Structured JSON logging configured successfully.")

@@ -45,10 +45,6 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = true
 
-# Upgrade checking configuration
-[upgrade-checking]
-target-version = "py310" # Adjust based on your project's minimum Python version
-
 # Linting configuration
 [lint]
 # Exclude directories and files from linting.

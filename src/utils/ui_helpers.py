@@ -2,10 +2,14 @@ import streamlit as st
 import logging
 from typing import Dict, Any
 
-from src.utils.api_key_validator import validate_gemini_api_key_format, test_gemini_api_key_functional # NEW: Import from api_key_validator
+from src.utils.api_key_validator import (
+    validate_gemini_api_key_format,
+    test_gemini_api_key_functional,
+)  # NEW: Import from api_key_validator
 from src.utils.session_manager import update_activity_timestamp
 
 logger = logging.getLogger(__name__)
+
 
 def on_api_key_change():
     """Callback to validate API key format and update activity timestamp."""
@@ -28,6 +32,7 @@ def on_api_key_change():
         st.session_state.current_debate_tokens_used = 0
         st.session_state.current_debate_cost_usd = 0.0
 
+
 def display_key_status():
     """Display detailed API key status with appropriate icons"""
     if not st.session_state.api_key_input:
@@ -43,6 +48,7 @@ def display_key_status():
         return
 
     st.caption("✅ Key status: Valid and functional")
+
 
 def test_api_key():
     """Test the API key functionality with proper error handling"""

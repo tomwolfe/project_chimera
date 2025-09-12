@@ -3,7 +3,7 @@ import re
 import logging
 import json
 from typing import List, Tuple, Dict, Any, Union, Optional
-from jsonschema import validate # NEW: Import validate for schema compliance
+from jsonschema import validate  # NEW: Import validate for schema compliance
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,8 @@ class ContentAlignmentValidator:
                     "robustness",
                     "efficiency",
                     "maintainability",
-                    "security", # Added security as a core self-improvement focus
-                    "test coverage", # Added test coverage as a core self-improvement focus
+                    "security",  # Added security as a core self-improvement focus
+                    "test coverage",  # Added test coverage as a core self-improvement focus
                     "code changes",
                     "process adjustments",
                     "project chimera codebase",
@@ -202,14 +202,27 @@ class ContentAlignmentValidator:
                 output_text = persona_output["ANALYSIS_SUMMARY"]
             elif "general_output" in persona_output:
                 output_text = persona_output["general_output"]
-            elif "analysisTitle" in persona_output: # For DevOps_Engineer output
-                output_text = persona_output["analysisTitle"] + " " + persona_output.get("introduction", "")
-                if "recommendations" in persona_output and isinstance(persona_output["recommendations"], list):
+            elif "analysisTitle" in persona_output:  # For DevOps_Engineer output
+                output_text = (
+                    persona_output["analysisTitle"]
+                    + " "
+                    + persona_output.get("introduction", "")
+                )
+                if "recommendations" in persona_output and isinstance(
+                    persona_output["recommendations"], list
+                ):
                     for rec in persona_output["recommendations"]:
-                        output_text += " " + rec.get("title", "") + " " + rec.get("description", "")
-            elif "architectural_analysis" in persona_output: # For Code_Architect output
+                        output_text += (
+                            " "
+                            + rec.get("title", "")
+                            + " "
+                            + rec.get("description", "")
+                        )
+            elif (
+                "architectural_analysis" in persona_output
+            ):  # For Code_Architect output
                 output_text = json.dumps(persona_output["architectural_analysis"])
-            elif "security_analysis" in persona_output: # For Security_Auditor output
+            elif "security_analysis" in persona_output:  # For Security_Auditor output
                 output_text = json.dumps(persona_output["security_analysis"])
             else:
                 # Fallback: convert dict to string for general keyword search
@@ -242,8 +255,8 @@ class ContentAlignmentValidator:
                     "maintainability",
                     "technical debt",
                     "design patterns",
-                    "reasoning flow", # Added for self-improvement context
-                    "codebase structure", # Added for self-improvement context
+                    "reasoning flow",  # Added for self-improvement context
+                    "codebase structure",  # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "Security_Auditor"
@@ -256,8 +269,8 @@ class ContentAlignmentValidator:
                     "authentication",
                     "authorization",
                     "api key management",
-                    "attack vectors", # Added for self-improvement context
-                    "compliance", # Added for self-improvement context
+                    "attack vectors",  # Added for self-improvement context
+                    "compliance",  # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "DevOps_Engineer"
@@ -270,9 +283,9 @@ class ContentAlignmentValidator:
                     "reliability",
                     "efficiency",
                     "token usage",
-                    "scalability", # Added for self-improvement context
-                    "automation", # Added for self-improvement context
-                    "cost management", # Added for self-improvement context
+                    "scalability",  # Added for self-improvement context
+                    "automation",  # Added for self-improvement context
+                    "cost management",  # Added for self-improvement context
                 ]
             elif persona_name.startswith("Test_Engineer"):  # Handle _TRUNCATED versions
                 effective_focus_areas = [
@@ -282,8 +295,8 @@ class ContentAlignmentValidator:
                     "robustness",
                     "testability",
                     "edge cases",
-                    "error conditions", # Added for self-improvement context
-                    "validation logic", # Added for self-improvement context
+                    "error conditions",  # Added for self-improvement context
+                    "validation logic",  # Added for self-improvement context
                 ]
             elif persona_name.startswith(
                 "Constructive_Critic"
@@ -295,9 +308,9 @@ class ContentAlignmentValidator:
                     "testability deficiencies",
                     "operational concerns",
                     "maintainability issues",
-                    "reasoning quality", # Added as per prompt
-                    "robustness", # Added as per prompt
-                    "efficiency", # Added as per prompt
+                    "reasoning quality",  # Added as per prompt
+                    "robustness",  # Added as per prompt
+                    "efficiency",  # Added as per prompt
                 ]
             elif persona_name.startswith(
                 "Devils_Advocate"
@@ -311,8 +324,8 @@ class ContentAlignmentValidator:
                     "effectiveness",
                     "edge cases",
                     "conflict",
-                    "relevance to initial prompt", # Added as per prompt
-                    "over-correction", # Added as per prompt
+                    "relevance to initial prompt",  # Added as per prompt
+                    "over-correction",  # Added as per prompt
                 ]
             # For other personas, use the base_focus_areas or a more general set.
 
@@ -341,10 +354,13 @@ class ContentAlignmentValidator:
 
         # Threshold for alignment
         # Increased threshold for Self_Improvement_Analyst and Devils_Advocate for stricter alignment
-        if persona_name == "Self_Improvement_Analyst" or persona_name == "Devils_Advocate":
-            alignment_threshold = 0.5 # Stricter for these critical personas
+        if (
+            persona_name == "Self_Improvement_Analyst"
+            or persona_name == "Devils_Advocate"
+        ):
+            alignment_threshold = 0.5  # Stricter for these critical personas
         else:
-            alignment_threshold = 0.3 # Default for others
+            alignment_threshold = 0.3  # Default for others
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False
@@ -378,7 +394,9 @@ class ContentAlignmentValidator:
         nuanced_feedback["is_aligned"] = True
         return True, "Content aligned with focus areas.", nuanced_feedback
 
-    def validate_schema_compliance(self, response: dict, schema: dict) -> tuple[bool, str]:
+    def validate_schema_compliance(
+        self, response: dict, schema: dict
+    ) -> tuple[bool, str]:
         """Validates response against JSON schema with detailed error reporting"""
         try:
             validate(instance=response, schema=schema)

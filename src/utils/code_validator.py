@@ -21,9 +21,7 @@ from src.utils.path_utils import (
     sanitize_and_validate_file_path,
     PROJECT_ROOT,
 )
-from src.models import (
-    CodeChange,
-)
+from src.models import CodeChange
 from src.utils.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
@@ -59,9 +57,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             ]
 
             return_code_lint, stdout_lint, stderr_lint = execute_command_safely(
-                lint_command,
-                timeout=30,
-                check=False,
+                lint_command, timeout=30, check=False
             )
 
             if stdout_lint:
@@ -122,9 +118,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             ]
 
             return_code_format, stdout_format, stderr_format = execute_command_safely(
-                format_command,
-                timeout=30,
-                check=False,
+                format_command, timeout=30, check=False
             )
 
             if return_code_format != 0:
@@ -177,7 +171,12 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     return issues
 
 
-def _run_bandit(content: str, filename: str, severity_level: str = "medium", confidence_level: str = "medium") -> List[Dict[str, Any]]:
+def _run_bandit(
+    content: str,
+    filename: str,
+    severity_level: str = "medium",
+    confidence_level: str = "medium",
+) -> List[Dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     tmp_file_path = None
@@ -196,30 +195,31 @@ def _run_bandit(content: str, filename: str, severity_level: str = "medium", con
                     f"Bandit config file not found at {bandit_config_path}. Running Bandit without explicit config."
                 )
                 # Use the provided lowercase severity_level and confidence_level
-                config_args = ["--severity-level", severity_level, "--confidence-level", confidence_level]
+                config_args = [
+                    "--severity-level",
+                    severity_level,
+                    "--confidence-level",
+                    confidence_level,
+                ]
             else:
                 config_args = ["-c", str(bandit_config_path)]
                 # Use the provided lowercase severity_level and confidence_level
-                config_args.extend(["--severity-level", severity_level, "--confidence-level", confidence_level])
+                config_args.extend(
+                    [
+                        "--severity-level",
+                        severity_level,
+                        "--confidence-level",
+                        confidence_level,
+                    ]
+                )
 
-
-            command = [
-                "bandit",
-                "-q",
-                "-f",
-                "json",
-                str(tmp_file_path),
-            ] + config_args
+            command = ["bandit", "-q", "-f", "json", str(tmp_file_path)] + config_args
 
             return_code, stdout, stderr = execute_command_safely(
-                command,
-                timeout=30,
-                check=False,
+                command, timeout=30, check=False
             )
 
-            if (
-                return_code not in (0, 1)
-            ):
+            if return_code not in (0, 1):
                 logger.error(
                     f"Bandit execution failed for {filename} with return code {return_code}. Stderr: {stderr}"
                 )
@@ -250,9 +250,7 @@ def _run_bandit(content: str, filename: str, severity_level: str = "medium", con
                                     ),
                                 }
                             )
-                    if (
-                        not bandit_results and stderr
-                    ):
+                    if not bandit_results and stderr:
                         logger.error(
                             f"Bandit produced no JSON output but had stderr: {stderr}"
                         )
@@ -308,9 +306,7 @@ def _run_bandit(content: str, filename: str, severity_level: str = "medium", con
                 "message": f"Bandit execution timed out: {e}.",
             }
         )
-    except (
-        subprocess.CalledProcessError
-    ) as e:
+    except subprocess.CalledProcessError as e:
         logger.error(
             f"Bandit execution failed with non-zero exit code: {e.returncode}. Stderr: {e.stderr.strip()}"
         )
@@ -447,8 +443,8 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             "line": node.lineno,
                             "message": "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False.",
                             "code_snippet": snippet,
-                                }
-                        )
+                        }
+                    )
 
                 # Check for XML External Entity (XXE) vulnerability in ElementTree
                 if (
@@ -547,7 +543,19 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             ):
                                 if any(
                                     char in arg.value
-                                    for char in [";", "|", "&", "$", "`", ">", "<", "(", ")", "#", "*"]
+                                    for char in [
+                                        ";",
+                                        "|",
+                                        "&",
+                                        "$",
+                                        "`",
+                                        ">",
+                                        "<",
+                                        "(",
+                                        ")",
+                                        "#",
+                                        "*",
+                                    ]
                                 ):
                                     self.issues.append(
                                         {
@@ -558,7 +566,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                                             "code_snippet": snippet,
                                         }
                                     )
-                
+
                 # NEW: Check for weak cryptographic hashes (e.g., MD5)
                 if (
                     isinstance(node.func, ast.Attribute)
@@ -582,17 +590,34 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 """Heuristic to check if function argument might be untrusted input."""
                 if node.args and isinstance(node.args[0], ast.Name):
                     arg_name = node.args[0].id
-                    untrusted_keywords = ["input", "user", "request", "param", "data", "body", "query", "json", "raw"]
-                    return any(keyword in arg_name.lower() for keyword in untrusted_keywords)
+                    untrusted_keywords = [
+                        "input",
+                        "user",
+                        "request",
+                        "param",
+                        "data",
+                        "body",
+                        "query",
+                        "json",
+                        "raw",
+                    ]
+                    return any(
+                        keyword in arg_name.lower() for keyword in untrusted_keywords
+                    )
                 return True
 
             def _has_safe_loader_parameter(self, node) -> bool:
                 """Check if yaml.load call has a safe Loader parameter."""
                 for keyword in node.keywords:
                     if keyword.arg == "Loader":
-                        if isinstance(keyword.value, ast.Attribute) and keyword.value.attr in ["SafeLoader", "CSafeLoader"]:
+                        if isinstance(
+                            keyword.value, ast.Attribute
+                        ) and keyword.value.attr in ["SafeLoader", "CSafeLoader"]:
                             return True
-                        if isinstance(keyword.value, ast.Name) and keyword.value.id in ["SafeLoader", "CSafeLoader"]:
+                        if isinstance(keyword.value, ast.Name) and keyword.value.id in [
+                            "SafeLoader",
+                            "CSafeLoader",
+                        ]:
                             return True
                 return False
 
@@ -701,7 +726,7 @@ def validate_code_output(
                         "message": "New content is identical to original.",
                     }
                 )
-            
+
             if file_analysis_cache and file_path_str in file_analysis_cache:
                 cached_analysis = file_analysis_cache[file_path_str]
                 if "ruff_issues" in cached_analysis:
@@ -829,7 +854,9 @@ def validate_code_output_batch(
             try:
                 original_content = original_contents.get(file_path)
                 # Pass the file_analysis_cache to validate_code_output
-                validation_result = validate_code_output(change_entry, original_content, file_analysis_cache)
+                validation_result = validate_code_output(
+                    change_entry, original_content, file_analysis_cache
+                )
 
                 all_validation_results[file_path] = validation_result.get("issues", [])
                 logger.debug(

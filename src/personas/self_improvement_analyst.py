@@ -90,7 +90,7 @@ class SelfImprovementAnalyst:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        metrics_collector: Any, # NEW: Add metrics_collector to init
+        metrics_collector: Any,  # NEW: Add metrics_collector to init
     ):
         """
         Initializes the analyst with collected metrics and context.
@@ -99,12 +99,14 @@ class SelfImprovementAnalyst:
         self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.codebase_raw_file_contents = codebase_raw_file_contents # NEW: Renamed for clarity
+        self.codebase_raw_file_contents = (
+            codebase_raw_file_contents  # NEW: Renamed for clarity
+        )
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.metrics_collector = metrics_collector # NEW: Store metrics_collector
+        self.metrics_collector = metrics_collector  # NEW: Store metrics_collector
         self.codebase_path = (
             Path.cwd()
         )  # Assuming the analyst operates from the project root
@@ -123,7 +125,9 @@ class SelfImprovementAnalyst:
         # Ensure context is properly formatted, handling potential missing keys gracefully.
         metrics_context = context.get("metrics", "No metrics provided.")
         reasoning_quality_context = context.get("reasoning_quality", "N/A")
-        historical_analysis_context = context.get("historical_analysis", "N/A") # NEW: Add historical context
+        historical_analysis_context = context.get(
+            "historical_analysis", "N/A"
+        )  # NEW: Add historical context
 
         # Construct the prompt using f-string for clarity
         self_improvement_prompt = f"""Analyze Project Chimera for high-impact self-improvement (80/20).
@@ -182,22 +186,32 @@ Summarize findings concisely.
         # --- NEW: Incorporate Historical Analysis ---
         # Retrieve historical analysis data
         historical_data = self.metrics_collector.analyze_historical_effectiveness()
-        top_performing_areas = {item['area']: item['success_rate'] for item in historical_data.get('top_performing_areas', [])}
-        common_failure_modes = {item['metric']: item['occurrences'] for item in historical_data.get('common_failure_modes', [])}
+        top_performing_areas = {
+            item["area"]: item["success_rate"]
+            for item in historical_data.get("top_performing_areas", [])
+        }
+        common_failure_modes = {
+            item["metric"]: item["occurrences"]
+            for item in historical_data.get("common_failure_modes", [])
+        }
 
         # Add a suggestion based on historical data if available
         if historical_data.get("total_attempts", 0) > 0:
-            if historical_data.get("success_rate", 0) < 0.5 and historical_data.get("total_attempts", 0) > 5: # If overall success rate is low and enough data
-                suggestions.append({
-                    "AREA": "Reasoning Quality",
-                    "PROBLEM": f"Overall self-improvement success rate is low ({historical_data['success_rate']:.1%}). This indicates a need to refine the self-improvement methodology or prompt engineering.",
-                    "PROPOSED_SOLUTION": "Review the `Self_Improvement_Analyst`'s system prompt and the overall debate flow. Prioritize clarity in instructions and ensure the AI is focused on actionable, AI-centric improvements. Consider A/B testing different prompt versions.",
-                    "EXPECTED_IMPACT": "Improved reliability and effectiveness of the self-improvement loop, leading to more successful code changes and AI enhancements.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "personas.yaml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/personas.yaml
+            if (
+                historical_data.get("success_rate", 0) < 0.5
+                and historical_data.get("total_attempts", 0) > 5
+            ):  # If overall success rate is low and enough data
+                suggestions.append(
+                    {
+                        "AREA": "Reasoning Quality",
+                        "PROBLEM": f"Overall self-improvement success rate is low ({historical_data['success_rate']:.1%}). This indicates a need to refine the self-improvement methodology or prompt engineering.",
+                        "PROPOSED_SOLUTION": "Review the `Self_Improvement_Analyst`'s system prompt and the overall debate flow. Prioritize clarity in instructions and ensure the AI is focused on actionable, AI-centric improvements. Consider A/B testing different prompt versions.",
+                        "EXPECTED_IMPACT": "Improved reliability and effectiveness of the self-improvement loop, leading to more successful code changes and AI enhancements.",
+                        "CODE_CHANGES_SUGGESTED": [
+                            {
+                                "FILE_PATH": "personas.yaml",
+                                "ACTION": "MODIFY",
+                                "DIFF_CONTENT": """--- a/personas.yaml
 +++ b/personas.yaml
 @@ -100,7 +100,10 @@
        You are Project Chimera's Self-Improvement Analyst. Your core mission is to identify the most impactful improvements for Project Chimera, strictly adhering to the 80/20 Pareto principle.
@@ -210,33 +224,39 @@ Summarize findings concisely.
  
        ---
        **CRITICAL INSTRUCTION: ABSOLUTE ADHERENCE TO CONFLICT RESOLUTION** If the provided `Conflict Resolution Summary` explicitly states that specific code modifications cannot be provided due to lack of direct codebase access or other methodological limitations, you MUST **ABSOLUTELY AND WITHOUT EXCEPTION** adhere to that resolution. In such cases: - Your `IMPACTFUL_SUGGESTIONS` should contain **ONLY** suggestions focused on resolving the lack of codebase context (e.g., suggesting a `docs/project_chimera_context.md` file). - For any such suggestions, the `CODE_CHANGES_SUGGESTED` array MUST be EMPTY for items that would normally require direct codebase access. - If a conceptual change is needed, suggest an 'ADD' action to a new documentation file (e.g., `docs/security_guidance.md`) and put the conceptual content in `FULL_CONTENT`. - If the conflict resolution dictates no code changes, then `CODE_CHANGES_SUGGESTED` for *all* other suggestions MUST be an empty array `[]`. ---
-"""
-                        }
-                    ]
-                })
+""",
+                            }
+                        ],
+                    }
+                )
             elif top_performing_areas and historical_data.get("total_attempts", 0) > 5:
                 # Suggest leveraging a top-performing area
                 best_area = max(top_performing_areas, key=top_performing_areas.get)
-                suggestions.append({
-                    "AREA": "Reasoning Quality",
-                    "PROBLEM": f"Historical analysis shows '{best_area}' is a top-performing area for self-improvement (success rate: {top_performing_areas[best_area]:.1%}).",
-                    "PROPOSED_SOLUTION": f"Double down on strategies that have proven effective in '{best_area}'. Analyze successful past suggestions in this area to extract common patterns and apply them to new problems.",
-                    "EXPECTED_IMPACT": "Increased efficiency and success rate of self-improvement by focusing on proven methods.",
-                    "CODE_CHANGES_SUGGESTED": []
-                })
+                suggestions.append(
+                    {
+                        "AREA": "Reasoning Quality",
+                        "PROBLEM": f"Historical analysis shows '{best_area}' is a top-performing area for self-improvement (success rate: {top_performing_areas[best_area]:.1%}).",
+                        "PROPOSED_SOLUTION": f"Double down on strategies that have proven effective in '{best_area}'. Analyze successful past suggestions in this area to extract common patterns and apply them to new problems.",
+                        "EXPECTED_IMPACT": "Increased efficiency and success rate of self-improvement by focusing on proven methods.",
+                        "CODE_CHANGES_SUGGESTED": [],
+                    }
+                )
             elif common_failure_modes and historical_data.get("total_attempts", 0) > 5:
                 # Suggest addressing a common failure mode
-                most_common_failure = max(common_failure_modes, key=common_failure_modes.get)
-                suggestions.append({
-                    "AREA": "Robustness",
-                    "PROBLEM": f"Historical analysis identifies '{most_common_failure}' as a common failure mode ({common_failure_modes[most_common_failure]} occurrences).",
-                    "PROPOSED_SOLUTION": f"Implement specific safeguards or prompt adjustments to mitigate '{most_common_failure}'. For example, if it's 'schema_validation_failures_count', refine JSON output instructions or use more robust parsing.",
-                    "EXPECTED_IMPACT": "Reduced recurrence of known issues, improving the overall reliability of the self-improvement process.",
-                    "CODE_CHANGES_SUGGESTED": [
-                        {
-                            "FILE_PATH": "personas.yaml",
-                            "ACTION": "MODIFY",
-                            "DIFF_CONTENT": """--- a/personas.yaml
+                most_common_failure = max(
+                    common_failure_modes, key=common_failure_modes.get
+                )
+                suggestions.append(
+                    {
+                        "AREA": "Robustness",
+                        "PROBLEM": f"Historical analysis identifies '{most_common_failure}' as a common failure mode ({common_failure_modes[most_common_failure]} occurrences).",
+                        "PROPOSED_SOLUTION": f"Implement specific safeguards or prompt adjustments to mitigate '{most_common_failure}'. For example, if it's 'schema_validation_failures_count', refine JSON output instructions or use more robust parsing.",
+                        "EXPECTED_IMPACT": "Reduced recurrence of known issues, improving the overall reliability of the self-improvement process.",
+                        "CODE_CHANGES_SUGGESTED": [
+                            {
+                                "FILE_PATH": "personas.yaml",
+                                "ACTION": "MODIFY",
+                                "DIFF_CONTENT": """--- a/personas.yaml
 +++ b/personas.yaml
 @@ -200,7 +200,7 @@
        **CRITICAL JSON OUTPUT INSTRUCTIONS: ABSOLUTELY MUST BE FOLLOWED**
@@ -247,10 +267,11 @@ Summarize findings concisely.
        4. STRICTLY ADHERE TO THE PROVIDED JSON SCHEMA BELOW.**
        5. USE ONLY DOUBLE QUOTES for all keys and string values.
        6. ENSURE COMMAS separate all properties in objects and elements in arrays.
-"""
-                        }
-                    ]
-                })
+""",
+                            }
+                        ],
+                    }
+                )
 
         final_suggestions = suggestions[:3]
 
@@ -258,7 +279,9 @@ Summarize findings concisely.
             f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
         )
 
-        return self.metrics_collector._process_suggestions_for_quality(final_suggestions) # NEW: Process suggestions for quality
+        return self.metrics_collector._process_suggestions_for_quality(
+            final_suggestions
+        )  # NEW: Process suggestions for quality
 
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")

@@ -11,8 +11,8 @@ from core import (
 from src.llm_provider import (
     GeminiProvider,
 )  # Assuming GeminiProvider is in src/llm_provider.py
-from src.persona_manager import PersonaManager # Import PersonaManager
-from src.token_tracker import TokenUsageTracker # Import TokenUsageTracker
+from src.persona_manager import PersonaManager  # Import PersonaManager
+from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
 
 
 # Fixture to provide a real LLM client for integration tests.
@@ -51,12 +51,16 @@ def test_reasoning_engine_integration(real_llm_client):
         "General": ["general", "question", "answer", "capital", "country"],
         "Software Engineering": ["code", "python", "implement"],
     }
-    
+
     # Initialize TokenUsageTracker
-    token_tracker_instance = TokenUsageTracker(budget=100000) # Provide a reasonable budget
+    token_tracker_instance = TokenUsageTracker(
+        budget=100000
+    )  # Provide a reasonable budget
 
     # Initialize PersonaManager with mock domain keywords and token tracker
-    persona_manager_instance = PersonaManager(mock_domain_keywords, token_tracker=token_tracker_instance)
+    persona_manager_instance = PersonaManager(
+        mock_domain_keywords, token_tracker=token_tracker_instance
+    )
 
     try:
         engine = SocraticDebate(
@@ -65,17 +69,15 @@ def test_reasoning_engine_integration(real_llm_client):
             model_name="gemini-2.5-flash-lite",  # Use a light model for tests
             domain="General",  # Use 'General' for simple questions
             persona_manager=persona_manager_instance,  # Pass the persona manager
-            structured_codebase_context={}, # NEW: Add structured_codebase_context
-            raw_file_contents={}, # NEW: Add raw_file_contents
-            token_tracker=token_tracker_instance # Pass the token tracker
+            structured_codebase_context={},  # NEW: Add structured_codebase_context
+            raw_file_contents={},  # NEW: Add raw_file_contents
+            token_tracker=token_tracker_instance,  # Pass the token tracker
         )
 
         result, intermediate_steps = engine.run_debate()
 
         assert isinstance(result, dict)
-        assert (
-            "general_output" in result
-        )
+        assert "general_output" in result
         assert (
             "Paris" in result["general_output"] or "paris" in result["general_output"]
         )

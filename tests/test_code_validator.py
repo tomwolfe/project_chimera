@@ -1,7 +1,7 @@
 # tests/test_code_validator.py
 
 import pytest
-from unittest.mock import MagicMock, patch # NEW: Import patch and MagicMock
+from unittest.mock import MagicMock, patch  # NEW: Import patch and MagicMock
 
 # Assuming src/utils/code_validator.py contains functions like validate_code_output
 from src.utils.code_validator import (
@@ -10,21 +10,25 @@ from src.utils.code_validator import (
     _run_bandit,
     _run_ast_security_checks,
 )
-from src.utils.command_executor import execute_command_safely # NEW: Import execute_command_safely
-from src.utils.code_utils import _get_code_snippet # NEW: Import _get_code_snippet
+from src.utils.command_executor import (
+    execute_command_safely,
+)  # NEW: Import execute_command_safely
+from src.utils.code_utils import _get_code_snippet  # NEW: Import _get_code_snippet
+
 
 # Mock execute_command_safely for _run_ruff and _run_bandit
 @pytest.fixture(autouse=True)
 def mock_execute_command_safely():
-    with patch('src.utils.code_validator.execute_command_safely') as mock_exec:
+    with patch("src.utils.code_validator.execute_command_safely") as mock_exec:
         # Default successful return for ruff and bandit
-        mock_exec.return_value = (0, '{"results": []}', '') # No issues found
+        mock_exec.return_value = (0, '{"results": []}', "")  # No issues found
         yield mock_exec
+
 
 # Mock _get_code_snippet for _run_ruff, _run_bandit, _run_ast_security_checks
 @pytest.fixture(autouse=True)
 def mock_get_code_snippet():
-    with patch('src.utils.code_validator._get_code_snippet') as mock_snippet:
+    with patch("src.utils.code_validator._get_code_snippet") as mock_snippet:
         mock_snippet.return_value = "mock_code_snippet"
         yield mock_snippet
 
@@ -72,11 +76,19 @@ def test_run_ruff_detects_linting_issue(mock_execute_command_safely):
     """Test _run_ruff with a known linting issue (e.g., unused import)."""
     content = "import os\ndef func():\n    pass\n"
     filename = "test_lint.py"
-    
+
     # Configure mock_execute_command_safely to simulate Ruff finding an issue
     mock_execute_command_safely.side_effect = [
-        (1, '[{"code": "F401", "message": "unused-import", "location": {"row": 1, "column": 8}}]', ''), # Linting issue
-        (1, 'Would reformat: /tmp/tmp_file.py\n1 file would be reformatted', '') # Formatting issue
+        (
+            1,
+            '[{"code": "F401", "message": "unused-import", "location": {"row": 1, "column": 8}}]',
+            "",
+        ),  # Linting issue
+        (
+            1,
+            "Would reformat: /tmp/tmp_file.py\n1 file would be reformatted",
+            "",
+        ),  # Formatting issue
     ]
 
     issues = _run_ruff(content, filename)
@@ -88,12 +100,12 @@ def test_run_bandit_detects_security_issue(mock_execute_command_safely):
     """Test _run_bandit with a known security issue (e.g., hardcoded password)."""
     content = "password = 'hardcoded_secret'\n"
     filename = "test_bandit.py"
-    
+
     # Configure mock_execute_command_safely to simulate Bandit finding an issue
     mock_execute_command_safely.return_value = (
-        1, # Bandit returns 1 for issues found
+        1,  # Bandit returns 1 for issues found
         '{"results": [{"test_id": "B105", "severity": "MEDIUM", "description": "Hardcoded password string", "line_number": 1}]}',
-        ''
+        "",
     )
 
     issues = _run_bandit(content, filename)

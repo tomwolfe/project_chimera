@@ -44,7 +44,7 @@ class TestAPIIntegration(unittest.TestCase):
     def test_status_endpoint(self):
         """Test the /api/v1/status endpoint."""
         try:
-            response = requests.get(f"{self.BASE_URL}/status", timeout=5) # Add timeout
+            response = requests.get(f"{self.BASE_URL}/status", timeout=5)  # Add timeout
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {"status": "operational"})
         except requests.exceptions.ConnectionError as e:
@@ -73,7 +73,9 @@ class TestAPIIntegration(unittest.TestCase):
             "max_tokens_budget": 10000,
         }
         try:
-            response = requests.post(f"{self.BASE_URL}/analyze_code", json=payload, timeout=10) # Add timeout
+            response = requests.post(
+                f"{self.BASE_URL}/analyze_code", json=payload, timeout=10
+            )  # Add timeout
             # Expect 200 for success, or 400/401/429 if API key is missing/invalid or rate limited
             self.assertIn(
                 response.status_code,
@@ -107,7 +109,9 @@ class TestAPIIntegration(unittest.TestCase):
             "max_tokens_budget": 10000,
         }
         try:
-            response = requests.post(f"{self.BASE_URL}/analyze_code", json=payload, timeout=10) # Add timeout
+            response = requests.post(
+                f"{self.BASE_URL}/analyze_code", json=payload, timeout=10
+            )  # Add timeout
             self.assertEqual(response.status_code, 422)  # FastAPI validation error
             data = response.json()
             self.assertIn("detail", data)

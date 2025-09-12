@@ -202,7 +202,7 @@ class PromptAnalyzer:
         NEGATION_PROXIMITY = 50
 
         for domain, keywords_list in self.domain_keywords.items():
-            score = 0.0 # Reset score for each domain
+            score = 0.0  # Reset score for each domain
             if not isinstance(keywords_list, list):
                 continue
 
@@ -211,7 +211,7 @@ class PromptAnalyzer:
                 for match in re.finditer(
                     r"\b" + re.escape(keyword_lower) + r"\b", prompt_lower
                 ):
-                    negated = False # Initialize for each match
+                    negated = False  # Initialize for each match
                     keyword_start_pos = match.start()
 
                     search_window_start = max(0, keyword_start_pos - NEGATION_PROXIMITY)
@@ -221,7 +221,7 @@ class PromptAnalyzer:
                         if re.search(neg_pattern, search_window):
                             negated = True
                             score += DEFAULT_KEYWORD_WEIGHT * (1 - penalty)
-                            break # Break from negation patterns loop, not keyword matches loop
+                            break  # Break from negation patterns loop, not keyword matches loop
 
                     if not negated:
                         score += DEFAULT_KEYWORD_WEIGHT
@@ -261,12 +261,8 @@ def optimize_reasoning_prompt(prompt: str) -> str:
 
     optimized_prompt = prompt.strip()
 
-    optimized_prompt = re.sub(
-        r"\s+", " ", optimized_prompt
-    )
-    optimized_prompt = re.sub(
-        r"\n\s*\n", "\n\n", optimized_prompt
-    )
+    optimized_prompt = re.sub(r"\s+", " ", optimized_prompt)
+    optimized_prompt = re.sub(r"\n\s*\n", "\n\n", optimized_prompt)
 
     logger.debug("Applied basic prompt optimization (cleanup).")
     return optimized_prompt

@@ -1,11 +1,11 @@
 # src/utils/output_formatter.py
-import json # Used for json.dumps
-import logging # Used for logger
-from datetime import datetime # Used for datetime.now
-from typing import Dict, Any, List, Optional # Used for type hints
-from pathlib import Path # Used for Path(change.get('FILE_PATH', 'N/A')).name
+import json  # Used for json.dumps
+import logging  # Used for logger
+from datetime import datetime  # Used for datetime.now
+from typing import Dict, Any, List, Optional  # Used for type hints
+from pathlib import Path  # Used for Path(change.get('FILE_PATH', 'N/A')).name
 
-from src.models import ( # Used for type hints in format_findings_list, format_complete_report
+from src.models import (  # Used for type hints in format_findings_list, format_complete_report
     CodeChange,
     SelfImprovementFinding,
     QuantitativeImpactMetrics,
@@ -129,9 +129,7 @@ class OutputFormatter:
             if finding.metrics and finding.metrics.token_savings_percent is not None:
                 metrics_str += f"- Token Savings: {token_savings * 100:.1f}%\n"
             else:
-                metrics_str += (
-                    "- Token Savings: N/A\n"
-                )
+                metrics_str += "- Token Savings: N/A\n"
 
             markdown += metrics_str + "\n"
 

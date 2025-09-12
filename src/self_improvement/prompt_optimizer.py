@@ -2,9 +2,10 @@
 import logging
 from typing import Dict, Any, List, Optional
 from src.tokenizers import Tokenizer
-from src.config.settings import ChimeraSettings # Import ChimeraSettings
+from src.config.settings import ChimeraSettings  # Import ChimeraSettings
 
 logger = logging.getLogger(__name__)
+
 
 class PromptOptimizer:
     """Optimizes prompts for various personas based on context and token limits."""
@@ -14,10 +15,7 @@ class PromptOptimizer:
         self.settings = settings
 
     def optimize_prompt(
-        self,
-        prompt: str,
-        persona_name: str,
-        max_output_tokens_for_turn: int,
+        self, prompt: str, persona_name: str, max_output_tokens_for_turn: int
     ) -> str:
         """
         Optimizes a prompt for a specific persona based on actual token usage and persona-specific limits.
@@ -26,7 +24,7 @@ class PromptOptimizer:
         """
         # Calculate current prompt tokens
         prompt_tokens = self.tokenizer.count_tokens(prompt)
-        
+
         # Get persona-specific token limits from settings
         # Use a default if not explicitly defined for the persona
         # Note: max_output_tokens_for_turn is already passed, so we use that as the target output.
@@ -42,7 +40,7 @@ class PromptOptimizer:
         # then we should aggressively optimize the input.
         # The `max_output_tokens_for_turn` is the *actual* budget for the output,
         # so we should consider it.
-        
+
         # Calculate a soft limit for the input prompt based on the persona's overall capacity
         # and the expected output size.
         # A persona's total capacity is its max_tokens (from PersonaConfig, which is passed to _execute_llm_turn)
@@ -50,7 +48,7 @@ class PromptOptimizer:
         # Let's assume `max_output_tokens_for_turn` is the effective max output.
         # So, the input should ideally be `persona_total_capacity - max_output_tokens_for_turn`.
         # However, `persona_input_token_limit` from settings is a more direct control for input.
-        
+
         # Prioritize `persona_input_token_limit` from settings for input control.
         effective_input_limit = persona_input_token_limit
 
@@ -58,15 +56,16 @@ class PromptOptimizer:
             logger.warning(
                 f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
             )
-            
+
             optimized_prompt = self.tokenizer.truncate_to_token_limit(
-                prompt, effective_input_limit, 
-                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]"
+                prompt,
+                effective_input_limit,
+                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]",
             )
-            
+
             logger.info(
                 f"Prompt for {persona_name} truncated from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
             )
             return optimized_prompt
-        
+
         return prompt

@@ -35,14 +35,14 @@ THRESHOLD = 0.75
 
 # Optimized persona sequence for self-analysis prompts
 SELF_ANALYSIS_PERSONA_SEQUENCE: List[str] = [
-    "Self_Improvement_Analyst", # Primary analyst first
+    "Self_Improvement_Analyst",  # Primary analyst first
     "Code_Architect",
     "Security_Auditor",
     "DevOps_Engineer",
     "Test_Engineer",
     "Constructive_Critic",
     "Impartial_Arbitrator",
-    "Devils_Advocate", # Devils Advocate is often useful for critical self-reflection
+    "Devils_Advocate",  # Devils Advocate is often useful for critical self-reflection
 ]
 
 # --- SHARED CONSTANTS FOR LLM OUTPUT FORMATTING ---

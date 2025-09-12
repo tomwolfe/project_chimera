@@ -36,7 +36,7 @@ class Tokenizer(ABC):
         pass
 
     @abstractmethod
-    def truncate_to_token_limit( # Renamed from trim_text_to_tokens
+    def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
         """

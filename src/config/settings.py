@@ -4,12 +4,13 @@ Configuration settings for Project Chimera, including token budgeting and retry 
 """
 
 from pydantic import BaseModel, Field, validator, model_validator
-from typing import Self, Dict, Any, List # FIX: Added List import
+from typing import Self, Dict, Any, List  # FIX: Added List import
 import yaml
 from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class ChimeraSettings(BaseModel):
     """
@@ -60,7 +61,7 @@ class ChimeraSettings(BaseModel):
     )
     self_analysis_debate_ratio: float = Field(
         default=0.40,
-        ge=0.1, # MODIFIED: Lowered min to allow more flexibility
+        ge=0.1,  # MODIFIED: Lowered min to allow more flexibility
         le=0.9,
         description="Proportion of total budget for debate turns during self-analysis.",
     )
@@ -80,7 +81,7 @@ class ChimeraSettings(BaseModel):
         le=2000000,  # MODIFIED CONSTRAINT
         description="Maximum total tokens allowed for a single Socratic debate run.",
     )
-    
+
     # NEW: Persona-specific maximum input token limits for prompt optimization
     # These values are heuristics and can be tuned based on observed persona verbosity
     default_max_input_tokens_per_persona: int = Field(
@@ -91,7 +92,15 @@ class ChimeraSettings(BaseModel):
     )
     max_tokens_per_persona: Dict[str, int] = Field(
         default_factory=lambda: {
-            "Self_Improvement_Analyst": 4000, "Security_Auditor": 3800, "Code_Architect": 3500, "Test_Engineer": 3000, "DevOps_Engineer": 4000, "Devils_Advocate": 4000, "Generalist_Assistant": 3000, "Constructive_Critic": 3500, "Impartial_Arbitrator": 4000
+            "Self_Improvement_Analyst": 4000,
+            "Security_Auditor": 3800,
+            "Code_Architect": 3500,
+            "Test_Engineer": 3000,
+            "DevOps_Engineer": 4000,
+            "Devils_Advocate": 4000,
+            "Generalist_Assistant": 3000,
+            "Constructive_Critic": 3500,
+            "Impartial_Arbitrator": 4000,
         },
         description="Specific maximum input tokens for individual personas.",
     )
@@ -99,13 +108,13 @@ class ChimeraSettings(BaseModel):
     # NEW: Domain keywords for prompt analysis, loaded from config.yaml
     domain_keywords: Dict[str, List[str]] = Field(
         default_factory=dict,
-        description="Keywords for classifying prompts into domains."
+        description="Keywords for classifying prompts into domains.",
     )
 
     # NEW: Sentence Transformer cache directory
     sentence_transformer_cache_dir: str = Field(
         default=str(Path.home() / ".cache" / "huggingface" / "transformers"),
-        description="Directory for caching SentenceTransformer models."
+        description="Directory for caching SentenceTransformer models.",
     )
 
     @model_validator(mode="after")
@@ -156,15 +165,18 @@ class ChimeraSettings(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, file_path: str) -> 'ChimeraSettings':
+    def from_yaml(cls, file_path: str) -> "ChimeraSettings":
         """Loads settings from a YAML file."""
         try:
             # Use Path for robust file handling
             config_path = Path(file_path)
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config_data = yaml.safe_load(f)
             return cls(**config_data)
         except (FileNotFoundError, TypeError, yaml.YAMLError) as e:
             # Log the error for debugging
-            logger.error(f"Failed to load settings from {file_path}: {e}. Returning default settings.", exc_info=True)
-            return cls() # Return default settings on error
+            logger.error(
+                f"Failed to load settings from {file_path}: {e}. Returning default settings.",
+                exc_info=True,
+            )
+            return cls()  # Return default settings on error

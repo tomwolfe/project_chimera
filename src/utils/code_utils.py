@@ -7,9 +7,10 @@ import logging
 import re
 import ast
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any, Union # ADDED: Union import
+from typing import List, Tuple, Optional, Dict, Any, Union  # ADDED: Union import
 
 logger = logging.getLogger(__name__)
+
 
 # --- Helper to get a snippet around a line number ---
 def _get_code_snippet(
@@ -40,9 +41,12 @@ def _get_code_snippet(
     snippet_lines = []
     for i in range(start_idx, end_idx):
         # Add 1 to i to display 1-indexed line numbers for clarity
-        snippet_lines.append(f"{i + 1}: {content_lines[i].rstrip()}")  # rstrip to remove trailing newlines
+        snippet_lines.append(
+            f"{i + 1}: {content_lines[i].rstrip()}"
+        )  # rstrip to remove trailing newlines
 
     return "\n".join(snippet_lines)
+
 
 # --- AST Visitor for detailed code metrics (if needed elsewhere, otherwise can be removed) ---
 class ComplexityVisitor(ast.NodeVisitor):
@@ -86,7 +90,9 @@ class ComplexityVisitor(ast.NodeVisitor):
     def _analyze_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]):
         function_name = node.name
         start_line = node.lineno
-        end_line = getattr(node, "end_lineno", node.lineno) # Use lineno if end_lineno is missing
+        end_line = getattr(
+            node, "end_lineno", node.lineno
+        )  # Use lineno if end_lineno is missing
 
         complexity = 1
         max_nesting_depth = 0
@@ -146,7 +152,7 @@ class ComplexityVisitor(ast.NodeVisitor):
                 ):
                     nested_loops_count += 1
 
-        stack.clear() # Clear stack after visiting the function node
+        stack.clear()  # Clear stack after visiting the function node
         loc = self._calculate_loc(node)
         num_args = (
             len(node.args.args)

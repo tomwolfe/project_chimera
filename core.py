@@ -43,25 +43,28 @@ from src.exceptions import (
 )
 from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
-from src.persona_manager import PersonaManager # Persona management
+from src.persona_manager import PersonaManager  # Persona management
 
 # NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
-from src.utils.prompt_analyzer import (
-    PromptAnalyzer,
-)
+from src.utils.prompt_analyzer import PromptAnalyzer
 
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS # MODIFIED: Import SHARED_JSON_INSTRUCTIONS
-from src.utils.path_utils import PROJECT_ROOT # NEW: Import PROJECT_ROOT for CodebaseScanner initialization
+from src.constants import (
+    SELF_ANALYSIS_PERSONA_SEQUENCE,
+    SHARED_JSON_INSTRUCTIONS,
+)  # MODIFIED: Import SHARED_JSON_INSTRUCTIONS
+from src.utils.path_utils import (
+    PROJECT_ROOT,
+)  # NEW: Import PROJECT_ROOT for CodebaseScanner initialization
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.conflict_resolution import ConflictResolutionManager
-from src.config.model_registry import ModelRegistry # NEW: Import ModelRegistry
+from src.config.model_registry import ModelRegistry  # NEW: Import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +77,10 @@ class SocraticDebate:
         self,
         initial_prompt: str,
         api_key: str,
-        structured_codebase_context: Optional[Dict[str, Any]] = None, # MODIFIED: Renamed and changed type
-        raw_file_contents: Optional[Dict[str, str]] = None, # NEW: Raw file contents
+        structured_codebase_context: Optional[
+            Dict[str, Any]
+        ] = None,  # MODIFIED: Renamed and changed type
+        raw_file_contents: Optional[Dict[str, str]] = None,  # NEW: Raw file contents
         settings: Optional[ChimeraSettings] = None,
         all_personas: Optional[Dict[str, PersonaConfig]] = None,
         persona_sets: Optional[Dict[str, List[str]]] = None,
@@ -86,9 +91,7 @@ class SocraticDebate:
         context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
         is_self_analysis: bool = False,
         persona_manager: Optional[PersonaManager] = None,
-        content_validator: Optional[
-            ContentAlignmentValidator
-        ] = None,
+        content_validator: Optional[ContentAlignmentValidator] = None,
         token_tracker: Optional[TokenUsageTracker] = None,
     ):
         """
@@ -113,22 +116,28 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context..."
             )
-            scanner = CodebaseScanner(project_root=str(PROJECT_ROOT)) # Ensure scanner is initialized with project root
-            full_codebase_analysis = scanner.scan_codebase() # This returns {"file_structure": ..., "raw_file_contents": ...}
-            self.structured_codebase_context = full_codebase_analysis.get("file_structure", {}) # Store file_structure as structured context
+            scanner = CodebaseScanner(
+                project_root=str(PROJECT_ROOT)
+            )  # Ensure scanner is initialized with project root
+            full_codebase_analysis = (
+                scanner.scan_codebase()
+            )  # This returns {"file_structure": ..., "raw_file_contents": ...}
+            self.structured_codebase_context = full_codebase_analysis.get(
+                "file_structure", {}
+            )  # Store file_structure as structured context
             self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
             self.logger.info(
                 f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned"
             )
-        else: # If not self-analysis, use provided contexts
+        else:  # If not self-analysis, use provided contexts
             self.structured_codebase_context = structured_codebase_context or {}
             self.raw_file_contents = raw_file_contents or {}
 
         # NEW: Log if codebase_context is still empty after initialization
-        if not self.raw_file_contents: # MODIFIED: Check raw_file_contents
+        if not self.raw_file_contents:  # MODIFIED: Check raw_file_contents
             self.logger.warning(
                 "Codebase context is empty after SocraticDebate initialization. Context-aware features may be limited.",
-                extra=self._log_extra
+                extra=self._log_extra,
             )
 
         self.domain = domain
@@ -175,12 +184,18 @@ class SocraticDebate:
             self.logger.warning(
                 "PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI."
             )
-            self.persona_manager = PersonaManager(self.settings.domain_keywords, token_tracker=self.token_tracker, settings=self.settings) # MODIFIED: Pass domain_keywords and settings
+            self.persona_manager = PersonaManager(
+                self.settings.domain_keywords,
+                token_tracker=self.token_tracker,
+                settings=self.settings,
+            )  # MODIFIED: Pass domain_keywords and settings
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
         else:
             self.persona_manager.token_tracker = self.token_tracker
-            self.persona_manager.settings = self.settings # Ensure persona manager has latest settings
+            self.persona_manager.settings = (
+                self.settings
+            )  # Ensure persona manager has latest settings
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
 
@@ -202,8 +217,8 @@ class SocraticDebate:
                 "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
             )
             self.context_analyzer = ContextRelevanceAnalyzer(
-                cache_dir=self.settings.sentence_transformer_cache_dir, # MODIFIED: Use settings for cache_dir
-                raw_file_contents=self.raw_file_contents, # MODIFIED: Pass raw_file_contents
+                cache_dir=self.settings.sentence_transformer_cache_dir,  # MODIFIED: Use settings for cache_dir
+                raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
@@ -211,10 +226,14 @@ class SocraticDebate:
         # FIX: Ensure context_analyzer has computed embeddings if codebase_context is present
         # This is a safeguard in case ContextRelevanceAnalyzer was passed in without embeddings
         # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
-        if self.raw_file_contents and not self.context_analyzer.file_embeddings: # MODIFIED: Check raw_file_contents
+        if (
+            self.raw_file_contents and not self.context_analyzer.file_embeddings
+        ):  # MODIFIED: Check raw_file_contents
             try:
                 # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(self.raw_file_contents) # MODIFIED: Pass raw_file_contents
+                self.context_analyzer.compute_file_embeddings(
+                    self.raw_file_contents
+                )  # MODIFIED: Pass raw_file_contents
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context after SocraticDebate init.",
@@ -223,45 +242,47 @@ class SocraticDebate:
                 self._log_with_context(
                     "error", f"Error computing context embeddings: {e}[/red]"
                 )
-                if self.status_callback: # Ensure status_callback is callable
+                if self.status_callback:  # Ensure status_callback is callable
                     # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        f"[red]Error computing context embeddings: {e}[/red]", # message
+                        f"[red]Error computing context embeddings: {e}[/red]",  # message
                         state="error",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
                         progress_pct=self.get_progress_pct("context", error=True),
                         current_persona_name="Context_Relevance_Analyzer_Init",
                     )
-                raise ChimeraError(f"Error computing context embeddings: {e}", original_exception=e) from e
+                raise ChimeraError(
+                    f"Error computing context embeddings: {e}", original_exception=e
+                ) from e
 
         # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
         if not self.content_validator:
             self.content_validator = ContentAlignmentValidator(
-                original_prompt=self.initial_prompt,
-                debate_domain=self.domain,
+                original_prompt=self.initial_prompt, debate_domain=self.domain
             )
-        
+
         self.prompt_optimizer = PromptOptimizer(
             tokenizer=self.tokenizer, settings=self.settings
-            )
+        )
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
         # NEW: Pass llm_provider and persona_manager to ConflictResolutionManager for self-correction
-        self.conflict_manager = ConflictResolutionManager(llm_provider=self.llm_provider, persona_manager=self.persona_manager)
+        self.conflict_manager = ConflictResolutionManager(
+            llm_provider=self.llm_provider, persona_manager=self.persona_manager
+        )
         self.model_registry = ModelRegistry()
 
         # Determine best model based on requirements, preferring the one passed in
         self.model_name = self._determine_optimal_model(model_name)
-        
+
         # NEW: Declare instance variable for synthesis persona name and file analysis cache
         self.synthesis_persona_name_for_metrics: Optional[str] = None
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
         # FIX: Ensure output_parser is set on the instance
         self.output_parser = LLMOutputParser()
-
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -290,17 +311,23 @@ class SocraticDebate:
         requirements = ["reasoning"]
         if "coding" in self.domain.lower():
             requirements.append("coding")
-            
-        model = self.model_registry.get_model(requirements=requirements, budget=None, preferred_model_name=preferred_model_name)
+
+        model = self.model_registry.get_model(
+            requirements=requirements,
+            budget=None,
+            preferred_model_name=preferred_model_name,
+        )
         return model.name if model else preferred_model_name
-    
+
     def _determine_phase_ratios(
         self, prompt_analysis: Dict[str, Any]
     ) -> Tuple[float, float, float]:
         """Determines the token budget ratios for context, debate, and synthesis phases."""
         complexity_score = prompt_analysis["complexity_score"]
 
-        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
+        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(
+            self.initial_prompt
+        ):
             context_ratio = self.settings.self_analysis_context_ratio
             debate_ratio = self.settings.self_analysis_debate_ratio
             synthesis_ratio = self.settings.self_analysis_synthesis_ratio
@@ -459,9 +486,7 @@ class SocraticDebate:
         self, phase: str, tokens: int, persona_name: Optional[str] = None
     ):
         """Tracks token usage for a given phase."""
-        self.token_tracker.set_current_stage(
-            phase
-        )
+        self.token_tracker.set_current_stage(phase)
         self.token_tracker.record_usage(tokens, persona=persona_name)
         cost = self.llm_provider.calculate_usd_cost(tokens, 0)
         self.intermediate_steps.setdefault(f"{phase}_Tokens_Used", 0)
@@ -484,7 +509,7 @@ class SocraticDebate:
         ):
             self._log_with_context(
                 "warning",
-                f"Token budget exceeded for {step_name} in {phase} phase. Current usage: {self.token_tracker.current_usage}, Needed: {tokens_needed}, Budget: {self.max_total_tokens_budget}", # MODIFIED: Added more details
+                f"Token budget exceeded for {step_name} in {phase} phase. Current usage: {self.token_tracker.current_usage}, Needed: {tokens_needed}, Budget: {self.max_total_tokens_budget}",  # MODIFIED: Added more details
                 current_tokens=self.token_tracker.current_usage,
                 tokens_needed=tokens_needed,
                 budget=self.max_total_tokens_budget,
@@ -567,11 +592,17 @@ class SocraticDebate:
             requested_model_name if requested_model_name else self.model_name
         )
         # Apply a small safety margin to max_output_tokens to ensure space for closing JSON syntax
-        safety_margin_factor = 0.98 # Request 98% of the actual max output tokens
-        effective_max_output_tokens = int(min(
-            max_output_tokens_for_turn, self.llm_provider.tokenizer.max_output_tokens
-        ) * safety_margin_factor)
-        effective_max_output_tokens = max(128, effective_max_output_tokens) # Ensure a minimum output
+        safety_margin_factor = 0.98  # Request 98% of the actual max output tokens
+        effective_max_output_tokens = int(
+            min(
+                max_output_tokens_for_turn,
+                self.llm_provider.tokenizer.max_output_tokens,
+            )
+            * safety_margin_factor
+        )
+        effective_max_output_tokens = max(
+            128, effective_max_output_tokens
+        )  # Ensure a minimum output
         self._log_with_context(
             "debug",
             f"Adjusting max_output_tokens for {persona_config.name}. Requested: {max_output_tokens_for_turn}, Model Max: {self.llm_provider.tokenizer.max_output_tokens}, Effective: {effective_max_output_tokens}",
@@ -585,18 +616,20 @@ class SocraticDebate:
         effective_max_output_tokens: int,
         final_model_to_use: str,
         system_prompt_for_llm: str,
-        output_schema: Type[BaseModel], # NEW: Pass output_schema
-    ) -> Tuple[str, int, int, bool]: # MODIFIED: Added 'bool' to return type hint
+        output_schema: Type[BaseModel],  # NEW: Pass output_schema
+    ) -> Tuple[str, int, int, bool]:  # MODIFIED: Added 'bool' to return type hint
         """Executes the actual LLM API call and tracks tokens."""
         # MODIFIED: Unpack all 4 return values from self.llm_provider.generate()
-        raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = self.llm_provider.generate(
-            prompt=current_prompt,
-            system_prompt=system_prompt_for_llm,
-            output_schema=output_schema, # NEW: Pass output_schema
-            temperature=persona_config.temperature,
-            max_tokens=effective_max_output_tokens,
-            persona_config=persona_config,
-            requested_model_name=final_model_to_use,
+        raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = (
+            self.llm_provider.generate(
+                prompt=current_prompt,
+                system_prompt=system_prompt_for_llm,
+                output_schema=output_schema,  # NEW: Pass output_schema
+                temperature=persona_config.temperature,
+                max_tokens=effective_max_output_tokens,
+                persona_config=persona_config,
+                requested_model_name=final_model_to_use,
+            )
         )
         self.track_token_usage(
             "debate", input_tokens + output_tokens, persona_name=persona_config.name
@@ -607,12 +640,17 @@ class SocraticDebate:
         self.intermediate_steps[f"{persona_config.name}_Actual_Max_Tokens"] = (
             effective_max_output_tokens
         )
-        if is_truncated_from_llm: # MODIFIED: Use the unpacked variable
+        if is_truncated_from_llm:  # MODIFIED: Use the unpacked variable
             self._log_with_context(
                 "warning",
                 f"Output for {persona_config.name} might be truncated. Output tokens ({output_tokens}) close to max_tokens ({effective_max_output_tokens}).",
             )
-        return raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm # MODIFIED: Return 4 values
+        return (
+            raw_llm_output,
+            input_tokens,
+            output_tokens,
+            is_truncated_from_llm,
+        )  # MODIFIED: Return 4 values
 
     def _parse_and_track_llm_output(
         self, persona_name: str, raw_llm_output: str, output_schema: Type[BaseModel]
@@ -643,15 +681,19 @@ class SocraticDebate:
         error_type = error_details.get("error_type", "Unknown validation error")
         field_path = error_details.get("field_path", "N/A")
         invalid_value_snippet = str(error_details.get("invalid_value", "N/A"))[:200]
-        
+
         # NEW: Include the full validation error message for more specific feedback
         full_validation_message = str(e)
 
         retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
-        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n" # Provide full validation message
-        retry_feedback += "CRITICAL: Your output failed schema validation. You MUST correct this. "
+        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n"  # Provide full validation message
+        retry_feedback += (
+            "CRITICAL: Your output failed schema validation. You MUST correct this. "
+        )
         retry_feedback += "Ensure the JSON is perfectly formed, with correct types and no extra text or markdown fences. "
-        retry_feedback += "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
+        retry_feedback += (
+            "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
+        )
         return f"{retry_feedback}Original prompt: {prompt_for_llm}"
 
     def _handle_content_alignment_check(
@@ -701,8 +743,13 @@ class SocraticDebate:
         return parsed_output
 
     def _execute_llm_turn(
-        self, persona_name: str, prompt_for_llm: str, phase: str, max_output_tokens_for_turn: int,
-        requested_model_name: Optional[str] = None, max_retries: int = 2
+        self,
+        persona_name: str,
+        prompt_for_llm: str,
+        phase: str,
+        max_output_tokens_for_turn: int,
+        requested_model_name: Optional[str] = None,
+        max_retries: int = 2,
     ) -> Dict[str, Any]:
         """
         Executes a single LLM turn for a given persona, handles API calls,
@@ -724,9 +771,10 @@ class SocraticDebate:
             )
             raise ChimeraError(f"Persona configuration not found for {persona_name}.")
 
-
         # NEW: Use persona_manager.PERSONA_OUTPUT_SCHEMAS
-        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(persona_name, GeneralOutput)
+        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
+            persona_name, GeneralOutput
+        )
         self.logger.debug(
             f"Using schema {output_schema_class.__name__} for {persona_name}."
         )
@@ -744,7 +792,9 @@ class SocraticDebate:
         )
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
-        current_prompt = self.prompt_optimizer.optimize_prompt(prompt_for_llm, persona_name, max_output_tokens_for_turn)
+        current_prompt = self.prompt_optimizer.optimize_prompt(
+            prompt_for_llm, persona_name, max_output_tokens_for_turn
+        )
         raw_llm_output = ""
         is_truncated = False
 
@@ -753,7 +803,7 @@ class SocraticDebate:
                 if self.status_callback:
                     # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...", # message
+                        f"LLM Call: [bold]{persona_name.replace('_', ' ')}[/bold] generating response (Attempt {attempt + 1}/{max_retries + 1})...",  # message
                         state="running",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
@@ -761,11 +811,20 @@ class SocraticDebate:
                         current_persona_name=persona_name,
                     )
 
-                final_model_to_use, effective_max_output_tokens = self._prepare_llm_call_config(
-                    persona_config, max_output_tokens_for_turn, requested_model_name
+                final_model_to_use, effective_max_output_tokens = (
+                    self._prepare_llm_call_config(
+                        persona_config, max_output_tokens_for_turn, requested_model_name
+                    )
                 )
-                raw_llm_output, input_tokens, output_tokens, is_truncated = self._make_llm_api_call(
-                    persona_config, current_prompt, effective_max_output_tokens, final_model_to_use, final_system_prompt, output_schema_class # NEW: Pass output_schema_class
+                raw_llm_output, input_tokens, output_tokens, is_truncated = (
+                    self._make_llm_api_call(
+                        persona_config,
+                        current_prompt,
+                        effective_max_output_tokens,
+                        final_model_to_use,
+                        final_system_prompt,
+                        output_schema_class,  # NEW: Pass output_schema_class
+                    )
                 )
                 parsed_output, has_schema_error = self._parse_and_track_llm_output(
                     persona_name, raw_llm_output, output_schema_class
@@ -776,11 +835,7 @@ class SocraticDebate:
 
                 break
 
-            except (
-                LLMProviderError,
-                CircuitBreakerError,
-                ChimeraError,
-            ) as e:
+            except (LLMProviderError, CircuitBreakerError, ChimeraError) as e:
                 self._log_with_context(
                     "error",
                     f"Non-retryable error during LLM turn for {persona_name}: {e}",
@@ -873,12 +928,17 @@ class SocraticDebate:
                             token_budget_exceeded=False,
                         )
                     # NEW: Return a fallback output using the parser
-                    return self.output_parser._create_fallback_output( # MODIFIED: Use LLMOutputParser() instance
+                    return self.output_parser._create_fallback_output(  # MODIFIED: Use LLMOutputParser() instance
                         output_schema_class,
-                        malformed_blocks=[{"type": "MAX_RETRIES_REACHED", "message": f"Schema validation failed after {max_retries} retries."}],
+                        malformed_blocks=[
+                            {
+                                "type": "MAX_RETRIES_REACHED",
+                                "message": f"Schema validation failed after {max_retries} retries.",
+                            }
+                        ],
                         raw_output_snippet=raw_llm_output,
                         partial_data=None,
-                        extracted_json_str=None
+                        extracted_json_str=None,
                     )
 
             except Exception as e:
@@ -936,13 +996,14 @@ class SocraticDebate:
         self._log_with_context("info", "Debate state initialized.")
 
     def _perform_context_analysis_phase(
-        self,
-        persona_sequence: Tuple[str, ...],
+        self, persona_sequence: Tuple[str, ...]
     ) -> Optional[Dict[str, Any]]:
         """
         Performs context analysis based on the initial prompt and codebase context.
         """
-        if not self.raw_file_contents or not self.context_analyzer: # MODIFIED: Check raw_file_contents
+        if (
+            not self.raw_file_contents or not self.context_analyzer
+        ):  # MODIFIED: Check raw_file_contents
             self._log_with_context(
                 "info",
                 "No codebase context or analyzer available. Skipping context analysis.",
@@ -950,26 +1011,29 @@ class SocraticDebate:
             return None
 
         if (
-            self.raw_file_contents # MODIFIED: Check raw_file_contents
+            self.raw_file_contents  # MODIFIED: Check raw_file_contents
             and self.context_analyzer
             and not self.context_analyzer.file_embeddings
         ):
             try:
                 # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(self.raw_file_contents) # MODIFIED: Pass raw_file_contents
+                self.context_analyzer.compute_file_embeddings(
+                    self.raw_file_contents
+                )  # MODIFIED: Pass raw_file_contents
                 self._log_with_context(
                     "info",
                     "Computed file embeddings for codebase context during context analysis phase.",
                 )
             except Exception as e:
                 self._log_with_context(
-                    "error", f"Failed to compute embeddings for codebase context during context analysis: {e}",
+                    "error",
+                    f"Failed to compute embeddings for codebase context during context analysis: {e}",
                     exc_info=True,
                 )
                 if self.status_callback:
                     # FIX: Provide all required arguments positionally to status_callback
                     self.status_callback(
-                        f"[red]Error computing context embeddings: {e}[/red]", # message
+                        f"[red]Error computing context embeddings: {e}[/red]",  # message
                         state="error",
                         current_total_tokens=self.token_tracker.current_usage,
                         current_total_cost=self.get_total_estimated_cost(),
@@ -1141,7 +1205,9 @@ class SocraticDebate:
             return None
 
         self._log_with_context("info", "Executing Context_Aware_Assistant turn.")
-        persona_config = self.persona_manager.get_adjusted_persona_config("Context_Aware_Assistant")
+        persona_config = self.persona_manager.get_adjusted_persona_config(
+            "Context_Aware_Assistant"
+        )
         if not persona_config:
             self._log_with_context(
                 "error", "Context_Aware_Assistant persona configuration not found."
@@ -1151,7 +1217,9 @@ class SocraticDebate:
         context_prompt_content = ""
         if context_analysis_results and context_analysis_results.get("relevant_files"):
             for file_path, _ in context_analysis_results["relevant_files"]:
-                content = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
+                content = self.raw_file_contents.get(
+                    file_path, ""
+                )  # MODIFIED: Use raw_file_contents
                 if content:
                     context_prompt_content += (
                         f"### File: {file_path}\n```\n{content}\n```\n\n"
@@ -1169,10 +1237,7 @@ class SocraticDebate:
 
         try:
             output = self._execute_llm_turn(
-                "Context_Aware_Assistant",
-                prompt,
-                "debate",
-                max_output_tokens_for_turn,
+                "Context_Aware_Assistant", prompt, "debate", max_output_tokens_for_turn
             )
             self._log_with_context("info", "Context_Aware_Assistant turn completed.")
             return output
@@ -1230,7 +1295,7 @@ class SocraticDebate:
                     summary += f"Summary of previous analysis: {previous_output_for_llm['ANALYSIS_SUMMARY']}"
                 elif previous_output_for_llm.get("general_output"):
                     summary += f"Summary of previous general output: {previous_output_for_llm['general_output'][:200]}..."
-                elif previous_output_for_llm.get("summary"): # For ConflictReport
+                elif previous_output_for_llm.get("summary"):  # For ConflictReport
                     summary += f"Summary of previous conflict report: {previous_output_for_llm['summary']}"
                 else:
                     summary += "Details in malformed_blocks."
@@ -1245,7 +1310,7 @@ class SocraticDebate:
                     return f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2)}\n\n"
                 elif previous_output_for_llm.get("general_output"):
                     return f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2)}\n\n"
-                elif previous_output_for_llm.get("summary"): # For ConflictReport
+                elif previous_output_for_llm.get("summary"):  # For ConflictReport
                     return f"Previous Debate Output:\n{json.dumps({'summary': previous_output_for_llm['summary'], 'conflict_found': previous_output_for_llm.get('conflict_found')}, indent=2)}\n\n"
                 else:
                     return f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2)}\n\n"
@@ -1253,9 +1318,7 @@ class SocraticDebate:
                 return f"Previous Debate Output:\n{previous_output_for_llm}\n\n"
 
     def _handle_devils_advocate_turn(
-        self,
-        output: Dict[str, Any],
-        debate_history_so_far: List[Dict[str, Any]],
+        self, output: Dict[str, Any], debate_history_so_far: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
         Handles the specific logic for the Devils_Advocate persona's output.
@@ -1344,7 +1407,7 @@ class SocraticDebate:
                 persona=persona_name,
             )
             self.status_callback(
-                f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...", # message
+                f"Executing: [bold]{persona_name.replace('_', ' ')}[/bold]...",  # message
                 state="running",
                 current_total_tokens=self.token_tracker.current_usage,
                 current_total_cost=self.get_total_estimated_cost(),
@@ -1375,10 +1438,15 @@ class SocraticDebate:
                 )
             current_prompt += previous_output_summary_str
 
-            base_persona_config = self.persona_manager.all_personas.get(persona_name.replace("_TRUNCATED", ""))
+            base_persona_config = self.persona_manager.all_personas.get(
+                persona_name.replace("_TRUNCATED", "")
+            )
             max_output_tokens_for_turn = self.phase_budgets.get(
                 "persona_turn_budgets", {}
-            ).get(persona_name, base_persona_config.max_tokens if base_persona_config else 1024)
+            ).get(
+                persona_name,
+                base_persona_config.max_tokens if base_persona_config else 1024,
+            )
 
             estimated_tokens = (
                 self.tokenizer.count_tokens(current_prompt) + max_output_tokens_for_turn
@@ -1388,18 +1456,21 @@ class SocraticDebate:
             turn_output = None
             try:
                 turn_output = self._execute_llm_turn(
-                    persona_name,
-                    current_prompt,
-                    "debate",
-                    max_output_tokens_for_turn,
+                    persona_name, current_prompt, "debate", max_output_tokens_for_turn
                 )
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
                         turn_output, debate_history
                     )
-                
-                if len(debate_history) > 0 and persona_name != debate_history[-1].get("persona"):
-                    last_response = debate_history[-1].get("output", {}).get("general_output", str(debate_history[-1].get("output")))
+
+                if len(debate_history) > 0 and persona_name != debate_history[-1].get(
+                    "persona"
+                ):
+                    last_response = (
+                        debate_history[-1]
+                        .get("output", {})
+                        .get("general_output", str(debate_history[-1].get("output")))
+                    )
                     meta_reasoning_prompt = f"The previous speaker stated: '{last_response}'. Based on this, explicitly state your primary point of contention or agreement and the core reason for it before proceeding with your main response."
                     self._log_with_context(
                         "debug",
@@ -1409,7 +1480,9 @@ class SocraticDebate:
 
                 debate_history.append({"persona": persona_name, "output": turn_output})
 
-                if self._is_problematic_output(turn_output): # Check if the output is problematic
+                if self._is_problematic_output(
+                    turn_output
+                ):  # Check if the output is problematic
                     self._log_with_context(
                         "warning",
                         f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
@@ -1417,15 +1490,31 @@ class SocraticDebate:
                         output_snippet=str(turn_output)[:200],
                     )
                     # Immediately attempt to resolve the problematic output
-                    resolved_output_from_manager = self.conflict_manager.resolve_conflict(debate_history)
-                    if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
+                    resolved_output_from_manager = (
+                        self.conflict_manager.resolve_conflict(debate_history)
+                    )
+                    if (
+                        resolved_output_from_manager
+                        and resolved_output_from_manager.get("resolved_output")
+                    ):
                         # If resolved, append the resolution to history and use it as the next input
-                        debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
-                        previous_output_for_llm = resolved_output_from_manager["resolved_output"]
+                        debate_history.append(
+                            {
+                                "persona": "Conflict_Resolution_Manager",
+                                "output": resolved_output_from_manager,
+                            }
+                        )
+                        previous_output_for_llm = resolved_output_from_manager[
+                            "resolved_output"
+                        ]
                         self.intermediate_steps["Conflict_Resolution_Attempt"] = {
                             "conflict_resolved": True,
-                            "resolution_summary": resolved_output_from_manager["resolution_summary"],
-                            "resolved_output": resolved_output_from_manager["resolved_output"]
+                            "resolution_summary": resolved_output_from_manager[
+                                "resolution_summary"
+                            ],
+                            "resolved_output": resolved_output_from_manager[
+                                "resolved_output"
+                            ],
                         }
                         self.intermediate_steps["Unresolved_Conflict"] = None
                     else:
@@ -1453,14 +1542,29 @@ class SocraticDebate:
                     exc_info=True,
                     original_exception=e,
                 )
-                resolved_output_from_manager = self.conflict_manager.resolve_conflict(debate_history)
-                if resolved_output_from_manager and resolved_output_from_manager.get("resolved_output"):
-                    debate_history.append({"persona": "Conflict_Resolution_Manager", "output": resolved_output_from_manager})
-                    previous_output_for_llm = resolved_output_from_manager["resolved_output"]
+                resolved_output_from_manager = self.conflict_manager.resolve_conflict(
+                    debate_history
+                )
+                if resolved_output_from_manager and resolved_output_from_manager.get(
+                    "resolved_output"
+                ):
+                    debate_history.append(
+                        {
+                            "persona": "Conflict_Resolution_Manager",
+                            "output": resolved_output_from_manager,
+                        }
+                    )
+                    previous_output_for_llm = resolved_output_from_manager[
+                        "resolved_output"
+                    ]
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = {
                         "conflict_resolved": True,
-                        "resolution_summary": resolved_output_from_manager["resolution_summary"],
-                        "resolved_output": resolved_output_from_manager["resolved_output"]
+                        "resolution_summary": resolved_output_from_manager[
+                            "resolution_summary"
+                        ],
+                        "resolved_output": resolved_output_from_manager[
+                            "resolved_output"
+                        ],
                     }
                     self.intermediate_steps["Unresolved_Conflict"] = None
                 else:
@@ -1615,23 +1719,25 @@ class SocraticDebate:
             "Metrics still too large after aggressive truncation. Converting to high-level summary string.",
         )
         # Get performance efficiency metrics with safe access
-        perf_metrics = metrics.get('performance_efficiency', {})
-        token_usage = perf_metrics.get('token_usage_stats', {})
-        
+        perf_metrics = metrics.get("performance_efficiency", {})
+        token_usage = perf_metrics.get("token_usage_stats", {})
+
         # Safely extract values with defaults
-        total_tokens = token_usage.get('total_tokens', 'N/A')
-        total_cost_usd = token_usage.get('total_cost_usd', 0.0)
-        
+        total_tokens = token_usage.get("total_tokens", "N/A")
+        total_cost_usd = token_usage.get("total_cost_usd", 0.0)
+
         # Get security metrics with safe access
-        security_metrics = metrics.get('security', {})
-        high_severity_issues = security_metrics.get('high_severity_issues', 0)
-        medium_severity_issues = security_metrics.get('medium_severity_issues', 0)
-        
+        security_metrics = metrics.get("security", {})
+        high_severity_issues = security_metrics.get("high_severity_issues", 0)
+        medium_severity_issues = security_metrics.get("medium_severity_issues", 0)
+
         # Get code quality metrics with safe access
-        code_quality_metrics = metrics.get('code_quality', {})
-        ruff_issues = code_quality_metrics.get('ruff_issues_count', 0)
-        maintainability_index = code_quality_metrics.get('maintainability_index', 'N/A') # Assuming this might exist
-        
+        code_quality_metrics = metrics.get("code_quality", {})
+        ruff_issues = code_quality_metrics.get("ruff_issues_count", 0)
+        maintainability_index = code_quality_metrics.get(
+            "maintainability_index", "N/A"
+        )  # Assuming this might exist
+
         summary_str = (
             f"Tokens: {total_tokens}, Cost: ${total_cost_usd:.4f}. "
             f"Security: {high_severity_issues} high, {medium_severity_issues} medium severity issues. "
@@ -1656,7 +1762,7 @@ class SocraticDebate:
 
         def convert_to_serializable(obj):
             """Recursively converts Pydantic models to dictionaries."""
-            if hasattr(obj, 'model_dump'):
+            if hasattr(obj, "model_dump"):
                 return obj.model_dump()
             elif isinstance(obj, list):
                 return [convert_to_serializable(item) for item in obj]
@@ -1666,7 +1772,7 @@ class SocraticDebate:
 
         # Convert the entire metrics object to a serializable format
         serializable_metrics = convert_to_serializable(metrics)
-        
+
         # Now, use json.dumps on the serializable_metrics
         summarized_metrics = json.loads(json.dumps(serializable_metrics))
         # --- END OF REQUIRED CHANGE APPLICATION ---
@@ -1693,7 +1799,8 @@ class SocraticDebate:
 
         if current_tokens > max_tokens:
             return self._create_fallback_metrics_summary_string(
-                summarized_metrics, max_tokens # MODIFIED: Pass summarized_metrics here, not original metrics
+                summarized_metrics,
+                max_tokens,  # MODIFIED: Pass summarized_metrics here, not original metrics
             )
 
         return summarized_metrics
@@ -1723,7 +1830,8 @@ class SocraticDebate:
                     }
                 elif "ANALYSIS_SUMMARY" in turn_copy["output"]:
                     turn_copy["output"] = {
-                        "ANALYSIS_SUMMARY": turn_copy["output"]["ANALYSIS_SUMMARY"][:50] + "..."
+                        "ANALYSIS_SUMMARY": turn_copy["output"]["ANALYSIS_SUMMARY"][:50]
+                        + "..."
                         if len(turn_copy["output"]["ANALYSIS_SUMMARY"]) > 50
                         else turn_copy["output"]["ANALYSIS_SUMMARY"]
                     }
@@ -1797,35 +1905,45 @@ class SocraticDebate:
 
     def _perform_synthesis_phase(
         self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Any], Optional[FocusedMetricsCollector]]: # MODIFIED: Return type to include metrics_collector
+    ) -> Tuple[
+        Dict[str, Any], Optional[FocusedMetricsCollector]
+    ]:  # MODIFIED: Return type to include metrics_collector
         """
         Executes the final synthesis persona turn based on the debate history.
         """
         self._log_with_context("info", "Executing final synthesis persona turn.")
 
         synthesis_persona_name = ""
-        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(self.initial_prompt):
+        if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(
+            self.initial_prompt
+        ):
             synthesis_persona_name = "Self_Improvement_Analyst"
         elif self.domain == "Software Engineering":
             synthesis_persona_name = "Impartial_Arbitrator"
         else:
             synthesis_persona_name = "General_Synthesizer"
 
-        synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
+        synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(
+            synthesis_persona_name
+        )
         if not synthesis_persona_config:
             self._log_with_context(
                 "error",
                 f"Synthesis persona '{synthesis_persona_name}' configuration not found. Falling back to General_Synthesizer.",
             )
             synthesis_persona_name = "General_Synthesizer"
-            synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(synthesis_persona_name)
+            synthesis_persona_config = self.persona_manager.get_adjusted_persona_config(
+                synthesis_persona_name
+            )
             if not synthesis_persona_config:
                 raise ChimeraError("No synthesis persona configuration found.")
 
         # NEW: Store the synthesis persona name as an instance variable
         self.synthesis_persona_name_for_metrics = synthesis_persona_name
 
-        local_metrics_collector: Optional[FocusedMetricsCollector] = None # NEW: Local variable for metrics collector
+        local_metrics_collector: Optional[FocusedMetricsCollector] = (
+            None  # NEW: Local variable for metrics collector
+        )
 
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
@@ -1851,7 +1969,7 @@ class SocraticDebate:
             )
 
         if synthesis_persona_name == "Self_Improvement_Analyst":
-            local_metrics_collector = FocusedMetricsCollector( # Keep local instantiation
+            local_metrics_collector = FocusedMetricsCollector(  # Keep local instantiation
                 initial_prompt=self.initial_prompt,
                 # Pass a copy of debate_persona_results to avoid modification issues
                 # and ensure the collector has the full history up to this point.
@@ -1859,7 +1977,7 @@ class SocraticDebate:
                 debate_history=list(debate_persona_results),
                 # The intermediate_steps will be updated with the synthesis output later.
                 intermediate_steps=self.intermediate_steps,
-                codebase_raw_file_contents=self.raw_file_contents, # MODIFIED: Pass raw_file_contents
+                codebase_raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
                 tokenizer=self.tokenizer,
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
@@ -1868,15 +1986,17 @@ class SocraticDebate:
             # NEW: Expose the file_analysis_cache from the local metrics_collector for UI
             # This needs to be done before collect_all_metrics is called.
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache
-            
+
             # FIX: Call the new collect_all_metrics method to get pre-synthesis metrics
-            collected_metrics = local_metrics_collector.collect_all_metrics() 
+            collected_metrics = local_metrics_collector.collect_all_metrics()
             self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
- 
+
             effective_metrics_budget = max(
                 300,
                 min(
-                    int(self.phase_budgets["synthesis"] * 0.3), # MODIFIED: Increased from 0.2 to 0.3
+                    int(
+                        self.phase_budgets["synthesis"] * 0.3
+                    ),  # MODIFIED: Increased from 0.2 to 0.3
                     self.phase_budgets["synthesis"] // 3,
                 ),
             )
@@ -1886,7 +2006,7 @@ class SocraticDebate:
             synthesis_prompt_parts.append(
                 f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2)}\n\n"
             )
- 
+
             synthesis_prompt_parts.append(
                 "Based on the debate history, conflict resolution (if any), and objective metrics, "
                 "critically analyze Project Chimera's codebase for self-improvement. "
@@ -1899,7 +2019,7 @@ class SocraticDebate:
             self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (
                 SelfImprovementAnalysisOutputV1
             )
- 
+
         else:
             synthesis_prompt_parts.append(
                 "Based on the initial problem and the debate history, synthesize a final, comprehensive answer. "
@@ -1907,25 +2027,30 @@ class SocraticDebate:
                 "Your output MUST strictly adhere to the LLMOutput JSON schema."
             )
             # NEW: Use persona_manager.PERSONA_OUTPUT_SCHEMAS
-            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = LLMOutput
-            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = GeneralOutput
- 
+            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = (
+                LLMOutput
+            )
+            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = (
+                GeneralOutput
+            )
+
         final_synthesis_prompt_raw = "\n".join(synthesis_prompt_parts)
- 
+
         input_budget_for_synthesis_prompt = int(self.phase_budgets["synthesis"] * 0.4)
- 
+
         final_synthesis_prompt = self.tokenizer.truncate_to_token_limit(
             final_synthesis_prompt_raw,
             input_budget_for_synthesis_prompt,
             truncation_indicator="\n... (truncated for token limits) ...",
         )
- 
+
         max_output_tokens_for_turn = self.phase_budgets[
             "synthesis"
         ] - self.tokenizer.count_tokens(final_synthesis_prompt)
-        max_output_tokens_for_turn = max(500, min(max_output_tokens_for_turn, synthesis_persona_config.max_tokens))
- 
- 
+        max_output_tokens_for_turn = max(
+            500, min(max_output_tokens_for_turn, synthesis_persona_config.max_tokens)
+        )
+
         estimated_tokens_for_turn = (
             self.tokenizer.count_tokens(final_synthesis_prompt)
             + max_output_tokens_for_turn
@@ -1933,7 +2058,7 @@ class SocraticDebate:
         self.check_budget(
             "synthesis", estimated_tokens_for_turn, synthesis_persona_name
         )
- 
+
         synthesis_output = self._execute_llm_turn(
             synthesis_persona_name,
             final_synthesis_prompt,
@@ -1941,16 +2066,24 @@ class SocraticDebate:
             max_output_tokens_for_turn,
         )
         self._log_with_context("info", "Final synthesis persona turn completed.")
-         
+
         # NEW: After synthesis_output is generated, analyze reasoning quality
-        if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and local_metrics_collector:
+        if (
+            self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
+            and local_metrics_collector
+        ):
             # Pass the synthesis_output to analyze_reasoning_quality
             local_metrics_collector.analyze_reasoning_quality(synthesis_output)
             # Update the intermediate steps with the now complete collected_metrics
-            self.intermediate_steps["Self_Improvement_Metrics"] = local_metrics_collector.collected_metrics
- 
-        return synthesis_output, local_metrics_collector # MODIFIED: Return local_metrics_collector
- 
+            self.intermediate_steps["Self_Improvement_Metrics"] = (
+                local_metrics_collector.collected_metrics
+            )
+
+        return (
+            synthesis_output,
+            local_metrics_collector,
+        )  # MODIFIED: Return local_metrics_collector
+
     def _finalize_debate_results(
         self,
         context_persona_turn_results: Optional[Dict[str, Any]],
@@ -1959,12 +2092,12 @@ class SocraticDebate:
     ) -> Tuple[Any, Dict[str, Any]]:
         """Synthesizes the final answer and prepares the intermediate steps for display."""
         final_answer = synthesis_persona_results
- 
+
         if not isinstance(final_answer, dict):
             final_answer = {"general_output": str(final_answer), "malformed_blocks": []}
         if "malformed_blocks" not in final_answer:
             final_answer["malformed_blocks"] = []
- 
+
         if isinstance(final_answer, dict):
             if final_answer.get("version") == "1.0" and "data" in final_answer:
                 final_answer["data"] = self._consolidate_self_improvement_code_changes(
@@ -1990,313 +2123,327 @@ class SocraticDebate:
                     "info",
                     "Self-improvement code changes consolidated and wrapped (direct V1 output).",
                 )
- 
+
         self._update_intermediate_steps_with_totals()
         if "malformed_blocks" not in self.intermediate_steps:
             self.intermediate_steps["malformed_blocks"] = []
- 
+
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
             final_answer["CONFLICT_RESOLUTION"] = self.intermediate_steps[
                 "Conflict_Resolution_Attempt"
             ]["resolution_summary"]
             final_answer["UNRESOLVED_CONFLICT"] = None
         elif self.intermediate_steps.get("Unresolved_Conflict"):
-            final_answer["UNRESOLVED_CONFLICT"] = self.intermediate_steps[
-                "Unresolved_Conflict"
-            ]["summary"] if isinstance(self.intermediate_steps["Unresolved_Conflict"], dict) and "summary" in self.intermediate_steps["Unresolved_Conflict"] else str(self.intermediate_steps["Unresolved_Conflict"])
+            final_answer["UNRESOLVED_CONFLICT"] = (
+                self.intermediate_steps["Unresolved_Conflict"]["summary"]
+                if isinstance(self.intermediate_steps["Unresolved_Conflict"], dict)
+                and "summary" in self.intermediate_steps["Unresolved_Conflict"]
+                else str(self.intermediate_steps["Unresolved_Conflict"])
+            )
             final_answer["CONFLICT_RESOLUTION"] = None
- 
+
         return final_answer, self.intermediate_steps
- 
+
     def _is_problematic_output(self, output: Dict[str, Any]) -> bool:
-         """Checks if a persona's output is malformed, indicates content misalignment, or reports a conflict."""
-         if not isinstance(output, dict):
-             return True
-         if output.get("malformed_blocks") or output.get("content_misalignment_warning"):
-             return True
-         if "conflict_found" in output and output["conflict_found"] is True:
-             return True
-         return False
- 
-    def _calculate_pareto_score(self, finding: Any) -> float: # MODIFIED: Type hint to Any as SelfImprovementFinding is not imported
-         """Calculate 80/20 Pareto score for a finding (impact/effort)."""
-         impact = (finding.metrics.expected_quality_improvement or 0) + (
-             finding.metrics.token_savings_percent or 0
-         )
-         effort_factor = 1.0 / (
-             finding.metrics.estimated_effort or 1
-         )
-         return lru_cache(maxsize=128)(lambda: min(1.0, impact * effort_factor * 5))()
- 
+        """Checks if a persona's output is malformed, indicates content misalignment, or reports a conflict."""
+        if not isinstance(output, dict):
+            return True
+        if output.get("malformed_blocks") or output.get("content_misalignment_warning"):
+            return True
+        if "conflict_found" in output and output["conflict_found"] is True:
+            return True
+        return False
+
+    def _calculate_pareto_score(
+        self, finding: Any
+    ) -> float:  # MODIFIED: Type hint to Any as SelfImprovementFinding is not imported
+        """Calculate 80/20 Pareto score for a finding (impact/effort)."""
+        impact = (finding.metrics.expected_quality_improvement or 0) + (
+            finding.metrics.token_savings_percent or 0
+        )
+        effort_factor = 1.0 / (finding.metrics.estimated_effort or 1)
+        return lru_cache(maxsize=128)(lambda: min(1.0, impact * effort_factor * 5))()
+
     def _update_intermediate_steps_with_totals(self):
-         """Updates the intermediate steps dictionary with total token usage and estimated cost."""
-         self.intermediate_steps["Total_Tokens_Used"] = self.token_tracker.current_usage
-         self.intermediate_steps["Total_Estimated_Cost_USD"] = (
-             self.get_total_estimated_cost()
-         )
- 
+        """Updates the intermediate steps dictionary with total token usage and estimated cost."""
+        self.intermediate_steps["Total_Tokens_Used"] = self.token_tracker.current_usage
+        self.intermediate_steps["Total_Estimated_Cost_USD"] = (
+            self.get_total_estimated_cost()
+        )
+
     @handle_errors(default_return=None, log_level="ERROR")
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
-         """
-         Orchestrates the full Socratic debate process by calling phase-specific methods.
-         Returns the final synthesized answer and a dictionary of intermediate steps.
-         """
-         self._initialize_debate_state()
-         initial_persona_sequence = self._get_final_persona_sequence(
-             self.initial_prompt, None
-         )
-         self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
- 
-         context_analysis_results = self._perform_context_analysis_phase(
-             tuple(initial_persona_sequence)
-         )
-         self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
- 
-         persona_sequence = self._get_final_persona_sequence(
-             self.initial_prompt, context_analysis_results
-         )
-         persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
-             persona_sequence
-         )
-         self.intermediate_steps["Persona_Sequence"] = persona_sequence
- 
-         self._distribute_debate_persona_budgets(persona_sequence)
- 
-         context_persona_turn_results = None
-         if "Context_Aware_Assistant" in persona_sequence:
-             self.status_callback(
-                 "Phase 2: Context-Aware Assistant Turn...",
-                 state="running",
-                 current_total_tokens=self.token_tracker.current_usage,
-                 current_total_cost=self.get_total_estimated_cost(),
-                 progress_pct=self.get_progress_pct("debate"),
-                 current_persona_name="Context_Aware_Assistant",
-             )
-             context_persona_turn_results = self._process_context_persona_turn(
-                 persona_sequence, context_analysis_results
-             )
-             self.intermediate_steps["Context_Aware_Assistant_Output"] = (
-                 context_persona_turn_results
-             )
- 
-         self.status_callback(
-             "Phase 3: Executing Debate Turns...",
-             state="running",
-             current_total_tokens=self.token_tracker.current_usage,
-             current_total_cost=self.get_total_estimated_cost(),
-             progress_pct=self.get_progress_pct("debate"),
-         )
-         debate_persona_results = self._execute_debate_persona_turns(
-             persona_sequence,
-             context_persona_turn_results
-             if context_persona_turn_results is not None
-             else {},
-         )
-         self.intermediate_steps["Debate_History"] = debate_persona_results
- 
-         self.status_callback(
-             "Phase 4: Synthesizing Final Answer...",
-             state="running",
-             current_total_tokens=self.token_tracker.current_usage,
-             current_total_cost=self.get_total_estimated_cost(),
-             progress_pct=self.get_progress_pct("synthesis"),
-         )
- 
-         # MODIFIED: Unpack the returned metrics_collector instance
-         synthesis_persona_results, metrics_collector_instance_from_synthesis_phase = self._perform_synthesis_phase(
-             persona_sequence, debate_persona_results
-         )
-         self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
- 
-         # NEW: Record the outcome of the Self_Improvement_Analyst's suggestions
-         if self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst" and metrics_collector_instance_from_synthesis_phase: # MODIFIED: Use instance variable and local metrics_collector
-             is_successful_suggestion = not self._is_problematic_output(synthesis_persona_results)
-             metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome( # MODIFIED: Use local metrics_collector
-                 self.synthesis_persona_name_for_metrics, is_successful_suggestion, schema_failed=bool(synthesis_persona_results.get("malformed_blocks"))
-             )
- 
-         self.status_callback(
-             "Finalizing Results...",
-             state="running",
-             current_total_tokens=self.token_tracker.current_usage,
-             current_total_cost=self.get_total_estimated_cost(),
-             progress_pct=0.95,
-         )
-         final_answer, intermediate_steps = self._finalize_debate_results(
-             context_persona_turn_results,
-             debate_persona_results,
-             synthesis_persona_results,
-         )
- 
-         self.status_callback(
-             "Socratic Debate Complete!",
-             state="complete",
-             current_total_tokens=self.token_tracker.current_usage,
-             current_total_cost=self.get_total_estimated_cost(),
-             progress_pct=1.0,
-         )
-         self._log_with_context(
-             "info",
-             "Socratic Debate process completed successfully.",
-             total_tokens=self.token_tracker.current_usage,
-             total_cost=self.get_total_estimated_cost(),
-         )
- 
-         return final_answer, intermediate_steps
- 
+        """
+        Orchestrates the full Socratic debate process by calling phase-specific methods.
+        Returns the final synthesized answer and a dictionary of intermediate steps.
+        """
+        self._initialize_debate_state()
+        initial_persona_sequence = self._get_final_persona_sequence(
+            self.initial_prompt, None
+        )
+        self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
+
+        context_analysis_results = self._perform_context_analysis_phase(
+            tuple(initial_persona_sequence)
+        )
+        self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
+
+        persona_sequence = self._get_final_persona_sequence(
+            self.initial_prompt, context_analysis_results
+        )
+        persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
+            persona_sequence
+        )
+        self.intermediate_steps["Persona_Sequence"] = persona_sequence
+
+        self._distribute_debate_persona_budgets(persona_sequence)
+
+        context_persona_turn_results = None
+        if "Context_Aware_Assistant" in persona_sequence:
+            self.status_callback(
+                "Phase 2: Context-Aware Assistant Turn...",
+                state="running",
+                current_total_tokens=self.token_tracker.current_usage,
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=self.get_progress_pct("debate"),
+                current_persona_name="Context_Aware_Assistant",
+            )
+            context_persona_turn_results = self._process_context_persona_turn(
+                persona_sequence, context_analysis_results
+            )
+            self.intermediate_steps["Context_Aware_Assistant_Output"] = (
+                context_persona_turn_results
+            )
+
+        self.status_callback(
+            "Phase 3: Executing Debate Turns...",
+            state="running",
+            current_total_tokens=self.token_tracker.current_usage,
+            current_total_cost=self.get_total_estimated_cost(),
+            progress_pct=self.get_progress_pct("debate"),
+        )
+        debate_persona_results = self._execute_debate_persona_turns(
+            persona_sequence,
+            context_persona_turn_results
+            if context_persona_turn_results is not None
+            else {},
+        )
+        self.intermediate_steps["Debate_History"] = debate_persona_results
+
+        self.status_callback(
+            "Phase 4: Synthesizing Final Answer...",
+            state="running",
+            current_total_tokens=self.token_tracker.current_usage,
+            current_total_cost=self.get_total_estimated_cost(),
+            progress_pct=self.get_progress_pct("synthesis"),
+        )
+
+        # MODIFIED: Unpack the returned metrics_collector instance
+        synthesis_persona_results, metrics_collector_instance_from_synthesis_phase = (
+            self._perform_synthesis_phase(persona_sequence, debate_persona_results)
+        )
+        self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
+
+        # NEW: Record the outcome of the Self_Improvement_Analyst's suggestions
+        if (
+            self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
+            and metrics_collector_instance_from_synthesis_phase
+        ):  # MODIFIED: Use instance variable and local metrics_collector
+            is_successful_suggestion = not self._is_problematic_output(
+                synthesis_persona_results
+            )
+            metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome(  # MODIFIED: Use local metrics_collector
+                self.synthesis_persona_name_for_metrics,
+                is_successful_suggestion,
+                schema_failed=bool(synthesis_persona_results.get("malformed_blocks")),
+            )
+
+        self.status_callback(
+            "Finalizing Results...",
+            state="running",
+            current_total_tokens=self.token_tracker.current_usage,
+            current_total_cost=self.get_total_estimated_cost(),
+            progress_pct=0.95,
+        )
+        final_answer, intermediate_steps = self._finalize_debate_results(
+            context_persona_turn_results,
+            debate_persona_results,
+            synthesis_persona_results,
+        )
+
+        self.status_callback(
+            "Socratic Debate Complete!",
+            state="complete",
+            current_total_tokens=self.token_tracker.current_usage,
+            current_total_cost=self.get_total_estimated_cost(),
+            progress_pct=1.0,
+        )
+        self._log_with_context(
+            "info",
+            "Socratic Debate process completed successfully.",
+            total_tokens=self.token_tracker.current_usage,
+            total_cost=self.get_total_estimated_cost(),
+        )
+
+        return final_answer, intermediate_steps
+
     def _generate_unified_diff(
-         self, file_path: str, original_content: str, new_content: str
-     ) -> str:
-         """Generates a unified diff string between original and new content."""
-         diff_lines = difflib.unified_diff(
-             original_content.splitlines(keepends=True),
-             new_content.splitlines(keepends=True),
-             fromfile=f"a/{file_path}",
-             tofile=f"b/{file_path}",
-             lineterm="",
-         )
-         return "".join(diff_lines)
- 
+        self, file_path: str, original_content: str, new_content: str
+    ) -> str:
+        """Generates a unified diff string between original and new content."""
+        diff_lines = difflib.unified_diff(
+            original_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=f"a/{file_path}",
+            tofile=f"b/{file_path}",
+            lineterm="",
+        )
+        return "".join(diff_lines)
+
     def _process_single_file_code_changes(
-         self,
-         file_path: str,
-         changes_for_file: List[CodeChange],
-         suggestion: Dict[str, Any],
-         analysis_output: Dict[str, Any],
-     ) -> Optional[CodeChange]:
-         """Processes and consolidates changes for a single file."""
-         remove_actions = [c for c in changes_for_file if c.action == "REMOVE"]
-         add_actions = [c for c in changes_for_file if c.action == "ADD"]
-         modify_actions = [c for c in changes_for_file if c.action == "MODIFY"]
- 
-         if remove_actions:
-             all_lines_to_remove = []
-             for ra in remove_actions:
-                 all_lines_to_remove.extend(ra.lines)
-             return CodeChange(
-                 FILE_PATH=file_path,
-                 ACTION="REMOVE",
-                 LINES=list(set(all_lines_to_remove)),
-             )
-         elif add_actions:
-             return add_actions[0]
-         elif modify_actions:
-             original_content = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
-             final_content_for_diff = self.raw_file_contents.get(file_path, "") # MODIFIED: Use raw_file_contents
-             last_full_content_provided = None
- 
-             for mod_change in modify_actions:
-                 if mod_change.full_content is not None:
-                     last_full_content_provided = mod_change.full_content
- 
-             consolidated_diff_content = None
- 
-             if last_full_content_provided is not None:
-                 final_content_for_diff = last_full_content_provided
-                 consolidated_diff_content = self._generate_unified_diff(
-                     file_path, original_content, final_content_for_diff
-                 )
-                 self._log_with_context(
-                     "debug", f"Generated diff from FULL_CONTENT for {file_path}."
-                 )
-             else:
-                 last_diff_from_llm = None
-                 for mod_change in modify_actions:
-                     if mod_change.diff_content is not None:
-                         last_diff_from_llm = mod_change.diff_content
- 
-                 if last_diff_from_llm is not None:
-                     consolidated_diff_content = last_diff_from_llm
-                     self._log_with_context(
-                         "debug", f"Using LLM-provided DIFF_CONTENT for {file_path}."
-                     )
-                 else:
-                     self._log_with_context(
-                         "info",
-                         f"Consolidated MODIFY for {file_path} resulted in no effective change (no FULL_CONTENT or DIFF_CONTENT provided). Removing from suggestions.",
-                     )
-                     analysis_output.setdefault("malformed_blocks", []).append(
-                         {
-                             "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
-                             "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
-                             "file_path": file_path,
-                             "suggestion_area": suggestion.get("AREA"),
-                         }
-                     )
-                     return None
-             if consolidated_diff_content and consolidated_diff_content.strip():
-                 return CodeChange(
-                     FILE_PATH=file_path,
-                     ACTION="MODIFY",
-                     DIFF_CONTENT=consolidated_diff_content,
-                 )
-             else:
-                 self._log_with_context(
-                     "info",
-                     f"Consolidated MODIFY for {file_path} resulted in no effective change. Removing from suggestions.",
-                     )
-                 analysis_output.setdefault("malformed_blocks", []).append(
-                     {
-                         "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
-                         "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
-                         "file_path": file_path,
-                         "suggestion_area": suggestion.get("AREA"),
-                     }
-                 )
-                 return None
-         return None
- 
+        self,
+        file_path: str,
+        changes_for_file: List[CodeChange],
+        suggestion: Dict[str, Any],
+        analysis_output: Dict[str, Any],
+    ) -> Optional[CodeChange]:
+        """Processes and consolidates changes for a single file."""
+        remove_actions = [c for c in changes_for_file if c.action == "REMOVE"]
+        add_actions = [c for c in changes_for_file if c.action == "ADD"]
+        modify_actions = [c for c in changes_for_file if c.action == "MODIFY"]
+
+        if remove_actions:
+            all_lines_to_remove = []
+            for ra in remove_actions:
+                all_lines_to_remove.extend(ra.lines)
+            return CodeChange(
+                FILE_PATH=file_path,
+                ACTION="REMOVE",
+                LINES=list(set(all_lines_to_remove)),
+            )
+        elif add_actions:
+            return add_actions[0]
+        elif modify_actions:
+            original_content = self.raw_file_contents.get(
+                file_path, ""
+            )  # MODIFIED: Use raw_file_contents
+            final_content_for_diff = self.raw_file_contents.get(
+                file_path, ""
+            )  # MODIFIED: Use raw_file_contents
+            last_full_content_provided = None
+
+            for mod_change in modify_actions:
+                if mod_change.full_content is not None:
+                    last_full_content_provided = mod_change.full_content
+
+            consolidated_diff_content = None
+
+            if last_full_content_provided is not None:
+                final_content_for_diff = last_full_content_provided
+                consolidated_diff_content = self._generate_unified_diff(
+                    file_path, original_content, final_content_for_diff
+                )
+                self._log_with_context(
+                    "debug", f"Generated diff from FULL_CONTENT for {file_path}."
+                )
+            else:
+                last_diff_from_llm = None
+                for mod_change in modify_actions:
+                    if mod_change.diff_content is not None:
+                        last_diff_from_llm = mod_change.diff_content
+
+                if last_diff_from_llm is not None:
+                    consolidated_diff_content = last_diff_from_llm
+                    self._log_with_context(
+                        "debug", f"Using LLM-provided DIFF_CONTENT for {file_path}."
+                    )
+                else:
+                    self._log_with_context(
+                        "info",
+                        f"Consolidated MODIFY for {file_path} resulted in no effective change (no FULL_CONTENT or DIFF_CONTENT provided). Removing from suggestions.",
+                    )
+                    analysis_output.setdefault("malformed_blocks", []).append(
+                        {
+                            "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
+                            "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
+                            "file_path": file_path,
+                            "suggestion_area": suggestion.get("AREA"),
+                        }
+                    )
+                    return None
+            if consolidated_diff_content and consolidated_diff_content.strip():
+                return CodeChange(
+                    FILE_PATH=file_path,
+                    ACTION="MODIFY",
+                    DIFF_CONTENT=consolidated_diff_content,
+                )
+            else:
+                self._log_with_context(
+                    "info",
+                    f"Consolidated MODIFY for {file_path} resulted in no effective change. Removing from suggestions.",
+                )
+                analysis_output.setdefault("malformed_blocks", []).append(
+                    {
+                        "type": "NO_OP_CODE_CHANGE_CONSOLIDATED",
+                        "message": f"Consolidated MODIFY for {file_path} resulted in no effective change. Removed from final suggestions.",
+                        "file_path": file_path,
+                        "suggestion_area": suggestion.get("AREA"),
+                    }
+                )
+                return None
+        return None
+
     def _consolidate_self_improvement_code_changes(
-         self, analysis_output: Dict[str, Any]
-     ) -> Dict[str, Any]:
-         """
-         Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
-         SelfImprovementAnalysisOutput. Also filters out no-op changes.
-         """
-         if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
-             return analysis_output
- 
-         consolidated_suggestions = []
-         for suggestion in analysis_output["IMPACTFUL_SUGGESTIONS"]:
-             if (
-                 "CODE_CHANGES_SUGGESTED" not in suggestion
-                 or not suggestion["CODE_CHANGES_SUGGESTED"]
-             ):
-                 consolidated_suggestions.append(suggestion)
-                 continue
- 
-             file_changes_map = defaultdict(list)
-             for change_data in suggestion["CODE_CHANGES_SUGGESTED"]:
-                 try:
-                     code_change = CodeChange.model_validate(change_data)
-                     file_changes_map[code_change.file_path].append(code_change)
-                 except ValidationError as e:
-                     self._log_with_context(
-                         "warning",
-                         f"Malformed CodeChange item during consolidation: {e}. Skipping.",
-                         raw_change_data=change_data,
-                     )
-                     analysis_output.setdefault("malformed_blocks", []).append(
-                         {
-                             "type": "CODE_CHANGE_CONSOLIDATION_ERROR",
-                             "message": f"Malformed CodeChange item skipped during consolidation: {e}",
-                             "raw_string_snippet": str(change_data)[:500],
-                         }
-                     )
-                     continue
- 
-             new_code_changes_for_suggestion = []
-             for file_path, changes_for_file in file_changes_map.items():
-                 consolidated_change = self._process_single_file_code_changes(
-                     file_path, changes_for_file, suggestion, analysis_output
-                 )
-                 if consolidated_change:
-                     new_code_changes_for_suggestion.append(
-                         consolidated_change.model_dump(by_alias=True)
-                     )
- 
-             suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
-             consolidated_suggestions.append(suggestion)
- 
-         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
-         return analysis_output
+        self, analysis_output: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
+        SelfImprovementAnalysisOutput. Also filters out no-op changes.
+        """
+        if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
+            return analysis_output
+
+        consolidated_suggestions = []
+        for suggestion in analysis_output["IMPACTFUL_SUGGESTIONS"]:
+            if (
+                "CODE_CHANGES_SUGGESTED" not in suggestion
+                or not suggestion["CODE_CHANGES_SUGGESTED"]
+            ):
+                consolidated_suggestions.append(suggestion)
+                continue
+
+            file_changes_map = defaultdict(list)
+            for change_data in suggestion["CODE_CHANGES_SUGGESTED"]:
+                try:
+                    code_change = CodeChange.model_validate(change_data)
+                    file_changes_map[code_change.file_path].append(code_change)
+                except ValidationError as e:
+                    self._log_with_context(
+                        "warning",
+                        f"Malformed CodeChange item during consolidation: {e}. Skipping.",
+                        raw_change_data=change_data,
+                    )
+                    analysis_output.setdefault("malformed_blocks", []).append(
+                        {
+                            "type": "CODE_CHANGE_CONSOLIDATION_ERROR",
+                            "message": f"Malformed CodeChange item skipped during consolidation: {e}",
+                            "raw_string_snippet": str(change_data)[:500],
+                        }
+                    )
+                    continue
+
+            new_code_changes_for_suggestion = []
+            for file_path, changes_for_file in file_changes_map.items():
+                consolidated_change = self._process_single_file_code_changes(
+                    file_path, changes_for_file, suggestion, analysis_output
+                )
+                if consolidated_change:
+                    new_code_changes_for_suggestion.append(
+                        consolidated_change.model_dump(by_alias=True)
+                    )
+
+            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
+            consolidated_suggestions.append(suggestion)
+
+        analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
+        return analysis_output

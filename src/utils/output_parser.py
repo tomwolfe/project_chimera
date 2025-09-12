@@ -25,7 +25,7 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
-    SuggestionItem, # NEW: Import SuggestionItem
+    SuggestionItem,  # NEW: Import SuggestionItem
 )
 
 logger = logging.getLogger(__name__)
@@ -157,7 +157,7 @@ class LLMOutputParser:
         self.logger.debug("Attempting to extract JSON from markdown code blocks...")
 
         # Pattern to match any code block, optionally with a language specifier
-        markdown_block_pattern = r"```(?:json|python|text|yaml|yml)?\s*(.*?)(?:```|\Z)" # MODIFIED: Added yml and made language specifier optional
+        markdown_block_pattern = r"```(?:json|python|text|yaml|yml)?\s*(.*?)(?:```|\Z)"  # MODIFIED: Added yml and made language specifier optional
 
         matches = list(
             re.finditer(markdown_block_pattern, text, re.DOTALL | re.MULTILINE)
@@ -192,33 +192,55 @@ class LLMOutputParser:
         # Heuristic 1: Remove trailing commas
         temp_str = re.sub(r",\s*([\}\]])", r"\1", json_str)
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Removed trailing commas."})
+            repair_log.append(
+                {"action": "initial_repair", "details": "Removed trailing commas."}
+            )
             json_str = temp_str
 
         # Heuristic 2: Add missing closing braces/brackets
-        open_braces = json_str.count('{')
-        close_braces = json_str.count('}')
+        open_braces = json_str.count("{")
+        close_braces = json_str.count("}")
         if open_braces > close_braces:
-            json_str += '}' * (open_braces - close_braces)
-            repair_log.append({"action": "initial_repair", "details": f"Added {open_braces - close_braces} missing closing braces."})
+            json_str += "}" * (open_braces - close_braces)
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": f"Added {open_braces - close_braces} missing closing braces.",
+                }
+            )
 
-        open_brackets = json_str.count('[')
-        close_brackets = json_str.count(']')
+        open_brackets = json_str.count("[")
+        close_brackets = json_str.count("]")
         if open_brackets > close_brackets:
-            json_str += ']' * (open_brackets - close_brackets)
-            repair_log.append({"action": "initial_repair", "details": f"Added {open_brackets - close_brackets} missing closing brackets."})
+            json_str += "]" * (open_brackets - close_brackets)
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": f"Added {open_brackets - close_brackets} missing closing brackets.",
+                }
+            )
 
         # Heuristic 3: Handle the specific numbered array element issue (e.g., "0:{")
         temp_str = re.sub(r"\d+\s*:\s*{", "{", json_str)
         temp_str = re.sub(r",\s*\d+\s*:\s*{", ", {", temp_str)
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Fixed numbered array elements (e.g., '0:{' -> '{')."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Fixed numbered array elements (e.g., '0:{' -> '{').",
+                }
+            )
             json_str = temp_str
 
         # Heuristic 4: Replace single quotes with double quotes (careful not to break escaped quotes)
         temp_str = re.sub(r"(?<!\\)\'", '"', json_str)
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Replaced single quotes with double quotes."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Replaced single quotes with double quotes.",
+                }
+            )
             json_str = temp_str
 
         # Heuristic 5: Handle unquoted keys (simple heuristic, might fail on complex cases)
@@ -226,32 +248,56 @@ class LLMOutputParser:
             r"([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', json_str
         )
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Added quotes to unquoted keys."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Added quotes to unquoted keys.",
+                }
+            )
             json_str = temp_str
-        
+
         # Heuristic 6: Handle unescaped newlines within string values
         # This is a common LLM error that breaks JSON.
-        temp_str = re.sub(r'(?<!\\)\n', r'\\n', json_str)
+        temp_str = re.sub(r"(?<!\\)\n", r"\\n", json_str)
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Escaped unescaped newlines within strings."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Escaped unescaped newlines within strings.",
+                }
+            )
             json_str = temp_str
 
         # Heuristic 7: Handle cases where entire array is wrapped in quotes
         temp_str = re.sub(r'"\[\s*{', "[{", json_str)
         temp_str = re.sub(r'}\s*\]"', "}]", temp_str)
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Fixed array incorrectly wrapped in quotes."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Fixed array incorrectly wrapped in quotes.",
+                }
+            )
             json_str = temp_str
 
         # Heuristic 8: Remove or escape invalid control characters (e.g., \u0000-\x1F)
         # This is a common issue with LLM outputs.
-        temp_str = re.sub(r'[\x00-\x1F\x7F]', '', json_str) # Remove non-printable ASCII characters
+        temp_str = re.sub(
+            r"[\x00-\x1F\x7F]", "", json_str
+        )  # Remove non-printable ASCII characters
         if temp_str != json_str:
-            repair_log.append({"action": "initial_repair", "details": "Removed invalid control characters."})
+            repair_log.append(
+                {
+                    "action": "initial_repair",
+                    "details": "Removed invalid control characters.",
+                }
+            )
             json_str = temp_str
 
         if original_str != json_str:
-            self.logger.info(f"Repaired JSON string. Repairs: {', '.join([r['details'] for r in repair_log])}")
+            self.logger.info(
+                f"Repaired JSON string. Repairs: {', '.join([r['details'] for r in repair_log])}"
+            )
 
         return json_str, repair_log
 
@@ -298,13 +344,17 @@ class LLMOutputParser:
         current_json_str = json_str
 
         # Attempt 0: Apply simple repairs before first parse attempt
-        repaired_first_pass, initial_repairs = self._repair_json_string(current_json_str)
+        repaired_first_pass, initial_repairs = self._repair_json_string(
+            current_json_str
+        )
         if initial_repairs:
-            repair_log.extend(initial_repairs) # Already formatted as dicts
+            repair_log.extend(initial_repairs)  # Already formatted as dicts
             try:
                 return json.loads(repaired_first_pass), repair_log
             except json.JSONDecodeError:
-                current_json_str = repaired_first_pass # Use repaired string for next steps
+                current_json_str = (
+                    repaired_first_pass  # Use repaired string for next steps
+                )
 
         # Attempt 1: Apply all standard repairs and try to load
         repaired_text, current_repairs = self._repair_json_string(current_json_str)
@@ -445,7 +495,7 @@ class LLMOutputParser:
             cleaned,
             flags=re.DOTALL | re.MULTILINE | re.IGNORECASE,
         )
-        
+
         # Remove common conversational filler that might precede or follow JSON
         # Made regex more specific to avoid accidentally removing valid JSON content.
         # Added `\A` and `\Z` anchors for start/end of string to target outer filler.
@@ -459,7 +509,7 @@ class LLMOutputParser:
             r"\n(?:```(?:json|python|text|yaml|yml)?|```).*?\Z",
             "",
             cleaned,
-            flags=re.DOTALL | re.MULTILINE | re.IGNORECASE, # Added re.MULTILINE
+            flags=re.DOTALL | re.MULTILINE | re.IGNORECASE,  # Added re.MULTILINE
         )
 
         # Attempt to find the outermost JSON structure and trim anything outside it
@@ -562,7 +612,9 @@ class LLMOutputParser:
 
         # 1. Attempt to extract JSON string using markers from the cleaned output
         cleaned_raw_output = self._clean_llm_output(raw_output)
-        self.logger.debug(f"Cleaned raw output for parsing: {cleaned_raw_output[:500]}...")
+        self.logger.debug(
+            f"Cleaned raw output for parsing: {cleaned_raw_output[:500]}..."
+        )
 
         marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
         if marker_extraction_result:
@@ -694,7 +746,14 @@ class LLMOutputParser:
                     processed_suggestions = []
                     for item_str in parsed_data:
                         if isinstance(item_str, str):
-                            processed_suggestions.append(SuggestionItem(AREA="General", PROBLEM=item_str, PROPOSED_SOLUTION="N/A", EXPECTED_IMPACT="N/A").model_dump(by_alias=True))
+                            processed_suggestions.append(
+                                SuggestionItem(
+                                    AREA="General",
+                                    PROBLEM=item_str,
+                                    PROPOSED_SOLUTION="N/A",
+                                    EXPECTED_IMPACT="N/A",
+                                ).model_dump(by_alias=True)
+                            )
                         # Handle non-string items if necessary, or log as malformed
                     data_to_validate = {
                         "CRITIQUE_SUMMARY": "LLM returned a list of strings as suggestions.",
@@ -708,7 +767,7 @@ class LLMOutputParser:
                     )
                     data_to_validate = {
                         "CRITIQUE_SUMMARY": "LLM returned a list of dicts as critique points.",
-                        "CRITIQUE_POINTS": [], # FIX: CritiqueOutput expects a list of dicts for CRITIQUE_POINTS, not raw dicts
+                        "CRITIQUE_POINTS": [],  # FIX: CritiqueOutput expects a list of dicts for CRITIQUE_POINTS, not raw dicts
                         "SUGGESTIONS": [],
                         "malformed_blocks": malformed_blocks_list,
                     }
@@ -719,17 +778,23 @@ class LLMOutputParser:
                         if isinstance(item, dict):
                             try:
                                 # Try to validate as SuggestionItem first
-                                validated_suggestion = SuggestionItem.model_validate(item)
-                                processed_suggestions.append(validated_suggestion.model_dump(by_alias=True))
+                                validated_suggestion = SuggestionItem.model_validate(
+                                    item
+                                )
+                                processed_suggestions.append(
+                                    validated_suggestion.model_dump(by_alias=True)
+                                )
                             except ValidationError:
                                 # If not a SuggestionItem, treat as a generic critique point
                                 processed_critique_points.append(item)
                         else:
-                            malformed_blocks_list.append({
-                                "type": "MALFORMED_CRITIQUE_ITEM",
-                                "message": f"Critique item is not a dictionary: {str(item)[:100]}",
-                                "raw_string_snippet": str(item)[:100]
-                            })
+                            malformed_blocks_list.append(
+                                {
+                                    "type": "MALFORMED_CRITIQUE_ITEM",
+                                    "message": f"Critique item is not a dictionary: {str(item)[:100]}",
+                                    "raw_string_snippet": str(item)[:100],
+                                }
+                            )
                     data_to_validate["CRITIQUE_POINTS"] = processed_critique_points
                     data_to_validate["SUGGESTIONS"] = processed_suggestions
                 else:
@@ -843,7 +908,9 @@ class LLMOutputParser:
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
                     if extracted_json_str is not None
-                    else raw_output[:500] # Use raw_output_snippet for detection if extracted_json_str is None
+                    else raw_output[
+                        :500
+                    ]  # Use raw_output_snippet for detection if extracted_json_str is None
                 )
                 if (
                     detected_suggestion
@@ -1122,17 +1189,37 @@ class LLMOutputParser:
             # MODIFIED: Ensure IMPACTFUL_SUGGESTIONS is a list of SuggestionItem objects
             raw_suggestions = partial_data_as_dict.get("IMPACTFUL_SUGGESTIONS", [])
             if not isinstance(raw_suggestions, list):
-                raw_suggestions = [raw_suggestions] # Wrap single item in a list
-            
+                raw_suggestions = [raw_suggestions]  # Wrap single item in a list
+
             processed_suggestions = []
             for item in raw_suggestions:
                 if isinstance(item, dict):
                     try:
-                        processed_suggestions.append(SuggestionItem.model_validate(item).model_dump(by_alias=True))
+                        processed_suggestions.append(
+                            SuggestionItem.model_validate(item).model_dump(
+                                by_alias=True
+                            )
+                        )
                     except ValidationError:
-                        processed_suggestions.append({"AREA": "Unknown", "PROBLEM": "Malformed suggestion", "PROPOSED_SOLUTION": str(item)[:100], "EXPECTED_IMPACT": "N/A", "CODE_CHANGES_SUGGESTED": []})
+                        processed_suggestions.append(
+                            {
+                                "AREA": "Unknown",
+                                "PROBLEM": "Malformed suggestion",
+                                "PROPOSED_SOLUTION": str(item)[:100],
+                                "EXPECTED_IMPACT": "N/A",
+                                "CODE_CHANGES_SUGGESTED": [],
+                            }
+                        )
                 else:
-                    processed_suggestions.append({"AREA": "Unknown", "PROBLEM": "Malformed suggestion", "PROPOSED_SOLUTION": str(item)[:100], "EXPECTED_IMPACT": "N/A", "CODE_CHANGES_SUGGESTED": []})
+                    processed_suggestions.append(
+                        {
+                            "AREA": "Unknown",
+                            "PROBLEM": "Malformed suggestion",
+                            "PROPOSED_SOLUTION": str(item)[:100],
+                            "EXPECTED_IMPACT": "N/A",
+                            "CODE_CHANGES_SUGGESTED": [],
+                        }
+                    )
 
             fallback_data_for_model["IMPACTFUL_SUGGESTIONS"] = processed_suggestions
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks

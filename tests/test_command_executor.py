@@ -5,25 +5,32 @@ from unittest.mock import patch, MagicMock
 import subprocess
 import sys
 from pathlib import Path
-import pytest # NEW: Import pytest for pytest.raises
+import pytest  # NEW: Import pytest for pytest.raises
 
 # Assuming src/utils/command_executor.py contains the execute_command_safely function
 from src.utils.command_executor import execute_command_safely
 
+
 class TestCommandExecutor(unittest.TestCase):
     """Unit tests for the execute_command_safely utility function."""
 
-    @patch('sys.executable', sys.executable) # Ensure sys.executable is available for patching
-    @patch('subprocess.run')
+    @patch(
+        "sys.executable", sys.executable
+    )  # Ensure sys.executable is available for patching
+    @patch("subprocess.run")
     def setUp(self, mock_run):
         """Set up mocks for subprocess.run and sys.executable for all tests."""
         self.mock_run = mock_run
         # Mock sys.executable to a predictable path for testing the command adjustment logic
         self.original_sys_executable = sys.executable
-        sys.executable = '/fake/python/executable' # Use a fake path for consistent testing
+        sys.executable = (
+            "/fake/python/executable"  # Use a fake path for consistent testing
+        )
 
         # Mock the return value of subprocess.run for successful calls
-        self.mock_run.return_value = MagicMock(returncode=0, stdout="Success output", stderr="")
+        self.mock_run.return_value = MagicMock(
+            returncode=0, stdout="Success output", stderr=""
+        )
 
     def tearDown(self):
         """Restore sys.executable after tests."""
@@ -40,7 +47,7 @@ class TestCommandExecutor(unittest.TestCase):
             text=True,
             check=False,
             shell=False,
-            timeout=60
+            timeout=60,
         )
         self.assertEqual(return_code, 0)
         self.assertEqual(stdout, "Success output")
@@ -54,12 +61,16 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "false_command"], # FIX: Expect sys.executable -m for 'false_command'
+            [
+                sys.executable,
+                "-m",
+                "false_command",
+            ],  # FIX: Expect sys.executable -m for 'false_command'
             capture_output=True,
             text=True,
             check=False,
             shell=False,
-            timeout=60
+            timeout=60,
         )
         self.assertEqual(return_code, 1)
         self.assertEqual(stdout, "")
@@ -69,17 +80,23 @@ class TestCommandExecutor(unittest.TestCase):
         """Test command failure with stderr output."""
         command = ["error_command"]
         error_message = "This is an error message."
-        self.mock_run.return_value = MagicMock(returncode=1, stdout="", stderr=error_message)
+        self.mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr=error_message
+        )
 
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "error_command"], # FIX: Expect sys.executable -m for 'error_command'
+            [
+                sys.executable,
+                "-m",
+                "error_command",
+            ],  # FIX: Expect sys.executable -m for 'error_command'
             capture_output=True,
             text=True,
             check=False,
             shell=False,
-            timeout=60
+            timeout=60,
         )
         self.assertEqual(return_code, 1)
         self.assertEqual(stdout, "")
@@ -91,31 +108,30 @@ class TestCommandExecutor(unittest.TestCase):
         # Mock subprocess.run to raise TimeoutExpired
         self.mock_run.side_effect = subprocess.TimeoutExpired(cmd=command, timeout=1)
 
-        with pytest.raises(subprocess.TimeoutExpired): # FIX: Expect TimeoutExpired to be re-raised
+        with pytest.raises(
+            subprocess.TimeoutExpired
+        ):  # FIX: Expect TimeoutExpired to be re-raised
             execute_command_safely(command, timeout=1)
         self.mock_run.assert_called_once_with(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            shell=False,
-            timeout=1
+            command, capture_output=True, text=True, check=False, shell=False, timeout=1
         )
 
     def test_execute_command_safely_check_true_success(self):
         """Test check=True with a successful command."""
         command = ["echo", "success"]
-        self.mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
+        self.mock_run.return_value = MagicMock(
+            returncode=0, stdout="Success", stderr=""
+        )
 
         return_code, stdout, stderr = execute_command_safely(command, check=True)
 
         self.mock_run.assert_called_once_with(
-            command, # FIX: No sys.executable -m for 'echo'
+            command,  # FIX: No sys.executable -m for 'echo'
             capture_output=True,
             text=True,
             check=True,
             shell=False,
-            timeout=60
+            timeout=60,
         )
         self.assertEqual(return_code, 0)
         self.assertEqual(stdout, "Success")
@@ -129,65 +145,97 @@ class TestCommandExecutor(unittest.TestCase):
         )
 
         with pytest.raises(subprocess.CalledProcessError):
-            execute_command_safely(command, check=True) # FIX: Expect CalledProcessError to be re-raised
+            execute_command_safely(
+                command, check=True
+            )  # FIX: Expect CalledProcessError to be re-raised
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "false_command"], # FIX: Expect sys.executable -m
+            [sys.executable, "-m", "false_command"],  # FIX: Expect sys.executable -m
             capture_output=True,
             text=True,
             check=True,
             shell=False,
-            timeout=60
+            timeout=60,
         )
 
     def test_execute_command_safely_python_tool_invocation(self):
         """Test that python tools are correctly prepended with `sys.executable -m`."""
         # Test with 'pytest'
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Pytest output", stderr="")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Pytest output", stderr=""
+            )
             execute_command_safely(["pytest", "tests/"])
             mock_run.assert_called_once_with(
                 [sys.executable, "-m", "pytest", "tests/"],
-                capture_output=True, text=True, check=False, shell=False, timeout=60
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+                timeout=60,
             )
 
         # Test with 'ruff'
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Ruff output", stderr="")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Ruff output", stderr=""
+            )
             execute_command_safely(["ruff", "check", "."])
             mock_run.assert_called_once_with(
                 [sys.executable, "-m", "ruff", "check", "."],
-                capture_output=True, text=True, check=False, shell=False, timeout=60
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+                timeout=60,
             )
 
         # Test with 'bandit'
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Bandit output", stderr="")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Bandit output", stderr=""
+            )
             execute_command_safely(["bandit", "-r", "."])
             mock_run.assert_called_once_with(
                 [sys.executable, "-m", "bandit", "-r", "."],
-                capture_output=True, text=True, check=False, shell=False, timeout=60
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+                timeout=60,
             )
 
     def test_execute_command_safely_already_python_m(self):
         """Test that `python -m` is not double-prepended."""
         command = [sys.executable, "-m", "ruff", "check", "."]
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Ruff output", stderr="")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Ruff output", stderr=""
+            )
             execute_command_safely(command)
             mock_run.assert_called_once_with(
-                command, # Should be called with the original command, not modified
-                capture_output=True, text=True, check=False, shell=False, timeout=60
+                command,  # Should be called with the original command, not modified
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+                timeout=60,
             )
 
     def test_execute_command_safely_non_python_command(self):
         """Test that non-Python commands are not prepended with sys.executable -m."""
         command = ["echo", "hello"]
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Echo output", stderr="")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="Echo output", stderr=""
+            )
             execute_command_safely(command)
             mock_run.assert_called_once_with(
-                command, # Should be called with the original command
-                capture_output=True, text=True, check=False, shell=False, timeout=60
+                command,  # Should be called with the original command
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+                timeout=60,
             )
 
     def test_execute_command_safely_error_handling_for_non_subprocess_errors(self):
@@ -196,22 +244,24 @@ class TestCommandExecutor(unittest.TestCase):
         # Mock subprocess.run to raise a different exception
         self.mock_run.side_effect = OSError("Permission denied")
 
-        with patch('logging.getLogger') as mock_logger:
+        with patch("logging.getLogger") as mock_logger:
             mock_logger_instance = MagicMock()
             mock_logger.return_value = mock_logger_instance
-            
-            with pytest.raises(OSError): # FIX: Expect the original exception to be re-raised
+
+            with pytest.raises(
+                OSError
+            ):  # FIX: Expect the original exception to be re-raised
                 execute_command_safely(command)
-            
+
             mock_logger_instance.error.assert_called_once_with(
                 f"An error occurred while executing command: Permission denied",
-                exc_info=True # FIX: Ensure exc_info is passed
+                exc_info=True,  # FIX: Ensure exc_info is passed
             )
             self.mock_run.assert_called_once_with(
-                [sys.executable, "-m", "some_command"], # FIX: Expect sys.executable -m
+                [sys.executable, "-m", "some_command"],  # FIX: Expect sys.executable -m
                 capture_output=True,
                 text=True,
                 check=False,
                 shell=False,
-                timeout=60
+                timeout=60,
             )
