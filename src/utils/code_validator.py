@@ -447,8 +447,8 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                             "line": node.lineno,
                             "message": "Use of os.system() is discouraged; it can execute arbitrary commands and is prone to shell injection. Consider subprocess.run() with shell=False.",
                             "code_snippet": snippet,
-                        }
-                    )
+                                }
+                        )
 
                 # Check for XML External Entity (XXE) vulnerability in ElementTree
                 if (
@@ -745,7 +745,7 @@ def validate_code_output(
 
 def validate_code_output_batch(
     parsed_data: Dict,
-    original_contents: Dict[str, str] = None,
+    original_contents: Optional[Dict[str, str]] = None,
     file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Validates a batch of code changes and aggregates issues per file."""

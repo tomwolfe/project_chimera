@@ -80,7 +80,7 @@ class GeminiAPIError(LLMProviderError):
         self,
         message: str,
         code: int = None,
-        response_details: Any = None, # MODIFIED: Renamed from response_json to response_details for broader use
+        response_details: Any = None,
         original_exception: Optional[Exception] = None,
     ):
         super().__init__(
@@ -114,7 +114,7 @@ class ValidationPhaseError(ChimeraError):
     def __init__(
         self,
         message: str,
-        error_code: str = "VALIDATION_PHASE_ERROR", # ADDED: error_code parameter
+        error_code: str = "VALIDATION_PHASE_ERROR",
         invalid_response: Any = None,
         expected_schema: str = None,
         details: Optional[dict] = None,
@@ -125,8 +125,8 @@ class ValidationPhaseError(ChimeraError):
             {"invalid_response": invalid_response, "expected_schema": expected_schema}
         )
         super().__init__(
-            message, # Pass message first
-            error_code=error_code, # Pass the new error_code parameter
+            message,
+            error_code=error_code,
             details=full_details,
             original_exception=original_exception,
         )
@@ -154,7 +154,7 @@ class SchemaValidationError(ValidationPhaseError):
         )
         super().__init__(
             message,
-            error_code="SCHEMA_VALIDATION_ERROR", # Pass error_code to parent
+            error_code="SCHEMA_VALIDATION_ERROR",
             details=full_details,
             original_exception=original_exception,
         )

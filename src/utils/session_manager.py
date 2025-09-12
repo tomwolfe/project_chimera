@@ -1,3 +1,4 @@
+# src/utils/session_manager.py
 import streamlit as st
 import time
 import os
@@ -20,7 +21,7 @@ def update_activity_timestamp():
     st.session_state.last_activity_timestamp = time.time()
     logger.debug("Activity timestamp updated.")
 
-def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
+def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
     """Initializes or resets all session state variables to their default values."""
     # MODIFIED: Access total_budget directly from app_config (ChimeraSettings instance)
     MAX_TOKENS_LIMIT = app_config.total_budget
@@ -79,7 +80,7 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
 
     if "persona_manager" not in st.session_state:
         st.session_state.persona_manager = PersonaManager(
-            DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker # MODIFIED: Pass DOMAIN_KEYWORDS
+            DOMAIN_KEYWORDS, token_tracker=st.session_state.token_tracker
         )
         st.session_state.all_personas = st.session_state.persona_manager.all_personas
         st.session_state.persona_sets = st.session_state.persona_manager.persona_sets
@@ -103,7 +104,7 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
         # NEW: Use cache dir from settings
         analyzer = ContextRelevanceAnalyzer(
             cache_dir=app_config.sentence_transformer_cache_dir,
-            raw_file_contents=st.session_state.raw_file_contents, # MODIFIED: Pass raw_file_contents
+            raw_file_contents=st.session_state.raw_file_contents,
         )
         if st.session_state.persona_manager.persona_router:
             analyzer.set_persona_router(st.session_state.persona_manager.persona_router)
@@ -147,12 +148,12 @@ def _initialize_session_state(app_config: ChimeraSettings, example_prompts: Dict
             default_example_category
         ][default_example_name].get("framework_hint")
 
-def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
+def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
     """Resets all session state variables to their default values."""
     _initialize_session_state(app_config, example_prompts)
     st.rerun()
 
-def check_session_expiration(app_config: ChimeraSettings, example_prompts: Dict[str, Any]): # MODIFIED: Type hint app_config as ChimeraSettings
+def check_session_expiration(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
     """Checks for session expiration due to inactivity."""
     if "initialized" in st.session_state and st.session_state.initialized:
         if time.time() - st.session_state.last_activity_timestamp > SESSION_TIMEOUT_SECONDS:

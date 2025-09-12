@@ -63,7 +63,7 @@ class FocusedMetricsCollector:
         initial_prompt: str,
         debate_history: List[Dict],
         intermediate_steps: Dict[str, Any],
-        codebase_raw_file_contents: Dict[str, str], # MODIFIED: Accept raw file contents
+        codebase_raw_file_contents: Dict[str, str],
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
@@ -73,7 +73,7 @@ class FocusedMetricsCollector:
         self.initial_prompt = initial_prompt
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.raw_file_contents = codebase_raw_file_contents # MODIFIED: Store raw file contents
+        self.raw_file_contents = codebase_raw_file_contents
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
@@ -81,9 +81,9 @@ class FocusedMetricsCollector:
         self.codebase_path = (
             PROJECT_ROOT
         )  # Assuming the analyst operates from the project root
-        self.collected_metrics: Dict[str, Any] = {} # Stores the final collected metrics
-        self.reasoning_quality_metrics: Dict[str, Any] = {} # Initialized here, populated by analyze_reasoning_quality
-        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # Cache for file analysis results
+        self.collected_metrics: Dict[str, Any] = {}
+        self.reasoning_quality_metrics: Dict[str, Any] = {}
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
         
         # NEW: Raw counts for tracking current run's outcome (to be saved historically)
         self._current_run_total_suggestions_processed: int = 0
@@ -95,7 +95,7 @@ class FocusedMetricsCollector:
         self._historical_successful_suggestions: int = 0
         self._historical_schema_validation_failures: Dict[str, int] = defaultdict(int)
 
-        self.critical_metric: Optional[str] = None # Initialized here, populated by _identify_critical_metric
+        self.critical_metric: Optional[str] = None
 
         # Load historical data at initialization
         historical_summary = self.analyze_historical_effectiveness()
@@ -110,7 +110,7 @@ class FocusedMetricsCollector:
         max_deviation = -1
 
         for metric_name, config in self.CRITICAL_METRICS.items():
-            value = self.collected_metrics.get(metric_name, 0) # Use self.collected_metrics
+            value = self.collected_metrics.get(metric_name, 0)
             threshold = config["threshold"]
 
             if metric_name == "token_efficiency":
@@ -124,7 +124,7 @@ class FocusedMetricsCollector:
 
         self.critical_metric = critical_metric
 
-    def analyze_reasoning_quality( # MODIFIED: Removed debate_history from arguments
+    def analyze_reasoning_quality(
         self, analysis_output: Dict[str, Any]
     ):
         """Analyzes the quality of reasoning in the debate process and final output."""
@@ -186,7 +186,7 @@ class FocusedMetricsCollector:
         self.reasoning_quality_metrics["80_20_adherence_score"] = (
             0.8 if ("80/20" in analysis_text or "pareto" in analysis_text) else 0.3
         )
-
+        
         ct_indicators = self.reasoning_quality_metrics["critical_thinking_indicators"]
         total_indicators = sum(ct_indicators.values())
         self.reasoning_quality_metrics["reasoning_depth"] = min(
@@ -683,14 +683,14 @@ class FocusedMetricsCollector:
         token_efficiency = (
             total_tokens / max(1, suggestions_count)
             if suggestions_count > 0
-            else total_tokens # If no suggestions, efficiency is just total tokens
+            else total_tokens
         )
         
         return {
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost,
             "persona_token_usage": phase_token_usage,
-            "token_efficiency": token_efficiency, # NEW: Add token efficiency here
+            "token_efficiency": token_efficiency,
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
@@ -769,7 +769,7 @@ class FocusedMetricsCollector:
                 if return_code == 1:
                     coverage_data["coverage_details"] += " Note: Some tests failed during coverage collection."
                 coverage_json_path.unlink()
-            elif return_code not in (0, 1): # If command failed with unexpected code
+            elif return_code not in (0, 1):
                 coverage_data["coverage_details"] = "Coverage JSON report not found."
 
         except Exception as e:
@@ -822,7 +822,7 @@ class FocusedMetricsCollector:
                 "success_rate": 0.0,
                 "top_performing_areas": [],
                 "common_failure_modes": {},
-                "historical_total_suggestions_processed": 0, # NEW: Return raw counts
+                "historical_total_suggestions_processed": 0,
                 "historical_successful_suggestions": 0,
                 "historical_schema_validation_failures": {},
             }
@@ -927,7 +927,7 @@ class FocusedMetricsCollector:
             f"Successful: {self._current_run_successful_suggestions}"
         )
 
-    def _get_critical_metric_info(self): # NEW: Renamed from get_critical_metric_info
+    def _get_critical_metric_info(self):
         """Get information about the critical metric for prompt engineering."""
         if not self.critical_metric:
             return None
@@ -972,10 +972,10 @@ class FocusedMetricsCollector:
         diff_content = code_change.get("DIFF_CONTENT")
 
         if not file_path_str or not action or not content:
-            return code_change # Cannot validate malformed change
+            return code_change
 
         if not file_path_str.endswith(".py"):
-            return code_change # Only validate Python files
+            return code_change
 
         # Create a temporary file for validation
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", encoding="utf-8", delete=False) as temp_file:
@@ -1057,7 +1057,7 @@ class FocusedMetricsCollector:
         complexity_metrics = []
         code_smells_count = 0
         detailed_issues = []
-        ruff_violations = [] # Specific list for Ruff violations
+        ruff_violations = []
 
         for file_path_str, content in self.raw_file_contents.items():
             if file_path_str.endswith(".py"):
@@ -1097,21 +1097,21 @@ class FocusedMetricsCollector:
 
         self.collected_metrics["code_quality"] = {
             "ruff_issues_count": ruff_issues_count,
-            "bandit_issues_count": bandit_issues_count, # Also include in code_quality for overview
-            "ast_security_issues_count": ast_security_issues_count, # Also include in code_quality for overview
+            "bandit_issues_count": bandit_issues_count,
+            "ast_security_issues_count": ast_security_issues_count,
             "complexity_metrics": complexity_metrics,
             "code_smells_count": code_smells_count,
             "detailed_issues": detailed_issues,
             "ruff_violations": ruff_violations,
         }
-        self.collected_metrics["security"] = { # Separate security section for clarity
+        self.collected_metrics["security"] = {
             "bandit_issues_count": bandit_issues_count,
             "ast_security_issues_count": ast_security_issues_count,
             "detailed_security_issues": [issue for issue in detailed_issues if issue["type"] == "Bandit Security Issue" or issue["type"] == "Security Vulnerability (AST)"],
         }
         logger.info(f"Collected code quality and security metrics for {len(self.raw_file_contents)} files.")
 
-    def collect_all_metrics(self) -> Dict[str, Any]: # NEW: Public method to collect all metrics
+    def collect_all_metrics(self) -> Dict[str, Any]:
         """
         Collects all objective metrics that are available *before* the synthesis persona runs.
         This is the main entry point for `core.py` to get metrics for the synthesis prompt.
@@ -1120,14 +1120,14 @@ class FocusedMetricsCollector:
 
         # Reset collected_metrics to ensure a fresh collection for each run
         self.collected_metrics = {}
-        self.file_analysis_cache = {} # Clear cache for fresh run
+        self.file_analysis_cache = {}
 
         # Retrieve Conflict_Resolution_Attempt safely, handling potential None values
         # FIX: Ensure that .get() is not called on None.
         conflict_resolution_attempt_data = self.intermediate_steps.get("Conflict_Resolution_Attempt")
         
         # Initialize suggestions list, which will be part of collected_metrics
-        initial_suggestions_from_conflict = [] # Renamed to avoid confusion with the 'suggestions' list in generate_suggestions
+        initial_suggestions_from_conflict = []
 
         # FIX: Correctly access conflict_resolved from conflict_resolution_attempt_data
         # and check the 'resolved_output' for the specific rationale string.
@@ -1207,7 +1207,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         # Identify the critical metric based on collected data
         # This should be called *after* all relevant metrics are in self.collected_metrics
-        self._identify_critical_metric() # <-- This call is important here
+        self._identify_critical_metric()
 
         logger.info("Finished collecting all pre-synthesis metrics.")
         return self.collected_metrics

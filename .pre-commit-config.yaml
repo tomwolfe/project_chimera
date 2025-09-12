@@ -20,7 +20,7 @@ repos:
   #     - id: black
   #       language_version: python3.11 # Specify your Python version, adjust if needed
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.1.9 # Use the latest stable version (ensure this is kept up-to-date)
+    rev: v0.4.0  # Use a newer stable version (check PyPI for latest)
     hooks:
       - id: ruff # Runs linting checks (and auto-fixes)
         args: ["--fix", "--exit-non-zero"] # Automatically fix linting errors and fail if unfixed

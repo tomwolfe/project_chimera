@@ -112,7 +112,7 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
     file_path = codebase_path / change["FILE_PATH"]
     action = change["ACTION"]
 
-    if action == "ADD" or action == "CREATE": # MODIFIED: Added CREATE
+    if action == "ADD" or action == "CREATE":
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
@@ -121,7 +121,7 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
         except OSError as e:
             logger.error(f"Failed to add file {file_path}: {e}")
             raise  # Re-raise to indicate failure
-    elif action == "CREATE_DIRECTORY": # NEW: Handle CREATE_DIRECTORY
+    elif action == "CREATE_DIRECTORY":
         try:
             file_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created directory: {file_path}")
@@ -150,7 +150,7 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
                     )
                     try:
                         original_content = file_path.read_text(encoding="utf-8")
-                        patched_content = _apply_unified_diff(original_content, change["DIFF_CONTENT"]) # MODIFIED: Use _apply_unified_diff
+                        patched_content = _apply_unified_diff(original_content, change["DIFF_CONTENT"])
                         with open(file_path, "w", encoding="utf-8") as f:
                             f.write(patched_content)
                         logger.info(f"Successfully applied diff to {file_path}")
