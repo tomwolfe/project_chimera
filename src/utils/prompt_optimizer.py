@@ -14,34 +14,56 @@ logger = logging.getLogger(__name__)
 # Initialize summarization pipeline once to avoid repeated loading
 _summarizer = None
 
+
 def get_summarizer():
     global _summarizer
     if _summarizer is None:
         # Using a smaller, faster model for summarization
-        _summarizer = pipeline('summarization', model='sshleifer/distilbart-cnn-6-6')
+        _summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-6-6")
     return _summarizer
 
+
 def summarize_text(text: str, target_tokens: int) -> str:
-    '''Summarizes text to a target token count using a pre-trained model.'''
+    """Summarizes text to a target token count using a pre-trained model."""
     # Fallback to truncation if summarization model fails or is not loaded
     try:
         summarizer = get_summarizer()
-        # Estimate max_length for summarizer based on target_tokens (heuristic: 1 token ~ 4 chars)
-        # Transformers summarization models typically output fewer tokens than input.
-        # max_summary_length is in words/subwords, not tokens.
-        # A common ratio is 1.5-2x tokens for words. Let's use a heuristic.
-        max_summary_length_words = target_tokens * 2 # Rough estimate
-        min_summary_length_words = min(30, int(target_tokens * 0.5)) # Ensure a minimum length
+        # Pre-truncate input text to a manageable size for the summarizer model
+        # distilbart-cnn-6-6 has a max input length of 1024 tokens.
+        # We'll use a slightly larger buffer for safety, but still well within typical model limits.
+        # Heuristic: 1 token ~ 4 characters. So 1024 tokens is ~4096 characters.
+        max_input_chars_for_summarizer = (
+            4096 * 2
+        )  # Allow a bit more, as tokenizers vary
+        if len(text) > max_input_chars_for_summarizer:
+            logger.warning(
+                f"Input text for summarizer is too long ({len(text)} chars). Pre-truncating to {max_input_chars_for_summarizer} chars."
+            )
+            text = text[:max_input_chars_for_summarizer]
 
-        summary = summarizer(
+        # Estimate max_length for summarizer based on target_tokens (heuristic: 1 token ~ 4 chars)
+        max_summary_length_words = target_tokens * 2  # Rough estimate
+        min_summary_length_words = min(
+            30, int(target_tokens * 0.5)
+        )  # Ensure a minimum length
+
+        # Ensure max_length is not excessively large for the summarizer model
+        # distilbart-cnn-6-6 typically has a max output length around 142.
+        # We need to be careful not to ask for too much.
+        max_summary_length_words = min(
+            max_summary_length_words, 256
+        )  # Cap output length for distilbart
+
+        summary_result = summarizer(
             text,
             max_length=max_summary_length_words,
             min_length=min_summary_length_words,
-            do_sample=False # For deterministic output
-        )[0]['summary_text']
+            do_sample=False,  # For deterministic output
+        )
+        summary = summary_result[0]["summary_text"]
 
         # Ensure the summary itself doesn't exceed target_tokens after generation
-        encoding = tiktoken.get_encoding("cl100k_base") # Use tiktoken for final check
+        encoding = tiktoken.get_encoding("cl100k_base")  # Use tiktoken for final check
         summary_tokens = len(encoding.encode(summary))
 
         if summary_tokens > target_tokens:
@@ -49,7 +71,9 @@ def summarize_text(text: str, target_tokens: int) -> str:
             return encoding.decode(encoding.encode(summary)[:target_tokens])
         return summary
     except Exception as e:
-        logger.error(f"Summarization failed: {e}. Falling back to truncation.", exc_info=True)
+        logger.error(
+            f"Summarization failed: {e}. Falling back to truncation.", exc_info=True
+        )
         # Fallback to simple truncation if summarization fails
         encoding = tiktoken.get_encoding("cl100k_base")
         return encoding.decode(encoding.encode(text)[:target_tokens])
@@ -62,7 +86,9 @@ class PromptOptimizer:
         self.tokenizer = tokenizer
         self.settings = settings
 
-    def _get_persona_specific_optimization_config(self, persona_name: str) -> Tuple[Dict[str, str], List[str]]:
+    def _get_persona_specific_optimization_config(
+        self, persona_name: str
+    ) -> Tuple[Dict[str, str], List[str]]:
         """
         Returns persona-specific regex patterns for sections and their ordered keys
         for truncation priority.
@@ -130,7 +156,7 @@ class PromptOptimizer:
                 "remove_instructions",
                 "json_schema",
                 "synthesis_feedback_instruction",
-                "objective_metrics", # Higher priority for Self-Improvement Analyst
+                "objective_metrics",  # Higher priority for Self-Improvement Analyst
                 "ai_reasoning_quality",
                 "security_analysis",
                 "token_optimization",
@@ -153,7 +179,7 @@ class PromptOptimizer:
                 "diff_instructions",
                 "remove_instructions",
                 "json_schema",
-                "security_analysis", # Higher priority for Security Auditor
+                "security_analysis",  # Higher priority for Security Auditor
                 "initial_problem",
                 "relevant_code_context",
                 "debate_history",
@@ -165,7 +191,7 @@ class PromptOptimizer:
                 "previous_debate_output",
                 "conflict_resolution_summary",
                 "unresolved_conflict",
-                "synthesis_feedback_instruction", # Lower priority for non-synthesis persona
+                "synthesis_feedback_instruction",  # Lower priority for non-synthesis persona
             ]
             return default_sections_to_optimize, ordered_keys
         # Add more persona-specific configurations here if needed
@@ -188,7 +214,6 @@ class PromptOptimizer:
         else:
             # For other personas, use the default configuration
             return default_sections_to_optimize, default_ordered_keys
-
 
     def optimize_prompt(
         self, prompt: str, persona_name: str, max_output_tokens_for_turn: int

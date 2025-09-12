@@ -88,7 +88,7 @@ def mock_config_persistence():
     cp._get_saved_custom_framework_names.return_value = []
     cp._load_custom_framework_config_from_file.return_value = None
     cp.save_user_framework.return_value = (True, "Framework saved.")
-    cp.export_framework_for_sharing.return_value = "framework_content"
+    cp.export_framework_for_sharing.return_value = "exported_yaml_content"
     cp.import_framework_from_file.return_value = (
         True,
         "Framework imported.",
@@ -169,6 +169,7 @@ def test_persona_manager_initialization(persona_manager_instance):
     assert "Visionary_Generator" in persona_manager_instance.all_personas
     assert "General" in persona_manager_instance.persona_sets
     assert persona_manager_instance.default_persona_set_name == "General"
+    # The order of available_domains is sorted alphabetically
     assert persona_manager_instance.available_domains == [
         "General",
         "Software Engineering",
@@ -302,7 +303,7 @@ def test_save_framework(persona_manager_instance, mock_config_persistence):
         framework_name, "General", current_active_personas, description
     )
     assert success
-    assert "saved successfully" in message
+    assert "Framework saved." in message  # Message is now "Framework saved."
     mock_config_persistence.save_user_framework.assert_called_once()
     # Check if the framework name was added to available domains
     assert framework_name in persona_manager_instance.available_domains
@@ -381,7 +382,7 @@ def test_import_framework(persona_manager_instance, mock_config_persistence):
         "file_content", "test.yaml"
     )
     assert success
-    assert "imported and saved successfully" in message
+    assert "Framework imported." in message
     # Verify that the persistence method was called correctly
     mock_config_persistence.import_framework_from_file.assert_called_once_with(
         "file_content", "test.yaml"

@@ -35,6 +35,12 @@ def mock_metrics_collector():
             "historical_successful_suggestions": 0,
             "historical_schema_validation_failures": {},
         },
+        "configuration_analysis": {
+            "ci_workflow": {},
+            "pre_commit_hooks": [],
+            "pyproject_toml": {},
+        },
+        "deployment_robustness": {},
     }
     collector.analyze_historical_effectiveness.return_value = {
         "total_attempts": 0,
@@ -47,6 +53,9 @@ def mock_metrics_collector():
     }
     collector.record_self_improvement_suggestion_outcome.return_value = None
     collector.file_analysis_cache = {}  # Ensure this attribute exists
+    collector._process_suggestions_for_quality.side_effect = (
+        lambda x: x
+    )  # Mock to return suggestions as is for simplicity in tests
     return collector
 
 
@@ -268,6 +277,7 @@ def test_analyze_self_improvement_plan_historical_low_success_rate(
         "historical_total_suggestions_processed": 10,
         "historical_successful_suggestions": 3,
         "historical_schema_validation_failures": {},
+        "successful_patterns": {},  # Added for consistency
     }
     mock_llm_provider.generate.return_value = (
         json.dumps(
@@ -327,6 +337,7 @@ def test_analyze_self_improvement_plan_historical_common_failure_mode(
         "historical_total_suggestions_processed": 10,
         "historical_successful_suggestions": 8,
         "historical_schema_validation_failures": {"Constructive_Critic": 5},
+        "successful_patterns": {},  # Added for consistency
     }
     mock_llm_provider.generate.return_value = (
         json.dumps(
@@ -355,10 +366,13 @@ def test_analyze_self_improvement_plan_historical_common_failure_mode(
 
     suggestions = analyzer.analyze()
     assert any(
-        "Frequent schema validation failures" in s["PROBLEM"] for s in suggestions
+        "Historical analysis identifies 'schema_validation_failures_count' as a common failure mode"
+        in s["PROBLEM"]
+        for s in suggestions
     )
     assert any(
-        "Refine JSON output instructions in persona prompts" in s["PROPOSED_SOLUTION"]
+        "Implement specific safeguards or prompt adjustments to mitigate 'schema_validation_failures_count'"
+        in s["PROPOSED_SOLUTION"]
         for s in suggestions
     )
 
@@ -378,12 +392,18 @@ def test_analyze_self_improvement_plan_high_token_consumption(
         "code_quality": {"ruff_issues_count": 0},
         "security": {"bandit_issues_count": 0},
         "performance_efficiency": {
-            "token_usage_stats": {
-                "persona_token_usage": {"TestPersona": 3000, "OtherPersona": 500}
-            },
-            "debate_efficiency_summary": {
-                "persona_token_breakdown": {"TestPersona": 3000, "OtherPersona": 500}
-            },
+            "total_tokens": 3500,  # Total tokens
+            "total_cost_usd": 0.001,
+            "persona_token_usage": {"TestPersona": 3000, "OtherPersona": 500},
+            "token_efficiency": 3500,  # Assuming 1 suggestion, so 3500 tokens/suggestion
+        },
+        "debate_efficiency": {  # Added for consistency
+            "num_turns": 2,
+            "malformed_blocks_count": 0,
+            "conflict_resolution_attempts": 0,
+            "unresolved_conflict": False,
+            "average_turn_tokens": 1750.0,
+            "persona_token_breakdown": {"TestPersona": 3000, "OtherPersona": 500},
         },
         "robustness": {"schema_validation_failures_count": 0},
         "maintainability": {
@@ -398,7 +418,10 @@ def test_analyze_self_improvement_plan_high_token_consumption(
             "historical_total_suggestions_processed": 0,
             "historical_successful_suggestions": 0,
             "historical_schema_validation_failures": {},
+            "successful_patterns": {},  # Added for consistency
         },
+        "configuration_analysis": {},  # Added for consistency
+        "deployment_robustness": {},  # Added for consistency
     }
     mock_llm_provider.generate.return_value = (
         json.dumps(

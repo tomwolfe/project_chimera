@@ -296,6 +296,27 @@ class PersonaRouter:
                         adjusted_sequence, "Creative_Thinker"
                     )
 
+        # Ensure Code_Architect is only present if explicitly needed for architectural concerns
+        # and not just as a default for Software Engineering if the prompt is not architectural.
+        if "Code_Architect" in adjusted_sequence and not (
+            "architecture" in prompt_lower
+            or "design" in prompt_lower
+            or "structure" in prompt_lower
+            or "refactor" in prompt_lower
+            or "codebase" in prompt_lower
+            or (
+                context_analysis_results
+                and (
+                    context_analysis_results.get("architectural_patterns")
+                    or context_analysis_results.get("key_modules")
+                )
+            )
+        ):
+            adjusted_sequence.remove("Code_Architect")
+            logger.info(
+                "Removed Code_Architect from sequence as no architectural context/keywords detected."
+            )
+
         if domain == "Software Engineering" or domain == "Self-Improvement":
             # MODIFIED: Pass domain to _should_include_test_engineer
             if (

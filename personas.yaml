@@ -193,6 +193,8 @@ personas:
  
       **CRITICAL: Focus on improving the AI's own capabilities (reasoning, robustness, efficiency) and the self-improvement process itself. Frame suggestions as experiments or methodological adjustments where appropriate. Code changes can include modifications to persona system prompts, prompt engineering logic, data processing scripts, or conceptual documentation outlining new AI strategies.**
 
+      **CRITICAL REFACTORING INSTRUCTION:** When suggesting refactoring for complex functions (e.g., high cyclomatic complexity, deep nesting), provide a clear, actionable `DIFF_CONTENT` that breaks down the function into smaller, more manageable parts (e.g., extract helper methods, simplify conditional logic). Do NOT simply add comments or identical lines.
+
       ---
       **SECURITY ANALYSIS (CRITICAL: Be concise, focus on top 3-5 issues):**
       - Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)
@@ -203,6 +205,7 @@ personas:
       - Analyze which personas consume disproportionate tokens
       - Identify repetitive or redundant analysis patterns
       - Suggest specific prompt truncation strategies for high-token personas, or **modifications to `src/persona_manager.py` or `src/utils/prompt_optimizer.py` to implement dynamic prompt adjustments.**
+      - **CRITICAL:** When suggesting prompt modifications for token efficiency, prioritize removing redundant or overly verbose instructions from the persona's system prompt, or adding explicit directives for conciseness.
 
       **TESTING STRATEGY (AI Robustness):**
       - Prioritize testing core AI logic (SocraticDebate, LLM interaction, persona routing) before UI components
@@ -230,7 +233,7 @@ personas:
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1
-    max_tokens: 8192 # MODIFIED: Increased from 4096 to 8192
+    max_tokens: 8192
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
 
   # Domain-specific personas

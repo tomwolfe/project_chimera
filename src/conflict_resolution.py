@@ -14,12 +14,10 @@ from src.models import (
     ContextAnalysisOutput,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
-    SuggestionItem, # NEW: Import SuggestionItem for conflict detection
+    SuggestionItem,  # NEW: Import SuggestionItem for conflict detection
 )
 from src.utils.output_parser import LLMOutputParser
-from src.llm_tokenizers.gemini_tokenizer import (
-    GeminiTokenizer,
-)
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError
@@ -55,9 +53,18 @@ class ConflictResolutionManager:
         logger.info("Attempting to detect conflict type.")
 
         # Look for fundamental disagreements in key areas
-        security_auditor_output = next((t["output"] for t in debate_history if t["persona"] == "Security_Auditor"), None)
-        code_architect_output = next((t["output"] for t in debate_history if t["persona"] == "Code_Architect"), None)
-        devils_advocate_output = next((t["output"] for t in debate_history if t["persona"] == "Devils_Advocate"), None)
+        security_auditor_output = next(
+            (t["output"] for t in debate_history if t["persona"] == "Security_Auditor"),
+            None,
+        )
+        code_architect_output = next(
+            (t["output"] for t in debate_history if t["persona"] == "Code_Architect"),
+            None,
+        )
+        devils_advocate_output = next(
+            (t["output"] for t in debate_history if t["persona"] == "Devils_Advocate"),
+            None,
+        )
 
         # Check for SECURITY_VS_ARCHITECTURE conflict
         if security_auditor_output and code_architect_output:
@@ -66,12 +73,15 @@ class ConflictResolutionManager:
             architect_suggestions = code_architect_output.get("SUGGESTIONS", [])
 
             security_problems_identified = [
-                s.get("PROBLEM", "").lower() for s in security_suggestions
+                s.get("PROBLEM", "").lower()
+                for s in security_suggestions
                 if s.get("AREA", "").lower() == "security"
             ]
             architect_solutions_proposed = [
-                s.get("PROPOSED_SOLUTION", "").lower() for s in architect_suggestions
-                if s.get("AREA", "").lower() == "architecture" or s.get("AREA", "").lower() == "maintainability"
+                s.get("PROPOSED_SOLUTION", "").lower()
+                for s in architect_suggestions
+                if s.get("AREA", "").lower() == "architecture"
+                or s.get("AREA", "").lower() == "maintainability"
             ]
 
             # If security issues are identified but not adequately addressed by architect's solutions
@@ -162,9 +172,7 @@ class ConflictResolutionManager:
         # Strategy 1: Attempt to parse if the latest output is a string that looks like JSON
         if isinstance(latest_output, str):
             try:
-                parsed_latest_output = json.loads(
-                    latest_output
-                )
+                parsed_latest_output = json.loads(latest_output)
                 logger.info(
                     f"ConflictResolutionManager: Successfully parsed string output from {latest_persona_name}."
                 )
@@ -189,37 +197,59 @@ class ConflictResolutionManager:
         logger.info(f"Detected conflict type: {conflict_type}")
 
         if conflict_type == "SECURITY_VS_ARCHITECTURE":
-            logger.info("Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict.")
+            logger.info(
+                "Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict."
+            )
             # Example logic: Prioritize security concerns, ask for architectural solutions that address them
             resolution_summary = "Security concerns were identified by Security_Auditor but not adequately addressed by Code_Architect. Prioritizing security in the resolution."
             # This would typically involve another LLM call to synthesize a solution that balances both.
             # For now, we'll synthesize from history, but with a specific summary.
-            synthesized_output = self._synthesize_from_history(latest_output, debate_history[:-1], resolution_summary)
+            synthesized_output = self._synthesize_from_history(
+                latest_output, debate_history[:-1], resolution_summary
+            )
             if synthesized_output:
                 return {
                     "resolution_strategy": "security_vs_architecture_synthesis",
                     "resolved_output": synthesized_output,
                     "resolution_summary": resolution_summary,
-                    "malformed_blocks": [{"type": "SECURITY_VS_ARCHITECTURE_RESOLVED", "message": resolution_summary}],
+                    "malformed_blocks": [
+                        {
+                            "type": "SECURITY_VS_ARCHITECTURE_RESOLVED",
+                            "message": resolution_summary,
+                        }
+                    ],
                 }
             else:
-                logger.warning("SECURITY_VS_ARCHITECTURE synthesis failed. Falling back to general resolution.")
+                logger.warning(
+                    "SECURITY_VS_ARCHITECTURE synthesis failed. Falling back to general resolution."
+                )
 
         elif conflict_type == "FUNDAMENTAL_FLAW_DETECTION":
-            logger.info("Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict.")
+            logger.info(
+                "Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict."
+            )
             # Example logic: If Devils_Advocate found a fundamental flaw, it needs to be addressed directly.
             resolution_summary = "Devils_Advocate identified a fundamental flaw. The resolution focuses on addressing this core issue."
             # This might involve re-prompting a persona to fix the flaw, or a synthesis that explicitly incorporates the flaw.
-            synthesized_output = self._synthesize_from_history(latest_output, debate_history[:-1], resolution_summary)
+            synthesized_output = self._synthesize_from_history(
+                latest_output, debate_history[:-1], resolution_summary
+            )
             if synthesized_output:
                 return {
                     "resolution_strategy": "fundamental_flaw_resolution_synthesis",
                     "resolved_output": synthesized_output,
                     "resolution_summary": resolution_summary,
-                    "malformed_blocks": [{"type": "FUNDAMENTAL_FLAW_RESOLVED", "message": resolution_summary}],
+                    "malformed_blocks": [
+                        {
+                            "type": "FUNDAMENTAL_FLAW_RESOLVED",
+                            "message": resolution_summary,
+                        }
+                    ],
                 }
             else:
-                logger.warning("FUNDAMENTAL_FLAW_DETECTION synthesis failed. Falling back to general resolution.")
+                logger.warning(
+                    "FUNDAMENTAL_FLAW_DETECTION synthesis failed. Falling back to general resolution."
+                )
         else:
             logger.info("Applying general conflict resolution strategy.")
             # Strategy 2: Synthesize from previous valid turns (General Disagreement)
@@ -266,14 +296,21 @@ class ConflictResolutionManager:
         )
 
     def _synthesize_from_history(
-        self, problematic_output: Any, valid_turns: List[Dict[str, Any]], custom_summary: Optional[str] = None
+        self,
+        problematic_output: Any,
+        valid_turns: List[Dict[str, Any]],
+        custom_summary: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Attempts to synthesize a coherent output from previous valid turns.
         """
         if valid_turns:
             last_valid_output = valid_turns[-1]["output"]
-            resolution_summary = custom_summary if custom_summary else f"Conflict detected after {valid_turns[-1]['persona']}'s turn. Automated synthesis from previous turns was attempted. Original problematic output: {str(problematic_output)[:100]}..."
+            resolution_summary = (
+                custom_summary
+                if custom_summary
+                else f"Conflict detected after {valid_turns[-1]['persona']}'s turn. Automated synthesis from previous turns was attempted. Original problematic output: {str(problematic_output)[:100]}..."
+            )
 
             if isinstance(last_valid_output, dict):
                 synthesized = last_valid_output.copy()

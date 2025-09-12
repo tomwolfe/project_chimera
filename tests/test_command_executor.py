@@ -126,7 +126,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command, check=True)
 
         self.mock_run.assert_called_once_with(
-            command,  # FIX: No sys.executable -m for 'echo'
+            command,  # 'echo' is not a Python tool, so no sys.executable -m
             capture_output=True,
             text=True,
             check=True,

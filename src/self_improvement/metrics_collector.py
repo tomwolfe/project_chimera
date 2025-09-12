@@ -4,7 +4,7 @@ import json
 import ast
 import logging
 from typing import Dict, Any, List, Tuple, Union, Optional
-from collections import defaultdict # NEW: Import defaultdict
+from collections import defaultdict  # NEW: Import defaultdict
 from pathlib import Path
 import re
 import yaml
@@ -77,8 +77,8 @@ class FocusedMetricsCollector:
         self.persona_manager = persona_manager
         self.content_validator = content_validator
         self.codebase_path = (
-            PROJECT_ROOT
-        )  # Assuming the analyst operates from the project root
+            PROJECT_ROOT  # Assuming the analyst operates from the project root
+        )
         self.collected_metrics: Dict[str, Any] = {}
         self.reasoning_quality_metrics: Dict[str, Any] = {}
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
@@ -919,10 +919,16 @@ class FocusedMetricsCollector:
             record_success = record.get("success", False)
             prompt_analysis = record.get("prompt_analysis", {})
             persona_sequence = record.get("persona_sequence", [])
-            code_changes_suggested = record.get("CODE_CHANGES_SUGGESTED", []) # This field name is from the suggested change, might need adjustment if it's nested differently in actual records.
+            code_changes_suggested = record.get(
+                "CODE_CHANGES_SUGGESTED", []
+            )  # This field name is from the suggested change, might need adjustment if it's nested differently in actual records.
 
             # Pattern 1: Successful attempts with specific prompt structure
-            if prompt_analysis.get("reasoning_quality_metrics", {}).get("indicators", {}).get("structured_output_request", False):
+            if (
+                prompt_analysis.get("reasoning_quality_metrics", {})
+                .get("indicators", {})
+                .get("structured_output_request", False)
+            ):
                 total_attempts_per_pattern["structured_output_request"] += 1
                 if record_success:
                     successful_attempts_per_pattern["structured_output_request"] += 1
@@ -931,7 +937,9 @@ class FocusedMetricsCollector:
             if persona_sequence and persona_sequence[0] == "Self_Improvement_Analyst":
                 total_attempts_per_pattern["self_improvement_analyst_first"] += 1
                 if record_success:
-                    successful_attempts_per_pattern["self_improvement_analyst_first"] += 1
+                    successful_attempts_per_pattern[
+                        "self_improvement_analyst_first"
+                    ] += 1
 
             # Pattern 3: Successful attempts with specific code changes (presence of any code changes)
             # Assuming CODE_CHANGES_SUGGESTED is a list of dicts, and we check if it's non-empty
@@ -944,9 +952,11 @@ class FocusedMetricsCollector:
         pattern_success_rates = {}
         for pattern, total_count in total_attempts_per_pattern.items():
             if total_count > 0:
-                pattern_success_rates[pattern] = successful_attempts_per_pattern[pattern] / total_count
+                pattern_success_rates[pattern] = (
+                    successful_attempts_per_pattern[pattern] / total_count
+                )
             else:
-                pattern_success_rates[pattern] = 0.0 # No attempts for this pattern
+                pattern_success_rates[pattern] = 0.0  # No attempts for this pattern
 
         return pattern_success_rates
 
@@ -962,7 +972,7 @@ class FocusedMetricsCollector:
                 "historical_total_suggestions_processed": 0,
                 "historical_successful_suggestions": 0,
                 "historical_schema_validation_failures": {},
-                "successful_patterns": {}, # NEW: Add successful_patterns
+                "successful_patterns": {},  # NEW: Add successful_patterns
             }
 
         try:
@@ -1012,7 +1022,9 @@ class FocusedMetricsCollector:
 
             # NEW: Call identify_successful_patterns
             pattern_success_rates = self.identify_successful_patterns(records)
-            logger.info(f"Successful patterns: {pattern_success_rates}") # Use logger.info
+            logger.info(
+                f"Successful patterns: {pattern_success_rates}"
+            )  # Use logger.info
 
             return {
                 "total_attempts": total,
@@ -1024,7 +1036,7 @@ class FocusedMetricsCollector:
                 "historical_schema_validation_failures": dict(
                     schema_validation_failures_across_history
                 ),
-                "successful_patterns": pattern_success_rates, # NEW: Include in return
+                "successful_patterns": pattern_success_rates,  # NEW: Include in return
             }
         except Exception as e:
             logger.error(f"Error analyzing historical data: {e}")
@@ -1036,7 +1048,7 @@ class FocusedMetricsCollector:
                 "historical_total_suggestions_processed": 0,
                 "historical_successful_suggestions": 0,
                 "historical_schema_validation_failures": {},
-                "successful_patterns": {}, # NEW: Add successful_patterns
+                "successful_patterns": {},  # NEW: Add successful_patterns
             }
 
     @staticmethod

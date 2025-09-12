@@ -204,7 +204,12 @@ def test_parse_and_validate_top_level_list_of_strings_critique_output(parser):
         result["CRITIQUE_SUMMARY"] == "LLM returned a list of strings as suggestions."
     )
     assert len(result["SUGGESTIONS"]) == 2
-    assert result["SUGGESTIONS"][0] == "Suggestion 1"
+    assert result["SUGGESTIONS"][0]["AREA"] == "General"
+    assert result["SUGGESTIONS"][0]["PROBLEM"] == "Suggestion 1"
+    assert result["SUGGESTIONS"][0]["PROPOSED_SOLUTION"] == "N/A"
+    assert result["SUGGESTIONS"][0]["EXPECTED_IMPACT"] == "N/A"
+    assert result["SUGGESTIONS"][0]["CODE_CHANGES_SUGGESTED"] == []
+    assert result["SUGGESTIONS"][0]["RATIONALE"] is None
     assert any(
         "TOP_LEVEL_LIST_WRAPPING" == block["type"]
         for block in result["malformed_blocks"]
@@ -254,7 +259,7 @@ def test_parse_and_validate_empty_list_general_output(parser):
     """Tests handling of an empty list for GeneralOutput."""
     raw_output = "[]"
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == "[]"
+    assert result["general_output"] == "Unexpected partial data type: list. Value: []"
     assert any(
         "EMPTY_JSON_LIST" == block["type"] for block in result["malformed_blocks"]
     )

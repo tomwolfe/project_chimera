@@ -106,6 +106,7 @@ except Exception as e:
     st.error(f"❌ Application configuration error: {e}")
     st.stop()
 
+
 # NEW: Initialize the global logger object using st.cache_resource for robustness
 @st.cache_resource
 def get_app_logger():
@@ -114,28 +115,43 @@ def get_app_logger():
         configured_logger = setup_structured_logging()
         if configured_logger is None:
             # Fallback to a basic logger if setup_structured_logging returns None
-            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+            logging.basicConfig(
+                level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+            )
             fallback_logger = logging.getLogger(__name__)
-            fallback_logger.warning("setup_structured_logging returned None. Using basic fallback logger.")
+            fallback_logger.warning(
+                "setup_structured_logging returned None. Using basic fallback logger."
+            )
             return fallback_logger
         return configured_logger
     except Exception as e:
         st.error(f"❌ Error setting up structured logging: {e}")
         # Fallback to a basic logger if setup fails
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
         fallback_logger = logging.getLogger(__name__)
-        fallback_logger.exception("Failed to set up structured logging. Using basic fallback logger.")
+        fallback_logger.exception(
+            "Failed to set up structured logging. Using basic fallback logger."
+        )
         return fallback_logger
+
 
 logger = get_app_logger()
 
 # Add a quick check to ensure logger is not None, though st.cache_resource should prevent this
 if logger is None:
-    st.error("❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py.")
+    st.error(
+        "❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py."
+    )
     # As a last resort, create a very basic logger if all else fails
-    logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(
+        level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     logger = logging.getLogger(__name__)
-    logger.critical("Final fallback logger activated due to primary and secondary logger initialization failure.")
+    logger.critical(
+        "Final fallback logger activated due to primary and secondary logger initialization failure."
+    )
 
 
 # REMOVED: DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})

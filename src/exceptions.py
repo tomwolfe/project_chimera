@@ -66,12 +66,24 @@ class LLMProviderError(ChimeraError):
         provider_error_code: Any = None,
         details: Optional[dict] = None,
         original_exception: Optional[Exception] = None,
+        error_code: str = "LLM_PROVIDER_ERROR",
     ):
         full_details = (details or {}).copy()
-        full_details["provider_error_code"] = provider_error_code
+        if provider_error_code is not None:
+            full_details["provider_error_code"] = provider_error_code
+            # If provider_error_code is more specific, use it as the primary error_code
+            # Otherwise, use the default "LLM_PROVIDER_ERROR"
+            final_error_code = (
+                provider_error_code
+                if isinstance(provider_error_code, str)
+                else error_code
+            )
+        else:
+            final_error_code = error_code
+
         super().__init__(
             message,
-            error_code="LLM_PROVIDER_ERROR",
+            error_code=final_error_code,
             details=full_details,
             original_exception=original_exception,
         )
