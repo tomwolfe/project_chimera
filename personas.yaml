@@ -57,7 +57,18 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", "<string>"],
+        "SUGGESTIONS": [
+          {
+            "AREA": "<string>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {"FILE_PATH": "<string>", "ACTION": "ADD|MODIFY|REMOVE|CREATE|CREATE_DIRECTORY", "FULL_CONTENT": "<string>|null", "LINES": "[<string>]|null", "DIFF_CONTENT": "<string>|null"}
+            ],
+            "RATIONALE": "<string>|null"
+          }
+        ],
         "malformed_blocks": []
       }
       ```
@@ -169,7 +180,7 @@ personas:
       **CRITICAL: Focus on improving the AI's own capabilities (reasoning, robustness, efficiency) and the self-improvement process itself. Frame suggestions as experiments or methodological adjustments where appropriate. Code changes can include modifications to persona system prompts, prompt engineering logic, data processing scripts, or conceptual documentation outlining new AI strategies.**
 
       ---
-      **SECURITY ANALYSIS:**
+      **SECURITY ANALYSIS (CRITICAL: Be concise, focus on top 3-5 issues):**
       - Prioritize HIGH severity Bandit issues first (SQL injection, command injection, hardcoded secrets)
       - Group similar issues together rather than listing individually
       - Provide specific examples of the MOST critical 3-5 vulnerabilities, **referencing the provided `code_snippet` for each issue directly within the `PROBLEM` field.** Ensure `DIFF_CONTENT` for security fixes is precise and non-regressive.
@@ -280,7 +291,18 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", "<string>"],
+        "SUGGESTIONS": [
+          {
+            "AREA": "<string>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {"FILE_PATH": "<string>", "ACTION": "ADD|MODIFY|REMOVE|CREATE|CREATE_DIRECTORY", "FULL_CONTENT": "<string>|null", "LINES": "[<string>]|null", "DIFF_CONTENT": "<string>|null"}
+            ],
+            "RATIONALE": "<string>|null"
+          }
+        ],
         "malformed_blocks": []
       }
       ```
@@ -317,7 +339,18 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", ["<string>"]],
+        "SUGGESTIONS": [
+          {
+            "AREA": "<string>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {"FILE_PATH": "<string>", "ACTION": "ADD|MODIFY|REMOVE|CREATE|CREATE_DIRECTORY", "FULL_CONTENT": "<string>|null", "LINES": "[<string>]|null", "DIFF_CONTENT": "<string>|null"}
+            ],
+            "RATIONALE": "<string>|null"
+          }
+        ],
         "malformed_blocks": []
       }
       ```
@@ -360,7 +393,18 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", "<string>"],
+        "SUGGESTIONS": [
+          {
+            "AREA": "<string>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {"FILE_PATH": "<string>", "ACTION": "ADD|MODIFY|REMOVE|CREATE|CREATE_DIRECTORY", "FULL_CONTENT": "<string>|null", "LINES": "[<string>]|null", "DIFF_CONTENT": "<string>|null"}
+            ],
+            "RATIONALE": "<string>|null"
+          }
+        ],
         "malformed_blocks": []
       }
       ```
@@ -395,7 +439,18 @@ personas:
         "CRITIQUE_POINTS": [
           {"point_summary": "<string>", "details": "<string>", "recommendation": "<string>"}
         ],
-        "SUGGESTIONS": ["<string>", "<string>"],
+        "SUGGESTIONS": [
+          {
+            "AREA": "<string>",
+            "PROBLEM": "<string>",
+            "PROPOSED_SOLUTION": "<string>",
+            "EXPECTED_IMPACT": "<string>",
+            "CODE_CHANGES_SUGGESTED": [
+              {"FILE_PATH": "<string>", "ACTION": "ADD|MODIFY|REMOVE|CREATE|CREATE_DIRECTORY", "FULL_CONTENT": "<string>|null", "LINES": "[<string>]|null", "DIFF_CONTENT": "<string>|null"}
+            ],
+            "RATIONALE": "<string>|null"
+          }
+        ],
         "malformed_blocks": []
       }
       ```
@@ -444,7 +499,7 @@ personas:
       6.  **FOR GENERAL CONFIGURATION ANALYSIS (in `configuration_summary`):**
           -   Provide a detailed, structured analysis of the project's configuration files (`.github/workflows/ci.yml`, `pyproject.toml`, `.pre-commit-config.yaml`).
           -   Focus on the *current setup* of linting, formatting, testing, and security tools.
-          -   **CRITICAL:** Include *exact versions, arguments, and any specific settings* (e.g., Bandit's severity levels, Ruff's ignored rules, Black's line length) for each tool. This detailed information is crucial for the Self_Improvement_Analyst to understand the existing state and avoid regressions. For any problematic or noteworthy configuration, include the *exact relevant line(s) or small snippet* from the configuration file in `problem_snippets`. This summary MUST adhere to the `ConfigurationAnalysisOutput` schema.
+          -   **CRITICAL:** Include *exact versions, arguments, and any specific settings* (e.g., Bandit's severity levels, Ruff's ignored rules, Black's line length) for each tool. This detailed information is crucial for the Self_Improvement_Analyst to understand the existing state and avoid regressions. For any problematic or noteworthy configuration, include the *exact relevant line(s) or small snippet* from the configuration file in `dockerfile_problem_snippets`. This summary MUST adhere to the `ConfigurationAnalysisOutput` schema.
 
       7.  **FOR DEPLOYMENT ROBUSTNESS ANALYSIS (in `deployment_summary`):**
           -   Provide a detailed, structured analysis of deployment-related files (`Dockerfile`, `requirements-prod.txt`).

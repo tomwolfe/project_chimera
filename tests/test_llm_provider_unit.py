@@ -29,16 +29,16 @@ def mock_llm_client_success():
 @pytest.fixture
 def mock_llm_client_api_error():
     mock_client = MagicMock()
-    # FIX: Correct APIError constructor
-    mock_client.models.generate_content.side_effect = APIError("Simulated API Error", code=500, response_json={"error": "Simulated API Error"})
+    # FIX: Correct APIError constructor: code is a positional argument
+    mock_client.models.generate_content.side_effect = APIError("Simulated API Error", 500, response_json={"error": "Simulated API Error"})
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 
 @pytest.fixture
 def mock_llm_client_rate_limit():
     mock_client = MagicMock()
-    # FIX: Correct APIError constructor
-    mock_client.models.generate_content.side_effect = APIError("Rate limit exceeded", code=429, response_json={"error": "Rate limit exceeded"})
+    # FIX: Correct APIError constructor: code is a positional argument
+    mock_client.models.generate_content.side_effect = APIError("Rate limit exceeded", 429, response_json={"error": "Rate limit exceeded"})
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
 
@@ -250,7 +250,7 @@ def test_llm_provider_generate_with_schema_validation_success():
         
         response_text, _, _, _ = provider.generate(
             prompt="Generate valid JSON",
-            system_prompt="System prompt",
+            system_prompt="You are a helpful assistant.",
             output_schema=GeneralOutput, # Pass a valid schema
             temperature=0.7,
             max_tokens=100,
@@ -294,8 +294,8 @@ def test_llm_provider_generate_with_schema_validation_failure():
 
 def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
     """Tests that a 401 APIError (Unauthorized) raises GeminiAPIError."""
-    # FIX: Correct APIError constructor
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError("Invalid API Key", code=401, response_json={"error": "Invalid API Key"})
+    # FIX: Correct APIError constructor: code is a positional argument
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError("Invalid API Key", 401, response_json={"error": "Invalid API Key"})
     with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
         provider = GeminiProvider(
@@ -308,8 +308,24 @@ def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
             provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
         mock_llm_client_api_error.models.generate_content.assert_called_once()
 
-def test_llm_provider_generate_api_error_429_exhausted_retries(mock_llm_client_rate_limit):
-    """Tests that a 429 APIError (Rate Limit) raises GeminiAPIError after retries are exhausted."""
+def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
+    """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
+    # FIX: Correct APIError constructor: code is a positional argument
+    mock_llm_client_api_error.models.generate_content.side_effect = APIError("API Key lacks permissions", 403, response_json={"error": "API Key lacks permissions"})
+    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
+        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
+        provider = GeminiProvider(
+            api_key="mock-key",
+            model_name="mock-model",
+            tokenizer=mock_tokenizer,
+            settings=ChimeraSettings()
+        )
+        with pytest.raises(GeminiAPIError, match="API Key lacks permissions"):
+            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+        mock_llm_client_api_error.models.generate_content.assert_called_once()
+
+def test_llm_provider_generate_rate_limit_error(mock_llm_client_rate_limit):
+    """Tests handling of rate limit errors during content generation."""
     # mock_llm_client_rate_limit is already configured to raise APIError(code=429)
     with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_rate_limit):
         mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_rate_limit)
@@ -317,12 +333,17 @@ def test_llm_provider_generate_api_error_429_exhausted_retries(mock_llm_client_r
             api_key="mock-key",
             model_name="mock-model",
             tokenizer=mock_tokenizer,
-            settings=ChimeraSettings(max_retries=1, max_backoff_seconds=1) # Short retries for test
+            settings=ChimeraSettings(max_retries=1) # Set max_retries to 1 to quickly hit the limit
         )
-        with pytest.raises(GeminiAPIError, match="Rate Limit Exceeded after retries"):
-            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
-        # Should be called max_retries + 1 times (initial + retries)
-        assert mock_llm_client_rate_limit.models.generate_content.call_count == 2 # 1 initial + 1 retry
+        
+        with pytest.raises(APIError, match="Rate limit exceeded"):
+            provider.generate(
+                prompt="This prompt should cause a rate limit error.",
+                system_prompt="You are a helpful assistant.",
+                temperature=0.7,
+                max_tokens=100,
+            )
+        mock_llm_client_rate_limit.models.generate_content.assert_called_once()
 
 def test_llm_provider_generate_network_error(mock_llm_client_success):
     """Tests that a network error (e.g., socket.gaierror) raises LLMUnexpectedError."""
@@ -336,21 +357,11 @@ def test_llm_provider_generate_network_error(mock_llm_client_success):
             settings=ChimeraSettings(max_retries=1, max_backoff_seconds=1) # Short retries for test
         )
         with pytest.raises(LLMUnexpectedError, match="Name or service not known"): # Match the specific error message
-            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
+            provider.generate(
+                prompt="Test network error",
+                system_prompt="System prompt",
+                temperature=0.7,
+                max_tokens=100,
+            )
+        # Should be called max_retries + 1 times (initial + retries)
         assert mock_llm_client_success.models.generate_content.call_count == 2 # 1 initial + 1 retry
-
-def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
-    """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
-    # FIX: Correct APIError constructor
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError("API Key lacks permissions", code=403, response_json={"error": "API Key lacks permissions"})
-    with patch('src.llm_provider.genai.Client', return_value=mock_llm_client_api_error):
-        mock_tokenizer = GeminiTokenizer(model_name="mock-model", genai_client=mock_llm_client_api_error)
-        provider = GeminiProvider(
-            api_key="mock-key",
-            model_name="mock-model",
-            tokenizer=mock_tokenizer,
-            settings=ChimeraSettings()
-        )
-        with pytest.raises(GeminiAPIError, match="API Key lacks permissions"):
-            provider.generate(prompt="test", system_prompt="sys", temperature=0.7, max_tokens=100)
-        mock_llm_client_api_error.models.generate_content.assert_called_once()

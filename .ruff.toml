@@ -1,0 +1,78 @@
+# .ruff.toml
+# Basic Ruff configuration to enforce common Python style guidelines.
+# This configuration aims to address the 279 reported issues.
+
+# Global settings
+line-length = 88
+indent-width = 4
+
+# Select the rules to enable. You can customize this list.
+# 'E' and 'F' codes are from pycodestyle and Pyflakes respectively.
+# 'I' codes are from isort.
+# 'UP' codes are from pyupgrade.
+# 'C' codes are from flake8-comprehensions.
+# 'B' codes are from flake8-bugbear.
+# 'SIM' codes are from flake8-simplify.
+# 'TCH' codes are from flake8-type-checking.
+# 'PL' codes are from pylint.
+
+select = [
+    "E", # pycodestyle errors
+    "F", # Pyflakes
+    "W", # pycodestyle warnings
+    "C90", # pycodestyle warnings
+    "I", # isort
+    "N", # pep8-naming
+    "D", # pydocstyle
+    "UP", # pyupgrade
+    "ANN", # flake8-annotations
+    "ASYNC", # flake8-async
+    "B", # flake8-bugbear
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "PL", # pylint
+]
+
+# Ignore specific rules or files if necessary.
+# For example, ignore unused imports in __init__.py files
+# ignore = [
+#     "E501", # Line too long (if 88 is too restrictive for some files)
+# ]
+
+# Formatting settings
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = true
+
+# Upgrade checking configuration
+[upgrade-checking]
+target-version = "py310" # Adjust based on your project's minimum Python version
+
+# Linting configuration
+[lint]
+# Exclude directories and files from linting.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pycache__", # Added common cache dir
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+# Enable the following rules for more strict checks.
+[lint.per-file-ignores]
+"__init__.py" = ["F401"] # Ignore unused imports in __init__.py
+"tests/*" = ["S101"] # Allow assert statements in tests

@@ -893,13 +893,13 @@ class FocusedMetricsCollector:
         failure_modes_count = defaultdict(int)
         
         for record in records:
-            if not record.get("success", False):
+            if not record.get("current_run_outcome", {}).get("is_successful", True): # Check the actual success flag
                 for suggestion in record.get("suggestions", []):
                     for block in suggestion.get("malformed_blocks", []):
                         failure_modes_count[block.get("type", "UNKNOWN_MALFORMED_BLOCK")] += 1
                 
                 for category, changes in record.get("performance_changes", {}).items():
-                    if "schema_validation_failures_count" in changes and changes["schema_validation_failures_count"].get("after", 0) > changes["schema_validation_failures_count"].get("before", 0):
+                    if "schema_validation_failures" in changes and changes["schema_validation_failures"].get("after", 0) > changes["schema_validation_failures"].get("before", 0): # Check the correct key
                         failure_modes_count["schema_validation_failures_count"] += 1
                     if "token_budget_exceeded_count" in changes and changes["token_budget_exceeded_count"].get("after", 0) > changes["token_budget_exceeded_count"].get("before", 0):
                         failure_modes_count["token_budget_exceeded_count"] += 1

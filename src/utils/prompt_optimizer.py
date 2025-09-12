@@ -69,7 +69,7 @@ class PromptOptimizer:
         # For other prompts, a more general approach is needed.
 
         optimized_prompt_parts = []
-        current_tokens_after_optimization = 0
+        current_tokens_used = 0
 
         # Define sections and their priority for truncation (lower index = higher priority to keep)
         # This is a heuristic and can be refined.

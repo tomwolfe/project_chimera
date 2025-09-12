@@ -690,10 +690,16 @@ class LLMOutputParser:
                     self.logger.warning(
                         "LLM returned a list of strings for CritiqueOutput. Assuming they are suggestions."
                     )
+                    # Convert list of strings to list of SuggestionItem objects
+                    processed_suggestions = []
+                    for item_str in parsed_data:
+                        if isinstance(item_str, str):
+                            processed_suggestions.append(SuggestionItem(AREA="General", PROBLEM=item_str, PROPOSED_SOLUTION="N/A", EXPECTED_IMPACT="N/A").model_dump(by_alias=True))
+                        # Handle non-string items if necessary, or log as malformed
                     data_to_validate = {
                         "CRITIQUE_SUMMARY": "LLM returned a list of strings as suggestions.",
                         "CRITIQUE_POINTS": [],
-                        "SUGGESTIONS": parsed_data,
+                        "SUGGESTIONS": processed_suggestions,
                         "malformed_blocks": malformed_blocks_list,
                     }
                 elif all(isinstance(item, dict) for item in parsed_data):

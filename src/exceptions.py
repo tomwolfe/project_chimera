@@ -1,4 +1,8 @@
 # src/exceptions.py
+"""
+Custom exceptions for the Project Chimera application.
+"""
+
 import datetime
 from typing import Optional, Dict, Any
 import traceback  # Import traceback
@@ -7,7 +11,7 @@ import traceback  # Import traceback
 class ChimeraError(Exception):
     """Base exception for all Chimera errors with standardized structure."""
 
-    # FIX: Added error_code parameter and explicitly stored message for __str__
+    # FIX: Added error_code parameter and explicitly stored message for __str__ and to_dict
     def __init__(
         self,
         message: str,
@@ -66,7 +70,7 @@ class LLMProviderError(ChimeraError):
         full_details = (details or {}).copy()
         full_details["provider_error_code"] = provider_error_code
         super().__init__(
-            message, # FIX: Removed 'error_code=' as it's passed positionally to base Exception
+            message,
             error_code="LLM_PROVIDER_ERROR",
             details=full_details,
             original_exception=original_exception,

@@ -22,7 +22,6 @@ from src.models import ( # All these are used for type hints or schema validatio
     ContextAnalysisOutput,
     CritiqueOutput,
     GeneralOutput,
-    ConflictReport,
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     SuggestionItem, # NEW: Import SuggestionItem
@@ -92,31 +91,6 @@ def get_codebase_scanner_instance():
     return CodebaseScanner()
 
 
-# --- NEW CONSTANTS FOR SESSION MANAGEMENT AND RETRIES ---
-# SESSION_TIMEOUT_SECONDS = 1800  # 30 minutes of inactivity # Moved to session_manager
-MAX_DEBATE_RETRIES = 3  # Max retries for the entire debate process if rate limited
-DEBATE_RETRY_DELAY_SECONDS = (
-    5  # Initial delay for debate retries (will be multiplied by attempt number)
-)
-# --- END NEW CONSTANTS ---
-
-# --- INITIALIZE STRUCTURED LOGGING AND GET LOGGER ---
-setup_structured_logging(log_level=logging.INFO)
-logger = logging.getLogger(__name__)
-# --- END LOGGING SETUP ---
-
-# Define the cache directory dynamically based on the environment
-# REMOVED: Old SENTENCE_TRANSFORMER_CACHE_DIR global variable
-# NEW: Use settings_instance for cache directory
-SENTENCE_TRANSFORMER_CACHE_DIR = settings_instance.sentence_transformer_cache_dir
-
-
-st.set_page_config(layout="wide", page_title="Project Chimera Web App")
-st.title("Project Chimera: Socratic Self-Debate")
-st.markdown(
-    "An advanced reasoning engine for complex problem-solving and code generation. This project's core software is open-source and available on [GitHub](https://github.com/tomwolfe/project_chimera)."
-)
-
 # --- MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
 # Grouping prompts by category for better UI organization
 EXAMPLE_PROMPTS = {
@@ -179,7 +153,8 @@ def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
     issues = []
 
-    sanitized = html.escape(prompt)
+    # Apply prompt injection replacements first
+    processed_prompt = prompt
 
     injection_patterns = [
         (
@@ -222,15 +197,19 @@ def sanitize_user_input(prompt: str) -> str:
     MAX_PROMPT_LENGTH = 2000
     if len(prompt) > MAX_PROMPT_LENGTH:
         issues.append(
-            f"Prompt length exceeded ({len(prompt)} > {MAX_PROMPT_LENGTH}). Truncating."
+            f"Prompt length exceeded ({len(processed_prompt)} > {MAX_PROMPT_LENGTH}). Truncating."
         )
-        prompt = prompt[:MAX_PROMPT_LENGTH]
+        processed_prompt = processed_prompt[:MAX_PROMPT_LENGTH]
 
-    for pattern, replacement_tag in injection_patterns:
-        prompt = re.sub(pattern, f"[{replacement_tag}]", prompt)
+    for pattern, replacement_tag in injection_patterns: # Apply replacements
+        processed_prompt = re.sub(pattern, f"[{replacement_tag}]", processed_prompt)
 
+    # Then, apply HTML escaping to prevent XSS
+    sanitized = html.escape(processed_prompt)
+
+    # Finally, apply character repetition sanitization
     sanitized = re.sub(
-        r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r"\1\1\1", prompt
+        r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r"\1\1\1", sanitized
     )
 
     for char_pair in [('"', '"'), ("'", "'"), ("(", ")"), ("{", "}"), ("[", "]")]:
@@ -1337,6 +1316,10 @@ def _run_socratic_debate_process():
             st.session_state.codebase_context = codebase_raw_file_contents_for_debate
             logger.info("Successfully loaded Project Chimera's codebase context for self-analysis.")
         except Exception as e:
+            # Ensure embeddings are cleared if loading fails
+            if st.session_state.context_analyzer:
+                st.session_state.context_analyzer.file_embeddings = {}
+                st.session_state.context_analyzer.raw_file_contents = {}
             st.error(f"❌ Error loading Project Chimera's codebase for self-analysis: {e}")
             logger.error(f"Failed to load own codebase context: {e}", exc_info=True)
             return
@@ -1532,6 +1515,20 @@ def _run_socratic_debate_process():
                 logger.debug(
                     f"Domain selection logic - Final domain_for_run: {domain_for_run}"
                 )
+
+                # NEW: Ensure context_analyzer has the latest raw_file_contents and re-computes embeddings if needed
+                # This is crucial if raw_file_contents were updated by the self-analysis block above
+                # or by file uploads, and the cached context_analyzer instance needs to reflect this.
+                if st.session_state.raw_file_contents and st.session_state.context_analyzer:
+                    st.session_state.context_analyzer.raw_file_contents = codebase_raw_file_contents_for_debate
+                    if not st.session_state.context_analyzer.file_embeddings:
+                        try:
+                            st.session_state.context_analyzer.compute_file_embeddings(codebase_raw_file_contents_for_debate)
+                            logger.info("Re-computed file embeddings for context analyzer in app.py before debate init.")
+                        except Exception as e:
+                            st.error(f"❌ Error re-computing context embeddings: {e}")
+                            logger.error(f"Failed to re-compute context embeddings: {e}", exc_info=True)
+                            return # Abort debate if embeddings fail
 
                 # REMOVED: current_settings = ChimeraSettings(...)
                 # NEW: Use the globally loaded settings_instance
