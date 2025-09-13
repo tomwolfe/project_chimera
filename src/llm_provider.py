@@ -25,10 +25,6 @@ from rich.console import Console
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 
-# --- MODIFICATION: Import PersonaConfig from src.models ---
-# from src.models import PersonaConfig # REMOVED: Unused import
-# --- END MODIFICATION ---
-
 # --- Custom Exceptions ---
 from src.exceptions import (
     ChimeraError,
@@ -393,11 +389,15 @@ class GeminiProvider:
                     config=config,
                 )
 
-                generated_text = ""
-                if response.candidates and len(response.candidates) > 0:
-                    content = response.candidates[0].content
-                    if content and content.parts and len(content.parts) > 0:
-                        generated_text = content.parts[0].text
+                # --- START Fix Malformed Response Handling ---
+                if not response.candidates:
+                    raise LLMUnexpectedError("No candidates in response", details={"response": response})
+
+                if not response.candidates[0].content.parts:
+                    raise LLMUnexpectedError("No content parts in response", details={"response": response})
+                # --- END Fix Malformed Response Handling ---
+
+                generated_text = response.candidates[0].content.parts[0].text
 
                 # NEW: Early schema validation before returning
                 if output_schema:
@@ -405,6 +405,8 @@ class GeminiProvider:
                         cleaned_generated_text = self.output_parser._clean_llm_output(
                             generated_text
                         )
+                        # Attempt to parse the LLM output into the Pydantic model
+                        # Use model_validate_json for Pydantic v2, parse_raw for v1
                         if hasattr(output_schema, "model_validate_json"):
                             output_schema.model_validate_json(cleaned_generated_text)
                         else:
@@ -414,7 +416,7 @@ class GeminiProvider:
                         self._log_with_context(
                             "warning",
                             f"Early schema validation failed (retryable): {ve}",
-                            llm_output_snippet=generated_text[:200],
+                            llm_output_snippet=generated_text[:200]
                         )
                         # Re-raise as SchemaValidationError to trigger the retry logic in the outer loop
                         raise SchemaValidationError(
@@ -486,64 +488,67 @@ class GeminiProvider:
                     )
                     raise e
 
-            except Exception as e:
+            except APIError as e: # Catch APIError specifically
                 error_msg = str(e)
+                error_msg_lower = error_msg.lower()
+                # --- START Fix API Error Handling ---
+                # Ensure response_json is a dictionary
+                response_json = e.response_json if isinstance(e.response_json, dict) else {}
+                # --- END Fix API Error Handling ---
 
-                should_retry = False
-                error_details = {}
-
-                # Specific handling for common critical errors
-                if isinstance(e, APIError):
-                    if e.code == 401:
-                        raise GeminiAPIError(
-                            f"Invalid API Key: {error_msg}",
-                            code=e.code,
-                            response_details=e.response_json,
-                            original_exception=e,
-                        ) from e
-                    elif e.code == 403:
-                        raise GeminiAPIError(
-                            f"API Key lacks permissions: {error_msg}",
-                            code=e.code,
-                            response_details=e.response_json,
-                            original_exception=e,
-                        ) from e
-                    elif e.code == 429:
-                        if attempt >= self.MAX_RETRIES:
-                            raise GeminiAPIError(
-                                f"Rate Limit Exceeded after retries: {error_msg}",
-                                code=e.code,
-                                response_details=e.response_json,
-                                original_exception=e,
-                            ) from e
-                        should_retry = True
-                    elif e.code == 400 and (
-                        "context window exceeded" in error_msg.lower()
-                        or "prompt too large" in error_msg.lower()
-                    ):
-                        self._log_with_context(
-                            "error",
-                            f"LLM context window exceeded: {error_msg}",
-                            **error_details,
-                        )
-                        raise LLMUnexpectedError(
-                            f"LLM context window exceeded: {error_msg}",
-                            original_exception=e,
-                        ) from e
-
-                if isinstance(e, APIError):
-                    error_details["api_error_code"] = getattr(e, "code", None)
-                    if e.code in self.RETRYABLE_ERROR_CODES:
-                        should_retry = True
-                    http_status_code = getattr(e, "response", None)
-                    if http_status_code:
-                        error_details["http_status_code"] = http_status_code.status_code
-                        if http_status_code.status_code in self.RETRYABLE_HTTP_CODES:
-                            should_retry = True
-                elif isinstance(e, socket.gaierror):
+                if e.code == 401:
+                    raise GeminiAPIError(f"Invalid API Key: {error_msg}",
+                                        code=e.code,
+                                        response_details=response_json,
+                                        original_exception=e) from e
+                elif e.code == 403:
+                    raise GeminiAPIError(f"API Key lacks permissions: {error_msg}",
+                                        code=e.code,
+                                        response_details=response_json,
+                                        original_exception=e) from e
+                elif e.code == 429:
+                    if attempt >= self.MAX_RETRIES:
+                        raise GeminiAPIError(f"Rate Limit Exceeded after retries: {error_msg}",
+                                            code=e.code,
+                                            response_details=response_json,
+                                            original_exception=e) from e
+                    should_retry = True # Set should_retry for backoff
+                    error_details["api_error_code"] = e.code
+                elif e.code == 400 and (
+                    "context window exceeded" in error_msg_lower or
+                    "prompt too large" in error_msg_lower
+                ):
+                    self._log_with_context(
+                        "error",
+                        f"LLM context window exceeded: {error_msg}",
+                        **error_details,
+                    )
+                    raise LLMUnexpectedError(
+                        f"LLM context window exceeded: {error_msg}",
+                        original_exception=e,
+                    ) from e
+                elif e.code == 400 and ( # New condition for invalid JSON
+                    "invalid json" in error_msg_lower or
+                    "invalid json format" in error_msg_lower or
+                    "invalid response format" in error_msg_lower
+                ):
+                    should_retry = True # Set should_retry for backoff
+                    error_details["api_error_code"] = e.code
+                elif e.code in self.RETRYABLE_ERROR_CODES: # Generic retryable API errors
                     should_retry = True
-                    error_details["network_error"] = "socket.gaierror"
-                elif (
+                    error_details["api_error_code"] = e.code
+                else: # Non-retryable APIError not specifically handled
+                    raise LLMProviderError(error_msg, original_exception=e) from e
+
+            except socket.gaierror as e: # Catch network errors specifically
+                error_msg = str(e)
+                should_retry = True
+                error_details["network_error"] = "socket.gaierror"
+
+            except Exception as e: # Catch any other unexpected exceptions
+                error_msg = str(e)
+                # Check for generic context window exceeded if not caught by APIError 400
+                if (
                     "context window exceeded" in error_msg.lower()
                     or "prompt too large" in error_msg.lower()
                 ):
@@ -556,38 +561,41 @@ class GeminiProvider:
                         f"LLM context window exceeded: {error_msg}",
                         original_exception=e,
                     ) from e
-
-                if should_retry and attempt < self.MAX_RETRIES:
-                    backoff_time = min(
-                        self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
-                        self.MAX_BACKOFF_SECONDS,
-                    )
-                    jitter = secrets.SystemRandom().uniform(
-                        0,
-                        0.5
-                        * min(
-                            self.INITIAL_BACKOFF_SECONDS
-                            * (self.BACKOFF_FACTOR**attempt),
-                            self.MAX_BACKOFF_SECONDS,
-                        ),
-                    )
-                    sleep_time = backoff_time + jitter
-
-                    log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
-                    if self.rich_console:
-                        self.rich_console.print(f"[yellow]{log_message}[/yellow]")
-                    else:
-                        self._log_with_context("warning", log_message, **error_details)
-                    time.sleep(sleep_time)
                 else:
-                    if isinstance(e, APIError):
-                        raise GeminiAPIError(
-                            error_msg,
-                            getattr(e, "code", None),
-                            response_details=e.response_json,
-                            original_exception=e,
-                        ) from e
-                    else:
-                        raise LLMUnexpectedError(error_msg, original_exception=e) from e
+                    raise LLMProviderError(error_msg, original_exception=e) from e
 
-            raise LLMUnexpectedError("Max retries exceeded for generate call.")
+            # This block handles the actual retry logic if should_retry is True
+            if should_retry and attempt < self.MAX_RETRIES:
+                backoff_time = min(
+                    self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
+                    self.MAX_BACKOFF_SECONDS,
+                )
+                jitter = secrets.SystemRandom().uniform(
+                    0,
+                    0.5
+                    * min(
+                        self.INITIAL_BACKOFF_SECONDS
+                        * (self.BACKOFF_FACTOR**attempt),
+                        self.MAX_BACKOFF_SECONDS,
+                    ),
+                )
+                sleep_time = backoff_time + jitter
+
+                log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
+                if self.rich_console:
+                    self.rich_console.print(f"[yellow]{log_message}[/yellow]")
+                else:
+                    self._log_with_context("warning", log_message, **error_details)
+                time.sleep(sleep_time)
+            elif should_retry and attempt >= self.MAX_RETRIES:
+                # If it was retryable but max retries reached, raise a final error
+                # The specific exception (e.g., GeminiAPIError for 429) should have been raised already.
+                # For other retryable errors (like 400 invalid JSON or network errors),
+                # raise a generic LLMProviderError here.
+                raise LLMProviderError(f"Max retries exceeded for retryable error: {error_msg}", original_exception=e) from e
+            # If not retryable, the specific exception should have already been raised.
+            # This `else` block is not needed here.
+
+        # If the loop finishes without returning or raising, it means max retries were exceeded
+        # for a non-specific error that wasn't caught by the specific `raise` statements.
+        raise LLMUnexpectedError("Max retries exceeded for generate call.")

@@ -111,33 +111,35 @@ class SocraticDebate:
 
         self.initial_prompt = initial_prompt
         self.intermediate_steps = {} # FIX: Initialize intermediate_steps here
-        self.is_self_analysis = is_self_analysis # ADDED THIS LINE
+        self.is_self_analysis = is_self_analysis
         
         # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
-        # Prioritize provided contexts. Only scan if self-analysis AND no raw_file_contents provided.
-        self.codebase_scanner = codebase_scanner # Use provided instance
-        if self.is_self_analysis: # Use self.is_self_analysis here
-            if not raw_file_contents and self.codebase_scanner: # Only scan if not already provided AND scanner is available
-                self.logger.info("Performing self-analysis - scanning codebase for context...")
-                full_codebase_analysis = self.codebase_scanner.scan_codebase()
-                self.structured_codebase_context = full_codebase_analysis.get("file_structure", {})
-                self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
-                self.logger.info(f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned")
-            else:
-                self.logger.info("Self-analysis context already provided or scanner not available. Skipping redundant scan.")
-                self.structured_codebase_context = structured_codebase_context or {}
-                self.raw_file_contents = raw_file_contents or {}
+        # Initialize codebase_scanner and populate raw_file_contents and structured_codebase_context
+        self.codebase_scanner = codebase_scanner
+        if self.codebase_scanner:
+            # Prioritize content from the provided codebase_scanner instance
+            self.raw_file_contents = self.codebase_scanner.raw_file_contents
+            self.structured_codebase_context = self.codebase_scanner.file_structure
         else:
-            self.structured_codebase_context = structured_codebase_context or {}
+            # Fallback to direct arguments if no scanner provided
             self.raw_file_contents = raw_file_contents or {}
-        # --- END MODIFIED ---
+            self.structured_codebase_context = structured_codebase_context or {}
+
+        # If it's self-analysis and raw_file_contents is still empty, perform a scan as a fallback
+        if self.is_self_analysis and not self.raw_file_contents and self.codebase_scanner:
+            self.logger.info("Performing self-analysis - scanning codebase for context (fallback scan in SocraticDebate init)...")
+            full_codebase_analysis = self.codebase_scanner.scan_codebase()
+            self.structured_codebase_context = full_codebase_analysis.get("file_structure", {})
+            self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
+            self.logger.info(f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned during fallback.")
 
         # NEW: Log if codebase_context is still empty after initialization
-        if not self.raw_file_contents:  # MODIFIED: Check raw_file_contents
+        if not self.raw_file_contents:
             self.logger.warning(
                 "Codebase context is empty after SocraticDebate initialization. Context-aware features may be limited.",
                 extra=self._log_extra,
             )
+        # --- END MODIFIED ---
 
         self.domain = domain
 
