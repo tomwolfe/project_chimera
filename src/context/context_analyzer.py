@@ -371,14 +371,25 @@ class ContextRelevanceAnalyzer:
         raw_file_contents: Optional[
             Dict[str, str]
         ] = None,  # MODIFIED: Renamed codebase_context to raw_file_contents
+        max_file_content_size: int = 100000, # NEW: Add max_file_content_size (100KB default)
     ):
         """
         Initializes the analyzer.
         """
         self.cache_dir = cache_dir
-        self.raw_file_contents = (
-            raw_file_contents if raw_file_contents is not None else {}
-        )  # MODIFIED: Use raw_file_contents
+        self.max_file_content_size = max_file_content_size # NEW: Store max_file_content_size
+        
+        # NEW: Filter raw_file_contents based on size during initialization
+        if raw_file_contents is not None:
+            self.raw_file_contents = {
+                k: v for k, v in raw_file_contents.items()
+                if len(v) < self.max_file_content_size
+            }
+            if len(raw_file_contents) != len(self.raw_file_contents):
+                self.logger.warning(f"Filtered out {len(raw_file_contents) - len(self.raw_file_contents)} large files from initial raw_file_contents in ContextRelevanceAnalyzer init.")
+        else:
+            self.raw_file_contents = {}
+
         self.logger = logger
         self.persona_router = None
         self.file_embeddings: Dict[str, Any] = {}  # Initialize empty
@@ -439,11 +450,17 @@ class ContextRelevanceAnalyzer:
 
         embeddings = {}
         try:
-            # Filter out empty file contents before encoding
-            files_with_content = {k: v for k, v in context.items() if v}
-            if not files_with_content:
+            # Filter out empty file contents and large files before encoding
+            files_to_encode = {}
+            for k, v in context.items():
+                if v and len(v) < self.max_file_content_size: # NEW: Filter by max_file_content_size
+                    files_to_encode[k] = v
+                elif v:
+                    self.logger.warning(f"Skipping embedding for large file: {k} ({len(v)} bytes > {self.max_file_content_size} bytes)")
+
+            if not files_to_encode:
                 self.logger.warning(
-                    "No non-empty file content found in context for embedding. Clearing existing embeddings."
+                    "No non-empty or appropriately sized file content found in context for embedding. Clearing existing embeddings."
                 )
                 self.file_embeddings = {}
                 self._last_raw_file_contents_hash = None
@@ -455,8 +472,8 @@ class ContextRelevanceAnalyzer:
                     "SentenceTransformer model not loaded for embedding."
                 )
 
-            file_paths = list(files_with_content.keys())
-            file_contents = list(files_with_content.values())
+            file_paths = list(files_to_encode.keys())
+            file_contents = list(files_to_encode.values())
 
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
             # Ensure file_contents are not empty before encoding

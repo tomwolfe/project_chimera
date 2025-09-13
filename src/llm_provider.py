@@ -357,6 +357,9 @@ class GeminiProvider:
     ) -> tuple[str, int, int, bool]:
         """Internal method to handle retries for API calls, called by the circuit breaker."""
         for attempt in range(1, self.MAX_RETRIES + 1):
+            should_retry = False  # Define should_retry before using it
+            error_msg = "" # Initialize error_msg
+            error_details = {} # Initialize error_details
             try:
                 prompt_with_system = (
                     f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
@@ -455,38 +458,8 @@ class GeminiProvider:
 
             except self.RETRYABLE_LLM_EXCEPTIONS as e:
                 error_msg = str(e)
-                if attempt < self.MAX_RETRIES:
-                    backoff_time = min(
-                        self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
-                        self.MAX_BACKOFF_SECONDS,
-                    )
-                    jitter = secrets.SystemRandom().uniform(
-                        0,
-                        0.5
-                        * min(
-                            self.INITIAL_BACKOFF_SECONDS
-                            * (self.BACKOFF_FACTOR**attempt),
-                            self.MAX_BACKOFF_SECONDS,
-                        ),
-                    )
-                    sleep_time = backoff_time + jitter
-
-                    log_message = f"Retryable LLM exception: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
-                    if self.rich_console:
-                        self.rich_console.print(f"[yellow]{log_message}[/yellow]")
-                    else:
-                        self._log_with_context(
-                            "warning", log_message, error_type=type(e).__name__
-                        )
-                    time.sleep(sleep_time)
-                else:
-                    self._log_with_context(
-                        "error",
-                        f"Max retries exceeded for retryable LLM exception: {error_msg}",
-                        error_type=type(e).__name__,
-                        exc_info=True,
-                    )
-                    raise e
+                should_retry = True
+                error_details = {"error_type": type(e).__name__}
 
             except APIError as e: # Catch APIError specifically
                 error_msg = str(e)
@@ -515,11 +488,6 @@ class GeminiProvider:
                                         response_details=response_json,
                                         original_exception=e) from e
                 elif e.code == 429:
-                    if attempt >= self.MAX_RETRIES:
-                        raise GeminiAPIError(f"Rate Limit Exceeded after retries: {error_msg}",
-                                            code=e.code,
-                                            response_details=response_json,
-                                            original_exception=e) from e
                     should_retry = True # Set should_retry for backoff
                     error_details = {"api_error_code": e.code} # Initialize error_details here
                 elif e.code == 400 and (

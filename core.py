@@ -94,6 +94,8 @@ class SocraticDebate:
         token_tracker: Optional[TokenUsageTracker] = None,
         codebase_scanner: Optional[CodebaseScanner] = None, # NEW: Expect pre-initialized CodebaseScanner
         summarizer_pipeline_instance: Any = None, # NEW: Accept summarizer pipeline instance
+        max_debate_history_turns: int = 10, # NEW: Add max_debate_history_turns
+        max_debate_rounds: int = 10, # NEW: Add max_debate_rounds
     ):
         """
         Initializes the Socratic debate session.
@@ -113,6 +115,10 @@ class SocraticDebate:
         self.intermediate_steps = {} # FIX: Initialize intermediate_steps here
         self.is_self_analysis = is_self_analysis
         
+        # NEW: Store max_debate_history_turns and max_debate_rounds
+        self.max_debate_history_turns = max_debate_history_turns
+        self.max_debate_rounds = max_debate_rounds
+
         # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
         # Initialize codebase_scanner and populate raw_file_contents and structured_codebase_context
         self.codebase_scanner = codebase_scanner
@@ -1404,6 +1410,11 @@ class SocraticDebate:
             personas_for_debate.insert(insert_idx, "Devils_Advocate")
  
         for i, persona_name in enumerate(personas_for_debate):
+            # NEW: Add check for max_debate_rounds
+            if i >= self.max_debate_rounds:
+                self._log_with_context("warning", f"Max debate rounds ({self.max_debate_rounds}) reached. Stopping debate turns early.")
+                break
+
             self._log_with_context(
                 "info",
                 f"Executing debate turn for persona: {persona_name}",
@@ -1482,6 +1493,11 @@ class SocraticDebate:
                     )
  
                 debate_history.append({"persona": persona_name, "output": turn_output})
+                
+                # NEW: Truncate debate_history to prevent unbounded growth
+                if len(debate_history) > self.max_debate_history_turns:
+                    self._log_with_context("debug", f"Truncating debate history to {self.max_debate_history_turns} turns.")
+                    debate_history = debate_history[-self.max_debate_history_turns:]
  
                 if self._is_problematic_output(
                     turn_output
