@@ -1968,7 +1968,6 @@ class SocraticDebate:
                 debate_history=list(debate_persona_results),
                 # The intermediate_steps will be updated with the synthesis output later.
                 intermediate_steps=self.intermediate_steps,
-                codebase_raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
                 tokenizer=self.tokenizer,
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
