@@ -191,7 +191,7 @@ def test_llm_provider_tokenizer_integration(mock_llm_client_success):
         )
 
         test_prompt = "Hello world"
-        mock_tokenizer.count_tokens.return_value = 2  # Mock a token count
+        mock_tokenizer.count_tokens = MagicMock(return_value=2)  # FIX: Set return_value on the mock_tokenizer.count_tokens method itself
 
         provider.generate(
             prompt=test_prompt, system_prompt="System", temperature=0.5, max_tokens=10

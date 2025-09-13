@@ -491,10 +491,18 @@ class GeminiProvider:
             except APIError as e: # Catch APIError specifically
                 error_msg = str(e)
                 error_msg_lower = error_msg.lower()
-                # --- START Fix API Error Handling ---
-                # Ensure response_json is a dictionary
-                response_json = e.response_json if isinstance(e.response_json, dict) else {}
-                # --- END Fix API Error Handling ---
+                # Ensure response_json is always a dictionary
+                if isinstance(e.response_json, dict):
+                    response_json = e.response_json
+                else:
+                    # Create a minimal dictionary with error info
+                    response_json = {
+                        "error": {
+                            "code": e.code,
+                            "message": error_msg,
+                            "raw_response": str(e.response_json) if e.response_json is not None else None
+                        }
+                    }
 
                 if e.code == 401:
                     raise GeminiAPIError(f"Invalid API Key: {error_msg}",
@@ -513,7 +521,7 @@ class GeminiProvider:
                                             response_details=response_json,
                                             original_exception=e) from e
                     should_retry = True # Set should_retry for backoff
-                    error_details["api_error_code"] = e.code
+                    error_details = {"api_error_code": e.code} # Initialize error_details here
                 elif e.code == 400 and (
                     "context window exceeded" in error_msg_lower or
                     "prompt too large" in error_msg_lower
@@ -521,7 +529,7 @@ class GeminiProvider:
                     self._log_with_context(
                         "error",
                         f"LLM context window exceeded: {error_msg}",
-                        **error_details,
+                        error_details={"api_error_code": e.code}, # Pass error_details here
                     )
                     raise LLMUnexpectedError(
                         f"LLM context window exceeded: {error_msg}",
@@ -533,17 +541,17 @@ class GeminiProvider:
                     "invalid response format" in error_msg_lower
                 ):
                     should_retry = True # Set should_retry for backoff
-                    error_details["api_error_code"] = e.code
+                    error_details = {"api_error_code": e.code} # Initialize error_details here
                 elif e.code in self.RETRYABLE_ERROR_CODES: # Generic retryable API errors
                     should_retry = True
-                    error_details["api_error_code"] = e.code
+                    error_details = {"api_error_code": e.code} # Initialize error_details here
                 else: # Non-retryable APIError not specifically handled
                     raise LLMProviderError(error_msg, original_exception=e) from e
 
             except socket.gaierror as e: # Catch network errors specifically
                 error_msg = str(e)
                 should_retry = True
-                error_details["network_error"] = "socket.gaierror"
+                error_details = {"network_error": "socket.gaierror"} # Initialize error_details here
 
             except Exception as e: # Catch any other unexpected exceptions
                 error_msg = str(e)
@@ -555,7 +563,7 @@ class GeminiProvider:
                     self._log_with_context(
                         "error",
                         f"LLM context window exceeded: {error_msg}",
-                        **error_details,
+                        error_details={"error_type": type(e).__name__}, # Pass error_details here
                     )
                     raise LLMUnexpectedError(
                         f"LLM context window exceeded: {error_msg}",

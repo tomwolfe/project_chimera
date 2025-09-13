@@ -29,21 +29,28 @@ def fetch_api_key() -> Optional[str]:
     Fetches the Gemini API key, prioritizing a secrets manager if configured,
     then falling back to environment variables.
     """
-    # 1. Try to fetch from a secrets manager
+    # 1. First check environment variables
+    env_api_key = os.environ.get("GEMINI_API_KEY")
+    if env_api_key:
+        logger.info("API key fetched from environment variable.")
+        return env_api_key
+
+    # 2. Check Streamlit secrets if running in Streamlit
+    try:
+        import streamlit as st
+        if "GEMINI_API_KEY" in st.secrets:
+            logger.info("API key fetched from Streamlit secrets.")
+            return st.secrets["GEMINI_API_KEY"]
+    except ImportError:
+        pass # Not running in Streamlit or streamlit not installed
+
+    # 3. Fallback to a secrets manager (if configured)
     secrets_manager_key = _secrets_manager_client.get_secret("GEMINI_API_KEY_SECRET")
     if secrets_manager_key:
         logger.info("API key fetched from secrets manager.")
         return secrets_manager_key
 
-    # 2. Fallback to environment variable
-    env_api_key = os.getenv("GEMINI_API_KEY")
-    if env_api_key:
-        logger.info("API key fetched from environment variable.")
-        return env_api_key
-
-    logger.warning(
-        "No Gemini API key found in secrets manager or environment variables."
-    )
+    logger.warning("No Gemini API key found in environment variables, Streamlit secrets, or secrets manager.")
     return None
 
 
