@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 import numpy as np  # NEW: Import numpy
+import numbers # NEW: Import numbers for robust type checking
 
 
 def strip_ansi_codes(text: str) -> str:
@@ -82,6 +83,8 @@ def generate_markdown_report(
             return [convert_to_serializable(item) for item in obj]
         # NEW: Handle NumPy types
         elif isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.generic) and isinstance(obj.item(), numbers.Number): # More general NumPy scalar check
             return float(obj)
         elif isinstance(obj, (np.int32, np.int64)):
             return int(obj)

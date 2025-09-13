@@ -66,7 +66,6 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        metrics_collector: Any,  # NEW: Add metrics_collector to init
     ):
         """
         Initializes the analyst with collected metrics and context.
@@ -82,7 +81,6 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.metrics_collector = metrics_collector  # NEW: Store metrics_collector
         self.codebase_path = PROJECT_ROOT
         self.collected_metrics: Dict[str, Any] = {}
         self.reasoning_quality_metrics: Dict[str, Any] = {}
