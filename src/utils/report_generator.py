@@ -1,7 +1,9 @@
-import datetime  # Needed for report_date
-import json  # Needed for json.dumps
-import re  # Needed for strip_ansi_codes
-from typing import Any, Dict, List  # Needed for type hints
+import datetime
+import json
+import re
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+import numpy as np # NEW: Import numpy
 
 # No other imports are needed for the functions in this file.
 # The previous imports from src.utils.path_utils, src.utils.output_parser,
@@ -68,7 +70,7 @@ def generate_markdown_report(
     md_content += strip_ansi_codes(process_log_output)
     md_content += "\n```\n\n"
 
-    # Helper function to convert Pydantic models to dicts
+    # Helper function to convert Pydantic models and NumPy types to dicts/standard Python types
     def convert_to_serializable(obj):
         if hasattr(obj, "model_dump"):
             return obj.model_dump()
@@ -80,6 +82,13 @@ def generate_markdown_report(
             return {k: convert_to_serializable(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [convert_to_serializable(item) for item in obj]
+        # NEW: Handle NumPy types
+        elif isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist() # Convert NumPy arrays to Python lists
         return obj
 
     if config_params.get("show_intermediate_steps", True):
