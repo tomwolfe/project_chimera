@@ -71,7 +71,6 @@ class FocusedMetricsCollector:
         Initializes the analyst with collected metrics and context.
         """
         self.initial_prompt = initial_prompt
-        self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.raw_file_contents = (
