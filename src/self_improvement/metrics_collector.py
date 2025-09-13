@@ -31,6 +31,7 @@ from src.models import (
 )
 from src.utils.command_executor import execute_command_safely
 from src.utils.path_utils import PROJECT_ROOT
+from src.context.context_analyzer import CodebaseScanner # NEW: Import CodebaseScanner
 
 logger = logging.getLogger(__name__)
 
@@ -61,21 +62,22 @@ class FocusedMetricsCollector:
         initial_prompt: str,
         debate_history: List[Dict],
         intermediate_steps: Dict[str, Any],
-        codebase_raw_file_contents: Dict[str, str],
+        # REMOVED: codebase_raw_file_contents: Dict[str, str], # REMOVED THIS PARAMETER
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
+        codebase_scanner: CodebaseScanner, # NEW: Accept codebase_scanner
     ):
         """
         Initializes the analyst with collected metrics and context.
         """
         self.initial_prompt = initial_prompt
+        self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.raw_file_contents = (
-            codebase_raw_file_contents  # NEW: Renamed for clarity
-        )
+        self.codebase_scanner = codebase_scanner # NEW: Store the scanner
+        self.raw_file_contents = self.codebase_scanner.raw_file_contents # NEW: Access raw_file_contents via scanner
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager

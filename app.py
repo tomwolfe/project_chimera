@@ -55,7 +55,7 @@ from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
+from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner # MODIFIED
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
 from src.utils.session_manager import (
@@ -117,7 +117,7 @@ def get_app_logger():
 
 logger = get_app_logger()
 
-if logger == None:
+if logger is None: # MODIFIED: Changed === to is
     st.error(
         "❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py."
     )
@@ -1376,8 +1376,8 @@ def _run_socratic_debate_process():
 
     request_id = str(uuid.uuid4())[:8]
 
-    structured_codebase_context_for_debate: Dict[str, Any] = {}
-    codebase_raw_file_contents_for_debate: Dict[str, str] = {}
+    # REMOVED: structured_codebase_context_for_debate: Dict[str, Any] = {}
+    # REMOVED: codebase_raw_file_contents_for_debate: Dict[str, str] = {}
 
     is_self_analysis_prompt_detected = (
         st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
@@ -1393,18 +1393,20 @@ def _run_socratic_debate_process():
             # Use the cached CodebaseScanner instance
             scanner = get_codebase_scanner_instance()
             full_codebase_analysis = scanner.load_own_codebase_context()
-            structured_codebase_context_for_debate = full_codebase_analysis.get(
-                "file_structure", {}
-            )
-            codebase_raw_file_contents_for_debate = full_codebase_analysis.get(
-                "raw_file_contents", {}
-            )
-            st.session_state.structured_codebase_context = (
-                structured_codebase_context_for_debate
-            )
-            st.session_state.raw_file_contents = codebase_raw_file_contents_for_debate
+
+            # Update the cached instances directly
+            st.session_state.codebase_scanner.file_structure = full_codebase_analysis.get("file_structure", {})
+            st.session_state.codebase_scanner.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
+
+            # Also update context_analyzer's raw_file_contents and recompute embeddings
+            st.session_state.context_analyzer.raw_file_contents = st.session_state.codebase_scanner.raw_file_contents
+            st.session_state.context_analyzer.compute_file_embeddings(st.session_state.context_analyzer.raw_file_contents)
+            st.session_state.context_analyzer._last_raw_file_contents_hash = hash(frozenset(st.session_state.context_analyzer.raw_file_contents.items()))
+
+            # REMOVED: st.session_state.structured_codebase_context = structured_codebase_context_for_debate
+            # REMOVED: st.session_state.raw_file_contents = codebase_raw_file_contents_for_debate
             logger.info(
-                "Successfully loaded Project Chimera's codebase context for self-analysis."
+                "Successfully loaded Project Chimera's codebase context for self-analysis into cached instances."
             )
         except Exception as e:
             if st.session_state.context_analyzer:
@@ -1484,17 +1486,7 @@ def _run_socratic_debate_process():
             }
         ],
     }
-    intermediate_steps = {
-        "Total_Tokens_Used": 0,
-        "Total_Estimated_Cost_USD": 0.0,
-        "CODE_CHANGES": [],
-        "malformed_blocks": [
-            {
-                "type": "UNHANDLED_ERROR_INIT",
-                "message": "Debate failed during initialization or early phase.",
-            }
-        ],
-    }
+    # REMOVED: intermediate_steps = { ... } # This local variable is no longer needed here
     final_total_tokens = 0
     final_total_cost = 0.0
 
@@ -1613,12 +1605,16 @@ def _run_socratic_debate_process():
                 )
 
                 # NEW: Ensure context_analyzer has the latest raw_file_contents and re-computes embeddings if needed
+                # This block is now redundant as the codebase_scanner already updates context_analyzer
+                # and context_analyzer.raw_file_contents is now sourced from codebase_scanner.
+                # Keeping it for now, but it could be simplified.
                 if (
-                    st.session_state.raw_file_contents
-                    and st.session_state.context_analyzer
+                    st.session_state.context_analyzer
+                    and st.session_state.codebase_scanner
+                    and st.session_state.codebase_scanner.raw_file_contents
                 ):
                     current_files_hash = hash(
-                        frozenset(st.session_state.raw_file_contents.items())
+                        frozenset(st.session_state.codebase_scanner.raw_file_contents.items())
                     )
                     if (
                         not hasattr(
@@ -1629,11 +1625,11 @@ def _run_socratic_debate_process():
                         != current_files_hash
                     ):
                         st.session_state.context_analyzer.raw_file_contents = (
-                            codebase_raw_file_contents_for_debate
+                            st.session_state.codebase_scanner.raw_file_contents
                         )
                         try:
                             st.session_state.context_analyzer.compute_file_embeddings(
-                                codebase_raw_file_contents_for_debate
+                                st.session_state.codebase_scanner.raw_file_contents
                             )
                             st.session_state.context_analyzer._last_raw_file_contents_hash = current_files_hash
                             logger.info(
@@ -1656,8 +1652,8 @@ def _run_socratic_debate_process():
                     domain=domain_for_run,
                     status_callback=update_status_with_realtime_metrics,
                     rich_console=rich_console_instance,
-                    structured_codebase_context=structured_codebase_context_for_debate,
-                    raw_file_contents=codebase_raw_file_contents_for_debate,
+                    # REMOVED: structured_codebase_context=structured_codebase_context_for_debate,
+                    # REMOVED: raw_file_contents=codebase_raw_file_contents_for_debate,
                     context_analyzer=st.session_state.context_analyzer,  # Pass cached instance
                     is_self_analysis=is_self_analysis_prompt_detected,
                     settings=settings_instance,
@@ -1675,7 +1671,7 @@ def _run_socratic_debate_process():
                     },
                 )
 
-                final_answer, intermediate_steps = debate_instance.run_debate()
+                final_answer, st.session_state.intermediate_steps_output = debate_instance.run_debate() # MODIFIED: Store directly in session state
 
                 if (
                     hasattr(debate_instance, "file_analysis_cache")
@@ -1698,7 +1694,7 @@ def _run_socratic_debate_process():
 
                 st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 st.session_state.final_answer_output = final_answer
-                st.session_state.intermediate_steps_output = intermediate_steps
+                # REMOVED: st.session_state.intermediate_steps_output = intermediate_steps # Already done above
                 st.session_state.last_config_params = {
                     "max_tokens_budget": st.session_state.max_tokens_budget_input,
                     "model_name": st.session_state.selected_model_selectbox,
@@ -1709,10 +1705,8 @@ def _run_socratic_debate_process():
                 status.update(
                     label="Socratic Debate Complete!", state="complete", expanded=False
                 )
-                final_total_tokens = intermediate_steps.get("Total_Tokens_Used", 0)
-                final_total_cost = intermediate_steps.get(
-                    "Total_Estimated_Cost_USD", 0.0
-                )
+                final_total_tokens = st.session_state.intermediate_steps_output.get("Total_Tokens_Used", 0) # MODIFIED
+                final_total_cost = st.session_state.intermediate_steps_output.get("Total_Estimated_Cost_USD", 0.0) # MODIFIED
 
             except (
                 TokenBudgetExceededError,
@@ -1759,11 +1753,11 @@ def _run_socratic_debate_process():
                     "Total_Estimated_Cost_USD", 0.0
                 )
             finally:
-                st.session_state.raw_file_contents = {}
-                st.session_state.structured_codebase_context = {}
+                # REMOVED: st.session_state.raw_file_contents = {}
+                # REMOVED: st.session_state.structured_codebase_context = {}
                 if st.session_state.context_analyzer:
-                    st.session_state.context_analyzer.file_embeddings = {}
-                    st.session_state.context_analyzer.raw_file_contents = {}
+                    # REMOVED: st.session_state.context_analyzer.file_embeddings = {}
+                    # REMOVED: st.session_state.context_analyzer.raw_file_contents = {}
                     st.session_state.context_analyzer._last_raw_file_contents_hash = (
                         None
                     )
@@ -2229,7 +2223,7 @@ if st.session_state.debate_ran:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {
                 k: v
-                for k, v in st.session_state.intermediate_steps_output.items()
+                for k, v in st.session_state.intermediate_steps_output.items() # MODIFIED
                 if not k.endswith("_Tokens_Used")
                 and not k.endswith("_Estimated_Cost_USD")
                 and k != "Total_Tokens_Used"
@@ -2257,12 +2251,12 @@ if st.session_state.debate_ran:
                     .replace("_Feedback", "")
                 )
                 token_count_key = f"{token_base_name}_Tokens_Used"
-                tokens_used = intermediate_steps.get(token_count_key, "N/A")
+                tokens_used = st.session_state.intermediate_steps_output.get(token_count_key, "N/A") # MODIFIED
 
-                actual_temp = st.session_state.intermediate_steps_output.get(
+                actual_temp = st.session_state.intermediate_steps_output.get( # MODIFIED
                     f"{persona_name}_Actual_Temperature"
                 )
-                actual_max_tokens = st.session_state.intermediate_steps_output.get(
+                actual_max_tokens = st.session_state.intermediate_steps_output.get( # MODIFIED
                     f"{persona_name}_Actual_Max_Tokens"
                 )
 
