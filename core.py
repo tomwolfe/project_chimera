@@ -1943,8 +1943,17 @@ class SocraticDebate:
             200,
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
         )
-        summarized_debate_history = self.prompt_optimizer.optimize_debate_history( # Use prompt_optimizer
-            json.dumps(debate_persona_results, default=convert_to_json_friendly), effective_history_budget
+        # First, summarize the Python object (list of dicts) to reduce its size
+        summarized_debate_history_object = self._summarize_debate_history_for_llm(
+            debate_persona_results, effective_history_budget
+        )
+        # Then, dump this smaller object to a JSON string
+        debate_history_json_str = json.dumps(summarized_debate_history_object, default=convert_to_json_friendly)
+
+        # Now, pass this (already smaller) string to the prompt_optimizer,
+        # which will apply the HF summarizer if needed.
+        summarized_debate_history = self.prompt_optimizer.optimize_debate_history(
+            debate_history_json_str, effective_history_budget # Pass the budget for the final string
         )
         synthesis_prompt_parts.append(
             f"Debate History:\n{summarized_debate_history}\n\n" # Use optimized string directly
@@ -1968,6 +1977,7 @@ class SocraticDebate:
                 debate_history=list(debate_persona_results),
                 # The intermediate_steps will be updated with the synthesis output later.
                 intermediate_steps=self.intermediate_steps,
+                codebase_raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
                 tokenizer=self.tokenizer,
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,

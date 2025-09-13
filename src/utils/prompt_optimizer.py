@@ -87,10 +87,13 @@ class PromptOptimizer:
             # We set the summarizer's internal max_length to a reasonable value, then re-truncate
             # its output using the Gemini tokenizer to fit the overall budget.
             
+            # Cap the summarizer's internal output length to a value appropriate for distilbart.
+            # This is a hard cap for the summarizer model itself, not the overall budget.
+            DISTILBART_MAX_OUTPUT_TOKENS = 256 # A reasonable cap for distilbart-cnn-6-6
             # Use a conservative upper bound for the summarizer's internal output,
             # typically around 1/3 to 1/2 of the input length or the model's default.
             # For distilbart-cnn-6-6, 142 is a common max output.
-            summarizer_internal_max_output_tokens = min(target_tokens, self.summarizer_model_max_input_tokens) 
+            summarizer_internal_max_output_tokens = min(target_tokens, DISTILBART_MAX_OUTPUT_TOKENS)
             summarizer_internal_min_output_tokens = max(5, int(target_tokens * 0.2)) # Ensure a minimum, at least 5
 
             # Ensure max is at least min
