@@ -66,6 +66,7 @@ from src.utils.prompt_optimizer import PromptOptimizer
 from src.llm_provider import GeminiProvider # Moved import here to avoid circular dependency
 from src.conflict_resolution import ConflictResolutionManager
 from src.config.model_registry import ModelRegistry  # NEW: Import ModelRegistry
+from src.utils.json_utils import convert_to_json_friendly # NEW: Import the shared utility
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,6 @@ class SocraticDebate:
         self.model_name = model_name
         self.status_callback = status_callback
         self.rich_console = rich_console or Console(stderr=True)
-        self.is_self_analysis = is_self_analysis
-
         self.request_id = str(uuid.uuid4())[:8]
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
@@ -1257,25 +1256,25 @@ class SocraticDebate:
         if persona_name == "Security_Auditor" and context_persona_turn_results.get(
             "security_summary"
         ):
-            persona_specific_context_str = f"Security Context Summary:\n{json.dumps(context_persona_turn_results['security_summary'], indent=2)}"
+            persona_specific_context_str = f"Security Context Summary:\n{json.dumps(context_persona_turn_results['security_summary'], indent=2, default=convert_to_json_friendly)}"
         elif persona_name == "Code_Architect" and context_persona_turn_results.get(
             "architecture_summary"
         ):
-            persona_specific_context_str = f"Architecture Context Summary:\n{json.dumps(context_persona_turn_results['architecture_summary'], indent=2)}"
+            persona_specific_context_str = f"Architecture Context Summary:\n{json.dumps(context_persona_turn_results['architecture_summary'], indent=2, default=convert_to_json_friendly)}"
         elif persona_name == "DevOps_Engineer" and context_persona_turn_results.get(
             "devops_summary"
         ):
-            persona_specific_context_str = f"DevOps Context Summary:\n{json.dumps(context_persona_turn_results['devops_summary'], indent=2)}"
+            persona_specific_context_str = f"DevOps Context Summary:\n{json.dumps(context_persona_turn_results['devops_summary'], indent=2, default=convert_to_json_friendly)}"
         elif persona_name == "Test_Engineer" and context_persona_turn_results.get(
             "testing_summary"
         ):
-            persona_specific_context_str = f"Testing Context Summary:\n{json.dumps(context_persona_turn_results['testing_summary'], indent=2)}"
+            persona_specific_context_str = f"Testing Context Summary:\n{json.dumps(context_persona_turn_results['testing_summary'], indent=2, default=convert_to_json_friendly)}"
         elif context_persona_turn_results.get("general_overview"):
             persona_specific_context_str = f"General Codebase Overview:\n{context_persona_turn_results['general_overview']}"
         if context_persona_turn_results.get("configuration_summary"):
-            persona_specific_context_str += f"\n\nStructured Configuration Analysis:\n{json.dumps(context_persona_turn_results['configuration_summary'], indent=2)}"
+            persona_specific_context_str += f"\n\nStructured Configuration Analysis:\n{json.dumps(context_persona_turn_results['configuration_summary'], indent=2, default=convert_to_json_friendly)}"
         if context_persona_turn_results.get("deployment_summary"):
-            persona_specific_context_str += f"\n\nStructured Deployment Robustness Analysis:\n{json.dumps(context_persona_turn_results['deployment_summary'], indent=2)}"
+            persona_specific_context_str += f"\n\nStructured Deployment Robustness Analysis:\n{json.dumps(context_persona_turn_results['deployment_summary'], indent=2, default=convert_to_json_friendly)}"
         return persona_specific_context_str
  
     def _summarize_previous_output(
@@ -1301,15 +1300,15 @@ class SocraticDebate:
         else:
             if isinstance(previous_output_for_llm, dict):
                 if previous_output_for_llm.get("CRITIQUE_SUMMARY"):
-                    return f"Previous Debate Output:\n{json.dumps({'CRITIQUE_SUMMARY': previous_output_for_llm['CRITIQUE_SUMMARY'], 'SUGGESTIONS': previous_output_for_llm.get('SUGGESTIONS', [])}, indent=2)}\n\n"
+                    return f"Previous Debate Output:\n{json.dumps({'CRITIQUE_SUMMARY': previous_output_for_llm['CRITIQUE_SUMMARY'], 'SUGGESTIONS': previous_output_for_llm.get('SUGGESTIONS', [])}, indent=2, default=convert_to_json_friendly)}\n\n"
                 elif previous_output_for_llm.get("ANALYSIS_SUMMARY"):
-                    return f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2)}\n\n"
+                    return f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2, default=convert_to_json_friendly)}\n\n"
                 elif previous_output_for_llm.get("general_output"):
-                    return f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2)}\n\n"
+                    return f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2, default=convert_to_json_friendly)}\n\n"
                 elif previous_output_for_llm.get("summary"):  # For ConflictReport
-                    return f"Previous Debate Output:\n{json.dumps({'summary': previous_output_for_llm['summary'], 'conflict_found': previous_output_for_llm.get('conflict_found')}, indent=2)}\n\n"
+                    return f"Previous Debate Output:\n{json.dumps({'summary': previous_output_for_llm['summary'], 'conflict_found': previous_output_for_llm.get('conflict_found')}, indent=2, default=convert_to_json_friendly)}\n\n"
                 else:
-                    return f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2)}\n\n"
+                    return f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2, default=convert_to_json_friendly)}\n\n"
             else:
                 return f"Previous Debate Output:\n{previous_output_for_llm}\n\n"
  
@@ -1364,7 +1363,7 @@ class SocraticDebate:
  
         previous_output_for_llm: Union[str, Dict[str, Any]]
         if context_persona_turn_results:
-            previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}\n\nStructured Context Analysis:\n{json.dumps(context_persona_turn_results, indent=2)}"
+            previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}\n\nStructured Context Analysis:\n{json.dumps(context_persona_turn_results, indent=2, default=convert_to_json_friendly)}"
         else:
             previous_output_for_llm = f"Initial Prompt: {self.initial_prompt}"
  
@@ -1604,7 +1603,7 @@ class SocraticDebate:
  
         summarized_critical_sections = {}
         critical_sections_tokens = self.tokenizer.count_tokens(
-            json.dumps(critical_sections_content)
+            json.dumps(critical_sections_content, default=convert_to_json_friendly)
         )
  
         if critical_sections_tokens > CRITICAL_SECTION_TOKEN_BUDGET:
@@ -1651,7 +1650,7 @@ class SocraticDebate:
             summarized_critical_sections = critical_sections_content
  
         summarized_metrics.update(summarized_critical_sections)
-        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics, default=convert_to_json_friendly))
         return summarized_metrics, current_tokens
  
     def _truncate_detailed_issue_lists(
@@ -1756,32 +1755,14 @@ class SocraticDebate:
         # The change involves converting Pydantic model instances within the metrics
         # dictionary to dictionaries using model_dump() before JSON serialization.
  
-        def convert_to_serializable(obj):
-            """Recursively converts Pydantic models to dictionaries."""
-            if hasattr(obj, "model_dump"):
-                return obj.model_dump()
-            elif hasattr(
-                obj, "dict"
-            ):  # Fallback for Pydantic v1 if model_dump is not present
-                return obj.dict()
-            elif isinstance(obj, list):
-                return [convert_to_serializable(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {k: convert_to_serializable(v) for k, v in obj.items()}
-            elif isinstance(obj, np.generic): # NEW: Handle NumPy scalars
-                return obj.item() # Convert to a standard Python scalar
-            elif isinstance(obj, np.ndarray): # NEW: Handle NumPy arrays
-                return obj.tolist() # Convert NumPy arrays to Python lists
-            return obj
- 
         # Convert the entire metrics object to a serializable format
-        serializable_metrics = convert_to_serializable(metrics)
+        serializable_metrics = convert_to_json_friendly(metrics)
  
         # Now, use json.dumps on the serializable_metrics
         summarized_metrics = json.loads(json.dumps(serializable_metrics))
         # --- END OF REQUIRED CHANGE APPLICATION ---
  
-        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics, default=convert_to_json_friendly))
  
         if current_tokens <= max_tokens:
             return summarized_metrics
@@ -1799,7 +1780,7 @@ class SocraticDebate:
         summarized_metrics = self._truncate_detailed_issue_lists(
             summarized_metrics, remaining_budget_for_issues
         )
-        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics))
+        current_tokens = self.tokenizer.count_tokens(json.dumps(summarized_metrics, default=convert_to_json_friendly))
  
         if current_tokens > max_tokens:
             return self._create_fallback_metrics_summary_string(
@@ -1822,7 +1803,7 @@ class SocraticDebate:
         MAX_TURNS_TO_INCLUDE = 3
  
         for turn in reversed(debate_history[-MAX_TURNS_TO_INCLUDE:]):
-            turn_copy = json.loads(json.dumps(turn))
+            turn_copy = json.loads(json.dumps(turn, default=convert_to_json_friendly))
  
             if "output" in turn_copy and isinstance(turn_copy["output"], dict):
                 if "CRITIQUE_SUMMARY" in turn_copy["output"]:
@@ -1883,7 +1864,7 @@ class SocraticDebate:
                     else turn_copy["output"]
                 )
  
-            turn_tokens = self.tokenizer.count_tokens(json.dumps(turn_copy))
+            turn_tokens = self.tokenizer.count_tokens(json.dumps(turn_copy, default=convert_to_json_friendly))
  
             if current_tokens + turn_tokens <= max_tokens:
                 summarized_history.insert(0, turn_copy)
@@ -1957,7 +1938,7 @@ class SocraticDebate:
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
         )
         summarized_debate_history = self.prompt_optimizer.optimize_debate_history( # Use prompt_optimizer
-            json.dumps(debate_persona_results), effective_history_budget
+            json.dumps(debate_persona_results, default=convert_to_json_friendly), effective_history_budget
         )
         synthesis_prompt_parts.append(
             f"Debate History:\n{summarized_debate_history}\n\n" # Use optimized string directly
@@ -1965,11 +1946,11 @@ class SocraticDebate:
  
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
             synthesis_prompt_parts.append(
-                f"Conflict Resolution Summary: {json.dumps(self.intermediate_steps['Conflict_Resolution_Attempt']['resolution_summary'], indent=2)}\n\n"
+                f"Conflict Resolution Summary: {json.dumps(self.intermediate_steps['Conflict_Resolution_Attempt']['resolution_summary'], indent=2, default=convert_to_json_friendly)}\n\n"
             )
         elif self.intermediate_steps.get("Unresolved_Conflict"):
             synthesis_prompt_parts.append(
-                f"Unresolved Conflict: {json.dumps(self.intermediate_steps['Unresolved_Conflict'], indent=2)}\n\n"
+                f"Unresolved Conflict: {json.dumps(self.intermediate_steps['Unresolved_Conflict'], indent=2, default=convert_to_json_friendly)}\n\n"
             )
  
         if synthesis_persona_name == "Self_Improvement_Analyst":
@@ -2008,7 +1989,7 @@ class SocraticDebate:
                 collected_metrics, effective_metrics_budget
             )
             synthesis_prompt_parts.append(
-                f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2)}\n\n"
+                f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2, default=convert_to_json_friendly)}\n\n"
             )
  
             synthesis_prompt_parts.append(

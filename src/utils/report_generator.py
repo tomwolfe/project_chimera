@@ -5,9 +5,10 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
-import numpy as np  # NEW: Import numpy
-import numbers  # NEW: Import numbers for robust type checking
-import logging # NEW: Import logging
+import numpy as np
+import numbers
+import logging
+from src.utils.json_utils import convert_to_json_friendly # NEW: Import the shared utility
 
 logger = logging.getLogger(__name__)
 
@@ -72,25 +73,6 @@ def generate_markdown_report(
     md_content += strip_ansi_codes(process_log_output)
     md_content += "\n```\n\n"
 
-    # Helper function to convert Pydantic models and NumPy types to dicts/standard Python types
-    def convert_to_serializable(obj):
-        if hasattr(obj, "model_dump"):
-            return obj.model_dump()
-        elif hasattr(
-            obj, "dict"
-        ):  # Fallback for Pydantic v1 if model_dump is not present
-            return obj.dict()
-        elif isinstance(obj, dict):
-            return {k: convert_to_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_to_serializable(item) for item in obj]
-        # Handle NumPy scalars (np.generic covers all scalar types like np.float32, np.int64, etc.)
-        elif isinstance(obj, np.generic):
-            return obj.item()  # Convert to a standard Python scalar (float, int, bool, etc.)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()  # Convert NumPy arrays to Python lists
-        return obj
-
     if config_params.get("show_intermediate_steps", True):
         md_content += "---\n\n"
         md_content += "## Intermediate Reasoning Steps\n\n"
@@ -126,26 +108,23 @@ def generate_markdown_report(
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
             md_content += f"### {display_name}\n\n"
-            # Convert to serializable format before dumping
-            content_serializable = convert_to_serializable(content)
-            if isinstance(content_serializable, dict):
+            if isinstance(content, dict): # Check if it's a dict before dumping
                 md_content += "```json\n"
-                md_content += json.dumps(content_serializable, indent=2)
+                md_content += json.dumps(content, indent=2, default=convert_to_json_friendly)
                 md_content += "\n```\n"
             else:
-                md_content += f"```markdown\n{content_serializable}\n```\n"
+                # If content is not a dict, convert it to a serializable string for markdown display
+                md_content += f"```markdown\n{convert_to_json_friendly(content)}\n```\n"
             md_content += f"**Tokens Used for this step:** {tokens_used}\n\n"
     md_content += "---\n\n"
     md_content += "## Final Synthesized Answer\n\n"
 
-    # Convert final answer to serializable format
-    final_answer_serializable = convert_to_serializable(final_answer)
-
-    if isinstance(final_answer_serializable, dict):
+    if isinstance(final_answer, dict): # Check if it's a dict before dumping
         md_content += "```json\n"
-        md_content += json.dumps(final_answer_serializable, indent=2)
+        md_content += json.dumps(final_answer, indent=2, default=convert_to_json_friendly)
     else:
-        md_content += f"{final_answer_serializable}\n\n"
+        # If final_answer is not a dict, convert it to a serializable string for markdown display
+        md_content += f"{convert_to_json_friendly(final_answer)}\n\n"
 
     md_content += "---\n\n"
     md_content += "## Summary\n\n"
