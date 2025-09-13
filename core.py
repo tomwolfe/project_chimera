@@ -1319,77 +1319,48 @@ class SocraticDebate:
                     summary += f"Summary of previous conflict report: {truncated_summary}"
                 else:
                     summary += "Details in malformed_blocks."
-            else:
+            else: # previous_output_for_llm is a string
+                # Ensure previous_output_for_llm is treated as a string for truncation
                 truncated_snippet = self.tokenizer.truncate_to_token_limit(
                     str(previous_output_for_llm), SUMMARY_TOKEN_LIMIT * 2 # Allow a bit more for raw strings
                 )
                 summary += f"Raw error snippet: {truncated_snippet}..."
             return f"Previous Debate Output Summary (with issues):\n{summary}\n\n"
-        else:
-            if isinstance(previous_output_for_llm, dict):
+        else: # Not problematic
+            # Initialize output_content as a copy if dict, or as a string if not
+            output_content = previous_output_for_llm
+            
+            if isinstance(output_content, dict):
+                output_copy = output_content.copy()
                 # Apply truncation to relevant string fields before dumping
-                output_copy = previous_output_for_llm.copy()
-                if output_copy.get("CRITIQUE_SUMMARY"):
-                    output_copy["CRITIQUE_SUMMARY"] = self.tokenizer.truncate_to_token_limit(
-                        output_copy["CRITIQUE_SUMMARY"], SUMMARY_TOKEN_LIMIT
-                    )
-                if output_copy.get("ANALYSIS_SUMMARY"):
-                    output_copy["ANALYSIS_SUMMARY"] = self.tokenizer.truncate_to_token_limit(
-                        output_copy["ANALYSIS_SUMMARY"], SUMMARY_TOKEN_LIMIT
-                    )
-                if output_copy.get("general_output"):
-                    output_copy["general_output"] = self.tokenizer.truncate_to_token_limit(
-                        output_copy["general_output"], SUMMARY_TOKEN_LIMIT
-                    )
-                if output_copy.get("summary"): # For ConflictReport
-                    output_copy["summary"] = self.tokenizer.truncate_to_token_limit(
-                        output_copy["summary"], SUMMARY_TOKEN_LIMIT
-                    )
+                for key in ["CRITIQUE_SUMMARY", "ANALYSIS_SUMMARY", "general_output", "summary"]:
+                    if output_copy.get(key):
+                        output_copy[key] = self.tokenizer.truncate_to_token_limit(
+                            output_copy[key], SUMMARY_TOKEN_LIMIT
+                        )
                 
                 # Also truncate content within suggestions/code_changes if present
-                if "SUGGESTIONS" in output_copy and isinstance(output_copy["SUGGESTIONS"], list):
-                    for suggestion in output_copy["SUGGESTIONS"]:
-                        if isinstance(suggestion, dict):
-                            if suggestion.get("PROBLEM"):
-                                suggestion["PROBLEM"] = self.tokenizer.truncate_to_token_limit(suggestion["PROBLEM"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("PROPOSED_SOLUTION"):
-                                suggestion["PROPOSED_SOLUTION"] = self.tokenizer.truncate_to_token_limit(suggestion["PROPOSED_SOLUTION"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("EXPECTED_IMPACT"):
-                                suggestion["EXPECTED_IMPACT"] = self.tokenizer.truncate_to_token_limit(suggestion["EXPECTED_IMPACT"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("RATIONALE"):
-                                suggestion["RATIONALE"] = self.tokenizer.truncate_to_token_limit(suggestion["RATIONALE"], SUMMARY_TOKEN_LIMIT)
-                            if "CODE_CHANGES_SUGGESTED" in suggestion and isinstance(suggestion["CODE_CHANGES_SUGGESTED"], list):
-                                for change in suggestion["CODE_CHANGES_SUGGESTED"]:
-                                    if isinstance(change, dict):
-                                        if change.get("FULL_CONTENT"):
-                                            change["FULL_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["FULL_CONTENT"], SUMMARY_TOKEN_LIMIT)
-                                        if change.get("DIFF_CONTENT"):
-                                            change["DIFF_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["DIFF_CONTENT"], SUMMARY_TOKEN_LIMIT)
+                for key_list in ["SUGGESTIONS", "IMPACTFUL_SUGGESTIONS"]:
+                    if key_list in output_copy and isinstance(output_copy[key_list], list):
+                        for suggestion in output_copy[key_list]:
+                            if isinstance(suggestion, dict):
+                                for field in ["PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT", "RATIONALE"]:
+                                    if suggestion.get(field):
+                                        suggestion[field] = self.tokenizer.truncate_to_token_limit(suggestion[field], SUMMARY_TOKEN_LIMIT)
+                                if "CODE_CHANGES_SUGGESTED" in suggestion and isinstance(suggestion["CODE_CHANGES_SUGGESTED"], list):
+                                    for change in suggestion["CODE_CHANGES_SUGGESTED"]:
+                                        if isinstance(change, dict):
+                                            if change.get("FULL_CONTENT"):
+                                                change["FULL_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["FULL_CONTENT"], SUMMARY_TOKEN_LIMIT)
+                                            if change.get("DIFF_CONTENT"):
+                                                change["DIFF_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["DIFF_CONTENT"], SUMMARY_TOKEN_LIMIT)
                 
-                if "IMPACTFUL_SUGGESTIONS" in output_copy and isinstance(output_copy["IMPACTFUL_SUGGESTIONS"], list):
-                    for suggestion in output_copy["IMPACTFUL_SUGGESTIONS"]:
-                        if isinstance(suggestion, dict):
-                            if suggestion.get("PROBLEM"):
-                                suggestion["PROBLEM"] = self.tokenizer.truncate_to_token_limit(suggestion["PROBLEM"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("PROPOSED_SOLUTION"):
-                                suggestion["PROPOSED_SOLUTION"] = self.tokenizer.truncate_to_token_limit(suggestion["PROPOSED_SOLUTION"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("EXPECTED_IMPACT"):
-                                suggestion["EXPECTED_IMPACT"] = self.tokenizer.truncate_to_token_limit(suggestion["EXPECTED_IMPACT"], SUMMARY_TOKEN_LIMIT)
-                            if suggestion.get("RATIONALE"):
-                                suggestion["RATIONALE"] = self.tokenizer.truncate_to_token_limit(suggestion["RATIONALE"], SUMMARY_TOKEN_LIMIT)
-                            if "CODE_CHANGES_SUGGESTED" in suggestion and isinstance(suggestion["CODE_CHANGES_SUGGESTED"], list):
-                                for change in suggestion["CODE_CHANGES_SUGGESTED"]:
-                                    if isinstance(change, dict):
-                                        if change.get("FULL_CONTENT"):
-                                            change["FULL_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["FULL_CONTENT"], SUMMARY_TOKEN_LIMIT)
-                                        if change.get("DIFF_CONTENT"):
-                                            change["DIFF_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["DIFF_CONTENT"], SUMMARY_TOKEN_LIMIT)
-                else:
-                    truncated_output = self.tokenizer.truncate_to_token_limit(
-                        str(previous_output_for_llm), SUMMARY_TOKEN_LIMIT * 2
-                    )
-                    return f"Previous Debate Output:\n{truncated_output}\n\n"
                 return f"Previous Debate Output:\n{json.dumps(output_copy, indent=2, default=convert_to_json_friendly)}\n\n"
+            else: # It's a string (or other non-dict type)
+                truncated_output = self.tokenizer.truncate_to_token_limit(
+                    str(previous_output_for_llm), SUMMARY_TOKEN_LIMIT * 2
+                )
+                return f"Previous Debate Output:\n{truncated_output}\n\n"
  
     def _handle_devils_advocate_turn(
         self, output: Dict[str, Any], debate_history_so_far: List[Dict[str, Any]]

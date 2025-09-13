@@ -1223,10 +1223,11 @@ class FocusedMetricsCollector:
                 file_cache = self.file_analysis_cache.setdefault(file_path_str, {})
 
                 ruff_file_issues = _run_ruff(content, file_path_str)
-                # NEW: Truncate code_snippet for Ruff issues
                 for issue in ruff_file_issues:
                     if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT)
+                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
+                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
+                        )
                 ruff_issues_count += len(ruff_file_issues)
                 detailed_issues.extend(ruff_file_issues)
                 ruff_violations.extend(
@@ -1240,19 +1241,21 @@ class FocusedMetricsCollector:
                 file_cache["ruff_issues"] = ruff_file_issues
 
                 bandit_file_issues = _run_bandit(content, file_path_str)
-                # NEW: Truncate code_snippet for Bandit issues
                 for issue in bandit_file_issues:
                     if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT)
+                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
+                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
+                        )
                 bandit_issues_count += len(bandit_file_issues)
                 detailed_issues.extend(bandit_file_issues)
                 file_cache["bandit_issues"] = bandit_file_issues
 
                 ast_file_issues = _run_ast_security_checks(content, file_path_str)
-                # NEW: Truncate code_snippet for AST security issues
                 for issue in ast_file_issues:
                     if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT)
+                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
+                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
+                        )
                 ast_security_issues_count += len(ast_file_issues)
                 detailed_issues.extend(ast_file_issues)
                 file_cache["ast_security_issues"] = ast_file_issues

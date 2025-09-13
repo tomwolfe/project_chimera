@@ -5,6 +5,7 @@ from src.llm_tokenizers.base import Tokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
+import gc # NEW: Import garbage collector
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,6 @@ class PromptOptimizer:
 
             # NEW: Explicitly delete summary_result to free memory
             del summary_result
-            import gc
             gc.collect()
 
             # Use the Gemini tokenizer to ensure the final summary fits the overall target_tokens
