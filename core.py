@@ -70,9 +70,6 @@ logger = logging.getLogger(__name__)
 
 
 class SocraticDebate:
-    # REMOVED: PERSONA_OUTPUT_SCHEMAS from here, moved to PersonaManager
-    # PERSONA_OUTPUT_SCHEMAS = { ... }
-
     def __init__(
         self,
         initial_prompt: str,
@@ -88,11 +85,12 @@ class SocraticDebate:
         model_name: str = "gemini-2.5-flash-lite",
         status_callback: Optional[Callable] = None,
         rich_console: Optional[Console] = None,
-        context_analyzer: Optional[ContextRelevanceAnalyzer] = None,
+        context_analyzer: Optional[ContextRelevanceAnalyzer] = None, # Expect pre-initialized
         is_self_analysis: bool = False,
         persona_manager: Optional[PersonaManager] = None,
         content_validator: Optional[ContentAlignmentValidator] = None,
         token_tracker: Optional[TokenUsageTracker] = None,
+        codebase_scanner: Optional[CodebaseScanner] = None, # NEW: Expect pre-initialized CodebaseScanner
     ):
         """
         Initializes the Socratic debate session.
@@ -111,27 +109,25 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        # MODIFIED: Handle structured_codebase_context and raw_file_contents
+        
+        # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
+        # Prioritize provided contexts. Only scan if self-analysis AND no raw_file_contents provided.
+        self.codebase_scanner = codebase_scanner # Use provided instance
         if is_self_analysis:
-            self.logger.info(
-                "Performing self-analysis - scanning codebase for context..."
-            )
-            scanner = CodebaseScanner(
-                project_root=str(PROJECT_ROOT)
-            )  # Ensure scanner is initialized with project root
-            full_codebase_analysis = (
-                scanner.scan_codebase()
-            )  # This returns {"file_structure": ..., "raw_file_contents": ...}
-            self.structured_codebase_context = full_codebase_analysis.get(
-                "file_structure", {}
-            )  # Store file_structure as structured context
-            self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
-            self.logger.info(
-                f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned"
-            )
-        else:  # If not self-analysis, use provided contexts
+            if not raw_file_contents and self.codebase_scanner: # Only scan if not already provided AND scanner is available
+                self.logger.info("Performing self-analysis - scanning codebase for context...")
+                full_codebase_analysis = self.codebase_scanner.scan_codebase()
+                self.structured_codebase_context = full_codebase_analysis.get("file_structure", {})
+                self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
+                self.logger.info(f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned")
+            else:
+                self.logger.info("Self-analysis context already provided or scanner not available. Skipping redundant scan.")
+                self.structured_codebase_context = structured_codebase_context or {}
+                self.raw_file_contents = raw_file_contents or {}
+        else:
             self.structured_codebase_context = structured_codebase_context or {}
             self.raw_file_contents = raw_file_contents or {}
+        # --- END MODIFIED ---
 
         # NEW: Log if codebase_context is still empty after initialization
         if not self.raw_file_contents:  # MODIFIED: Check raw_file_contents
@@ -210,51 +206,39 @@ class SocraticDebate:
                 self.persona_manager.prompt_analyzer,
             )
 
-        # Initialize ContextRelevanceAnalyzer after tokenizer is available
-        self.context_analyzer = context_analyzer
+        # --- MODIFIED: ContextRelevanceAnalyzer initialization ---
+        self.context_analyzer = context_analyzer # Use provided instance
         if not self.context_analyzer:
-            self.logger.warning(
-                "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
-            )
+            self.logger.warning("ContextRelevanceAnalyzer instance not provided. Initializing a new one.")
             self.context_analyzer = ContextRelevanceAnalyzer(
                 cache_dir=self.settings.sentence_transformer_cache_dir,  # MODIFIED: Use settings for cache_dir
                 raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
-
-        # FIX: Ensure context_analyzer has computed embeddings if codebase_context is present
-        # This is a safeguard in case ContextRelevanceAnalyzer was passed in without embeddings
-        # or if codebase_context was populated after ContextRelevanceAnalyzer's init.
-        if (
-            self.raw_file_contents and not self.context_analyzer.file_embeddings
-        ):  # MODIFIED: Check raw_file_contents
-            try:
-                # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(
-                    self.raw_file_contents
-                )  # MODIFIED: Pass raw_file_contents
-                self._log_with_context(
-                    "info",
-                    "Computed file embeddings for codebase context after SocraticDebate init.",
-                )
-            except Exception as e:
-                self._log_with_context(
-                    "error", f"Error computing context embeddings: {e}[/red]"
-                )
-                if self.status_callback:  # Ensure status_callback is callable
-                    # FIX: Provide all required arguments positionally to status_callback
-                    self.status_callback(
-                        f"[red]Error computing context embeddings: {e}[/red]",  # message
-                        state="error",
-                        current_total_tokens=self.token_tracker.current_usage,
-                        current_total_cost=self.get_total_estimated_cost(),
-                        progress_pct=self.get_progress_pct("context", error=True),
-                        current_persona_name="Context_Relevance_Analyzer_Init",
-                    )
-                raise ChimeraError(
-                    f"Error computing context embeddings: {e}", original_exception=e
-                ) from e
+        else: # Ensure the passed context_analyzer has the latest raw_file_contents
+            self.context_analyzer.raw_file_contents = self.raw_file_contents
+            # Re-compute embeddings if raw_file_contents changed, or if not computed yet
+            current_files_hash = hash(frozenset(self.raw_file_contents.items()))
+            if not hasattr(self.context_analyzer, '_last_raw_file_contents_hash') or \
+               self.context_analyzer._last_raw_file_contents_hash != current_files_hash:
+                try:
+                    self.context_analyzer.compute_file_embeddings(self.raw_file_contents)
+                    self.context_analyzer._last_raw_file_contents_hash = current_files_hash
+                    self._log_with_context("info", "Computed file embeddings for context analyzer in SocraticDebate init.")
+                except Exception as e:
+                    self._log_with_context("error", f"Error computing context embeddings: {e}[/red]")
+                    if self.status_callback:  # Ensure status_callback is callable
+                        self.status_callback(
+                            f"[red]Error computing context embeddings: {e}[/red]",  # message
+                            state="error",
+                            current_total_tokens=self.token_tracker.current_usage,
+                            current_total_cost=self.get_total_estimated_cost(),
+                            progress_pct=self.get_progress_pct("context", error=True),
+                            current_persona_name="Context_Relevance_Analyzer_Init",
+                        )
+                    raise ChimeraError(f"Error computing context embeddings: {e}", original_exception=e) from e
+        # --- END MODIFIED ---
 
         # Initialize ContentAlignmentValidator if not provided
         self.content_validator = content_validator
@@ -263,9 +247,12 @@ class SocraticDebate:
                 original_prompt=self.initial_prompt, debate_domain=self.domain
             )
 
+        # --- MODIFIED: PromptOptimizer initialization (always here) ---
+        # Initialize PromptOptimizer here, as self.tokenizer is now guaranteed to be available.
         self.prompt_optimizer = PromptOptimizer(
             tokenizer=self.tokenizer, settings=self.settings
         )
+        # --- END MODIFIED ---
 
         # Initialize token budgets AFTER context_analyzer and content_validator are fully set up
         self._calculate_token_budgets()
@@ -1010,37 +997,33 @@ class SocraticDebate:
             )
             return None
 
-        if (
-            self.raw_file_contents  # MODIFIED: Check raw_file_contents
-            and self.context_analyzer
-            and not self.context_analyzer.file_embeddings
-        ):
-            try:
-                # Call the public method for computing file embeddings
-                self.context_analyzer.compute_file_embeddings(
-                    self.raw_file_contents
-                )  # MODIFIED: Pass raw_file_contents
-                self._log_with_context(
-                    "info",
-                    "Computed file embeddings for codebase context during context analysis phase.",
-                )
-            except Exception as e:
-                self._log_with_context(
-                    "error",
-                    f"Failed to compute embeddings for codebase context during context analysis: {e}",
-                    exc_info=True,
-                )
-                if self.status_callback:
-                    # FIX: Provide all required arguments positionally to status_callback
-                    self.status_callback(
-                        f"[red]Error computing context embeddings: {e}[/red]",  # message
-                        state="error",
-                        current_total_tokens=self.token_tracker.current_usage,
-                        current_total_cost=self.get_total_estimated_cost(),
-                        progress_pct=self.get_progress_pct("context", error=True),
-                        current_persona_name="Context_Relevance_Analyzer_Phase",
+        # --- MODIFIED: Check if embeddings are already up-to-date before re-computing ---
+        if self.raw_file_contents and self.context_analyzer:
+            current_files_hash = hash(frozenset(self.raw_file_contents.items()))
+            if not hasattr(self.context_analyzer, '_last_raw_file_contents_hash') or \
+               self.context_analyzer._last_raw_file_contents_hash != current_files_hash:
+                try:
+                    self.context_analyzer.compute_file_embeddings(self.raw_file_contents)
+                    self.context_analyzer._last_raw_file_contents_hash = current_files_hash
+                    self._log_with_context("info", "Computed file embeddings for codebase context during context analysis phase.")
+                except Exception as e:
+                    self._log_with_context(
+                        "error",
+                        f"Failed to compute embeddings for codebase context during context analysis: {e}",
+                        exc_info=True,
                     )
-                return {"error": f"Context analysis failed: {e}"}
+                    if self.status_callback:
+                        # FIX: Provide all required arguments positionally to status_callback
+                        self.status_callback(
+                            f"[red]Error computing context embeddings: {e}[/red]",  # message
+                            state="error",
+                            current_total_tokens=self.token_tracker.current_usage,
+                            current_total_cost=self.get_total_estimated_cost(),
+                            progress_pct=self.get_progress_pct("context", error=True),
+                            current_persona_name="Context_Relevance_Analyzer_Phase",
+                        )
+                    return {"error": f"Context analysis failed: {e}"}
+        # --- END MODIFIED ---
 
         self._log_with_context("info", "Performing context analysis.")
         try:
@@ -1952,11 +1935,11 @@ class SocraticDebate:
             200,
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
         )
-        summarized_debate_history = self._summarize_debate_history_for_llm(
-            debate_persona_results, effective_history_budget
+        summarized_debate_history = self.prompt_optimizer.optimize_debate_history( # Use prompt_optimizer
+            json.dumps(debate_persona_results), effective_history_budget
         )
         synthesis_prompt_parts.append(
-            f"Debate History:\n{json.dumps(summarized_debate_history, indent=2)}\n\n"
+            f"Debate History:\n{summarized_debate_history}\n\n" # Use optimized string directly
         )
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
@@ -2071,7 +2054,7 @@ class SocraticDebate:
         if (
             self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
             and local_metrics_collector
-        ):
+        ):  # MODIFIED: Use instance variable and local metrics_collector
             # Pass the synthesis_output to analyze_reasoning_quality
             local_metrics_collector.analyze_reasoning_quality(synthesis_output)
             # Update the intermediate steps with the now complete collected_metrics

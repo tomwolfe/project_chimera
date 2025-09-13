@@ -1,13 +1,13 @@
 # src/context/context_analyzer.py
-import os  # Used for os.walk, os.path.relpath
-import logging  # Used for logger
-from pathlib import Path  # Used for Path objects
-import fnmatch  # NEW: For file pattern matching
+import os
+import logging
+from pathlib import Path
+import fnmatch
 from typing import Dict, Any, List, Tuple, Optional
-from sentence_transformers import SentenceTransformer  # Needed for embeddings
-import re  # For keyword matching
-import json  # For potential JSON handling
-import numpy as np  # Needed for semantic similarity calculation
+from sentence_transformers import SentenceTransformer
+import re
+import json
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,8 @@ PROJECT_ROOT_MARKERS = [
     "README.md",
     "src/",
     ".github/",
-    "app.py",
-    "core.py",
+    "app.py", # ADDED
+    "core.py", # ADDED
 ]
 
 
@@ -90,10 +90,10 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
     if not raw_path:
         raise ValueError("File path cannot be empty.")
 
-    # Remove potentially harmful characters and sequences
+    # MODIFIED: Allow forward slashes in sanitized_path_str as they are valid path separators
     sanitized_path_str = re.sub(
-        r'[<>:"/\\|?*\x00-\x1f\x7f]', "", raw_path
-    )  # Remove invalid chars
+        r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path
+    )  # Removed '/' from invalid chars
     sanitized_path_str = re.sub(
         r"\.\./", "", sanitized_path_str
     )  # Remove parent directory traversal
@@ -357,9 +357,6 @@ class CodebaseScanner:
 
         return file_structure
 
-    # Removed placeholder methods: _gather_dependencies, _analyze_code_quality, _check_security_issues, _analyze_test_coverage
-    # These are now handled by FocusedMetricsCollector in core.py or are not directly part of context scanning for embeddings.
-
 
 # --- ContextRelevanceAnalyzer Class ---
 class ContextRelevanceAnalyzer:
@@ -384,6 +381,8 @@ class ContextRelevanceAnalyzer:
         )  # MODIFIED: Use raw_file_contents
         self.logger = logger
         self.persona_router = None
+        self.file_embeddings: Dict[str, Any] = {} # Initialize empty
+        self._last_raw_file_contents_hash: Optional[int] = None # NEW: Store hash of last processed content
 
         try:
             # Ensure the cache directory exists
@@ -401,37 +400,48 @@ class ContextRelevanceAnalyzer:
             )
             raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
 
-        if self.raw_file_contents:  # MODIFIED: Check raw_file_contents
+        # NEW: Compute initial embeddings and store hash if raw_file_contents are provided
+        if self.raw_file_contents:
             self.file_embeddings = self._compute_file_embeddings(
                 self.raw_file_contents
-            )  # MODIFIED: Pass raw_file_contents
-        else:
-            self.file_embeddings = {}
+            )
+            self._last_raw_file_contents_hash = hash(frozenset(self.raw_file_contents.items()))
+
 
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
-        """Public wrapper to compute embeddings for files in the codebase context."""
-        self.logger.info("Calling _compute_file_embeddings via public wrapper.")
-        return self._compute_file_embeddings(context)
-
-    def set_persona_router(self, persona_router: Any):
-        """Sets the persona router for context relevance scoring."""
-        self.persona_router = persona_router
-        self.logger.info("Persona router set for context relevance analysis.")
-
-    def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
-        """Computes embeddings for files in the codebase context."""
+        """
+        Public method to compute embeddings for files in the codebase context.
+        Includes a hash-based check to skip re-computation if the content hasn't changed.
+        """
         if not context:
-            self.logger.warning("No file content provided for embedding.")
+            self.logger.warning("No file content provided for embedding. Clearing existing embeddings.")
+            self.file_embeddings = {} # Clear old embeddings if context is empty
+            self._last_raw_file_contents_hash = None # Reset hash
             return {}
 
+        # Calculate hash of current context to check for changes
+        current_context_hash = hash(frozenset(context.items()))
+
+        # If the context hasn't changed, return existing embeddings
+        if hasattr(self, '_last_raw_file_contents_hash') and \
+           self._last_raw_file_contents_hash == current_context_hash:
+            self.logger.info("File embeddings are up-to-date. Skipping re-computation.")
+            return self.file_embeddings
+
+        # If context changed or no embeddings exist, re-compute
+        self.file_embeddings = {} # Clear existing embeddings before re-computing
+        self.logger.info("Computing embeddings for files...")
+        
         embeddings = {}
         try:
             # Filter out empty file contents before encoding
             files_with_content = {k: v for k, v in context.items() if v}
             if not files_with_content:
                 self.logger.warning(
-                    "No non-empty file content found in context for embedding."
+                    "No non-empty file content found in context for embedding. Clearing existing embeddings."
                 )
+                self.file_embeddings = {}
+                self._last_raw_file_contents_hash = None
                 return {}
 
             # NEW: Log if the model.encode call fails
@@ -444,9 +454,6 @@ class ContextRelevanceAnalyzer:
             file_contents = list(files_with_content.values())
 
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
-            if not hasattr(self, "model") or self.model is None:
-                raise RuntimeError("SentenceTransformer model not loaded.")
-
             # Ensure file_contents are not empty before encoding
             if not file_contents:
                 self.logger.warning("No file contents to encode for embeddings.")
@@ -457,8 +464,24 @@ class ContextRelevanceAnalyzer:
 
         except Exception as e:
             self.logger.error(f"Error computing file embeddings: {e}", exc_info=True)
-            return {}  # Return empty dict on error
-        return embeddings
+            embeddings = {}  # Return empty dict on error
+        
+        # Store the newly computed embeddings and the hash of the content that generated them
+        self.file_embeddings = embeddings
+        self._last_raw_file_contents_hash = current_context_hash
+        return self.file_embeddings
+
+    def set_persona_router(self, persona_router: Any):
+        """Sets the persona router for context relevance scoring."""
+        self.persona_router = persona_router
+        self.logger.info("Persona router set for context relevance analysis.")
+
+    def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Internal method to compute embeddings. Delegates to the public `compute_file_embeddings`
+        to ensure the caching logic is always applied.
+        """
+        return self.compute_file_embeddings(context)
 
     def find_relevant_files(
         self, prompt: str, max_context_tokens: int, active_personas: List[str] = []

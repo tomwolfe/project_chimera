@@ -6,7 +6,6 @@ from src.config.settings import ChimeraSettings
 import re
 import json
 
-# NEW IMPORTS FOR SUMMARIZATION
 import tiktoken
 from transformers import pipeline
 
@@ -17,8 +16,12 @@ _summarizer = None
 
 
 def get_summarizer():
+    """Initializes and returns the summarization pipeline, cached globally."""
     global _summarizer
     if _summarizer is None:
+        logger.info(
+            "Initializing Hugging Face summarization pipeline (sshleifer/distilbart-cnn-6-6). This is a one-time load."
+        )
         # Using a smaller, faster model for summarization
         _summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-6-6")
     return _summarizer
@@ -33,46 +36,38 @@ class PromptOptimizer:
 
     def _summarize_text(self, text: str, target_tokens: int) -> str:
         """Summarizes text to a target token count using a pre-trained model."""
-        # Fallback to truncation if summarization model fails or is not loaded
         try:
             summarizer = get_summarizer()
             # Pre-truncate input text to a manageable size for the summarizer model
             # distilbart-cnn-6-6 has a max input length of 1024 tokens.
-            # We'll use a slightly larger buffer for safety, but still well within typical model limits.
-            # 1 token is roughly 4 characters.
-            max_input_chars_for_summarizer = 1024 * 4
-            if len(text) > max_input_chars_for_summarizer:
+            max_input_tokens_for_summarizer = 1024
+            if self.tokenizer.count_tokens(text) > max_input_tokens_for_summarizer:
                 logger.warning(
-                    f"Input text for summarizer is too long ({len(text)} chars). Pre-truncating to {max_input_chars_for_summarizer} chars."
+                    f"Input text for summarizer is too long ({self.tokenizer.count_tokens(text)} tokens). Pre-truncating to {max_input_tokens_for_summarizer} tokens."
                 )
-                text = text[:max_input_chars_for_summarizer]
+                text = self.tokenizer.truncate_to_token_limit(
+                    text, max_input_tokens_for_summarizer
+                )
 
-            # Estimate max_length for summarizer based on target_tokens (heuristic: 1 token ~ 4 chars)
-            max_summary_length_words = target_tokens * 2  # Rough estimate
-            min_summary_length_words = max(
-                5, int(target_tokens * 0.5)
-            )  # Ensure a minimum length, at least 5 words
-
-            # Ensure max_length is not excessively large for the summarizer model
-            # distilbart-cnn-6-6 typically has a max output length around 142.
-            # We need to be careful not to ask for too much.
-            max_summary_length_words = min(
-                max_summary_length_words, int(target_tokens * 1.5)
-            )  # Cap output length for distilbart, in words
-            max_summary_length_words = max(max_summary_length_words, min_summary_length_words) # Ensure max is at least min
+            # distilbart-cnn-6-6 typically has a max output length around 142 tokens.
+            # We cap the requested summary length to avoid over-generation and memory issues.
+            # Target tokens is the budget for the summary.
+            max_summary_length_tokens = min(target_tokens, 142)  # Cap at model's typical max output
+            min_summary_length_tokens = max(5, int(target_tokens * 0.5))  # Ensure a minimum length, at least 5 tokens
+            max_summary_length_tokens = max(max_summary_length_tokens, min_summary_length_tokens)  # Ensure max is at least min
 
             summary_result = summarizer(
                 text,
-                max_length=max_summary_length_words,
-                min_length=min_summary_length_words,
+                max_length=max_summary_length_tokens,
+                min_length=min_summary_length_tokens,
                 do_sample=False,  # For deterministic output
             )
             summary = summary_result[0]["summary_text"]
 
             # Use the tokenizer to ensure the final summary fits the target_tokens
             final_summary = self.tokenizer.truncate_to_token_limit(summary, target_tokens)
-            if not final_summary and text.strip(): # If final_summary is empty but original text wasn't
-                return "[...summary truncated due to token limits...]" # Return a placeholder
+            if not final_summary and text.strip():  # If final_summary is empty but original text wasn't
+                return "[...summary truncated due to token limits...]"  # Return a placeholder
             return final_summary
         except Exception as e:
             logger.error(
@@ -93,6 +88,7 @@ class PromptOptimizer:
         prompt_tokens = self.tokenizer.count_tokens(prompt)
 
         # Get persona-specific token limits from settings
+        # Use a default if not explicitly defined for the persona
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
@@ -101,7 +97,7 @@ class PromptOptimizer:
         effective_input_limit = persona_input_token_limit
 
         # Ensure a minimum effective_input_limit to prevent accidental truncation to 0 tokens
-        MIN_EFFECTIVE_INPUT_LIMIT = 50 # tokens
+        MIN_EFFECTIVE_INPUT_LIMIT = 50  # tokens
         effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
 
         if prompt_tokens > effective_input_limit:
@@ -109,6 +105,7 @@ class PromptOptimizer:
                 f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
             )
 
+            # Use summarization for optimization
             optimized_prompt = self._summarize_text(prompt, effective_input_limit)
 
             logger.info(
@@ -138,10 +135,10 @@ class PromptOptimizer:
 
         # For now, a simple truncation as a fallback
         logger.warning(
-            f"Debate history too long ({current_tokens} tokens). Applying aggressive truncation to fit {max_tokens} tokens."
+            f"Debate history too long ({current_tokens} tokens). Applying aggressive summarization/truncation to fit {max_tokens} tokens."
         )
         return self.tokenizer.truncate_to_token_limit(
             debate_history_json_str,
             max_tokens,
-            truncation_indicator="\n[...debate history further summarized/truncated...]\\n",
+            truncation_indicator="\n[...debate history further summarized/truncated...]\n",
         )

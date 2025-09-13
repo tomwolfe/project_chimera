@@ -1,21 +1,20 @@
-# -*- coding: utf-8 -*-
 # app.py
+
 import streamlit as st
 import os
-
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import io
-import contextlib  # Used in capture_rich_output_and_get_console
-import re  # Used in sanitize_user_input
-import datetime  # Used in _log_persona_change
-import time  # Used in DEBATE_RETRY_DELAY_SECONDS
+import contextlib
+import re
+import datetime
+import time
 from typing import Dict, Any, List, Optional
-import logging  # Used for logger
-from rich.console import Console  # Used in capture_rich_output_and_get_console
-from core import SocraticDebate  # Instantiated
+import logging
+from rich.console import Console
+from core import SocraticDebate
 
-from src.models import (  # All these are used for type hints or schema validation in results display
+from src.models import (
     PersonaConfig,
     ReasoningFrameworkConfig,
     LLMOutput,
@@ -25,13 +24,13 @@ from src.models import (  # All these are used for type hints or schema validati
     GeneralOutput,
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
-    SuggestionItem,  # NEW: Import SuggestionItem
+    SuggestionItem,
 )
 from src.utils.output_parser import (
     LLMOutputParser,
-)  # Instantiated for parsing final_answer
-from src.persona_manager import PersonaManager  # Instantiated
-from src.exceptions import (  # All these are used in handle_debate_errors
+)
+from src.persona_manager import PersonaManager
+from src.exceptions import (
     ChimeraError,
     LLMResponseValidationError,
     SchemaValidationError,
@@ -39,61 +38,57 @@ from src.exceptions import (  # All these are used in handle_debate_errors
     LLMProviderError,
     CircuitBreakerError,
 )
-
-# REMOVED: from src.constants import SELF_ANALYSIS_KEYWORDS # SELF_ANALYSIS_KEYWORDS is not directly used in app.py
-# REMOVED: is_self_analysis_prompt is now accessed via st.session_state.persona_manager.prompt_analyzer
-from src.context.context_analyzer import ContextRelevanceAnalyzer  # Instantiated
-import traceback  # Used in handle_debate_errors
+from src.context.context_analyzer import ContextRelevanceAnalyzer
+import traceback
 from collections import (
     defaultdict,
-)  # Used in generate_markdown_report, validation_results_by_file
-from pydantic import ValidationError  # Used in handle_debate_errors
-import html  # Used in sanitize_user_input
-import difflib  # Used in diff_lines
-
-# import subprocess # REMOVED: Not needed after refactoring execute_command
+)
+from pydantic import ValidationError
+import html
+import difflib
 from src.utils.command_executor import (
     execute_command_safely,
-)  # NEW: Import for secure command execution
+)
 from src.utils.code_validator import (
     validate_code_output_batch,
-)  # NEW: Import for code validation
-
-# REMOVED: import yaml # No longer needed, ChimeraSettings handles YAML loading
-import json  # Used for json.dumps in results display
-
-import uuid  # Used for _session_id, request_id
-from src.logging_config import setup_structured_logging  # Called
+)
+import json
+import uuid
+from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import (
     RateLimiter,
     RateLimitExceededError,
-)  # Instantiated, used in handle_debate_errors
-from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
-from pathlib import Path  # Used for Path.cwd(), file_path.name
+)
+from src.config.settings import ChimeraSettings
+from pathlib import Path
 
-from src.utils.prompt_analyzer import PromptAnalyzer  # Instantiated via PersonaManager
-from src.token_tracker import TokenUsageTracker  # Instantiated
+from src.utils.prompt_analyzer import PromptAnalyzer
+from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner  # Instantiated
+from src.context.context_analyzer import CodebaseScanner
 
 from src.utils.report_generator import (
     generate_markdown_report,
     strip_ansi_codes,
-)  # NEW: Import from report_generator
+)
 from src.utils.session_manager import (
     _initialize_session_state,
     update_activity_timestamp,
     reset_app_state,
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
-)  # NEW: Import from session_manager
+)
 from src.utils.ui_helpers import (
     on_api_key_change,
     display_key_status,
     test_api_key,
-)  # NEW: Import from ui_helpers
-from src.utils.api_key_validator import fetch_api_key  # NEW: Import fetch_api_key
+)
+from src.utils.api_key_validator import fetch_api_key
+
+# NEW IMPORT for PromptOptimizer
+from src.utils.prompt_optimizer import PromptOptimizer
+import gc # NEW: Import garbage collector for explicit memory management
 
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
@@ -114,7 +109,6 @@ def get_app_logger():
     try:
         configured_logger = setup_structured_logging()
         if configured_logger is None:
-            # Fallback to a basic logger if setup_structured_logging returns None
             logging.basicConfig(
                 level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
             )
@@ -126,7 +120,6 @@ def get_app_logger():
         return configured_logger
     except Exception as e:
         st.error(f"❌ Error setting up structured logging: {e}")
-        # Fallback to a basic logger if setup fails
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
         )
@@ -139,12 +132,10 @@ def get_app_logger():
 
 logger = get_app_logger()
 
-# Add a quick check to ensure logger is not None, though st.cache_resource should prevent this
 if logger is None:
     st.error(
         "❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py."
     )
-    # As a last resort, create a very basic logger if all else fails
     logging.basicConfig(
         level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s"
     )
@@ -154,23 +145,33 @@ if logger is None:
     )
 
 
-# REMOVED: DOMAIN_KEYWORDS = app_config.get("domain_keywords", {})
-# REMOVED: CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.get("context_token_budget_ratio", 0.25)
-# REMOVED: MAX_TOKENS_LIMIT = app_config.get("max_tokens_limit", 64000)
-# NEW: Use settings_instance directly
 DOMAIN_KEYWORDS = settings_instance.domain_keywords
 CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = settings_instance.context_token_budget_ratio
-MAX_TOKENS_LIMIT = settings_instance.total_budget  # Use total_budget from settings
+MAX_TOKENS_LIMIT = settings_instance.total_budget
 
 
-# NEW: Instantiate CodebaseScanner once for the UI
+# NEW: Instantiate CodebaseScanner once for the UI and cache it
 @st.cache_resource
 def get_codebase_scanner_instance():
+    """Initializes and returns the CodebaseScanner, cached by Streamlit."""
+    logger.info("Initializing CodebaseScanner via st.cache_resource.")
     return CodebaseScanner()
 
+# NEW: Instantiate ContextRelevanceAnalyzer once and cache it
+@st.cache_resource
+# MODIFIED: Renamed 'settings' to '_settings' to prevent UnhashableParamError
+def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
+    """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
+    logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
+    return ContextRelevanceAnalyzer(
+        cache_dir=_settings.sentence_transformer_cache_dir, # Use _settings here
+        raw_file_contents={}, # Initialize empty, will be updated dynamically
+    )
 
-# --- MODIFIED EXAMPLE_PROMPTS STRUCTURE ---
-# Grouping prompts by category for better UI organization
+# REMOVED: get_prompt_optimizer_instance from app.py
+# It will be initialized within SocraticDebate to ensure tokenizer availability.
+
+
 EXAMPLE_PROMPTS = {
     "Coding & Implementation": {
         "Implement Python API Endpoint": {
@@ -212,12 +213,16 @@ EXAMPLE_PROMPTS = {
         },
     },
 }
-# --- END EXAMPLE_PROMPTS STRUCTURE ---
-
 
 # --- Session State Initialization Call ---
+# MODIFIED: Pass the cached instances to _initialize_session_state
 if "initialized" not in st.session_state:
-    _initialize_session_state(settings_instance, EXAMPLE_PROMPTS)
+    _initialize_session_state(
+        settings_instance,
+        EXAMPLE_PROMPTS,
+        get_context_relevance_analyzer_instance, # Pass the cached function
+        get_codebase_scanner_instance # Pass the cached function
+    )
     st.session_state.api_key_input = fetch_api_key() or ""
 # --- END Session State Initialization Call ---
 
@@ -226,12 +231,10 @@ check_session_expiration(settings_instance, EXAMPLE_PROMPTS)
 # --- END NEW: Session Expiration Check ---
 
 
-# --- ENHANCED SANITIZATION FUNCTION ---
 def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
     issues = []
 
-    # Apply prompt injection replacements first
     processed_prompt = prompt
 
     injection_patterns = [
@@ -279,13 +282,11 @@ def sanitize_user_input(prompt: str) -> str:
         )
         processed_prompt = processed_prompt[:MAX_PROMPT_LENGTH]
 
-    for pattern, replacement_tag in injection_patterns:  # Apply replacements
+    for pattern, replacement_tag in injection_patterns:
         processed_prompt = re.sub(pattern, f"[{replacement_tag}]", processed_prompt)
 
-    # Then, apply HTML escaping to prevent XSS
     sanitized = html.escape(processed_prompt)
 
-    # Finally, apply character repetition sanitization
     sanitized = re.sub(
         r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r"\1\1\1", sanitized
     )
@@ -301,10 +302,6 @@ def sanitize_user_input(prompt: str) -> str:
     return sanitized
 
 
-# --- END ENHANCED SANITIZATION FUNCTION ---
-
-
-# --- NEW: HELPER FUNCTION FOR ACTION-ORIENTED ERROR MESSAGING ---
 def handle_debate_errors(error: Exception):
     """Displays user-friendly, action-oriented error messages based on exception type."""
     error_type = type(error).__name__
@@ -461,23 +458,18 @@ def handle_debate_errors(error: Exception):
         )
 
 
-# --- MODIFIED execute_command function for security ---
 def execute_command(command_str: str, timeout: int = 60) -> str:
     """
     Executes a simple command safely using the centralized utility.
     This function is specifically for simple 'echo' commands within the app's UI.
     """
     try:
-        # Use the centralized, secure command executor
-        # For 'echo', we pass it as a list of arguments to prevent injection.
-        # The command_str itself is treated as a single argument to 'echo'.
         return_code, stdout, stderr = execute_command_safely(
             ["echo", command_str], timeout=timeout
         )
         if return_code == 0:
             return stdout.strip()
         else:
-            # Log stderr if available, otherwise a generic message
             error_output = (
                 stderr.strip()
                 if stderr.strip()
@@ -490,10 +482,6 @@ def execute_command(command_str: str, timeout: int = 60) -> str:
         return f"Error executing command: {e}"
 
 
-# --- END MODIFIED execute_command function ---
-
-
-# --- Persona Change Logging ---
 def _log_persona_change(
     persona_name: str, parameter: str, old_value: Any, new_value: Any
 ):
@@ -511,7 +499,6 @@ def _log_persona_change(
     update_activity_timestamp()
 
 
-# --- MODIFICATIONS FOR SIDEBAR GROUPING ---
 with st.sidebar:
     st.header("Configuration")
 
@@ -533,7 +520,6 @@ with st.sidebar:
                 else:
                     st.error(f"❌ {st.session_state.api_key_format_message}")
             else:
-                # NEW: Add warning if API key is only from environment variable in production
                 if (
                     os.getenv("ENVIRONMENT") == "production"
                     and st.session_state.api_key_input
@@ -582,7 +568,6 @@ with st.sidebar:
     with st.expander("Resource Management", expanded=False):
         st.markdown("---")
 
-        # NEW: Update token tracker budget if max_tokens_budget_input changes
         def on_max_tokens_budget_change():
             st.session_state.token_tracker.budget = (
                 st.session_state.max_tokens_budget_input
@@ -623,13 +608,10 @@ with st.sidebar:
         )
 
         if user_prompt_text and not st.session_state.context_ratio_user_modified:
-            # MODIFIED: Use PromptAnalyzer for domain recommendation
-            # FIX: Removed settings_instance.domain_keywords as an argument
             recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                user_prompt_text  # MODIFIED: Removed settings_instance.domain_keywords
+                user_prompt_text
             )
 
-            # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
             if st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
                 user_prompt_text
             ):
@@ -709,7 +691,6 @@ st.header("Project Setup & Input")
 CUSTOM_PROMPT_KEY = "Custom Prompt"
 
 
-# --- Callback functions for prompt selection ---
 def on_custom_prompt_change():
     st.session_state.user_prompt_input = st.session_state.custom_prompt_text_area_widget
     st.session_state.selected_example_name = CUSTOM_PROMPT_KEY
@@ -749,14 +730,10 @@ def on_example_select_change(selectbox_key, tab_name):
     st.session_state.raw_file_contents = {}
     st.session_state.uploaded_files = []
 
-    # When "Critically analyze the entire Project Chimera codebase" is selected
     if (
         selected_example_key
         == "Critically analyze the entire Project Chimera codebase. Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. For each suggestion, provide a clear rationale and a specific, actionable code modification."
     ):
-        # Force load codebase context
-        # The SocraticDebate constructor will handle loading codebase context if is_self_analysis is True
-        # Update the prompt to reflect we have context
         st.session_state.user_prompt_input = (
             EXAMPLE_PROMPTS[tab_name][selected_example_key]["prompt"]
             + "\n\nNOTE: You have full access to the Project Chimera codebase for this analysis."
@@ -784,7 +761,6 @@ def on_example_select_change(selectbox_key, tab_name):
     st.rerun()
 
 
-# --- MODIFIED PROMPT SELECTION UI ---
 st.subheader("What would you like to do?")
 
 tab_names = list(EXAMPLE_PROMPTS.keys()) + [CUSTOM_PROMPT_KEY]
@@ -810,10 +786,8 @@ for i, tab_name in enumerate(tab_names):
                 - **Example Output:** If possible, provide an.example of the desired output format.
                 """)
 
-            # MODIFIED: Use PromptAnalyzer for domain recommendation
-            # FIX: Removed settings_instance.domain_keywords as an argument
             recommended_domain_for_custom = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                st.session_state.user_prompt_input  # MODIFIED: Removed settings_instance.domain_keywords
+                st.session_state.user_prompt_input
             )
 
             if (
@@ -828,7 +802,7 @@ for i, tab_name in enumerate(tab_names):
                     f"Apply '{recommended_domain_for_custom}' Framework (Custom Prompt)",
                     type="secondary",
                     use_container_width=True,
-                    key=f"apply_suggested_framework_custom_prompt_{tab_name}",
+                    key=f"apply_suggested_framework_main_{recommended_domain.replace(' ', '_').lower()}",
                     on_click=update_activity_timestamp,
                 ):
                     st.session_state.selected_persona_set = (
@@ -942,33 +916,30 @@ logger.debug(
 )
 logger.debug(f"Sidebar selected persona set: {st.session_state.selected_persona_set}")
 
-# --- START: UI Layout for Framework and Context ---
 col1, col2 = st.columns(2, gap="medium")
 with col1:
     st.subheader("Reasoning Framework")
 
     if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
         if user_prompt.strip():
-            # MODIFIED: Use PromptAnalyzer for domain recommendation
-            # FIX: Removed settings_instance.domain_keywords as an argument
-            suggested_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                user_prompt  # MODIFIED: Removed settings_instance.domain_keywords
+            recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
+                user_prompt
             )
             if (
-                suggested_domain
-                and suggested_domain != st.session_state.selected_persona_set
+                recommended_domain
+                and recommended_domain != st.session_state.selected_persona_set
             ):
                 st.info(
-                    f"💡 Based on your custom prompt, the **'{suggested_domain}'** framework might be appropriate."
+                    f"💡 Based on your custom prompt, the **'{recommended_domain}'** framework might be appropriate."
                 )
                 if st.button(
-                    f"Apply '{suggested_domain}' Framework (Custom Prompt)",
+                    f"Apply '{recommended_domain}' Framework (Custom Prompt)",
                     type="secondary",
                     use_container_width=True,
-                    key=f"apply_suggested_framework_main_{suggested_domain.replace(' ', '_').lower()}",
+                    key=f"apply_suggested_framework_main_{recommended_domain.replace(' ', '_').lower()}",
                     on_click=update_activity_timestamp,
                 ):
-                    st.session_state.selected_persona_set = suggested_domain
+                    st.session_state.selected_persona_set = recommended_domain
                     update_activity_timestamp()
                     st.rerun()
 
@@ -1030,7 +1001,7 @@ with col1:
 
             if st.session_state.persona_changes_detected:
                 st.warning(
-                    "Unsaved persona changes detected. Save as a custom framework to persist them."
+                    "Unsaved persona changes detected. Please save as a custom framework to persist them."
                 )
 
             if (
@@ -1119,7 +1090,6 @@ with col1:
             st.subheader("Export Framework")
             st.info("Export the currently selected framework to a file for sharing.")
             export_framework_name = st.session_state.selected_persona_set
-            # FIX APPLIED HERE: Changed 'on_change' to 'on_click'
             if st.button(
                 f"Export '{export_framework_name}'",
                 use_container_width=True,
@@ -1262,7 +1232,6 @@ with col2:
                 st.session_state.uploaded_files = []
                 st.info("Codebase context cleared for custom prompt.")
 
-# --- NEW: Persona Editing UI ---
 st.markdown("---")
 with st.expander(
     "⚙️ View and Edit Personas", expanded=st.session_state.persona_edit_mode
@@ -1385,7 +1354,6 @@ with st.expander(
                     st.rerun()
                 else:
                     st.error("Could not reset all personas for the current framework.")
-# --- END NEW: Persona Editing UI ---
 
 st.markdown("---")
 run_col, reset_col = st.columns([0.8, 0.2])
@@ -1406,7 +1374,6 @@ with reset_col:
     )
 
 
-# --- MODIFICATION: Extract debate execution logic into a separate function ---
 def _run_socratic_debate_process():
     """Handles the execution of the Socratic debate process."""
 
@@ -1414,7 +1381,6 @@ def _run_socratic_debate_process():
 
     request_id = str(uuid.uuid4())[:8]
 
-    # NEW: Initialize structured and raw codebase context variables
     structured_codebase_context_for_debate: Dict[str, Any] = {}
     codebase_raw_file_contents_for_debate: Dict[str, str] = {}
 
@@ -1429,6 +1395,7 @@ def _run_socratic_debate_process():
             "Self-analysis prompt detected. Loading Project Chimera's codebase context..."
         )
         try:
+            # Use the cached CodebaseScanner instance
             scanner = get_codebase_scanner_instance()
             full_codebase_analysis = scanner.load_own_codebase_context()
             structured_codebase_context_for_debate = full_codebase_analysis.get(
@@ -1446,7 +1413,6 @@ def _run_socratic_debate_process():
                 "Successfully loaded Project Chimera's codebase context for self-analysis."
             )
         except Exception as e:
-            # Ensure embeddings are cleared if loading fails
             if st.session_state.context_analyzer:
                 st.session_state.context_analyzer.file_embeddings = {}
                 st.session_state.context_analyzer.raw_file_contents = {}
@@ -1610,7 +1576,6 @@ def _run_socratic_debate_process():
             rich_console_instance,
         ):
             try:
-                # --- FIX START: Correctly determine domain_for_run ---
                 domain_for_run = st.session_state.selected_persona_set
 
                 if (
@@ -1622,16 +1587,14 @@ def _run_socratic_debate_process():
                         f"Using active example framework hint: '{domain_for_run}' for example '{st.session_state.selected_example_name}'."
                     )
                 elif st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-                    # FIX: Removed settings_instance.domain_keywords as an argument
                     recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                        current_user_prompt_for_debate  # MODIFIED: Removed settings_instance.domain_keywords
+                        current_user_prompt_for_debate
                     )
                     if recommended_domain:
                         domain_for_run = recommended_domain
                         logger.debug(
                             f"Using recommended domain for custom prompt: '{domain_for_run}'."
                         )
-                # --- FIX END ---
 
                 logger.info(f"Final domain selected for debate: {domain_for_run}")
 
@@ -1656,34 +1619,21 @@ def _run_socratic_debate_process():
                 )
 
                 # NEW: Ensure context_analyzer has the latest raw_file_contents and re-computes embeddings if needed
-                # This is crucial if raw_file_contents were updated by the self-analysis block above
-                # or by file uploads, and the cached context_analyzer instance needs to reflect this.
-                if (
-                    st.session_state.raw_file_contents
-                    and st.session_state.context_analyzer
-                ):
-                    st.session_state.context_analyzer.raw_file_contents = (
-                        codebase_raw_file_contents_for_debate
-                    )
-                    if not st.session_state.context_analyzer.file_embeddings:
+                if st.session_state.raw_file_contents and st.session_state.context_analyzer:
+                    current_files_hash = hash(frozenset(st.session_state.raw_file_contents.items()))
+                    if not hasattr(st.session_state.context_analyzer, '_last_raw_file_contents_hash') or \
+                       st.session_state.context_analyzer._last_raw_file_contents_hash != current_files_hash:
+                        st.session_state.context_analyzer.raw_file_contents = codebase_raw_file_contents_for_debate
                         try:
                             st.session_state.context_analyzer.compute_file_embeddings(
                                 codebase_raw_file_contents_for_debate
                             )
-                            logger.info(
-                                "Re-computed file embeddings for context analyzer in app.py before debate init."
-                            )
+                            st.session_state.context_analyzer._last_raw_file_contents_hash = current_files_hash
+                            logger.info("Re-computed file embeddings for context analyzer in app.py before debate init.")
                         except Exception as e:
                             st.error(f"❌ Error re-computing context embeddings: {e}")
-                            logger.error(
-                                f"Failed to re-compute context embeddings: {e}",
-                                exc_info=True,
-                            )
-                            return  # Abort debate if embeddings fail
-
-                # REMOVED: current_settings = ChimeraSettings(...)
-                # NEW: Use the globally loaded settings_instance
-                # This ensures consistency across the app and the debate.
+                            logger.error(f"Failed to re-compute context embeddings: {e}", exc_info=True)
+                            return
 
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate,
@@ -1696,14 +1646,12 @@ def _run_socratic_debate_process():
                     rich_console=rich_console_instance,
                     structured_codebase_context=structured_codebase_context_for_debate,
                     raw_file_contents=codebase_raw_file_contents_for_debate,
-                    context_analyzer=st.session_state.context_analyzer,
-                    # UPDATED CALL: Use persona_manager.prompt_analyzer.is_self_analysis_prompt
-                    is_self_analysis=st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
-                        current_user_prompt_for_debate
-                    ),
+                    context_analyzer=st.session_state.context_analyzer, # Pass cached instance
+                    is_self_analysis=is_self_analysis_prompt_detected,
                     settings=settings_instance,
                     persona_manager=st.session_state.persona_manager,
                     token_tracker=st.session_state.token_tracker,
+                    codebase_scanner=get_codebase_scanner_instance(), # Pass cached instance
                 )
 
                 logger.info(
@@ -1716,7 +1664,6 @@ def _run_socratic_debate_process():
 
                 final_answer, intermediate_steps = debate_instance.run_debate()
 
-                # NEW: Capture file_analysis_cache if available from the debate instance
                 if (
                     hasattr(debate_instance, "file_analysis_cache")
                     and debate_instance.file_analysis_cache
@@ -1798,9 +1745,21 @@ def _run_socratic_debate_process():
                 final_total_cost = st.session_state.intermediate_steps_output.get(
                     "Total_Estimated_Cost_USD", 0.0
                 )
-
-
-# --- END OF NEW FUNCTION ---
+            finally:
+                st.session_state.raw_file_contents = {}
+                st.session_state.structured_codebase_context = {}
+                if st.session_state.context_analyzer:
+                    st.session_state.context_analyzer.file_embeddings = {}
+                    st.session_state.context_analyzer.raw_file_contents = {}
+                    st.session_state.context_analyzer._last_raw_file_contents_hash = None
+                st.session_state.file_analysis_cache = None
+                # Clear the summarizer pipeline cache if it exists
+                # This is a class-level attribute in PromptOptimizer, so we need to access it via the class
+                if hasattr(PromptOptimizer, '_summarizer') and PromptOptimizer._summarizer is not None:
+                    logger.info("Clearing PromptOptimizer's summarizer pipeline from memory.")
+                    del PromptOptimizer._summarizer
+                    PromptOptimizer._summarizer = None
+                gc.collect()
 
 if run_button_clicked:
     update_activity_timestamp()
@@ -1940,7 +1899,6 @@ if st.session_state.debate_ran:
                 ],
             }
 
-        # NEW: Pass file_analysis_cache to validate_code_output_batch
         validation_results_by_file = validate_code_output_batch(
             parsed_llm_output_dict,
             st.session_state.get("raw_file_contents", {}),

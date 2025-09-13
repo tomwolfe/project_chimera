@@ -4,7 +4,7 @@ import json
 import ast
 import logging
 from typing import Dict, Any, List, Tuple, Union, Optional
-from collections import defaultdict  # NEW: Import defaultdict
+from collections import defaultdict
 from pathlib import Path
 import re
 import yaml
@@ -77,25 +77,22 @@ class FocusedMetricsCollector:
         self.persona_manager = persona_manager
         self.content_validator = content_validator
         self.codebase_path = (
-            PROJECT_ROOT  # Assuming the analyst operates from the project root
+            PROJECT_ROOT
         )
         self.collected_metrics: Dict[str, Any] = {}
         self.reasoning_quality_metrics: Dict[str, Any] = {}
-        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
+        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # This cache will be cleared at the start of collect_all_metrics
 
-        # NEW: Raw counts for tracking current run's outcome (to be saved historically)
         self._current_run_total_suggestions_processed: int = 0
         self._current_run_successful_suggestions: int = 0
         self._current_run_schema_validation_failures: Dict[str, int] = defaultdict(int)
 
-        # These will hold aggregated historical data, populated by analyze_historical_effectiveness
         self._historical_total_suggestions_processed: int = 0
         self._historical_successful_suggestions: int = 0
         self._historical_schema_validation_failures: Dict[str, int] = defaultdict(int)
 
         self.critical_metric: Optional[str] = None
 
-        # Load historical data at initialization
         historical_summary = self.analyze_historical_effectiveness()
         self._historical_total_suggestions_processed = historical_summary.get(
             "historical_total_suggestions_processed", 0
@@ -129,7 +126,6 @@ class FocusedMetricsCollector:
 
     def analyze_reasoning_quality(self, analysis_output: Dict[str, Any]):
         """Analyzes the quality of reasoning in the debate process and final output."""
-        # Use self.debate_history which is already available in the instance
         debate_history = self.debate_history
 
         self.reasoning_quality_metrics = {
@@ -143,7 +139,6 @@ class FocusedMetricsCollector:
                 "evidence_citations": 0,
                 "assumption_challenges": 0,
             },
-            # NEW: Include historical self-improvement process quality metrics here
             "self_improvement_suggestion_success_rate_historical": self._get_historical_self_improvement_success_rate(),
             "schema_validation_failures_historical": dict(
                 self._get_historical_schema_validation_failures()
@@ -196,7 +191,6 @@ class FocusedMetricsCollector:
             5, total_indicators // 3
         )
 
-        # Store reasoning quality metrics in the main collected_metrics dictionary
         self.collected_metrics["reasoning_quality"] = self.reasoning_quality_metrics
 
     @classmethod
@@ -214,7 +208,6 @@ class FocusedMetricsCollector:
         }
         malformed_blocks = []
 
-        # 1. Analyze .github/workflows/ci.yml
         ci_yml_path = Path(codebase_path) / ".github/workflows/ci.yml"
         if ci_yml_path.exists():
             try:
@@ -335,7 +328,6 @@ class FocusedMetricsCollector:
                     }
                 )
 
-        # 2. Analyze .pre-commit-config.yaml
         pre_commit_path = Path(codebase_path) / ".pre-commit-config.yaml"
         if pre_commit_path.exists():
             try:
@@ -438,7 +430,6 @@ class FocusedMetricsCollector:
                     }
                 )
 
-        # 3. Analyze pyproject.toml
         pyproject_path = Path(codebase_path) / "pyproject.toml"
         if pyproject_path.exists():
             try:
@@ -590,7 +581,6 @@ class FocusedMetricsCollector:
             "malformed_blocks": [],
         }
 
-        # 1. Analyze Dockerfile
         dockerfile_path = Path(codebase_path) / "Dockerfile"
         if dockerfile_path.exists():
             deployment_metrics_data["dockerfile_present"] = True
@@ -639,7 +629,6 @@ class FocusedMetricsCollector:
                     }
                 )
 
-        # 2. Analyze requirements-prod.txt and requirements.txt
         prod_req_path = Path(codebase_path) / "requirements-prod.txt"
         dev_req_path = Path(codebase_path) / "requirements.txt"
 
@@ -719,13 +708,8 @@ class FocusedMetricsCollector:
                 persona_name = key.replace("_Tokens_Used", "")
                 phase_token_usage[persona_name] = value
 
-        # Calculate token efficiency (this was in _collect_core_metrics)
         suggestions_count = 0
         try:
-            # This part is problematic as debate_history[-1]["output"] is the *last persona's output*
-            # not necessarily the final synthesis output with suggestions.
-            # The `token_efficiency` metric should probably be calculated *after* synthesis.
-            # For now, we'll use a placeholder or calculate based on available suggestions in intermediate_steps.
             final_synthesis_output = self.intermediate_steps.get(
                 "Final_Synthesis_Output", {}
             )
@@ -736,7 +720,7 @@ class FocusedMetricsCollector:
                 suggestions_count = len(
                     final_synthesis_output["data"].get("IMPACTFUL_SUGGESTIONS", [])
                 )
-            elif "IMPACTFUL_SUGGESTIONS" in final_synthesis_output:  # Direct V1 output
+            elif "IMPACTFUL_SUGGESTIONS" in final_synthesis_output:
                 suggestions_count = len(
                     final_synthesis_output.get("IMPACTFUL_SUGGESTIONS", [])
                 )
@@ -802,7 +786,6 @@ class FocusedMetricsCollector:
             "coverage_details": "Failed to run coverage tool.",
         }
         try:
-            # Run pytest with coverage and generate a JSON report
             command = [
                 "pytest",
                 "-v",
@@ -810,26 +793,20 @@ class FocusedMetricsCollector:
                 "--cov=src",
                 "--cov-report=json:coverage.json",
             ]
-            # Use execute_command_safely for robustness
             return_code, stdout, stderr = execute_command_safely(
                 command, timeout=120, check=False
             )
 
-            # Pytest returns 0 for success, 1 for failed tests, 2 for internal errors/usage errors.
-            # Only consider exit code 0 or 1 as valid execution for coverage reporting.
             if return_code not in (0, 1):
                 logger.warning(
                     f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}"
                 )
-                # Provide more detailed error info, including stdout for debugging.
                 coverage_data["coverage_details"] = (
                     f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
                 )
                 return coverage_data
 
             coverage_json_path = Path("coverage.json")
-            # Check if the command actually produced the coverage.json file
-            # and if the return code indicates a successful or partially successful run (0 or 1 for pytest)
             if coverage_json_path.exists() and return_code in (0, 1):
                 with open(coverage_json_path, "r", encoding="utf-8") as f:
                     report = json.load(f)
@@ -855,7 +832,6 @@ class FocusedMetricsCollector:
                 coverage_data["coverage_details"] = (
                     "Coverage report generated successfully."
                 )
-                # NEW: Add a note if tests failed, even if coverage command ran
                 if return_code == 1:
                     coverage_data["coverage_details"] += (
                         " Note: Some tests failed during coverage collection."
@@ -905,9 +881,8 @@ class FocusedMetricsCollector:
         )
         return hashlib.sha256(hash_input.encode()).hexdigest()[
             :8
-        ]  # FIX: Use SHA256 instead of MD5
+        ]
 
-    # NEW METHOD: identify_successful_patterns
     def identify_successful_patterns(self, records: List[Dict]) -> Dict[str, float]:
         """Identify patterns that lead to successful self-improvement attempts."""
         patterns = defaultdict(int)
@@ -921,9 +896,8 @@ class FocusedMetricsCollector:
             persona_sequence = record.get("persona_sequence", [])
             code_changes_suggested = record.get(
                 "CODE_CHANGES_SUGGESTED", []
-            )  # This field name is from the suggested change, might need adjustment if it's nested differently in actual records.
+            )
 
-            # Pattern 1: Successful attempts with specific prompt structure
             if (
                 prompt_analysis.get("reasoning_quality_metrics", {})
                 .get("indicators", {})
@@ -933,7 +907,6 @@ class FocusedMetricsCollector:
                 if record_success:
                     successful_attempts_per_pattern["structured_output_request"] += 1
 
-            # Pattern 2: Successful attempts with specific persona sequence (Self_Improvement_Analyst first)
             if persona_sequence and persona_sequence[0] == "Self_Improvement_Analyst":
                 total_attempts_per_pattern["self_improvement_analyst_first"] += 1
                 if record_success:
@@ -941,14 +914,11 @@ class FocusedMetricsCollector:
                         "self_improvement_analyst_first"
                     ] += 1
 
-            # Pattern 3: Successful attempts with specific code changes (presence of any code changes)
-            # Assuming CODE_CHANGES_SUGGESTED is a list of dicts, and we check if it's non-empty
             if code_changes_suggested and len(code_changes_suggested) > 0:
                 total_attempts_per_pattern["specific_code_changes"] += 1
                 if record_success:
                     successful_attempts_per_pattern["specific_code_changes"] += 1
 
-        # Calculate success rates for each pattern
         pattern_success_rates = {}
         for pattern, total_count in total_attempts_per_pattern.items():
             if total_count > 0:
@@ -956,7 +926,7 @@ class FocusedMetricsCollector:
                     successful_attempts_per_pattern[pattern] / total_count
                 )
             else:
-                pattern_success_rates[pattern] = 0.0  # No attempts for this pattern
+                pattern_success_rates[pattern] = 0.0
 
         return pattern_success_rates
 
@@ -972,7 +942,7 @@ class FocusedMetricsCollector:
                 "historical_total_suggestions_processed": 0,
                 "historical_successful_suggestions": 0,
                 "historical_schema_validation_failures": {},
-                "successful_patterns": {},  # NEW: Add successful_patterns
+                "successful_patterns": {},
             }
 
         try:
@@ -982,7 +952,6 @@ class FocusedMetricsCollector:
             total = len(records)
             successful = sum(1 for r in records if r.get("success", False))
 
-            # NEW: Aggregate raw counts from historical records
             total_suggestions_across_history = 0
             successful_suggestions_across_history = 0
             schema_validation_failures_across_history = defaultdict(int)
@@ -1020,11 +989,10 @@ class FocusedMetricsCollector:
             ]
             top_areas.sort(key=lambda x: x["success_rate"], reverse=True)
 
-            # NEW: Call identify_successful_patterns
             pattern_success_rates = self.identify_successful_patterns(records)
             logger.info(
                 f"Successful patterns: {pattern_success_rates}"
-            )  # Use logger.info
+            )
 
             return {
                 "total_attempts": total,
@@ -1036,7 +1004,7 @@ class FocusedMetricsCollector:
                 "historical_schema_validation_failures": dict(
                     schema_validation_failures_across_history
                 ),
-                "successful_patterns": pattern_success_rates,  # NEW: Include in return
+                "successful_patterns": pattern_success_rates,
             }
         except Exception as e:
             logger.error(f"Error analyzing historical data: {e}")
@@ -1048,7 +1016,7 @@ class FocusedMetricsCollector:
                 "historical_total_suggestions_processed": 0,
                 "historical_successful_suggestions": 0,
                 "historical_schema_validation_failures": {},
-                "successful_patterns": {},  # NEW: Add successful_patterns
+                "successful_patterns": {},
             }
 
     @staticmethod
@@ -1059,7 +1027,7 @@ class FocusedMetricsCollector:
         for record in records:
             if not record.get("current_run_outcome", {}).get(
                 "is_successful", True
-            ):  # Check the actual success flag
+            ):
                 for suggestion in record.get("suggestions", []):
                     for block in suggestion.get("malformed_blocks", []):
                         failure_modes_count[
@@ -1071,7 +1039,7 @@ class FocusedMetricsCollector:
                         "schema_validation_failures"
                     ].get("after", 0) > changes["schema_validation_failures"].get(
                         "before", 0
-                    ):  # Check the correct key
+                    ):
                         failure_modes_count["schema_validation_failures_count"] += 1
                     if "token_budget_exceeded_count" in changes and changes[
                         "token_budget_exceeded_count"
@@ -1082,7 +1050,6 @@ class FocusedMetricsCollector:
 
         return dict(failure_modes_count)
 
-    # NEW: Method to record self-improvement suggestion outcomes
     def record_self_improvement_suggestion_outcome(
         self, persona_name: str, is_successful: bool, schema_failed: bool
     ):
@@ -1155,7 +1122,6 @@ class FocusedMetricsCollector:
         if not file_path_str.endswith(".py"):
             return code_change
 
-        # Create a temporary file for validation
         with tempfile.NamedTemporaryFile(
             mode="w+", suffix=".py", encoding="utf-8", delete=False
         ) as temp_file:
@@ -1164,14 +1130,11 @@ class FocusedMetricsCollector:
             tmp_file_path = Path(temp_file.name)
 
         try:
-            # 1. Run Ruff Format (and auto-fix)
             format_command = ["ruff", "format", str(tmp_file_path)]
             execute_command_safely(format_command, timeout=30, check=False)
 
-            # Read the (potentially fixed) content back
             fixed_content = tmp_file_path.read_text(encoding="utf-8")
 
-            # 2. Run Ruff Check (linting) and Bandit (security) on the fixed content
             ruff_issues = _run_ruff(fixed_content, file_path_str)
             bandit_issues = _run_bandit(fixed_content, file_path_str)
             ast_issues = _run_ast_security_checks(fixed_content, file_path_str)
@@ -1179,9 +1142,6 @@ class FocusedMetricsCollector:
             all_issues = ruff_issues + bandit_issues + ast_issues
 
             if fixed_content != content:
-                # If content was fixed, update the code_change
-                code_change["FULL_CONTENT"] = fixed_content
-                # If it was a MODIFY action with DIFF_CONTENT, regenerate the diff
                 if action == "MODIFY" and diff_content:
                     original_file_content = self.raw_file_contents.get(
                         file_path_str, ""
@@ -1193,12 +1153,12 @@ class FocusedMetricsCollector:
                         tofile=f"b/{file_path_str}",
                         lineterm="",
                     )
+                code_change["FULL_CONTENT"] = fixed_content # Update full content if it was fixed
                 logger.info(
                     f"Auto-fixed formatting for {file_path_str}. Remaining issues: {len(all_issues)}"
                 )
 
             if all_issues:
-                # Attach remaining issues to the code_change for reporting
                 code_change.setdefault("validation_issues", []).extend(all_issues)
 
         except Exception as e:
@@ -1257,10 +1217,8 @@ class FocusedMetricsCollector:
             if file_path_str.endswith(".py"):
                 content_lines = content.splitlines()
 
-                # Cache for this file
                 file_cache = self.file_analysis_cache.setdefault(file_path_str, {})
 
-                # Run Ruff
                 ruff_file_issues = _run_ruff(content, file_path_str)
                 ruff_issues_count += len(ruff_file_issues)
                 detailed_issues.extend(ruff_file_issues)
@@ -1274,19 +1232,16 @@ class FocusedMetricsCollector:
                 )
                 file_cache["ruff_issues"] = ruff_file_issues
 
-                # Run Bandit
                 bandit_file_issues = _run_bandit(content, file_path_str)
                 bandit_issues_count += len(bandit_file_issues)
                 detailed_issues.extend(bandit_file_issues)
                 file_cache["bandit_issues"] = bandit_file_issues
 
-                # Run AST-based security checks
                 ast_file_issues = _run_ast_security_checks(content, file_path_str)
                 ast_security_issues_count += len(ast_file_issues)
                 detailed_issues.extend(ast_file_issues)
                 file_cache["ast_security_issues"] = ast_file_issues
 
-                # Analyze AST for complexity and code smells
                 function_metrics = self._analyze_python_file_ast(
                     content, content_lines, file_path_str
                 )
@@ -1326,21 +1281,16 @@ class FocusedMetricsCollector:
         """
         logger.info("Performing self-analysis for Project Chimera.")
 
-        # Reset collected_metrics to ensure a fresh collection for each run
+        # NEW: Clear collected_metrics and file_analysis_cache at the start of collection
         self.collected_metrics = {}
         self.file_analysis_cache = {}
 
-        # Retrieve Conflict_Resolution_Attempt safely, handling potential None values
-        # FIX: Ensure that .get() is not called on None.
         conflict_resolution_attempt_data = self.intermediate_steps.get(
             "Conflict_Resolution_Attempt"
         )
 
-        # Initialize suggestions list, which will be part of collected_metrics
         initial_suggestions_from_conflict = []
 
-        # FIX: Correctly access conflict_resolved from conflict_resolution_attempt_data
-        # and check the 'resolved_output' for the specific rationale string.
         if conflict_resolution_attempt_data and conflict_resolution_attempt_data.get(
             "conflict_resolved"
         ):
@@ -1395,51 +1345,31 @@ This document outlines the refined methodology for identifying and implementing 
                         ],
                     }
                 )
-            # FIX: Store these suggestions in collected_metrics, do not return early.
             self.collected_metrics["initial_suggestions_from_conflict"] = (
                 initial_suggestions_from_conflict
             )
 
-        # Collect token usage stats
         self.collected_metrics["performance_efficiency"] = (
             self._collect_token_usage_stats()
         )
 
-        # Collect debate efficiency metrics
         self.collected_metrics["debate_efficiency"] = self._analyze_debate_efficiency()
 
-        # Assess test coverage
         self.collected_metrics["maintainability"] = {
             "test_coverage_summary": self._assess_test_coverage()
         }
 
-        # Collect configuration analysis
         self.collected_metrics["configuration_analysis"] = (
             self._collect_configuration_analysis(str(self.codebase_path))
         )
 
-        # Collect deployment robustness metrics
         self.collected_metrics["deployment_robustness"] = (
             self._collect_deployment_robustness_metrics(str(self.codebase_path))
         )
 
-        # Collect code quality and security metrics
         self._collect_code_quality_and_security_metrics()
 
-        # Identify the critical metric based on collected data
-        # This should be called *after* all relevant metrics are in self.collected_metrics
         self._identify_critical_metric()
 
         logger.info("Finished collecting all pre-synthesis metrics.")
         return self.collected_metrics
-
-    # REMOVED: The entire generate_suggestions method (lines 1090-1293 in the original file)
-    # Its logic is now handled by the Self_Improvement_Analyst persona via LLM.
-
-    def analyze_codebase_structure(self) -> Dict[str, Any]:
-        logger.info("Analyzing codebase structure.")
-        return {"summary": "Codebase structure analysis is a placeholder."}
-
-    def analyze_performance_bottlenecks(self) -> Dict[str, Any]:
-        logger.info("Analyzing performance bottlenecks.")
-        return {"summary": "Performance bottleneck analysis is a placeholder."}
