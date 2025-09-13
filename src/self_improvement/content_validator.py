@@ -53,17 +53,88 @@ class ContentAlignmentValidator:
                     "implement",
                     "refactor",
                     "bug fix",
-                    "architecture",
-                    "security",
-                    "testing",
+                    "application",
+                    "script",
+                    "software",
+                    "system design",
                     "devops",
                     "api",
                     "database",
-                    "function",
-                    "class",
-                    "module",
-                    "performance",
-                    "scalability",
+                    "security",
+                    "testing",
+                    "architecture",
+                    "pipeline",
+                    "infrastructure",
+                    "programming",
+                    "framework",
+                    "container",
+                    "kubernetes",
+                    "ci/cd",
+                    "vulnerability",
+                    "patch",
+                    "agile",
+                    "scrum",
+                    "technical debt",
+                    "clean code",
+                    "code review",
+                    "design pattern",
+                    "distributed system",
+                    "concurrency",
+                    "data structure",
+                    "network",
+                    "protocol",
+                    "encryption",
+                    "authentication",
+                    "authorization",
+                    "threat model",
+                    "risk assessment",
+                    "unit test",
+                    "integration test",
+                    "end-to-end test",
+                    "qa",
+                    "quality assurance",
+                    "release",
+                    "production",
+                    "staging",
+                    "development environment",
+                    "ide",
+                    "debugger",
+                    "compiler",
+                    "build",
+                    "deploy",
+                    "monitor",
+                    "alert",
+                    "incident response",
+                    "sre",
+                    "reliability engineering",
+                    "chaos engineering",
+                    "fault injection",
+                    "circuit breaker",
+                    "load balancer",
+                    "cdn",
+                    "dns",
+                    "firewall",
+                    "vpn",
+                    "ssl",
+                    "tls",
+                    "oauth",
+                    "jwt",
+                    "saml",
+                    "ldap",
+                    "active directory",
+                    "identity management",
+                    "access control list",
+                    "role-based access control",
+                    "rbac",
+                    "least privilege",
+                    "owasp",
+                    "cve",
+                    "cvss",
+                    "sql injection",
+                    "xss",
+                    "csrf",
+                    "ssrf",
+                    "rce",
                 ]
             else:
                 # For other domains, extract keywords from the original prompt itself
@@ -167,8 +238,7 @@ class ContentAlignmentValidator:
 
         # Get top N most frequent words as keywords
         sorted_keywords = sorted(
-            word_counts.items(), key=lambda item: item[1], reverse=True
-        )
+            word_counts.items(), key=lambda item: item[1], reverse=True)
         return [kw[0] for kw in sorted_keywords[:num_keywords]]
 
     def validate(
@@ -329,6 +399,18 @@ class ContentAlignmentValidator:
                     "lack of information",  # NEW: Added for Devils_Advocate
                 ]
             # For other personas, use the base_focus_areas or a more general set.
+
+        # NEW: Special handling for Devils_Advocate when it correctly reports no content to critique
+        if persona_name.startswith("Devils_Advocate"):
+            no_content_phrases = [
+                "no conflict identified as the previous output was a placeholder",
+                "no actual analysis or suggestions were provided to conflict with",
+                "insufficient to perform a thorough critique",
+                "lack of information",
+            ]
+            if any(phrase in output_text_lower for phrase in no_content_phrases):
+                nuanced_feedback["is_aligned"] = True
+                return True, "Devils_Advocate correctly reported lack of content to critique.", nuanced_feedback
 
         if not effective_focus_areas:
             logger.debug(

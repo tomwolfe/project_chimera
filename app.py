@@ -306,6 +306,7 @@ def handle_debate_errors(error: Exception):
     error_type = type(error).__name__
     error_str = str(error).lower()
 
+    # Prioritize specific API key errors
     if "invalid_api_key" in error_str or "api key not valid" in error_str:
         st.error("""
         🔑 **API Key Error: Invalid or Missing Key**
@@ -318,69 +319,7 @@ def handle_debate_errors(error: Exception):
         [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
         """)
         logger.error(f"API Key Error: {error_str}", exc_info=True)
-    elif "429" in error_str or "rate limit" in error_str or "quota" in error_str:
-        st.error("""
-        ⏳ **API Rate Limit Exceeded**
-
-        Google's Gemini API has rate limits based on your project quota.
-
-        **Immediate Solutions:**
-        - Wait 1-2 minutes before trying again.
-        - Reduce the complexity of your prompt.
-        - Break your request into smaller parts.
-
-        **Long-term Solutions:**
-        - Request a quota increase in [Google Cloud Console](https://console.cloud.google.com/iam-admin/quotas).
-        - Consider using a less capable but higher-quota model like `gemini-2.5-flash-lite`.
-        """)
-        logger.error(f"API Rate Limit Exceeded: {error_str}", exc_info=True)
-    elif (
-        "connection" in error_str
-        or "timeout" in error_str
-        or "network" in error_str
-        or "socket" in error_str
-    ):
-        st.error("""
-        📡 **Network Connection Issue**
-
-        Unable to connect to Google's API servers. This is likely a temporary network issue.
-
-        **What to try:**
-        - Check your internet connection.
-        - Refresh the page.
-        - Try again in a few minutes.
-
-        Google API status: [Cloud Status Dashboard](https://status.cloud.google.com/)
-        """)
-        logger.error(f"Network Connection Issue: {error_str}", exc_info=True)
-    elif (
-        "safety" in error_str
-        or "blocked" in error_str
-        or "content" in error_str
-        or "invalid_argument" in error_str
-    ):
-        st.error("""
-        🛡️ **Content Safety Filter Triggered**
-
-        Your prompt or the AI's response was blocked by Google's safety filters.
-
-        **How to fix:**
-        - Rephrase your prompt to avoid potentially sensitive topics.
-        - Remove any code that might be interpreted as harmful.
-        - Try a less detailed request first.
-        """)
-        logger.error(f"Content Safety Filter Triggered: {error_str}", exc_info=True)
-    elif isinstance(error, LLMProviderError):
-        st.error(f"""
-        🌐 **LLM Provider Error: Connection Issue**
-
-        An issue occurred while connecting to the Gemini API. This might be a temporary network problem or an API service disruption.
-
-        **Details:** `{str(error)}`
-
-        Please try again in a moment. If the issue persists, check your internet connection or the [Gemini API status page](https://status.cloud.google.com/).
-        """)
-        logger.error(f"LLM Provider Error: {error_str}", exc_info=True)
+    # Prioritize specific exception types
     elif isinstance(error, RateLimitExceededError):
         st.error(f"""
         ⏳ **Rate Limit Exceeded**
@@ -406,20 +345,17 @@ def handle_debate_errors(error: Exception):
         - Increasing the 'Max Total Tokens Budget' in the sidebar (use with caution, as this increases cost).
         """)
         logger.error(f"Token Budget Exceeded: {error_str}", exc_info=True)
-    elif isinstance(error, SchemaValidationError):
+    elif isinstance(error, LLMProviderError):
         st.error(f"""
-        🚫 **Output Format Error: LLM Response Invalid**
+        🌐 **LLM Processing Error**
 
-        The AI generated an output that did not conform to the expected structured format (JSON schema). This indicates the LLM struggled to follow instructions precisely.
+        An issue occurred during AI model interaction or processing. This could be a temporary service disruption, an unexpected model response, or an internal processing error.
 
         **Details:** `{str(error)}`
 
-        The system's circuit breaker has registered this failure. You can try:
-        - Rephrasing your prompt to be clearer.
-        - Reducing the complexity of the task.
-        - Trying a different LLM model (e.g., `gemini-2.5-pro` for more complex tasks).
+        Please try again in a moment. If the issue persists, consider simplifying your prompt or checking the [Gemini API status page](https://status.cloud.google.com/).
         """)
-        logger.error(f"Schema Validation Error: {error_str}", exc_info=True)
+        logger.error(f"LLM Provider Error: {error_str}", exc_info=True)
     elif isinstance(error, CircuitBreakerError):
         st.error(f"""
         ⛔ **Circuit Breaker Open: Service Temporarily Unavailable**
@@ -431,6 +367,61 @@ def handle_debate_errors(error: Exception):
         The circuit will attempt to reset itself after a short timeout. Please wait a minute and try again.
         """)
         logger.error(f"Circuit Breaker Open: {error_str}", exc_info=True)
+    elif isinstance(error, SchemaValidationError):
+        st.error(f"""
+        🚫 **Output Format Error: LLM Response Invalid**
+
+        The AI generated an output that did not conform to the expected structured format (JSON schema). This indicates the LLM struggled to follow instructions precisely.
+
+        **Details:** `{str(error)}`
+
+        The system's circuit breaker has registered this failure. You can try:
+        - Rephrase your prompt to be clearer.
+        - Reduce the complexity of the task.
+        - Try a different LLM model (e.g., `gemini-2.5-pro` for more complex tasks).
+        """)
+        logger.error(f"Schema Validation Error: {error_str}", exc_info=True)
+    # NEW: Specific handling for the TypeError seen in logs
+    elif isinstance(error, TypeError) and "unexpected keyword argument" in error_str:
+        st.error(f"""
+        🐛 **Internal Configuration Error: Type Mismatch**
+
+        An internal component received an unexpected argument. This usually indicates a mismatch in component configuration or an outdated interface.
+
+        **Details:** `{str(error)}`
+
+        This is likely a bug within Project Chimera. Please report this issue.
+        """)
+        logger.error(f"Internal Configuration Error (TypeError): {error_str}", exc_info=True)
+    # Generic network issues
+    elif "connection" in error_str or "timeout" in error_str or "network" in error_str or "socket" in error_str:
+        st.error("""
+        📡 **Network Connection Issue**
+
+        Unable to connect to Google's API servers. This is likely a temporary network issue.
+
+        **What to try:**
+        - Check your internet connection.
+        - Refresh the page.
+        - Try again in a few minutes.
+
+        Google API status: [Cloud Status Dashboard](https://status.cloud.google.com/)
+        """)
+        logger.error(f"Network Connection Issue: {error_str}", exc_info=True)
+    # Content safety filter (now with exclusion for ChimeraError to prevent misclassification)
+    elif ("safety" in error_str and "chimera_error" not in error_str) or "blocked" in error_str or "content" in error_str or "invalid_argument" in error_str:
+        st.error("""
+        🛡️ **Content Safety Filter Triggered**
+
+        Your prompt or the AI's response was blocked by Google's safety filters.
+
+        **How to fix:**
+        - Rephrase your prompt to avoid potentially sensitive topics.
+        - Remove any code that might be interpreted as harmful.
+        - Try a less detailed request first.
+        """)
+        logger.error(f"Content Safety Filter Triggered: {error_str}", exc_info=True)
+    # Generic Chimera internal error (should be caught by more specific handlers first)
     elif isinstance(error, ChimeraError):
         st.error(f"""
         🔥 **Project Chimera Internal Error**
@@ -442,6 +433,7 @@ def handle_debate_errors(error: Exception):
         Please report this issue if it persists.
         """)
         logger.error(f"Project Chimera Internal Error: {error_str}", exc_info=True)
+    # Catch-all for any other unexpected errors
     else:
         st.error(f"""
         ❌ **An Unexpected Error Occurred**
@@ -1714,6 +1706,7 @@ def _run_socratic_debate_process():
                 ChimeraError,
                 CircuitBreakerError,
                 LLMProviderError,
+                TypeError, # NEW: Catch TypeError explicitly
             ) as e:
                 handle_debate_errors(e)
                 status.update(

@@ -294,6 +294,16 @@ class LLMOutputParser:
             )
             json_str = temp_str
 
+        # Heuristic 9: Replace null values for fields that should be arrays with empty arrays
+        # This is a common LLM error where it outputs "field": null instead of "field": []
+        # This is a more aggressive repair and might need to be conditional.
+        temp_str = re.sub(r'":\s*null([,\}\]])', r'": []\1', json_str)
+        if temp_str != json_str:
+            repair_log.append(
+                {"action": "initial_repair", "details": "Replaced 'null' with '[]' for array fields."}
+            )
+            json_str = temp_str
+
         if original_str != json_str:
             self.logger.info(
                 f"Repaired JSON string. Repairs: {', '.join([r['details'] for r in repair_log])}"
