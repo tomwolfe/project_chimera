@@ -37,7 +37,6 @@ from src.exceptions import (
     LLMProviderError,
     CircuitBreakerError,
 )
-from src.context.context_analyzer import ContextRelevanceAnalyzer
 import traceback
 from collections import defaultdict
 from pydantic import ValidationError
@@ -56,7 +55,7 @@ from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner
+from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
 from src.utils.session_manager import (
@@ -72,6 +71,9 @@ from src.utils.api_key_validator import fetch_api_key
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
 import gc  # NEW: Import garbage collector for explicit memory management
+
+# NEW IMPORT: For the summarization pipeline
+from transformers import pipeline # NEW: Import pipeline for summarization
 
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
@@ -115,7 +117,7 @@ def get_app_logger():
 
 logger = get_app_logger()
 
-if logger is None:
+if logger == None:
     st.error(
         "❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py."
     )
@@ -151,6 +153,13 @@ def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
         cache_dir=_settings.sentence_transformer_cache_dir,  # Use _settings here
         raw_file_contents={},  # Initialize empty, will be updated dynamically
     )
+
+# NEW: Instantiate the Hugging Face summarization pipeline once and cache it
+@st.cache_resource
+def get_summarizer_pipeline_instance():
+    """Initializes and returns the Hugging Face summarization pipeline, cached by Streamlit."""
+    logger.info("Initializing Hugging Face summarization pipeline (sshleifer/distilbart-cnn-6-6) via st.cache_resource.")
+    return pipeline("summarization", model="sshleifer/distilbart-cnn-6-6")
 
 
 # REMOVED: get_prompt_optimizer_instance from app.py
@@ -738,15 +747,11 @@ def on_example_select_change(selectbox_key, tab_name):
         f"Current user_prompt_input (from session state): {st.session_state.user_prompt_input[:100]}..."
     )
     logger.debug(f"Selected example: {st.session_state.selected_example_name}")
-    logger.debug(
-        f"Selected prompt category: {st.session_state.selected_prompt_category}"
-    )
+    logger.debug(f"Selected prompt category: {st.session_state.selected_prompt_category}")
     logger.debug(
         f"Active example framework hint: {st.session_state.active_example_framework_hint}"
     )
-    logger.debug(
-        f"Sidebar selected persona set: {st.session_state.selected_persona_set}"
-    )
+    logger.debug(f"Sidebar selected persona set: {st.session_state.selected_persona_set}")
     update_activity_timestamp()
     st.rerun()
 
@@ -1659,6 +1664,7 @@ def _run_socratic_debate_process():
                     persona_manager=st.session_state.persona_manager,
                     token_tracker=st.session_state.token_tracker,
                     codebase_scanner=get_codebase_scanner_instance(),  # Pass cached instance
+                    summarizer_pipeline_instance=get_summarizer_pipeline_instance(), # NEW: Pass the cached summarizer pipeline
                 )
 
                 logger.info(
@@ -1762,17 +1768,7 @@ def _run_socratic_debate_process():
                         None
                     )
                 st.session_state.file_analysis_cache = None
-                # Clear the summarizer pipeline cache if it exists
-                # This is a class-level attribute in PromptOptimizer, so we need to access it via the class
-                if (
-                    hasattr(PromptOptimizer, "_summarizer")
-                    and PromptOptimizer._summarizer is not None
-                ):
-                    logger.info(
-                        "Clearing PromptOptimizer's summarizer pipeline from memory."
-                    )
-                    del PromptOptimizer._summarizer
-                    PromptOptimizer._summarizer = None
+                # REMOVED: Manual clearing of PromptOptimizer._summarizer as it's now managed by st.cache_resource
                 gc.collect()
 
 

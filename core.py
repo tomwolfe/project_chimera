@@ -93,6 +93,7 @@ class SocraticDebate:
         content_validator: Optional[ContentAlignmentValidator] = None,
         token_tracker: Optional[TokenUsageTracker] = None,
         codebase_scanner: Optional[CodebaseScanner] = None, # NEW: Expect pre-initialized CodebaseScanner
+        summarizer_pipeline_instance: Any = None, # NEW: Accept summarizer pipeline instance
     ):
         """
         Initializes the Socratic debate session.
@@ -110,11 +111,12 @@ class SocraticDebate:
 
         self.initial_prompt = initial_prompt
         self.intermediate_steps = {} # FIX: Initialize intermediate_steps here
+        self.is_self_analysis = is_self_analysis # ADDED THIS LINE
         
         # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
         # Prioritize provided contexts. Only scan if self-analysis AND no raw_file_contents provided.
         self.codebase_scanner = codebase_scanner # Use provided instance
-        if is_self_analysis:
+        if self.is_self_analysis: # Use self.is_self_analysis here
             if not raw_file_contents and self.codebase_scanner: # Only scan if not already provided AND scanner is available
                 self.logger.info("Performing self-analysis - scanning codebase for context...")
                 full_codebase_analysis = self.codebase_scanner.scan_codebase()
@@ -250,8 +252,12 @@ class SocraticDebate:
 
         # --- MODIFIED: PromptOptimizer initialization (always here) ---
         # Initialize PromptOptimizer here, as self.tokenizer is now guaranteed to be available.
+        if not summarizer_pipeline_instance:
+            raise ChimeraError("Summarizer pipeline instance must be provided for PromptOptimizer.")
         self.prompt_optimizer = PromptOptimizer(
-            tokenizer=self.tokenizer, settings=self.settings
+            tokenizer=self.tokenizer,
+            settings=self.settings,
+            summarizer_pipeline=summarizer_pipeline_instance # Pass the instance
         )
         # --- END MODIFIED ---
 
@@ -1967,6 +1973,7 @@ class SocraticDebate:
                 llm_provider=self.llm_provider,
                 persona_manager=self.persona_manager,
                 content_validator=self.content_validator,
+                codebase_scanner=self.codebase_scanner, # NEW: Pass codebase_scanner
             )
             # NEW: Expose the file_analysis_cache from the local metrics_collector for UI
             # This needs to be done before collect_all_metrics is called.
