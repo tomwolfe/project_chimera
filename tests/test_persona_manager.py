@@ -94,6 +94,7 @@ def mock_config_persistence():
         "Framework imported.",
         {
             "framework_name": "ImportedFramework",
+            "description": "A description for imported framework",  # FIX: Add description
             "personas": {},
             "persona_sets": {"ImportedFramework": []},
         },
@@ -119,7 +120,7 @@ def mock_settings():
 @pytest.fixture
 def persona_manager_instance(
     mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings
-):  # MODIFIED: Added mock_settings
+):
     """Provides a PersonaManager instance with mocked dependencies."""
     # Patch ConfigPersistence to return our mock during PersonaManager initialization
     with patch(
@@ -128,7 +129,7 @@ def persona_manager_instance(
         pm = PersonaManager(
             domain_keywords={"General": ["general"], "Software Engineering": ["code"]},
             token_tracker=mock_token_tracker,
-            settings=mock_settings,  # MODIFIED: Pass mock_settings
+            settings=mock_settings,
         )
         # Manually set the mock prompt_analyzer as it's used by PersonaRouter internally
         pm.prompt_analyzer = mock_prompt_analyzer
@@ -141,7 +142,7 @@ def persona_manager_instance(
 @pytest.fixture
 def persona_manager_for_metrics(
     mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings
-):  # MODIFIED: Added mock_settings
+):
     """Provides a PersonaManager instance specifically for testing metrics, ensuring 'TestPersona' is available."""
     with patch(
         "src.persona_manager.ConfigPersistence", return_value=mock_config_persistence
@@ -149,7 +150,7 @@ def persona_manager_for_metrics(
         pm = PersonaManager(
             domain_keywords={"General": ["general"]},
             token_tracker=mock_token_tracker,
-            settings=mock_settings,  # MODIFIED: Pass mock_settings
+            settings=mock_settings,
         )
         # Ensure TestPersona is in all_personas for metrics tracking
         if "TestPersona" not in pm.all_personas:
@@ -289,21 +290,17 @@ def test_save_framework(persona_manager_instance, mock_config_persistence):
     description = "A test framework"
     # Create a copy of the persona config to simulate current state
     current_active_personas = {
-        p_name: PersonaConfig(
-            **p_data.model_dump()
-        )  # Use model_dump for Pydantic v2 compatibility
+        p_name: PersonaConfig(**p_data.model_dump())
         for p_name, p_data in persona_manager_instance.all_personas.items()
         if p_name
-        in persona_manager_instance.get_persona_sequence_for_framework(
-            "General"
-        )  # Simulate personas for 'General' framework
+        in persona_manager_instance.get_persona_sequence_for_framework("General")
     }
 
     success, message = persona_manager_instance.save_framework(
         framework_name, "General", current_active_personas, description
     )
     assert success
-    assert "Framework saved." in message  # Message is now "Framework saved."
+    assert "Framework saved." in message
     mock_config_persistence.save_user_framework.assert_called_once()
     # Check if the framework name was added to available domains
     assert framework_name in persona_manager_instance.available_domains
@@ -315,7 +312,7 @@ def test_load_framework_into_session_custom(
     """Tests loading a custom framework into the session."""
     custom_framework_data = {
         "framework_name": "LoadedCustom",
-        "description": "Loaded framework",
+        "description": "A description for loaded framework",  # FIX: Add description
         "personas": {
             "NewPersona": {
                 "name": "NewPersona",
@@ -323,7 +320,7 @@ def test_load_framework_into_session_custom(
                 "temperature": 0.5,
                 "max_tokens": 512,
                 "description": "A new persona.",
-            }  # MODIFIED: Added description
+            }
         },
         "persona_sets": {"LoadedCustom": ["NewPersona"]},
     }
@@ -374,6 +371,7 @@ def test_import_framework(persona_manager_instance, mock_config_persistence):
         "Framework imported.",
         {
             "framework_name": "ImportedFramework",
+            "description": "A description for imported framework",  # FIX: Add description
             "personas": {},
             "persona_sets": {"ImportedFramework": []},
         },
@@ -398,9 +396,7 @@ def test_get_adjusted_persona_config_truncated(persona_manager_instance):
     )
 
     # Assert that the base persona name is used correctly
-    assert (
-        truncated_config.name == "Visionary_Generator"
-    )  # Base name should be preserved
+    assert truncated_config.name == "Visionary_Generator"
     # Assert that max_tokens has been reduced
     assert (
         truncated_config.max_tokens
@@ -413,7 +409,6 @@ def test_get_adjusted_persona_config_truncated(persona_manager_instance):
 def test_record_persona_performance(persona_manager_for_metrics):
     """Tests recording persona performance metrics."""
     pm = persona_manager_for_metrics
-    # pm._initialize_performance_metrics() # Already called by fixture
     # Record a successful turn
     pm.record_persona_performance(
         "TestPersona",
@@ -490,9 +485,7 @@ def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(
 
     # Expect only Visionary_Generator to be truncated
     assert "Visionary_Generator_TRUNCATED" in optimized_sequence
-    assert (
-        "Skeptical_Generator" in optimized_sequence
-    )  # Skeptical_Generator should remain as is
+    assert "Skeptical_Generator" in optimized_sequence
 
 
 def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_metrics):
@@ -506,12 +499,12 @@ def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_me
     metrics["schema_failures"] = 3  # 30% failure rate
     metrics["last_adjustment_timestamp"] = (
         time.time() - pm.adjustment_cooldown_seconds - 10
-    )  # Ensure not in cooldown
+    )
 
     adjusted_config = pm.get_adjusted_persona_config("TestPersona")
     assert adjusted_config.temperature < original_temp
     assert metrics["last_adjusted_temp"] == adjusted_config.temperature
-    assert metrics["total_turns"] == 0  # Metrics should be reset after adjustment
+    assert metrics["total_turns"] == 0
 
 
 def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_metrics):
@@ -525,9 +518,9 @@ def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_met
     metrics["truncation_failures"] = 2  # 20% truncation rate
     metrics["last_adjustment_timestamp"] = (
         time.time() - pm.adjustment_cooldown_seconds - 10
-    )  # Ensure not in cooldown
+    )
 
     adjusted_config = pm.get_adjusted_persona_config("TestPersona")
     assert adjusted_config.max_tokens > original_max_tokens
     assert metrics["last_adjusted_max_tokens"] == adjusted_config.max_tokens
-    assert metrics["total_turns"] == 0  # Metrics should be reset after adjustment
+    assert metrics["total_turns"] == 0

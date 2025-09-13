@@ -2,6 +2,7 @@
 
 import streamlit as st
 import os
+
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import io
@@ -26,9 +27,7 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
-from src.utils.output_parser import (
-    LLMOutputParser,
-)
+from src.utils.output_parser import LLMOutputParser
 from src.persona_manager import PersonaManager
 from src.exceptions import (
     ChimeraError,
@@ -40,25 +39,16 @@ from src.exceptions import (
 )
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 import traceback
-from collections import (
-    defaultdict,
-)
+from collections import defaultdict
 from pydantic import ValidationError
 import html
 import difflib
-from src.utils.command_executor import (
-    execute_command_safely,
-)
-from src.utils.code_validator import (
-    validate_code_output_batch,
-)
+from src.utils.command_executor import execute_command_safely
+from src.utils.code_validator import validate_code_output_batch
 import json
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import (
-    RateLimiter,
-    RateLimitExceededError,
-)
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path
 
@@ -68,10 +58,7 @@ from src.token_tracker import TokenUsageTracker
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
 
-from src.utils.report_generator import (
-    generate_markdown_report,
-    strip_ansi_codes,
-)
+from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
 from src.utils.session_manager import (
     _initialize_session_state,
     update_activity_timestamp,
@@ -79,16 +66,12 @@ from src.utils.session_manager import (
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
 )
-from src.utils.ui_helpers import (
-    on_api_key_change,
-    display_key_status,
-    test_api_key,
-)
+from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key
 from src.utils.api_key_validator import fetch_api_key
 
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
-import gc # NEW: Import garbage collector for explicit memory management
+import gc  # NEW: Import garbage collector for explicit memory management
 
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
@@ -157,6 +140,7 @@ def get_codebase_scanner_instance():
     logger.info("Initializing CodebaseScanner via st.cache_resource.")
     return CodebaseScanner()
 
+
 # NEW: Instantiate ContextRelevanceAnalyzer once and cache it
 @st.cache_resource
 # MODIFIED: Renamed 'settings' to '_settings' to prevent UnhashableParamError
@@ -164,9 +148,10 @@ def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
     """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
     logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
     return ContextRelevanceAnalyzer(
-        cache_dir=_settings.sentence_transformer_cache_dir, # Use _settings here
-        raw_file_contents={}, # Initialize empty, will be updated dynamically
+        cache_dir=_settings.sentence_transformer_cache_dir,  # Use _settings here
+        raw_file_contents={},  # Initialize empty, will be updated dynamically
     )
+
 
 # REMOVED: get_prompt_optimizer_instance from app.py
 # It will be initialized within SocraticDebate to ensure tokenizer availability.
@@ -220,8 +205,8 @@ if "initialized" not in st.session_state:
     _initialize_session_state(
         settings_instance,
         EXAMPLE_PROMPTS,
-        get_context_relevance_analyzer_instance, # Pass the cached function
-        get_codebase_scanner_instance # Pass the cached function
+        get_context_relevance_analyzer_instance,  # Pass the cached function
+        get_codebase_scanner_instance,  # Pass the cached function
     )
     st.session_state.api_key_input = fetch_api_key() or ""
 # --- END Session State Initialization Call ---
@@ -282,22 +267,27 @@ def sanitize_user_input(prompt: str) -> str:
         )
         processed_prompt = processed_prompt[:MAX_PROMPT_LENGTH]
 
+    # FIX: Apply injection pattern replacements first, and if found, replace the entire prompt
     for pattern, replacement_tag in injection_patterns:
-        processed_prompt = re.sub(pattern, f"[{replacement_tag}]", processed_prompt)
+        if re.search(pattern, processed_prompt):
+            processed_prompt = f"[{replacement_tag}]"  # Replace entire prompt with tag
+            break  # Only apply one injection tag if multiple patterns match
+
+    # FIX: Apply quote balancing BEFORE HTML escaping
+    for char_pair in [('"', '"'), ("'", "'"), ("(", ")"), ("{", "}"), ("[", "]")]:
+        open_count = processed_prompt.count(char_pair[0])
+        close_count = processed_prompt.count(char_pair[1])
+        if open_count > close_count:
+            processed_prompt += char_pair[1] * (open_count - close_count)
+        elif close_count > open_count:
+            processed_prompt += char_pair[0] * (close_count - open_count)
 
     sanitized = html.escape(processed_prompt)
 
+    # Apply repeated character reduction after HTML escaping
     sanitized = re.sub(
         r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r"\1\1\1", sanitized
     )
-
-    for char_pair in [('"', '"'), ("'", "'"), ("(", ")"), ("{", "}"), ("[", "]")]:
-        open_count = sanitized.count(char_pair[0])
-        close_count = sanitized.count(char_pair[1])
-        if open_count > close_count:
-            sanitized += char_pair[1] * (open_count - close_count)
-        elif close_count > open_count:
-            sanitized += char_pair[0] * (close_count - open_count)
 
     return sanitized
 
@@ -802,7 +792,7 @@ for i, tab_name in enumerate(tab_names):
                     f"Apply '{recommended_domain_for_custom}' Framework (Custom Prompt)",
                     type="secondary",
                     use_container_width=True,
-                    key=f"apply_suggested_framework_main_{recommended_domain.replace(' ', '_').lower()}",
+                    key=f"apply_suggested_framework_main_{recommended_domain_for_custom.replace(' ', '_').lower()}",
                     on_click=update_activity_timestamp,
                 ):
                     st.session_state.selected_persona_set = (
@@ -1408,7 +1398,6 @@ def _run_socratic_debate_process():
                 structured_codebase_context_for_debate
             )
             st.session_state.raw_file_contents = codebase_raw_file_contents_for_debate
-            st.session_state.codebase_context = codebase_raw_file_contents_for_debate
             logger.info(
                 "Successfully loaded Project Chimera's codebase context for self-analysis."
             )
@@ -1619,20 +1608,38 @@ def _run_socratic_debate_process():
                 )
 
                 # NEW: Ensure context_analyzer has the latest raw_file_contents and re-computes embeddings if needed
-                if st.session_state.raw_file_contents and st.session_state.context_analyzer:
-                    current_files_hash = hash(frozenset(st.session_state.raw_file_contents.items()))
-                    if not hasattr(st.session_state.context_analyzer, '_last_raw_file_contents_hash') or \
-                       st.session_state.context_analyzer._last_raw_file_contents_hash != current_files_hash:
-                        st.session_state.context_analyzer.raw_file_contents = codebase_raw_file_contents_for_debate
+                if (
+                    st.session_state.raw_file_contents
+                    and st.session_state.context_analyzer
+                ):
+                    current_files_hash = hash(
+                        frozenset(st.session_state.raw_file_contents.items())
+                    )
+                    if (
+                        not hasattr(
+                            st.session_state.context_analyzer,
+                            "_last_raw_file_contents_hash",
+                        )
+                        or st.session_state.context_analyzer._last_raw_file_contents_hash
+                        != current_files_hash
+                    ):
+                        st.session_state.context_analyzer.raw_file_contents = (
+                            codebase_raw_file_contents_for_debate
+                        )
                         try:
                             st.session_state.context_analyzer.compute_file_embeddings(
                                 codebase_raw_file_contents_for_debate
                             )
                             st.session_state.context_analyzer._last_raw_file_contents_hash = current_files_hash
-                            logger.info("Re-computed file embeddings for context analyzer in app.py before debate init.")
+                            logger.info(
+                                "Re-computed file embeddings for context analyzer in app.py before debate init."
+                            )
                         except Exception as e:
                             st.error(f"❌ Error re-computing context embeddings: {e}")
-                            logger.error(f"Failed to re-compute context embeddings: {e}", exc_info=True)
+                            logger.error(
+                                f"Failed to re-compute context embeddings: {e}",
+                                exc_info=True,
+                            )
                             return
 
                 debate_instance = SocraticDebate(
@@ -1646,12 +1653,12 @@ def _run_socratic_debate_process():
                     rich_console=rich_console_instance,
                     structured_codebase_context=structured_codebase_context_for_debate,
                     raw_file_contents=codebase_raw_file_contents_for_debate,
-                    context_analyzer=st.session_state.context_analyzer, # Pass cached instance
+                    context_analyzer=st.session_state.context_analyzer,  # Pass cached instance
                     is_self_analysis=is_self_analysis_prompt_detected,
                     settings=settings_instance,
                     persona_manager=st.session_state.persona_manager,
                     token_tracker=st.session_state.token_tracker,
-                    codebase_scanner=get_codebase_scanner_instance(), # Pass cached instance
+                    codebase_scanner=get_codebase_scanner_instance(),  # Pass cached instance
                 )
 
                 logger.info(
@@ -1751,15 +1758,23 @@ def _run_socratic_debate_process():
                 if st.session_state.context_analyzer:
                     st.session_state.context_analyzer.file_embeddings = {}
                     st.session_state.context_analyzer.raw_file_contents = {}
-                    st.session_state.context_analyzer._last_raw_file_contents_hash = None
+                    st.session_state.context_analyzer._last_raw_file_contents_hash = (
+                        None
+                    )
                 st.session_state.file_analysis_cache = None
                 # Clear the summarizer pipeline cache if it exists
                 # This is a class-level attribute in PromptOptimizer, so we need to access it via the class
-                if hasattr(PromptOptimizer, '_summarizer') and PromptOptimizer._summarizer is not None:
-                    logger.info("Clearing PromptOptimizer's summarizer pipeline from memory.")
+                if (
+                    hasattr(PromptOptimizer, "_summarizer")
+                    and PromptOptimizer._summarizer is not None
+                ):
+                    logger.info(
+                        "Clearing PromptOptimizer's summarizer pipeline from memory."
+                    )
                     del PromptOptimizer._summarizer
                     PromptOptimizer._summarizer = None
                 gc.collect()
+
 
 if run_button_clicked:
     update_activity_timestamp()
@@ -2240,15 +2255,13 @@ if st.session_state.debate_ran:
                     .title()
                 )
                 content = display_steps.get(step_key, "N/A")
-                cleaned_step_key = (
+                token_base_name = (
                     step_key.replace("_Output", "")
                     .replace("_Critique", "")
                     .replace("_Feedback", "")
                 )
-                token_count_key = f"{cleaned_step_key}_Tokens_Used"
-                tokens_used = st.session_state.intermediate_steps_output.get(
-                    token_count_key, "N/A"
-                )
+                token_count_key = f"{token_base_name}_Tokens_Used"
+                tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
                 actual_temp = st.session_state.intermediate_steps_output.get(
                     f"{persona_name}_Actual_Temperature"

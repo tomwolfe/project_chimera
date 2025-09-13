@@ -76,12 +76,12 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.codebase_path = (
-            PROJECT_ROOT
-        )
+        self.codebase_path = PROJECT_ROOT
         self.collected_metrics: Dict[str, Any] = {}
         self.reasoning_quality_metrics: Dict[str, Any] = {}
-        self.file_analysis_cache: Dict[str, Dict[str, Any]] = {} # This cache will be cleared at the start of collect_all_metrics
+        self.file_analysis_cache: Dict[
+            str, Dict[str, Any]
+        ] = {}  # This cache will be cleared at the start of collect_all_metrics
 
         self._current_run_total_suggestions_processed: int = 0
         self._current_run_successful_suggestions: int = 0
@@ -879,9 +879,7 @@ class FocusedMetricsCollector:
             + suggestion.get("PROBLEM", "")
             + suggestion.get("EXPECTED_IMPACT", "")
         )
-        return hashlib.sha256(hash_input.encode()).hexdigest()[
-            :8
-        ]
+        return hashlib.sha256(hash_input.encode()).hexdigest()[:8]
 
     def identify_successful_patterns(self, records: List[Dict]) -> Dict[str, float]:
         """Identify patterns that lead to successful self-improvement attempts."""
@@ -894,9 +892,7 @@ class FocusedMetricsCollector:
             record_success = record.get("success", False)
             prompt_analysis = record.get("prompt_analysis", {})
             persona_sequence = record.get("persona_sequence", [])
-            code_changes_suggested = record.get(
-                "CODE_CHANGES_SUGGESTED", []
-            )
+            code_changes_suggested = record.get("CODE_CHANGES_SUGGESTED", [])
 
             if (
                 prompt_analysis.get("reasoning_quality_metrics", {})
@@ -990,9 +986,7 @@ class FocusedMetricsCollector:
             top_areas.sort(key=lambda x: x["success_rate"], reverse=True)
 
             pattern_success_rates = self.identify_successful_patterns(records)
-            logger.info(
-                f"Successful patterns: {pattern_success_rates}"
-            )
+            logger.info(f"Successful patterns: {pattern_success_rates}")
 
             return {
                 "total_attempts": total,
@@ -1025,9 +1019,7 @@ class FocusedMetricsCollector:
         failure_modes_count = defaultdict(int)
 
         for record in records:
-            if not record.get("current_run_outcome", {}).get(
-                "is_successful", True
-            ):
+            if not record.get("current_run_outcome", {}).get("is_successful", True):
                 for suggestion in record.get("suggestions", []):
                     for block in suggestion.get("malformed_blocks", []):
                         failure_modes_count[
@@ -1153,7 +1145,9 @@ class FocusedMetricsCollector:
                         tofile=f"b/{file_path_str}",
                         lineterm="",
                     )
-                code_change["FULL_CONTENT"] = fixed_content # Update full content if it was fixed
+                code_change["FULL_CONTENT"] = (
+                    fixed_content  # Update full content if it was fixed
+                )
                 logger.info(
                     f"Auto-fixed formatting for {file_path_str}. Remaining issues: {len(all_issues)}"
                 )

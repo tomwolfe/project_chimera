@@ -26,7 +26,7 @@ from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 
 # --- MODIFICATION: Import PersonaConfig from src.models ---
-from src.models import PersonaConfig
+# from src.models import PersonaConfig # REMOVED: Unused import
 # --- END MODIFICATION ---
 
 # --- Custom Exceptions ---
@@ -261,7 +261,7 @@ class GeminiProvider:
         output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: int = 100,
-        persona_config: PersonaConfig = None,
+        persona_config: Any = None,  # Changed to Any to avoid circular import with PersonaConfig
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
     ) -> tuple[str, int, int, bool]:

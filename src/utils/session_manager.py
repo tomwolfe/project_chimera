@@ -4,7 +4,7 @@ import time
 import os
 import uuid
 import logging
-from typing import Dict, Any, Optional, Callable # Added Callable for type hint
+from typing import Dict, Any, Optional, Callable  # Added Callable for type hint
 
 from src.persona_manager import PersonaManager
 from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
@@ -27,15 +27,15 @@ def _initialize_session_state(
     app_config: ChimeraSettings,
     example_prompts: Dict[str, Any],
     # NEW: Add these two parameters to the function signature
-    get_context_relevance_analyzer_instance: Callable[[ChimeraSettings], ContextRelevanceAnalyzer],
+    get_context_relevance_analyzer_instance: Callable[
+        [ChimeraSettings], ContextRelevanceAnalyzer
+    ],
     get_codebase_scanner_instance: Callable[[], CodebaseScanner],
 ):
     """Initializes or resets all session state variables to their default values."""
     MAX_TOKENS_LIMIT = app_config.total_budget
     CONTEXT_TOKEN_BUDGET_RATIO_FROM_CONFIG = app_config.context_token_budget_ratio
-    DOMAIN_KEYWORDS = (
-        app_config.domain_keywords
-    )
+    DOMAIN_KEYWORDS = app_config.domain_keywords
 
     defaults = {
         "initialized": True,
@@ -114,17 +114,25 @@ def _initialize_session_state(
     # from app import get_context_relevance_analyzer_instance, get_codebase_scanner_instance
 
     if "context_analyzer" not in st.session_state:
-        analyzer = get_context_relevance_analyzer_instance(app_config) # Use passed function
-        analyzer.raw_file_contents = st.session_state.raw_file_contents # Update its raw_file_contents
+        analyzer = get_context_relevance_analyzer_instance(
+            app_config
+        )  # Use passed function
+        analyzer.raw_file_contents = (
+            st.session_state.raw_file_contents
+        )  # Update its raw_file_contents
         if st.session_state.persona_manager.persona_router:
             analyzer.set_persona_router(st.session_state.persona_manager.persona_router)
         st.session_state.context_analyzer = analyzer
-    else: # Ensure the cached instance is updated with current raw_file_contents
-        st.session_state.context_analyzer.raw_file_contents = st.session_state.raw_file_contents
+    else:  # Ensure the cached instance is updated with current raw_file_contents
+        st.session_state.context_analyzer.raw_file_contents = (
+            st.session_state.raw_file_contents
+        )
 
     if "codebase_scanner" not in st.session_state:
-        st.session_state.codebase_scanner = get_codebase_scanner_instance() # Use passed function
-    
+        st.session_state.codebase_scanner = (
+            get_codebase_scanner_instance()
+        )  # Use passed function
+
     # REMOVED: PromptOptimizer initialization from here. It's now handled in SocraticDebate.
     # --- END MODIFIED ---
 
@@ -171,12 +179,16 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
     """Resets all session state variables to their default values."""
     # MODIFIED: Pass the cached functions to _initialize_session_state
     # The import from app is no longer needed here, as the functions are passed as arguments.
-    from app import get_context_relevance_analyzer_instance, get_codebase_scanner_instance
+    from app import (
+        get_context_relevance_analyzer_instance,
+        get_codebase_scanner_instance,
+    )
+
     _initialize_session_state(
         app_config,
         example_prompts,
         get_context_relevance_analyzer_instance,
-        get_codebase_scanner_instance
+        get_codebase_scanner_instance,
     )
     st.rerun()
 
@@ -195,11 +207,15 @@ def check_session_expiration(
             )
             # MODIFIED: Pass the cached functions to _initialize_session_state
             # The import from app is no longer needed here, as the functions are passed as arguments.
-            from app import get_context_relevance_analyzer_instance, get_codebase_scanner_instance
+            from app import (
+                get_context_relevance_analyzer_instance,
+                get_codebase_scanner_instance,
+            )
+
             _initialize_session_state(
                 app_config,
                 example_prompts,
                 get_context_relevance_analyzer_instance,
-                get_codebase_scanner_instance
+                get_codebase_scanner_instance,
             )
             st.rerun()

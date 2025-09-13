@@ -120,6 +120,8 @@ personas:
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
 
+      **CRITICAL INSTRUCTION:** If the provided context or previous outputs are insufficient to perform a thorough critique or identify specific flaws, you MUST explicitly state this in your `summary` and `proposed_resolution_paths`. Focus on identifying the *lack of information* as a critical risk or flaw.
+
       Consider:
       1.  **Relevance to Initial Prompt:** Is the analysis staying focused on the core objectives (e.g., reasoning quality, robustness, efficiency, maintainability of Project Chimera itself) or has it drifted?
       2.  **Over-Correction:** Could the proposed fixes introduce new problems?

@@ -183,7 +183,9 @@ def mock_gemini_provider(mock_settings):
     """Provides a mock GeminiProvider instance."""
     provider = MagicMock(spec=GeminiProvider)
     provider.tokenizer = MagicMock()
-    provider.tokenizer.count_tokens.side_effect = lambda text: len(text) // 4
+    provider.tokenizer.count_tokens.side_effect = lambda text: max(
+        1, len(text) // 4
+    )  # Ensure at least 1 token
     provider.tokenizer.max_output_tokens = 8192
     provider.calculate_usd_cost.return_value = 0.001
     provider.generate.return_value = (
@@ -287,7 +289,7 @@ def mock_metrics_collector():
 
 
 @pytest.fixture
-def socratic_debate_instance(
+def socratic_debate_instance(  # noqa: F811
     mock_gemini_provider,
     mock_persona_manager,
     mock_token_tracker,
@@ -309,7 +311,7 @@ def socratic_debate_instance(
     ):
         debate = SocraticDebate(
             initial_prompt="Test prompt",
-            api_key="mock_api_key",
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="gemini-2.5-flash-lite",  # Use a light model for tests
             domain="General",  # Use 'General' for simple questions
             persona_manager=mock_persona_manager,  # Pass the persona manager
@@ -318,6 +320,8 @@ def socratic_debate_instance(
             settings=mock_settings,  # Pass mock_settings
             structured_codebase_context={},  # NEW: Add structured_codebase_context
             raw_file_contents={"file1.py": "content"},  # NEW: Add raw_file_contents
+            status_callback=MagicMock(),  # FIX: Ensure status_callback is a callable MagicMock
+            rich_console=MagicMock(),
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager
@@ -328,9 +332,10 @@ def socratic_debate_instance(
         return debate
 
 
-def test_socratic_debate_initialization(socratic_debate_instance):
+def test_socratic_debate_initialization(socratic_debate_instance):  # noqa: F811
     """Tests that the SocraticDebate initializes correctly."""
-    assert socratic_debate_instance.initial_prompt == "Test prompt"
+    assert socratic_debate_instance is not None
+    assert socratic_debate_instance.initial_prompt == "Test prompt"  # noqa: F841
     assert socratic_debate_instance.model_name == "gemini-2.5-flash-lite"
     assert socratic_debate_instance.llm_provider is not None
     assert socratic_debate_instance.persona_manager is not None
@@ -342,7 +347,7 @@ def test_socratic_debate_initialization(socratic_debate_instance):
     )  # FIX: Assert output_parser is set
 
 
-def test_socratic_debate_run_debate_success(
+def test_socratic_debate_run_debate_success(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider, mock_output_parser
 ):
     """Tests a successful end-to-end debate run."""
@@ -359,14 +364,14 @@ def test_socratic_debate_run_debate_success(
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
 
-    assert final_answer["general_output"] == "Final Answer"
+    assert final_answer["general_output"] == "Final Answer"  # noqa: F841
     assert "Total_Tokens_Used" in intermediate_steps
     assert "Total_Estimated_Cost_USD" in intermediate_steps
     assert mock_gemini_provider.generate.call_count > 0
     assert mock_output_parser.parse_and_validate.call_count > 0
 
 
-def test_socratic_debate_malformed_output_triggers_conflict_manager(
+def test_socratic_debate_malformed_output_triggers_conflict_manager(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider, mock_conflict_manager
 ):
     """Tests that malformed output triggers the conflict manager and that resolution is handled."""
@@ -413,7 +418,7 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
 
-    assert final_answer["general_output"] == "Final synthesis from resolved conflict"
+    assert final_answer["general_output"] == "Final synthesis from resolved conflict"  # noqa: F841
     assert "Conflict_Resolution_Attempt" in intermediate_steps
     assert (
         intermediate_steps["Conflict_Resolution_Attempt"]["conflict_resolved"] is True
@@ -440,7 +445,7 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(
     ).get("general_output", "")
 
 
-def test_socratic_debate_token_budget_exceeded(
+def test_socratic_debate_token_budget_exceeded(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider, mock_token_tracker
 ):
     """Tests that a TokenBudgetExceededError is raised when budget is exceeded."""
@@ -457,7 +462,7 @@ def test_socratic_debate_token_budget_exceeded(
         socratic_debate_instance.run_debate()
 
 
-def test_execute_llm_turn_schema_validation_retry(
+def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider
 ):
     """Tests that _execute_llm_turn retries on SchemaValidationError."""
@@ -512,7 +517,7 @@ def test_execute_llm_turn_schema_validation_retry(
     # For this test, we primarily care that the retry mechanism works and a valid output is eventually produced.
 
 
-def test_socratic_debate_self_analysis_flow(
+def test_socratic_debate_self_analysis_flow(  # noqa: F811
     socratic_debate_instance,
     mock_gemini_provider,
     mock_persona_manager,
@@ -553,7 +558,7 @@ def test_socratic_debate_self_analysis_flow(
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
 
-    assert final_answer["ANALYSIS_SUMMARY"] == "Self-analysis complete."
+    assert final_answer["ANALYSIS_SUMMARY"] == "Self-analysis complete."  # noqa: F841
     assert "Self_Improvement_Analyst_Output" in intermediate_steps
     mock_metrics_collector.collect_all_metrics.assert_called_once()
     mock_metrics_collector.record_self_improvement_suggestion_outcome.assert_called_once_with(
@@ -561,7 +566,7 @@ def test_socratic_debate_self_analysis_flow(
     )
 
 
-def test_socratic_debate_context_aware_assistant_turn(
+def test_socratic_debate_context_aware_assistant_turn(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider, mock_context_analyzer
 ):
     """Tests the Context_Aware_Assistant turn when present in the sequence, ensuring context is passed."""

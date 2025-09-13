@@ -1,9 +1,7 @@
 # tests/test_conflict_resolution.py
 import pytest
 import json
-from unittest.mock import (
-    MagicMock,
-)  # Import MagicMock for potential future use if needed
+from unittest.mock import MagicMock
 
 # Assuming ConflictResolutionManager is in src/conflict_resolution.py
 from src.conflict_resolution import ConflictResolutionManager
@@ -133,13 +131,15 @@ def test_resolve_conflict_with_malformed_dict_no_summary(conflict_manager):
             False,
         )
     ]
-    # Mock the parser for the self-correction attempt
-    conflict_manager.output_parser.parse_and_validate.return_value = {
-        "CRITIQUE_SUMMARY": "Self-corrected output",
-        "CRITIQUE_POINTS": [],
-        "SUGGESTIONS": [],
-        "malformed_blocks": [],
-    }
+    # FIX: Mock the parser for the self-correction attempt correctly
+    conflict_manager.output_parser.parse_and_validate.side_effect = [
+        {
+            "CRITIQUE_SUMMARY": "Self-corrected output",
+            "CRITIQUE_POINTS": [],
+            "SUGGESTIONS": [],
+            "malformed_blocks": [],
+        }
+    ]
 
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
@@ -170,10 +170,10 @@ def test_resolve_conflict_with_insufficient_history(conflict_manager):
     conflict_manager.llm_provider.generate.side_effect = [
         ('{"invalid": "output"}', 10, 10, True)
     ]
-    conflict_manager.output_parser.parse_and_validate.return_value = {
-        "invalid": "output",
-        "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],
-    }
+    # FIX: Mock the parser for the self-correction attempt correctly
+    conflict_manager.output_parser.parse_and_validate.side_effect = [
+        {"invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}
+    ]
 
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
@@ -216,10 +216,10 @@ def test_resolve_conflict_with_valid_history_and_problematic_output(conflict_man
     conflict_manager.llm_provider.generate.side_effect = [
         ('{"invalid": "output"}', 10, 10, True)
     ]
-    conflict_manager.output_parser.parse_and_validate.return_value = {
-        "invalid": "output",
-        "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],
-    }
+    # FIX: Mock the parser for the self-correction attempt correctly
+    conflict_manager.output_parser.parse_and_validate.side_effect = [
+        {"invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}
+    ]
 
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
@@ -269,3 +269,80 @@ def test_resolve_conflict_empty_history(conflict_manager):
     assert result is not None
     assert result["resolution_strategy"] == "manual_intervention"
     assert "Empty debate history" in result["resolution_summary"]
+
+
+def test_retry_persona_with_feedback_success(conflict_manager):
+    """Tests successful self-correction with feedback."""
+    persona_name = "Constructive_Critic"
+    history = [
+        {
+            "persona": persona_name,
+            "output": {"malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]},
+        }
+    ]
+    # Mock the LLM to return a valid output on the first retry
+    conflict_manager.llm_provider.generate.side_effect = [
+        (
+            '{"CRITIQUE_SUMMARY": "Corrected output", "CRITIQUE_POINTS": [], "SUGGESTIONS": [], "malformed_blocks": []}',
+            100,
+            50,
+            False,
+        )
+    ]
+    conflict_manager.output_parser.parse_and_validate.side_effect = [
+        {
+            "CRITIQUE_SUMMARY": "Corrected output",
+            "CRITIQUE_POINTS": [],
+            "SUGGESTIONS": [],
+            "malformed_blocks": [],
+        }
+    ]
+
+    resolved_output = conflict_manager._retry_persona_with_feedback(
+        persona_name, history
+    )
+    assert resolved_output is not None
+    assert resolved_output["CRITIQUE_SUMMARY"] == "Corrected output"
+    assert (
+        conflict_manager.llm_provider.generate.call_count == 1
+    )  # Only one call for successful retry
+
+
+def test_retry_persona_with_feedback_failure(conflict_manager):
+    """Tests self-correction failure after max retries."""
+    persona_name = "Constructive_Critic"
+    history = [
+        {
+            "persona": persona_name,
+            "output": {"malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]},
+        }
+    ]
+    # Mock the LLM to always return invalid output
+    conflict_manager.llm_provider.generate.side_effect = [
+        ('{"invalid": "output"}', 10, 10, True),
+        ('{"invalid": "output2"}', 10, 10, True),
+        ('{"invalid": "output3"}', 10, 10, True),  # Max retries is 2, so 3 calls total
+    ]
+    conflict_manager.output_parser.parse_and_validate.side_effect = [
+        {
+            "invalid": "output",
+            "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],
+        },
+        {
+            "invalid": "output2",
+            "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],
+        },
+        {
+            "invalid": "output3",
+            "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],
+        },
+    ]
+
+    resolved_output = conflict_manager._retry_persona_with_feedback(
+        persona_name, history
+    )
+    assert resolved_output is None
+    assert (
+        conflict_manager.llm_provider.generate.call_count
+        == conflict_manager.max_self_correction_retries + 1
+    )

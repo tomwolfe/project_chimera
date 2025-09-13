@@ -41,9 +41,9 @@ def mock_llm_client_success():
 @pytest.fixture
 def mock_llm_client_api_error():
     mock_client = MagicMock()
-    # FIX: Correct APIError constructor: code is a positional argument
-    mock_client.models.generate_content.side_effect = APIError(
-        "Simulated API Error", 500, {"error": "Simulated API Error"}
+    # FIX: Correct APIError constructor: code is a positional argument, response_json is a dict
+    mock_client.models.generate_content.side_effect = APIError(  # noqa: F841
+        "Simulated API Error", 500, {"error": {"message": "Simulated API Error"}}
     )
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
@@ -52,9 +52,9 @@ def mock_llm_client_api_error():
 @pytest.fixture
 def mock_llm_client_rate_limit():
     mock_client = MagicMock()
-    # FIX: Correct APIError constructor: code is a positional argument
-    mock_client.models.generate_content.side_effect = APIError(
-        "Rate limit exceeded", 429, {"error": "Rate limit exceeded"}
+    # FIX: Correct APIError constructor: code is a positional argument, response_json is a dict
+    mock_client.models.generate_content.side_effect = APIError(  # noqa: F841
+        "Rate limit exceeded", 429, {"error": {"message": "Rate limit exceeded"}}
     )
     mock_client.models.count_tokens.return_value.total_tokens = 0
     return mock_client
@@ -76,8 +76,8 @@ def test_llm_provider_generate_content_success(
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_success
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -114,8 +114,8 @@ def test_llm_provider_generate_api_error(mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_api_error
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -139,8 +139,8 @@ def test_llm_provider_generate_rate_limit_error(mock_llm_client_rate_limit):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_rate_limit
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(
@@ -164,8 +164,8 @@ def test_llm_provider_calculate_usd_cost(mock_llm_client_success):
         mock_tokenizer = GeminiTokenizer(
             model_name="gemini-2.5-flash-lite", genai_client=mock_llm_client_success
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="gemini-2.5-flash-lite",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -183,8 +183,8 @@ def test_llm_provider_tokenizer_integration(mock_llm_client_success):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_success
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -216,8 +216,8 @@ def test_llm_provider_generate_malformed_response_index_error():
     mock_tokenizer.max_output_tokens = 8192
 
     with patch("src.llm_provider.genai.Client", return_value=mock_client):
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -253,8 +253,8 @@ def test_llm_provider_generate_malformed_response_attribute_error():
     mock_tokenizer.max_output_tokens = 8192
 
     with patch("src.llm_provider.genai.Client", return_value=mock_client):
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -287,8 +287,8 @@ def test_llm_provider_generate_with_schema_validation_success():
     mock_tokenizer.max_output_tokens = 8192
 
     with patch("src.llm_provider.genai.Client", return_value=mock_client):
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -322,8 +322,8 @@ def test_llm_provider_generate_with_schema_validation_failure():
     mock_tokenizer.max_output_tokens = 8192
 
     with patch("src.llm_provider.genai.Client", return_value=mock_client):
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -349,14 +349,16 @@ def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
     """Tests that a 401 APIError (Unauthorized) raises GeminiAPIError."""
     # FIX: Correct APIError constructor: code is a positional argument
     mock_llm_client_api_error.models.generate_content.side_effect = APIError(
-        "Invalid API Key", 401, {"error": "Invalid API Key"}
+        "Invalid API Key",
+        401,
+        {"error": {"message": "Invalid API Key"}},  # FIX: Pass dict for response_json
     )
     with patch("src.llm_provider.genai.Client", return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_api_error
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -372,14 +374,18 @@ def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
     """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
     # FIX: Correct APIError constructor: code is a positional argument
     mock_llm_client_api_error.models.generate_content.side_effect = APIError(
-        "API Key lacks permissions", 403, {"error": "API Key lacks permissions"}
+        "API Key lacks permissions",
+        403,
+        {
+            "error": {"message": "API Key lacks permissions"}
+        },  # FIX: Pass dict for response_json
     )
     with patch("src.llm_provider.genai.Client", return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_api_error
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
             settings=ChimeraSettings(),
@@ -400,13 +406,13 @@ def test_llm_provider_generate_network_error(mock_llm_client_success):
         mock_tokenizer = GeminiTokenizer(
             model_name="mock-model", genai_client=mock_llm_client_success
         )
-        provider = GeminiProvider(
-            api_key="mock-key",
+        provider = GeminiProvider(  # noqa: F841
+            api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
             model_name="mock-model",
             tokenizer=mock_tokenizer,
-            settings=ChimeraSettings(
-                max_retries=1, max_backoff_seconds=1
-            ),  # Short retries for test
+            settings=ChimeraSettings(  # FIX: Use valid max_backoff_seconds
+                max_retries=1, max_backoff_seconds=5
+            ),
         )
         with pytest.raises(
             LLMUnexpectedError, match="Name or service not known"

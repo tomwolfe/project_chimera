@@ -12,7 +12,6 @@ import difflib
 import uuid
 
 # --- IMPORT MODIFICATIONS ---
-from src.llm_provider import GeminiProvider
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import PersonaRouter
 from src.utils.output_parser import LLMOutputParser
@@ -28,7 +27,7 @@ from src.models import (
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
-    DeploymentAnalysisOutput,
+    # DeploymentAnalysisOutput, # REMOVED: Not directly used here
     # SelfImprovementFinding, # REMOVED: Not directly used here
     # QuantitativeImpactMetrics, # REMOVED: Not directly used here
 )
@@ -63,6 +62,9 @@ from src.utils.path_utils import (
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompt_optimizer import PromptOptimizer
+from src.llm_provider import (
+    GeminiProvider,
+)  # Moved import here to avoid circular dependency
 from src.conflict_resolution import ConflictResolutionManager
 from src.config.model_registry import ModelRegistry  # NEW: Import ModelRegistry
 
@@ -85,12 +87,16 @@ class SocraticDebate:
         model_name: str = "gemini-2.5-flash-lite",
         status_callback: Optional[Callable] = None,
         rich_console: Optional[Console] = None,
-        context_analyzer: Optional[ContextRelevanceAnalyzer] = None, # Expect pre-initialized
+        context_analyzer: Optional[
+            ContextRelevanceAnalyzer
+        ] = None,  # Expect pre-initialized
         is_self_analysis: bool = False,
         persona_manager: Optional[PersonaManager] = None,
         content_validator: Optional[ContentAlignmentValidator] = None,
         token_tracker: Optional[TokenUsageTracker] = None,
-        codebase_scanner: Optional[CodebaseScanner] = None, # NEW: Expect pre-initialized CodebaseScanner
+        codebase_scanner: Optional[
+            CodebaseScanner
+        ] = None,  # NEW: Expect pre-initialized CodebaseScanner
     ):
         """
         Initializes the Socratic debate session.
@@ -109,19 +115,32 @@ class SocraticDebate:
         self._log_extra = {"request_id": self.request_id or "N/A"}
 
         self.initial_prompt = initial_prompt
-        
+        self.intermediate_steps = {}  # FIX: Initialize intermediate_steps here
+
         # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
         # Prioritize provided contexts. Only scan if self-analysis AND no raw_file_contents provided.
-        self.codebase_scanner = codebase_scanner # Use provided instance
+        self.codebase_scanner = codebase_scanner  # Use provided instance
         if is_self_analysis:
-            if not raw_file_contents and self.codebase_scanner: # Only scan if not already provided AND scanner is available
-                self.logger.info("Performing self-analysis - scanning codebase for context...")
+            if (
+                not raw_file_contents and self.codebase_scanner
+            ):  # Only scan if not already provided AND scanner is available
+                self.logger.info(
+                    "Performing self-analysis - scanning codebase for context..."
+                )
                 full_codebase_analysis = self.codebase_scanner.scan_codebase()
-                self.structured_codebase_context = full_codebase_analysis.get("file_structure", {})
-                self.raw_file_contents = full_codebase_analysis.get("raw_file_contents", {})
-                self.logger.info(f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned")
+                self.structured_codebase_context = full_codebase_analysis.get(
+                    "file_structure", {}
+                )
+                self.raw_file_contents = full_codebase_analysis.get(
+                    "raw_file_contents", {}
+                )
+                self.logger.info(
+                    f"Codebase context gathered: {len(self.structured_codebase_context)} directories scanned"
+                )
             else:
-                self.logger.info("Self-analysis context already provided or scanner not available. Skipping redundant scan.")
+                self.logger.info(
+                    "Self-analysis context already provided or scanner not available. Skipping redundant scan."
+                )
                 self.structured_codebase_context = structured_codebase_context or {}
                 self.raw_file_contents = raw_file_contents or {}
         else:
@@ -207,27 +226,41 @@ class SocraticDebate:
             )
 
         # --- MODIFIED: ContextRelevanceAnalyzer initialization ---
-        self.context_analyzer = context_analyzer # Use provided instance
+        self.context_analyzer = context_analyzer  # Use provided instance
         if not self.context_analyzer:
-            self.logger.warning("ContextRelevanceAnalyzer instance not provided. Initializing a new one.")
+            self.logger.warning(
+                "ContextRelevanceAnalyzer instance not provided. Initializing a new one."
+            )
             self.context_analyzer = ContextRelevanceAnalyzer(
                 cache_dir=self.settings.sentence_transformer_cache_dir,  # MODIFIED: Use settings for cache_dir
                 raw_file_contents=self.raw_file_contents,  # MODIFIED: Pass raw_file_contents
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
-        else: # Ensure the passed context_analyzer has the latest raw_file_contents
+        else:  # Ensure the passed context_analyzer has the latest raw_file_contents
             self.context_analyzer.raw_file_contents = self.raw_file_contents
             # Re-compute embeddings if raw_file_contents changed, or if not computed yet
             current_files_hash = hash(frozenset(self.raw_file_contents.items()))
-            if not hasattr(self.context_analyzer, '_last_raw_file_contents_hash') or \
-               self.context_analyzer._last_raw_file_contents_hash != current_files_hash:
+            if (
+                not hasattr(self.context_analyzer, "_last_raw_file_contents_hash")
+                or self.context_analyzer._last_raw_file_contents_hash
+                != current_files_hash
+            ):
                 try:
-                    self.context_analyzer.compute_file_embeddings(self.raw_file_contents)
-                    self.context_analyzer._last_raw_file_contents_hash = current_files_hash
-                    self._log_with_context("info", "Computed file embeddings for context analyzer in SocraticDebate init.")
+                    self.context_analyzer.compute_file_embeddings(
+                        self.raw_file_contents
+                    )  # noqa: F541
+                    self.context_analyzer._last_raw_file_contents_hash = (
+                        current_files_hash
+                    )
+                    self._log_with_context(
+                        "info",
+                        "Computed file embeddings for codebase context during SocraticDebate init.",
+                    )
                 except Exception as e:
-                    self._log_with_context("error", f"Error computing context embeddings: {e}[/red]")
+                    self._log_with_context(
+                        "error", f"Error computing context embeddings: {e}[/red]"
+                    )
                     if self.status_callback:  # Ensure status_callback is callable
                         self.status_callback(
                             f"[red]Error computing context embeddings: {e}[/red]",  # message
@@ -237,7 +270,9 @@ class SocraticDebate:
                             progress_pct=self.get_progress_pct("context", error=True),
                             current_persona_name="Context_Relevance_Analyzer_Init",
                         )
-                    raise ChimeraError(f"Error computing context embeddings: {e}", original_exception=e) from e
+                    raise ChimeraError(
+                        f"Error computing context embeddings: {e}", original_exception=e
+                    ) from e
         # --- END MODIFIED ---
 
         # Initialize ContentAlignmentValidator if not provided
@@ -299,6 +334,10 @@ class SocraticDebate:
         if "coding" in self.domain.lower():
             requirements.append("coding")
 
+        # FIX: Ensure model_registry is initialized before calling get_model
+        if not hasattr(self, "model_registry") or self.model_registry is None:
+            self.model_registry = ModelRegistry()
+
         model = self.model_registry.get_model(
             requirements=requirements,
             budget=None,
@@ -311,6 +350,11 @@ class SocraticDebate:
     ) -> Tuple[float, float, float]:
         """Determines the token budget ratios for context, debate, and synthesis phases."""
         complexity_score = prompt_analysis["complexity_score"]
+
+        # FIX: Ensure self.persona_manager is initialized before calling its methods
+        if not hasattr(self, "persona_manager") or self.persona_manager is None:
+            self.logger.warning("PersonaManager not initialized, using default ratios.")
+            return 0.2, 0.7, 0.1  # Fallback to default ratios
 
         if self.persona_manager.prompt_analyzer.is_self_analysis_prompt(
             self.initial_prompt
@@ -1000,12 +1044,22 @@ class SocraticDebate:
         # --- MODIFIED: Check if embeddings are already up-to-date before re-computing ---
         if self.raw_file_contents and self.context_analyzer:
             current_files_hash = hash(frozenset(self.raw_file_contents.items()))
-            if not hasattr(self.context_analyzer, '_last_raw_file_contents_hash') or \
-               self.context_analyzer._last_raw_file_contents_hash != current_files_hash:
+            if (
+                not hasattr(self.context_analyzer, "_last_raw_file_contents_hash")
+                or self.context_analyzer._last_raw_file_contents_hash
+                != current_files_hash
+            ):
                 try:
-                    self.context_analyzer.compute_file_embeddings(self.raw_file_contents)
-                    self.context_analyzer._last_raw_file_contents_hash = current_files_hash
-                    self._log_with_context("info", "Computed file embeddings for codebase context during context analysis phase.")
+                    self.context_analyzer.compute_file_embeddings(
+                        self.raw_file_contents
+                    )  # noqa: F541
+                    self.context_analyzer._last_raw_file_contents_hash = (
+                        current_files_hash
+                    )
+                    self._log_with_context(
+                        "info",
+                        "Computed file embeddings for codebase context during context analysis phase.",
+                    )
                 except Exception as e:
                     self._log_with_context(
                         "error",
@@ -1330,7 +1384,7 @@ class SocraticDebate:
         except ValidationError:
             self._log_with_context(
                 "warning",
-                f"Devils_Advocate output was not a valid ConflictReport. Treating as general output.",
+                "Devils_Advocate output was not a valid ConflictReport. Treating as general output.",
             )
             return output
         except Exception as e:
@@ -1597,7 +1651,7 @@ class SocraticDebate:
         if critical_sections_tokens > CRITICAL_SECTION_TOKEN_BUDGET:
             self._log_with_context(
                 "debug",
-                f"Critical sections (config/deployment) exceed dedicated budget. Summarizing aggressively.",
+                "Critical sections (config/deployment) exceed dedicated budget. Summarizing aggressively.",
             )
             for key, content in critical_sections_content.items():
                 if key == "configuration_analysis" and content:
@@ -1747,6 +1801,10 @@ class SocraticDebate:
             """Recursively converts Pydantic models to dictionaries."""
             if hasattr(obj, "model_dump"):
                 return obj.model_dump()
+            elif hasattr(
+                obj, "dict"
+            ):  # Fallback for Pydantic v1 if model_dump is not present
+                return obj.dict()
             elif isinstance(obj, list):
                 return [convert_to_serializable(item) for item in obj]
             elif isinstance(obj, dict):
@@ -1935,11 +1993,13 @@ class SocraticDebate:
             200,
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
         )
-        summarized_debate_history = self.prompt_optimizer.optimize_debate_history( # Use prompt_optimizer
-            json.dumps(debate_persona_results), effective_history_budget
+        summarized_debate_history = (
+            self.prompt_optimizer.optimize_debate_history(  # Use prompt_optimizer
+                json.dumps(debate_persona_results), effective_history_budget
+            )
         )
         synthesis_prompt_parts.append(
-            f"Debate History:\n{summarized_debate_history}\n\n" # Use optimized string directly
+            f"Debate History:\n{summarized_debate_history}\n\n"  # Use optimized string directly
         )
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):

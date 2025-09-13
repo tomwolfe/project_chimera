@@ -1,4 +1,3 @@
-# src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from src.llm_tokenizers.base import Tokenizer
@@ -6,7 +5,7 @@ from src.config.settings import ChimeraSettings
 import re
 import json
 
-import tiktoken
+# Removed unused imports: tiktoken (it's used in GeminiTokenizer, not directly here)
 from transformers import pipeline
 
 logger = logging.getLogger(__name__)
@@ -40,33 +39,50 @@ class PromptOptimizer:
             summarizer = get_summarizer()
             # Pre-truncate input text to a manageable size for the summarizer model
             # distilbart-cnn-6-6 has a max input length of 1024 tokens.
-            max_input_tokens_for_summarizer = 1024
-            if self.tokenizer.count_tokens(text) > max_input_tokens_for_summarizer:
+            max_input_tokens_for_summarizer_model = 1024
+            if (
+                self.tokenizer.count_tokens(text)
+                > max_input_tokens_for_summarizer_model
+            ):
                 logger.warning(
-                    f"Input text for summarizer is too long ({self.tokenizer.count_tokens(text)} tokens). Pre-truncating to {max_input_tokens_for_summarizer} tokens."
+                    f"Input text for summarizer is too long ({self.tokenizer.count_tokens(text)} tokens). Pre-truncating to {max_input_tokens_for_summarizer_model} tokens."
                 )
                 text = self.tokenizer.truncate_to_token_limit(
-                    text, max_input_tokens_for_summarizer
+                    text, max_input_tokens_for_summarizer_model
                 )
 
-            # distilbart-cnn-6-6 typically has a max output length around 142 tokens.
-            # We cap the requested summary length to avoid over-generation and memory issues.
-            # Target tokens is the budget for the summary.
-            max_summary_length_tokens = min(target_tokens, 142)  # Cap at model's typical max output
-            min_summary_length_tokens = max(5, int(target_tokens * 0.5))  # Ensure a minimum length, at least 5 tokens
-            max_summary_length_tokens = max(max_summary_length_tokens, min_summary_length_tokens)  # Ensure max is at least min
+            # The summarizer model has its own max output length (e.g., 142 for distilbart-cnn-6-6).
+            # We want the *final* summary to be <= target_tokens.
+            # So, we ask the summarizer for a length up to its own max, then truncate its output.
+            # The `max_length` parameter for the summarizer is in *tokens* for its output.
+            # Let's set a reasonable upper bound for the summarizer's output, and a minimum.
+            summarizer_max_output_tokens = min(
+                target_tokens, 142
+            )  # Model's typical max output
+            summarizer_min_output_tokens = max(
+                5, int(target_tokens * 0.5)
+            )  # Ensure a minimum, at least 5
+
+            # Ensure max is at least min
+            summarizer_max_output_tokens = max(
+                summarizer_max_output_tokens, summarizer_min_output_tokens
+            )
 
             summary_result = summarizer(
                 text,
-                max_length=max_summary_length_tokens,
-                min_length=min_summary_length_tokens,
+                max_length=summarizer_max_output_tokens,
+                min_length=summarizer_min_output_tokens,
                 do_sample=False,  # For deterministic output
             )
             summary = summary_result[0]["summary_text"]
 
             # Use the tokenizer to ensure the final summary fits the target_tokens
-            final_summary = self.tokenizer.truncate_to_token_limit(summary, target_tokens)
-            if not final_summary and text.strip():  # If final_summary is empty but original text wasn't
+            final_summary = self.tokenizer.truncate_to_token_limit(
+                summary, target_tokens
+            )
+            if (
+                not final_summary and text.strip()
+            ):  # If final_summary is empty but original text wasn't
                 return "[...summary truncated due to token limits...]"  # Return a placeholder
             return final_summary
         except Exception as e:
@@ -135,7 +151,9 @@ class PromptOptimizer:
 
         # For now, a simple truncation as a fallback
         logger.warning(
-            f"Debate history too long ({current_tokens} tokens). Applying aggressive summarization/truncation to fit {max_tokens} tokens."
+            "Debate history too long (%s tokens). Applying aggressive summarization/truncation to fit %s tokens.",
+            current_tokens,
+            max_tokens,  # FIX: Removed f-string, passed args
         )
         return self.tokenizer.truncate_to_token_limit(
             debate_history_json_str,

@@ -3,11 +3,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 from pathlib import Path
-import numpy as np # NEW: Import numpy
-
-# No other imports are needed for the functions in this file.
-# The previous imports from src.utils.path_utils, src.utils.output_parser,
-# src.utils.code_utils, and many standard library modules were unnecessary.
+import numpy as np  # NEW: Import numpy
 
 
 def strip_ansi_codes(text: str) -> str:
@@ -88,7 +84,7 @@ def generate_markdown_report(
         elif isinstance(obj, (np.int32, np.int64)):
             return int(obj)
         elif isinstance(obj, np.ndarray):
-            return obj.tolist() # Convert NumPy arrays to Python lists
+            return obj.tolist()  # Convert NumPy arrays to Python lists
         return obj
 
     if config_params.get("show_intermediate_steps", True):

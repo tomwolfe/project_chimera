@@ -21,8 +21,8 @@ PROJECT_ROOT_MARKERS = [
     "README.md",
     "src/",
     ".github/",
-    "app.py", # ADDED
-    "core.py", # ADDED
+    "app.py",  # ADDED
+    "core.py",  # ADDED
 ]
 
 
@@ -381,8 +381,10 @@ class ContextRelevanceAnalyzer:
         )  # MODIFIED: Use raw_file_contents
         self.logger = logger
         self.persona_router = None
-        self.file_embeddings: Dict[str, Any] = {} # Initialize empty
-        self._last_raw_file_contents_hash: Optional[int] = None # NEW: Store hash of last processed content
+        self.file_embeddings: Dict[str, Any] = {}  # Initialize empty
+        self._last_raw_file_contents_hash: Optional[int] = (
+            None  # NEW: Store hash of last processed content
+        )
 
         try:
             # Ensure the cache directory exists
@@ -402,11 +404,10 @@ class ContextRelevanceAnalyzer:
 
         # NEW: Compute initial embeddings and store hash if raw_file_contents are provided
         if self.raw_file_contents:
-            self.file_embeddings = self._compute_file_embeddings(
-                self.raw_file_contents
+            self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
+            self._last_raw_file_contents_hash = hash(
+                frozenset(self.raw_file_contents.items())
             )
-            self._last_raw_file_contents_hash = hash(frozenset(self.raw_file_contents.items()))
-
 
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
         """
@@ -414,24 +415,28 @@ class ContextRelevanceAnalyzer:
         Includes a hash-based check to skip re-computation if the content hasn't changed.
         """
         if not context:
-            self.logger.warning("No file content provided for embedding. Clearing existing embeddings.")
-            self.file_embeddings = {} # Clear old embeddings if context is empty
-            self._last_raw_file_contents_hash = None # Reset hash
+            self.logger.warning(
+                "No file content provided for embedding. Clearing existing embeddings."
+            )
+            self.file_embeddings = {}  # Clear old embeddings if context is empty
+            self._last_raw_file_contents_hash = None  # Reset hash
             return {}
 
         # Calculate hash of current context to check for changes
         current_context_hash = hash(frozenset(context.items()))
 
         # If the context hasn't changed, return existing embeddings
-        if hasattr(self, '_last_raw_file_contents_hash') and \
-           self._last_raw_file_contents_hash == current_context_hash:
+        if (
+            hasattr(self, "_last_raw_file_contents_hash")
+            and self._last_raw_file_contents_hash == current_context_hash
+        ):
             self.logger.info("File embeddings are up-to-date. Skipping re-computation.")
             return self.file_embeddings
 
         # If context changed or no embeddings exist, re-compute
-        self.file_embeddings = {} # Clear existing embeddings before re-computing
+        self.file_embeddings = {}  # Clear existing embeddings before re-computing
         self.logger.info("Computing embeddings for files...")
-        
+
         embeddings = {}
         try:
             # Filter out empty file contents before encoding
@@ -465,7 +470,7 @@ class ContextRelevanceAnalyzer:
         except Exception as e:
             self.logger.error(f"Error computing file embeddings: {e}", exc_info=True)
             embeddings = {}  # Return empty dict on error
-        
+
         # Store the newly computed embeddings and the hash of the content that generated them
         self.file_embeddings = embeddings
         self._last_raw_file_contents_hash = current_context_hash
