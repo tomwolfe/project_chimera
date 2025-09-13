@@ -42,15 +42,26 @@ class PromptOptimizer:
         if not self.summarizer_pipeline:
             logger.error("Summarizer pipeline is not initialized. Cannot summarize text.")
             # Fallback to simple truncation if summarizer is not available
+            # NEW: Explicitly delete text to free memory if summarizer is not available
+            del text
+            import gc
+            gc.collect()
             return self.tokenizer.truncate_to_token_limit(text, target_tokens)
 
         try:
-            # Use the summarizer's own tokenizer for accurate pre-truncation of input
             pre_truncated_text = text
             if self.summarizer_tokenizer:
-                # Tokenize the text using the summarizer's tokenizer, applying truncation
+                # NEW: Aggressive character-based pre-truncation before tokenization
+                # This reduces the initial memory footprint for the summarizer's tokenizer
+                # if the input text is extremely long.
+                MAX_CHARS_FOR_SUMMARIZER_INPUT = self.summarizer_model_max_input_tokens * 4 # Heuristic: 4 chars/token
+                if len(text) > MAX_CHARS_FOR_SUMMARIZER_INPUT:
+                    logger.warning(f"Input text for summarizer is extremely long ({len(text)} chars). Pre-truncating to {MAX_CHARS_FOR_SUMMARIZER_INPUT} chars.")
+                    pre_truncated_text = text[:MAX_CHARS_FOR_SUMMARIZER_INPUT]
+
+                # Tokenize the (potentially pre-truncated) text using the summarizer's tokenizer
                 tokenized_input = self.summarizer_tokenizer(
-                    text,
+                    pre_truncated_text,
                     truncation=True,
                     max_length=self.summarizer_model_max_input_tokens,
                     return_tensors="pt" # Return PyTorch tensors
@@ -110,6 +121,11 @@ class PromptOptimizer:
             logger.debug(f"Summarizer pipeline raw output length: {len(summary_result[0]['summary_text'])} chars.")
             summary = summary_result[0]["summary_text"]
 
+            # NEW: Explicitly delete summary_result to free memory
+            del summary_result
+            import gc
+            gc.collect()
+
             # Use the Gemini tokenizer to ensure the final summary fits the overall target_tokens
             final_summary = self.tokenizer.truncate_to_token_limit(
                 summary, target_tokens, truncation_indicator="... (summary truncated)"
@@ -140,9 +156,12 @@ class PromptOptimizer:
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
 
-        effective_input_limit = persona_input_token_limit
+        # NEW: Cap the effective_input_limit by the summarizer's max input length
+        # This ensures that even if a persona has a very high input limit,
+        # the summarizer won't receive an input larger than it can handle efficiently.
+        # This is a critical step to prevent the summarizer itself from OOMing.
+        effective_input_limit = min(persona_input_token_limit, self.summarizer_model_max_input_tokens)
 
-        # Ensure a minimum effective_input_limit to prevent accidental truncation to 0 tokens
         MIN_EFFECTIVE_INPUT_LIMIT = 50  # tokens
         effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
 

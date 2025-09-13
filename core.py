@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 import difflib
 import uuid
 import numpy as np # NEW: Import numpy for type handling
+import gc # NEW: Import garbage collector for explicit memory management
 
 # --- IMPORT MODIFICATIONS ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer
@@ -94,8 +95,6 @@ class SocraticDebate:
         token_tracker: Optional[TokenUsageTracker] = None,
         codebase_scanner: Optional[CodebaseScanner] = None, # NEW: Expect pre-initialized CodebaseScanner
         summarizer_pipeline_instance: Any = None, # NEW: Accept summarizer pipeline instance
-        max_debate_history_turns: int = 10, # NEW: Add max_debate_history_turns
-        max_debate_rounds: int = 10, # NEW: Add max_debate_rounds
     ):
         """
         Initializes the Socratic debate session.
@@ -115,10 +114,6 @@ class SocraticDebate:
         self.intermediate_steps = {} # FIX: Initialize intermediate_steps here
         self.is_self_analysis = is_self_analysis
         
-        # NEW: Store max_debate_history_turns and max_debate_rounds
-        self.max_debate_history_turns = max_debate_history_turns
-        self.max_debate_rounds = max_debate_rounds
-
         # --- MODIFIED: Handle structured_codebase_context and raw_file_contents ---
         # Initialize codebase_scanner and populate raw_file_contents and structured_codebase_context
         self.codebase_scanner = codebase_scanner
@@ -1295,36 +1290,106 @@ class SocraticDebate:
         self, previous_output_for_llm: Union[str, Dict[str, Any]], is_problematic: bool
     ) -> str:
         """Summarizes the previous LLM output for the current prompt."""
+        # Define a token limit for individual summaries within the debate history
+        SUMMARY_TOKEN_LIMIT = 100 # Adjust as needed
+
         if is_problematic:
             summary = "Previous persona's output had issues (malformed JSON or content misalignment). "
             if isinstance(previous_output_for_llm, dict):
                 if previous_output_for_llm.get("CRITIQUE_SUMMARY"):
-                    summary += f"Summary of previous critique: {previous_output_for_llm['CRITIQUE_SUMMARY']}"
+                    # Use tokenizer for token-aware truncation
+                    truncated_summary = self.tokenizer.truncate_to_token_limit(
+                        previous_output_for_llm["CRITIQUE_SUMMARY"], SUMMARY_TOKEN_LIMIT
+                    )
+                    summary += f"Summary of previous critique: {truncated_summary}"
                 elif previous_output_for_llm.get("ANALYSIS_SUMMARY"):
-                    summary += f"Summary of previous analysis: {previous_output_for_llm['ANALYSIS_SUMMARY']}"
+                    truncated_summary = self.tokenizer.truncate_to_token_limit(
+                        previous_output_for_llm["ANALYSIS_SUMMARY"], SUMMARY_TOKEN_LIMIT
+                    )
+                    summary += f"Summary of previous analysis: {truncated_summary}"
                 elif previous_output_for_llm.get("general_output"):
-                    summary += f"Summary of previous general output: {previous_output_for_llm['general_output'][:200]}..."
+                    truncated_summary = self.tokenizer.truncate_to_token_limit(
+                        previous_output_for_llm["general_output"], SUMMARY_TOKEN_LIMIT
+                    )
+                    summary += f"Summary of previous general output: {truncated_summary}"
                 elif previous_output_for_llm.get("summary"):  # For ConflictReport
-                    summary += f"Summary of previous conflict report: {previous_output_for_llm['summary']}"
+                    truncated_summary = self.tokenizer.truncate_to_token_limit(
+                        previous_output_for_llm["summary"], SUMMARY_TOKEN_LIMIT
+                    )
+                    summary += f"Summary of previous conflict report: {truncated_summary}"
                 else:
                     summary += "Details in malformed_blocks."
             else:
-                summary += f"Raw error snippet: {str(previous_output_for_llm)[:200]}..."
+                truncated_snippet = self.tokenizer.truncate_to_token_limit(
+                    str(previous_output_for_llm), SUMMARY_TOKEN_LIMIT * 2 # Allow a bit more for raw strings
+                )
+                summary += f"Raw error snippet: {truncated_snippet}..."
             return f"Previous Debate Output Summary (with issues):\n{summary}\n\n"
         else:
             if isinstance(previous_output_for_llm, dict):
-                if previous_output_for_llm.get("CRITIQUE_SUMMARY"):
-                    return f"Previous Debate Output:\n{json.dumps({'CRITIQUE_SUMMARY': previous_output_for_llm['CRITIQUE_SUMMARY'], 'SUGGESTIONS': previous_output_for_llm.get('SUGGESTIONS', [])}, indent=2, default=convert_to_json_friendly)}\n\n"
-                elif previous_output_for_llm.get("ANALYSIS_SUMMARY"):
-                    return f"Previous Debate Output:\n{json.dumps({'ANALYSIS_SUMMARY': previous_output_for_llm['ANALYSIS_SUMMARY'], 'IMPACTFUL_SUGGESTIONS': previous_output_for_llm.get('IMPACTFUL_SUGGESTIONS', [])}, indent=2, default=convert_to_json_friendly)}\n\n"
-                elif previous_output_for_llm.get("general_output"):
-                    return f"Previous Debate Output:\n{json.dumps({'general_output': previous_output_for_llm['general_output']}, indent=2, default=convert_to_json_friendly)}\n\n"
-                elif previous_output_for_llm.get("summary"):  # For ConflictReport
-                    return f"Previous Debate Output:\n{json.dumps({'summary': previous_output_for_llm['summary'], 'conflict_found': previous_output_for_llm.get('conflict_found')}, indent=2, default=convert_to_json_friendly)}\n\n"
+                # Apply truncation to relevant string fields before dumping
+                output_copy = previous_output_for_llm.copy()
+                if output_copy.get("CRITIQUE_SUMMARY"):
+                    output_copy["CRITIQUE_SUMMARY"] = self.tokenizer.truncate_to_token_limit(
+                        output_copy["CRITIQUE_SUMMARY"], SUMMARY_TOKEN_LIMIT
+                    )
+                if output_copy.get("ANALYSIS_SUMMARY"):
+                    output_copy["ANALYSIS_SUMMARY"] = self.tokenizer.truncate_to_token_limit(
+                        output_copy["ANALYSIS_SUMMARY"], SUMMARY_TOKEN_LIMIT
+                    )
+                if output_copy.get("general_output"):
+                    output_copy["general_output"] = self.tokenizer.truncate_to_token_limit(
+                        output_copy["general_output"], SUMMARY_TOKEN_LIMIT
+                    )
+                if output_copy.get("summary"): # For ConflictReport
+                    output_copy["summary"] = self.tokenizer.truncate_to_token_limit(
+                        output_copy["summary"], SUMMARY_TOKEN_LIMIT
+                    )
+                
+                # Also truncate content within suggestions/code_changes if present
+                if "SUGGESTIONS" in output_copy and isinstance(output_copy["SUGGESTIONS"], list):
+                    for suggestion in output_copy["SUGGESTIONS"]:
+                        if isinstance(suggestion, dict):
+                            if suggestion.get("PROBLEM"):
+                                suggestion["PROBLEM"] = self.tokenizer.truncate_to_token_limit(suggestion["PROBLEM"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("PROPOSED_SOLUTION"):
+                                suggestion["PROPOSED_SOLUTION"] = self.tokenizer.truncate_to_token_limit(suggestion["PROPOSED_SOLUTION"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("EXPECTED_IMPACT"):
+                                suggestion["EXPECTED_IMPACT"] = self.tokenizer.truncate_to_token_limit(suggestion["EXPECTED_IMPACT"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("RATIONALE"):
+                                suggestion["RATIONALE"] = self.tokenizer.truncate_to_token_limit(suggestion["RATIONALE"], SUMMARY_TOKEN_LIMIT)
+                            if "CODE_CHANGES_SUGGESTED" in suggestion and isinstance(suggestion["CODE_CHANGES_SUGGESTED"], list):
+                                for change in suggestion["CODE_CHANGES_SUGGESTED"]:
+                                    if isinstance(change, dict):
+                                        if change.get("FULL_CONTENT"):
+                                            change["FULL_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["FULL_CONTENT"], SUMMARY_TOKEN_LIMIT)
+                                        if change.get("DIFF_CONTENT"):
+                                            change["DIFF_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["DIFF_CONTENT"], SUMMARY_TOKEN_LIMIT)
+                
+                if "IMPACTFUL_SUGGESTIONS" in output_copy and isinstance(output_copy["IMPACTFUL_SUGGESTIONS"], list):
+                    for suggestion in output_copy["IMPACTFUL_SUGGESTIONS"]:
+                        if isinstance(suggestion, dict):
+                            if suggestion.get("PROBLEM"):
+                                suggestion["PROBLEM"] = self.tokenizer.truncate_to_token_limit(suggestion["PROBLEM"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("PROPOSED_SOLUTION"):
+                                suggestion["PROPOSED_SOLUTION"] = self.tokenizer.truncate_to_token_limit(suggestion["PROPOSED_SOLUTION"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("EXPECTED_IMPACT"):
+                                suggestion["EXPECTED_IMPACT"] = self.tokenizer.truncate_to_token_limit(suggestion["EXPECTED_IMPACT"], SUMMARY_TOKEN_LIMIT)
+                            if suggestion.get("RATIONALE"):
+                                suggestion["RATIONALE"] = self.tokenizer.truncate_to_token_limit(suggestion["RATIONALE"], SUMMARY_TOKEN_LIMIT)
+                            if "CODE_CHANGES_SUGGESTED" in suggestion and isinstance(suggestion["CODE_CHANGES_SUGGESTED"], list):
+                                for change in suggestion["CODE_CHANGES_SUGGESTED"]:
+                                    if isinstance(change, dict):
+                                        if change.get("FULL_CONTENT"):
+                                            change["FULL_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["FULL_CONTENT"], SUMMARY_TOKEN_LIMIT)
+                                        if change.get("DIFF_CONTENT"):
+                                            change["DIFF_CONTENT"] = self.tokenizer.truncate_to_token_limit(change["DIFF_CONTENT"], SUMMARY_TOKEN_LIMIT)
                 else:
-                    return f"Previous Debate Output:\n{json.dumps(previous_output_for_llm, indent=2, default=convert_to_json_friendly)}\n\n"
-            else:
-                return f"Previous Debate Output:\n{previous_output_for_llm}\n\n"
+                    truncated_output = self.tokenizer.truncate_to_token_limit(
+                        str(previous_output_for_llm), SUMMARY_TOKEN_LIMIT * 2
+                    )
+                    return f"Previous Debate Output:\n{truncated_output}\n\n"
+                return f"Previous Debate Output:\n{json.dumps(output_copy, indent=2, default=convert_to_json_friendly)}\n\n"
  
     def _handle_devils_advocate_turn(
         self, output: Dict[str, Any], debate_history_so_far: List[Dict[str, Any]]
@@ -1410,11 +1475,6 @@ class SocraticDebate:
             personas_for_debate.insert(insert_idx, "Devils_Advocate")
  
         for i, persona_name in enumerate(personas_for_debate):
-            # NEW: Add check for max_debate_rounds
-            if i >= self.max_debate_rounds:
-                self._log_with_context("warning", f"Max debate rounds ({self.max_debate_rounds}) reached. Stopping debate turns early.")
-                break
-
             self._log_with_context(
                 "info",
                 f"Executing debate turn for persona: {persona_name}",
@@ -1493,11 +1553,6 @@ class SocraticDebate:
                     )
  
                 debate_history.append({"persona": persona_name, "output": turn_output})
-                
-                # NEW: Truncate debate_history to prevent unbounded growth
-                if len(debate_history) > self.max_debate_history_turns:
-                    self._log_with_context("debug", f"Truncating debate history to {self.max_debate_history_turns} turns.")
-                    debate_history = debate_history[-self.max_debate_history_turns:]
  
                 if self._is_problematic_output(
                     turn_output
@@ -1682,8 +1737,10 @@ class SocraticDebate:
     ) -> Dict[str, Any]:
         """Truncates detailed issue lists within code_quality to fit budget."""
         TOKENS_PER_ISSUE_ESTIMATE = 100
- 
-        for issue_list_key in ["detailed_issues", "ruff_violations"]:
+        # Define a token limit for individual issue messages and code snippets
+        ISSUE_DETAIL_TOKEN_LIMIT = 50 # Adjust as needed
+
+        for issue_list_key in ["detailed_issues", "ruff_violations", "detailed_security_issues"]: # Include security issues
             if (
                 "code_quality" in summarized_metrics
                 and issue_list_key in summarized_metrics["code_quality"]
@@ -1692,19 +1749,32 @@ class SocraticDebate:
                 original_issues = list(
                     summarized_metrics["code_quality"][issue_list_key]
                 )
- 
+                
+                # Ensure we don't try to divide by zero if TOKENS_PER_ISSUE_ESTIMATE is 0
                 num_issues_to_keep = int(
                     remaining_budget_for_issues / TOKENS_PER_ISSUE_ESTIMATE
-                )
+                ) if TOKENS_PER_ISSUE_ESTIMATE > 0 else 0
+                
                 num_issues_to_keep = max(
                     0, min(len(original_issues), num_issues_to_keep)
                 )
- 
+                
+                truncated_issues = []
+                for issue in original_issues[:num_issues_to_keep]:
+                    issue_copy = issue.copy()
+                    if issue_copy.get("message"):
+                        issue_copy["message"] = self.tokenizer.truncate_to_token_limit(
+                            issue_copy["message"], ISSUE_DETAIL_TOKEN_LIMIT
+                        )
+                    if issue_copy.get("code_snippet"):
+                        issue_copy["code_snippet"] = self.tokenizer.truncate_to_token_limit(
+                            issue_copy["code_snippet"], ISSUE_DETAIL_TOKEN_LIMIT
+                        )
+                    truncated_issues.append(issue_copy)
+
                 if num_issues_to_keep < len(original_issues):
                     if num_issues_to_keep > 0:
-                        summarized_metrics["code_quality"][issue_list_key] = (
-                            original_issues[:num_issues_to_keep]
-                        )
+                        summarized_metrics["code_quality"][issue_list_key] = truncated_issues
                         summarized_metrics["code_quality"][issue_list_key].append(
                             {
                                 "type": "TRUNCATION_SUMMARY",
@@ -1721,16 +1791,58 @@ class SocraticDebate:
                         "debug",
                         f"Truncated {issue_list_key} from {len(original_issues)} to {num_issues_to_keep}.",
                     )
+                elif issue_list_key in summarized_metrics["code_quality"]: # If all issues fit, still apply truncation to content
+                    summarized_metrics["code_quality"][issue_list_key] = truncated_issues
             elif (
                 "code_quality" in summarized_metrics
                 and issue_list_key in summarized_metrics["code_quality"]
                 and not summarized_metrics["code_quality"][issue_list_key]
             ):
                 del summarized_metrics["code_quality"][issue_list_key]
+        
+        # Also apply to security.detailed_security_issues
+        if (
+            "security" in summarized_metrics
+            and "detailed_security_issues" in summarized_metrics["security"]
+            and summarized_metrics["security"]["detailed_security_issues"]
+        ):
+            original_issues = list(summarized_metrics["security"]["detailed_security_issues"])
+            num_issues_to_keep = int(
+                remaining_budget_for_issues / TOKENS_PER_ISSUE_ESTIMATE
+            ) if TOKENS_PER_ISSUE_ESTIMATE > 0 else 0
+            num_issues_to_keep = max(0, min(len(original_issues), num_issues_to_keep))
+
+            truncated_issues = []
+            for issue in original_issues[:num_issues_to_keep]:
+                issue_copy = issue.copy()
+                if issue_copy.get("message"):
+                    issue_copy["message"] = self.tokenizer.truncate_to_token_limit(
+                        issue_copy["message"], ISSUE_DETAIL_TOKEN_LIMIT
+                    )
+                if issue_copy.get("code_snippet"):
+                    issue_copy["code_snippet"] = self.tokenizer.truncate_to_token_limit(
+                        issue_copy["code_snippet"], ISSUE_DETAIL_TOKEN_LIMIT
+                    )
+                truncated_issues.append(issue_copy)
+            
+            if num_issues_to_keep < len(original_issues):
+                if num_issues_to_keep > 0:
+                    summarized_metrics["security"]["detailed_security_issues"] = truncated_issues
+                    summarized_metrics["security"]["detailed_security_issues"].append(
+                        {
+                            "type": "TRUNCATION_SUMMARY",
+                            "message": f"Only top {num_issues_to_keep} detailed_security_issues are listed due to token limits. Total: {len(original_issues)}.",
+                        }
+                    )
+                else:
+                    del summarized_metrics["security"]["detailed_security_issues"]
+            elif "detailed_security_issues" in summarized_metrics["security"]:
+                summarized_metrics["security"]["detailed_security_issues"] = truncated_issues
+
         return summarized_metrics
  
     def _create_fallback_metrics_summary_string(
-        self, metrics: Dict[str, Any], max_tokens: int
+        self, summarized_metrics: Dict[str, Any], max_tokens: int
     ) -> Dict[str, Any]:
         """Creates a high-level summary string if metrics are still too large."""
         self._log_with_context(
@@ -1738,7 +1850,7 @@ class SocraticDebate:
             "Metrics still too large after aggressive truncation. Converting to high-level summary string.",
         )
         # Get performance efficiency metrics with safe access
-        perf_metrics = metrics.get("performance_efficiency", {})
+        perf_metrics = summarized_metrics.get("performance_efficiency", {})
         token_usage = perf_metrics.get("token_usage_stats", {})
  
         # Safely extract values with defaults
@@ -1746,12 +1858,12 @@ class SocraticDebate:
         total_cost_usd = token_usage.get("total_cost_usd", 0.0)
  
         # Get security metrics with safe access
-        security_metrics = metrics.get("security", {})
+        security_metrics = summarized_metrics.get("security", {})
         high_severity_issues = security_metrics.get("high_severity_issues", 0)
         medium_severity_issues = security_metrics.get("medium_severity_issues", 0)
  
         # Get code quality metrics with safe access
-        code_quality_metrics = metrics.get("code_quality", {})
+        code_quality_metrics = summarized_metrics.get("code_quality", {})
         ruff_issues = code_quality_metrics.get("ruff_issues_count", 0)
         maintainability_index = code_quality_metrics.get(
             "maintainability_index", "N/A"

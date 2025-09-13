@@ -1746,17 +1746,25 @@ def _run_socratic_debate_process():
                     "Total_Estimated_Cost_USD", 0.0
                 )
             finally:
-                # REMOVED: st.session_state.raw_file_contents = {}
-                # REMOVED: st.session_state.structured_codebase_context = {}
+                # Explicitly clear large objects and trigger garbage collection
+                # These lines are already present, but ensure they are correctly placed
+                # and that `debate_instance` is also explicitly deleted.
                 if st.session_state.context_analyzer:
-                    # REMOVED: st.session_state.context_analyzer.file_embeddings = {}
-                    # REMOVED: st.session_state.context_analyzer.raw_file_contents = {}
-                    st.session_state.context_analyzer._last_raw_file_contents_hash = (
-                        None
-                    )
-                st.session_state.file_analysis_cache = None
-                # REMOVED: Manual clearing of PromptOptimizer._summarizer as it's now managed by st.cache_resource
-                gc.collect()
+                    st.session_state.context_analyzer._last_raw_file_contents_hash = None
+                    # It's generally better to clear the contents rather than deleting the cached instance
+                    st.session_state.context_analyzer.file_embeddings = {}
+                    st.session_state.context_analyzer.raw_file_contents = {}
+                
+                # Clear raw_file_contents and structured_codebase_context from session state
+                st.session_state.raw_file_contents = {}
+                st.session_state.structured_codebase_context = {}
+
+                st.session_state.file_analysis_cache = None # Clear this cache
+
+                if debate_instance:
+                    del debate_instance # Explicitly delete the debate instance
+                gc.collect() # Force garbage collection
+                logger.info("Explicit garbage collection triggered in app.py after debate process.")
 
 
 if run_button_clicked:
