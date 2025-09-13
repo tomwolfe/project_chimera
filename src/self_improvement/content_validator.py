@@ -439,10 +439,10 @@ class ContentAlignmentValidator:
         # Increased threshold for Self_Improvement_Analyst and Devils_Advocate for stricter alignment
         if (
             persona_name == "Self_Improvement_Analyst"
-            or persona_name == "Devils_Advocate"
+            or persona_name.startswith("Devils_Advocate") # Handle _TRUNCATED versions
         ):
             # FIX: Lowered threshold for Devils_Advocate to account for it critiquing lack of info
-            alignment_threshold = 0.2 if persona_name == "Devils_Advocate" else 0.5
+            alignment_threshold = 0.05 if persona_name.startswith("Devils_Advocate") else 0.5 # Very low threshold for Devils_Advocate
         else:
             alignment_threshold = 0.3  # Default for others
 

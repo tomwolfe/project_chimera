@@ -107,14 +107,15 @@ class PromptOptimizer:
                 min_length=summarizer_internal_min_output_tokens,
                 do_sample=False,  # For deterministic output
             )
+            logger.debug(f"Summarizer pipeline raw output length: {len(summary_result[0]['summary_text'])} chars.")
             summary = summary_result[0]["summary_text"]
 
             # Use the Gemini tokenizer to ensure the final summary fits the overall target_tokens
             final_summary = self.tokenizer.truncate_to_token_limit(
-                summary, target_tokens
+                summary, target_tokens, truncation_indicator="... (summary truncated)"
             )
             if not final_summary and text.strip():  # If final_summary is empty but original text wasn't
-                return "[...summary truncated due to token limits...]"  # Return a placeholder
+                return "[...summary could not be generated or was too short, original content truncated...]"  # Return a more descriptive placeholder
             return final_summary
         except Exception as e:
             logger.error(
