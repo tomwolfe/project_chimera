@@ -304,7 +304,7 @@ def test_socratic_debate_run_flow_simple(  # noqa: F811
     ]
     assert "Conflict_Resolution_Manager" not in [
         t["persona"] for t in intermediate_steps["Debate_History"]
-    ]  # Should not be called if no conflict
+    ]  # Should not be called
 
 
 def test_socratic_debate_conflict_resolution_flow(  # noqa: F811
@@ -377,3 +377,75 @@ def test_socratic_debate_conflict_resolution_flow(  # noqa: F811
     assert "Conflict_Resolution_Manager" in [
         t["persona"] for t in intermediate_steps["Debate_History"]
     ]  # Should be called
+
+
+# --- Appended Tests from Proposed Diff (Adapted to Pytest) ---
+
+def test_socratic_debate_error_handling(socratic_debate_instance, mock_llm_provider):
+    """Tests error handling during debate execution."""
+    mock_llm_provider.generate.side_effect = Exception("Simulated LLM error")
+
+    with pytest.raises(Exception, match="Simulated LLM error"):
+        socratic_debate_instance.run_debate()
+    mock_llm_provider.generate.assert_called_once()
+
+
+def test_socratic_debate_persona_routing(socratic_debate_instance, mock_persona_manager):
+    """Tests that persona routing is invoked correctly."""
+    # The persona_router.determine_persona_sequence is called twice in run_debate:
+    # once for initial sequence, once after context analysis.
+    # We'll mock its return value to ensure it's used.
+    mock_persona_manager.persona_router.determine_persona_sequence.return_value = [
+        "Visionary_Generator",
+        "Impartial_Arbitrator",
+    ]
+    
+    # Mock LLM responses for the new sequence
+    socratic_debate_instance.llm_provider.generate.side_effect = [
+        ('{"general_output": "Visionary output"}', 100, 50, False),
+        ('{"general_output": "Arbitrator output"}', 100, 50, False),
+    ]
+    socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
+        {"general_output": "Visionary output", "malformed_blocks": []},
+        {"general_output": "Arbitrator output", "malformed_blocks": []},
+    ]
+
+    final_answer, intermediate_steps = socratic_debate_instance.run_debate()
+
+    assert mock_persona_manager.persona_router.determine_persona_sequence.call_count >= 1
+    assert "Visionary_Generator" in [t["persona"] for t in intermediate_steps["Debate_History"]]
+    assert "Impartial_Arbitrator" in [t["persona"] for t in intermediate_steps["Debate_History"]]
+    assert final_answer["general_output"] == "Arbitrator output"
+
+
+def test_socratic_debate_token_tracking(socratic_debate_instance, mock_token_tracker, mock_llm_provider):
+    """Tests that token usage is tracked and reported."""
+    # Reset mocks for this specific test to ensure clean counts
+    mock_token_tracker.reset()
+    mock_token_tracker.current_usage = 0
+    mock_llm_provider.generate.reset_mock()
+    mock_llm_provider.generate.side_effect = [
+        ('{"general_output": "Output 1"}', 100, 50, False), # 150 tokens
+        ('{"general_output": "Output 2"}', 200, 80, False), # 280 tokens
+        ('{"general_output": "Output 3"}', 150, 60, False), # 210 tokens
+    ]
+    socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
+        {"general_output": "Output 1", "malformed_blocks": []},
+        {"general_output": "Output 2", "malformed_blocks": []},
+        {"general_output": "Output 3", "malformed_blocks": []},
+    ]
+    socratic_debate_instance.persona_router.determine_persona_sequence.return_value = [
+        "Visionary_Generator",
+        "Skeptical_Generator",
+        "Impartial_Arbitrator",
+    ]
+
+    final_answer, intermediate_steps = socratic_debate_instance.run_debate()
+
+    # The sum of tokens from generate calls is 640.
+    # The context analysis also adds tokens (mocked to return "No context summary." which has some tokens).
+    # The initial prompt also adds tokens.
+    # So, the total should be > 640.
+    assert intermediate_steps["Total_Tokens_Used"] >= 640
+    assert intermediate_steps["Total_Estimated_Cost_USD"] > 0.0
+    assert mock_token_tracker.record_usage.call_count >= 3 # At least 3 persona calls + context

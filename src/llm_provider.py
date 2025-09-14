@@ -451,7 +451,12 @@ class GeminiProvider:
                     full_generated_text=generated_text,
                 )
 
-                return generated_text, input_tokens, output_tokens, is_truncated
+                final_output_to_return = generated_text
+                if output_schema:
+                    # If schema validation was performed and passed, cleaned_generated_text holds the valid JSON string.
+                    # We ensure this cleaned string is returned.
+                    final_output_to_return = self.output_parser._clean_llm_output(generated_text)
+                return final_output_to_return, input_tokens, output_tokens, is_truncated
 
             except SchemaValidationError as e:
                 if i < max_schema_retries - 1:

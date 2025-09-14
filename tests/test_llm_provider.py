@@ -62,43 +62,8 @@ class TestGeminiProvider(unittest.TestCase):
             )
     
     def test_clean_generated_text(self):
-        """Test the _clean_generated_text method."""
+        """Test the output_parser._clean_llm_output method for removing markdown fences and conversational filler."""
         # Test with markdown code fence
-        text = "```json\n{\"test\": \"value\"}\n```"
-        cleaned = self.provider.output_parser._clean_llm_output(text) # Use the parser's method
-        self.assertEqual(cleaned, '{"test": "value"}')
-        
-        # Test with unescaped quotes (this is now handled by _repair_json_string in output_parser)
-        # The _clean_generated_text in llm_provider.py is replaced by output_parser._clean_llm_output
-        # and output_parser._repair_json_string.
-        # This test should reflect the combined behavior.
-        text_with_unescaped_quotes = '{"test": "value with "unescaped" quotes"}'
-        # The parser's repair logic would attempt to fix this.
-        # For a direct test of the repair, we'd call _repair_json_string directly.
-        # Here, we're testing the end-to-end cleaning.
-        # The expected output from _clean_llm_output would be the raw string,
-        # and then _parse_with_incremental_repair would fix it.
-        # For this unit test, we'll simulate a simple case that _clean_llm_output might handle.
-        
-        # Test with incomplete JSON (this is now handled by _parse_with_incremental_repair in output_parser)
-        text_incomplete = '{"test": "value"'
-        # The parser's repair logic would attempt to fix this.
-        # For a direct test of the repair, we'd call _repair_json_string directly.
-        # Here, we're testing the end-to-end cleaning.
-        
-        # Since _clean_generated_text is replaced by output_parser._clean_llm_output,
-        # and the repair logic is in _parse_with_incremental_repair,
-        # this test needs to be adjusted to reflect the new structure.
-        # For now, I'll keep the markdown test as it's a direct cleaning step.
-        # The other cases are more complex and involve the full parsing pipeline.
-        
-        # Re-evaluating the test for _clean_generated_text based on the new structure:
-        # The original _clean_generated_text method is effectively replaced by
-        # `self.output_parser._clean_llm_output(generated_text)` in `llm_provider.py`.
-        # The complex JSON repair logic is now within `LLMOutputParser._parse_with_incremental_repair`.
-        # So, this test should primarily focus on what `_clean_llm_output` does.
-        
-        # Test with markdown code fence (already covered)
         text_md = "```json\n{\"test\": \"value\"}\n```"
         cleaned_md = self.provider.output_parser._clean_llm_output(text_md)
         self.assertEqual(cleaned_md, '{"test": "value"}')
@@ -114,12 +79,12 @@ class TestGeminiProvider(unittest.TestCase):
         self.assertEqual(cleaned_surrounding, '{"data": 123}')
         
         # Test with malformed JSON that _clean_llm_output itself doesn't fix (it's for _parse_with_incremental_repair)
-        text_malformed = '{"test": "value" with "unescaped" quotes}'
-        cleaned_malformed = self.provider.output_parser._clean_llm_output(text_malformed)
         # _clean_llm_output primarily removes markdown/filler, it doesn't fix internal JSON structure.
         # So, the output should still be the raw malformed string, without markdown/filler.
-        self.assertEqual(cleaned_malformed, text_malformed) # Expect no change from _clean_llm_output itself
+        text_malformed = '{"test": "value" with "unescaped" quotes}'
+        cleaned_malformed = self.provider.output_parser._clean_llm_output(text_malformed)
+        self.assertEqual(cleaned_malformed, text_malformed)
         
         text_incomplete = '{"test": "value"'
         cleaned_incomplete = self.provider.output_parser._clean_llm_output(text_incomplete)
-        self.assertEqual(cleaned_incomplete, text_incomplete) # Expect no change from _clean_llm_output itself
+        self.assertEqual(cleaned_incomplete, text_incomplete)
