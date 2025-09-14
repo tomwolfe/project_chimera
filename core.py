@@ -800,9 +800,6 @@ class SocraticDebate:
         )
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 
-        current_prompt = self.prompt_optimizer.optimize_prompt(
-            prompt_for_llm, persona_name, max_output_tokens_for_turn
-        )
         raw_llm_output = ""
         is_truncated = False
 
@@ -818,6 +815,14 @@ class SocraticDebate:
                         current_persona_name=persona_name,
                     )
 
+                # MODIFIED: Call prompt_optimizer with the user prompt and the full system prompt for token counting
+                optimized_user_prompt = self.prompt_optimizer.optimize_prompt(
+                    user_prompt_text=prompt_for_llm, # Pass the user's prompt string
+                    persona_name=persona_name,
+                    max_output_tokens_for_turn=max_output_tokens_for_turn,
+                    system_message_for_token_count=final_system_prompt, # Pass the full system prompt here for accurate token counting
+                )
+
                 final_model_to_use, effective_max_output_tokens = (
                     self._prepare_llm_call_config(
                         persona_config, max_output_tokens_for_turn, requested_model_name
@@ -826,7 +831,7 @@ class SocraticDebate:
                 raw_llm_output, input_tokens, output_tokens, is_truncated = (
                     self._make_llm_api_call(
                         persona_config,
-                        current_prompt,
+                        optimized_user_prompt, # MODIFIED: Pass the optimized user prompt
                         effective_max_output_tokens,
                         final_model_to_use,
                         final_system_prompt,
@@ -896,7 +901,15 @@ class SocraticDebate:
                         exc_info=True,
                         original_exception=e,
                     )
-                    current_prompt = self._generate_retry_feedback(e, prompt_for_llm)
+                    # The retry feedback should be applied to the original prompt_for_llm
+                    prompt_for_llm = self._generate_retry_feedback(e, prompt_for_llm) # MODIFIED: Update prompt_for_llm
+                    # Re-optimize the prompt for the next retry
+                    optimized_user_prompt = self.prompt_optimizer.optimize_prompt( # NEW: Re-optimize
+                        user_prompt_text=prompt_for_llm,
+                        persona_name=persona_name,
+                        max_output_tokens_for_turn=max_output_tokens_for_turn,
+                        system_message_for_token_count=final_system_prompt,
+                    )
                     self.intermediate_steps.setdefault("malformed_blocks", []).append(
                         {
                             "type": "RETRYABLE_VALIDATION_ERROR",
@@ -1037,8 +1050,9 @@ class SocraticDebate:
                 except Exception as e:
                     self._log_with_context(
                         "error",
-                        f"Failed to compute embeddings for codebase context during context analysis: {e}",
+                        f"Error during context analysis: {e}",
                         exc_info=True,
+                        original_exception=e,
                     )
                     if self.status_callback:
                         self.status_callback(

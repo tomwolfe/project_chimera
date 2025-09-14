@@ -293,7 +293,7 @@ class GeminiProvider:
     )
     def generate(
         self,
-        prompt: str,
+        prompt: str, # This prompt is now assumed to be already optimized by core.py
         system_prompt: str = "",
         output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
@@ -355,14 +355,13 @@ class GeminiProvider:
         )
 
         max_schema_retries = 3
-        current_prompt_for_llm = prompt
+        current_prompt_for_llm = prompt # This is the already optimized user prompt
 
         for i in range(max_schema_retries):
             try:
-                persona_name_for_optimization = persona_config.name if persona_config else "Unknown"
-                optimized_prompt = self.prompt_optimizer.optimize_prompt(
-                    current_prompt_for_llm, persona_name_for_optimization, max_tokens
-                )
+                # The 'prompt' argument is now assumed to be already optimized by core.py.
+                # We use it directly here.
+                optimized_prompt = current_prompt_for_llm
 
                 prompt_with_system = (
                     f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt

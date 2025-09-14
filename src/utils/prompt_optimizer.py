@@ -1,8 +1,8 @@
 # src/utils/prompt_optimizer.py
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union # ADDED Union
 from src.llm_tokenizers.base import Tokenizer
-from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # NEW: Import GeminiTokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
@@ -141,100 +141,65 @@ class PromptOptimizer:
             )
 
     def optimize_prompt(
-        self, conversation_history: List[Dict[str, str]], persona_name: str, max_output_tokens_for_turn: int, system_message: str = ""
-    ) -> List[Dict[str, str]]:
+        self,
+        user_prompt_text: str, # MODIFIED: Expect a single string for the user's part
+        persona_name: str,
+        max_output_tokens_for_turn: int,
+        system_message_for_token_count: str = "" # NEW: System message for accurate token counting
+    ) -> str: # MODIFIED: Returns a single string
         """
-        Optimizes a list of messages (conversation history + optional system message)
-        for a specific persona based on actual token usage and persona-specific limits.
+        Optimizes a user prompt string for a specific persona based on context and token limits.
         This method aims to reduce the input prompt size if it, combined with the expected output,
         exceeds a reasonable threshold for the persona, or if the overall token budget is constrained.
-        It returns an optimized list of message dictionaries.
+        It returns an optimized user prompt string.
         """
-        # Combine system message and conversation history into a single list of messages
-        messages_for_optimization = []
-        if system_message:
-            messages_for_optimization.append({"role": "system", "content": system_message})
-        messages_for_optimization.extend(conversation_history)
-
-        # Calculate current prompt tokens using the Gemini tokenizer on the list of messages
-        prompt_tokens = self.tokenizer.count_tokens_from_messages(messages_for_optimization)
+        # Calculate current prompt tokens (including system message for accurate total)
+        # This is the total input tokens that will be sent to the LLM
+        full_input_tokens = self.tokenizer.count_tokens(system_message_for_token_count + user_prompt_text)
 
         # Get persona-specific token limits from settings
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
 
-        # The effective input limit should also consider the model's overall max input tokens
-        # and the summarizer's max input tokens if summarization is to be used.
-        # For now, we'll use the persona's configured limit.
+        # The effective input limit is the persona's limit, but also consider the model's overall max input tokens
+        # and the expected output tokens.
+        # The `max_output_tokens_for_turn` is already a budget for the output.
+        # So, the `effective_input_limit` is the maximum tokens allowed for the *input* part of the prompt.
         effective_input_limit = persona_input_token_limit
 
         MIN_EFFECTIVE_INPUT_LIMIT = 50
         effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
 
-        if prompt_tokens > effective_input_limit:
+        # If the full input (system + user) exceeds the persona's input limit, we need to optimize.
+        if full_input_tokens > effective_input_limit:
             logger.warning(
-                f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
+                f"{persona_name} prompt (total input tokens: {full_input_tokens}) exceeds effective input token limit ({effective_input_limit}). Optimizing..."
             )
 
-            # Truncate conversation history to fit the budget.
-            # Prioritize keeping the system message and the most recent messages.
-            optimized_messages = []
-            current_tokens = 0
+            # Calculate how many tokens are available for the user_prompt_text
+            # after accounting for the system_message.
+            system_message_tokens = self.tokenizer.count_tokens(system_message_for_token_count)
+            available_for_user_prompt = effective_input_limit - system_message_tokens
 
-            # Add system message first (if present)
-            if system_message:
-                system_msg_tokens = self.tokenizer.count_tokens(system_message)
-                if system_msg_tokens <= effective_input_limit:
-                    optimized_messages.append({"role": "system", "content": system_message})
-                    current_tokens += system_msg_tokens
-                else:
-                    # If system message alone exceeds limit, truncate it
-                    truncated_system_message = self.tokenizer.truncate_to_token_limit(
-                        system_message, effective_input_limit - 50, # Reserve some for truncation indicator
-                        truncation_indicator="\n... (system prompt truncated)"
-                    )
-                    optimized_messages.append({"role": "system", "content": truncated_system_message})
-                    current_tokens += self.tokenizer.count_tokens(truncated_system_message)
-                    logger.warning(f"System message for {persona_name} was truncated.")
-                    return optimized_messages # Return early if system message alone fills budget
+            if available_for_user_prompt <= MIN_EFFECTIVE_INPUT_LIMIT:
+                # If very little space, return a very short summary or indicator for the user prompt
+                return self.tokenizer.truncate_to_token_limit(
+                    user_prompt_text, MIN_EFFECTIVE_INPUT_LIMIT, truncation_indicator="... (user prompt too long)"
+                )
 
-            # Iterate through conversation history in reverse to keep recent messages
-            history_to_process = list(conversation_history) # Make a copy
-            temp_history_messages = [] # To build up messages in reverse order
-
-            for message in reversed(history_to_process):
-                message_content = message.get("content", "")
-                # Add a buffer for role and other metadata (e.g., 10 tokens)
-                message_tokens = self.tokenizer.count_tokens(message_content) + 10
-
-                if current_tokens + message_tokens <= effective_input_limit:
-                    temp_history_messages.insert(0, message) # Insert at beginning to maintain original order
-                    current_tokens += message_tokens
-                else:
-                    # If the current message is too large to fit, try to summarize it
-                    remaining_budget_for_message = effective_input_limit - current_tokens
-                    if remaining_budget_for_message > MIN_EFFECTIVE_INPUT_LIMIT: # Only summarize if meaningful space
-                        summarized_content = self._summarize_text(
-                            message_content,
-                            remaining_budget_for_message - 20, # Reserve tokens for indicator
-                            truncation_indicator="... (summarized)"
-                        )
-                        if summarized_content:
-                            temp_history_messages.insert(0, {"role": message["role"], "content": summarized_content})
-                            current_tokens += self.tokenizer.count_tokens(summarized_content) + 10
-                            logger.debug(f"Summarized a message for {persona_name}.")
-                    break # Stop adding messages once limit is reached
-
-            optimized_messages.extend(temp_history_messages)
-
+            # Truncate the user_prompt_text itself
+            optimized_user_prompt_text = self.tokenizer.truncate_to_token_limit(
+                user_prompt_text,
+                available_for_user_prompt,
+                truncation_indicator="\n... (user prompt truncated)"
+            )
             logger.info(
-                f"Prompt for {persona_name} optimized from {prompt_tokens} to {self.tokenizer.count_tokens_from_messages(optimized_messages)} tokens."
+                f"User prompt for {persona_name} optimized from {self.tokenizer.count_tokens(user_prompt_text)} to {self.tokenizer.count_tokens(optimized_user_prompt_text)} tokens."
             )
-            return optimized_messages
+            return optimized_user_prompt_text
 
-        # If no optimization needed, return the original messages (with system message prepended if applicable)
-        return messages_for_optimization
+        return user_prompt_text # No optimization needed
 
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int
@@ -267,11 +232,12 @@ class PromptOptimizer:
             system_prompt = persona_config_data["system_prompt"]
 
             # Remove generic instructions that aren't specific to the persona
-            system_prompt = system_prompt.replace("You are a highly analytical AI assistant.", "")
-            system_prompt = system_prompt.replace("Provide clear and concise responses.", "")
+            # These are examples, adjust based on actual common redundancies
+            system_prompt = re.sub(r"You are a highly analytical AI assistant\.", "", system_prompt)
+            system_prompt = re.sub(r"Provide clear and concise responses\.", "", system_prompt)
 
             # Add specific token optimization instructions
-            system_prompt += """
+            token_optimization_directives = """
             **Token Optimization Instructions:**
             - Be concise but thorough
             - Avoid repeating information
@@ -279,6 +245,9 @@ class PromptOptimizer:
             - Prioritize the most critical information first
             - Limit your response to the most essential points
             """
+            # Only add if not already present to avoid duplication on retries
+            if token_optimization_directives.strip() not in system_prompt:
+                system_prompt += token_optimization_directives
 
             persona_config_data["system_prompt"] = system_prompt
             logger.info(f"Optimized system prompt for high-token persona: {persona_name}")
