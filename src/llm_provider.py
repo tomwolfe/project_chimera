@@ -92,6 +92,7 @@ class GeminiProvider:
         request_id: Optional[str] = None,
         settings: Optional[Any] = None,
         summarizer_pipeline_instance: Any = None,
+        prompt_optimizer_instance: Optional[PromptOptimizer] = None, # NEW: Accept PromptOptimizer instance
     ):
         self.model_name = model_name
         self.model_registry = ModelRegistry()
@@ -101,6 +102,7 @@ class GeminiProvider:
         self.output_parser = LLMOutputParser()
         self.settings = settings or ChimeraSettings()
         self.summarizer_pipeline_instance = summarizer_pipeline_instance
+        self.prompt_optimizer = prompt_optimizer_instance # NEW: Store the passed instance
 
         try:
             resolved_api_key = api_key or fetch_api_key()
@@ -169,21 +171,18 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        if self.summarizer_pipeline_instance:
-            self.prompt_optimizer = PromptOptimizer(
-                tokenizer=self.tokenizer,
-                settings=self.settings,
-                summarizer_pipeline=self.summarizer_pipeline_instance,
-            )
-        else:
+        # Removed PromptOptimizer initialization from here. It's now passed in.
+        if not self.prompt_optimizer:
             logger.warning(
-                "Summarizer pipeline instance not provided to GeminiProvider. PromptOptimizer will be limited."
+                "PromptOptimizer instance not provided to GeminiProvider. Prompt optimization will be limited."
             )
+            # Fallback to a basic PromptOptimizer if not provided
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=None,
+                summarizer_pipeline=self.summarizer_pipeline_instance, # Pass the summarizer if available
             )
+
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))

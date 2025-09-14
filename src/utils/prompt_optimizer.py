@@ -2,6 +2,7 @@
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from src.llm_tokenizers.base import Tokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer # NEW: Import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
@@ -140,53 +141,33 @@ class PromptOptimizer:
             )
 
     def optimize_prompt(
-        self, prompt: str, persona_name: str, max_output_tokens_for_turn: int
-    ) -> str:
+        self, conversation_history: List[Dict[str, str]], persona_name: str, max_output_tokens_for_turn: int, system_message: str = ""
+    ) -> List[Dict[str, str]]:
         """
-        Optimizes a prompt for a specific persona based on actual token usage and persona-specific limits.
+        Optimizes a list of messages (conversation history + optional system message)
+        for a specific persona based on actual token usage and persona-specific limits.
         This method aims to reduce the input prompt size if it, combined with the expected output,
         exceeds a reasonable threshold for the persona, or if the overall token budget is constrained.
+        It returns an optimized list of message dictionaries.
         """
-        # --- NEW: Apply basic text optimization (redundant phrases, sentence simplification) ---
-        optimized_text_pre_truncation = prompt
+        # Combine system message and conversation history into a single list of messages
+        messages_for_optimization = []
+        if system_message:
+            messages_for_optimization.append({"role": "system", "content": system_message})
+        messages_for_optimization.extend(conversation_history)
 
-        # Remove redundant phrases
-        redundant_phrases = [
-            "please", "kindly", "could you", "would you", "i would like to",
-            "i need you to", "i want you to", "i am asking you to",
-            "i am requesting you to", "i am hoping you can", "i am hoping that you can"
-        ]
-        for phrase in redundant_phrases:
-            optimized_text_pre_truncation = optimized_text_pre_truncation.replace(phrase, "")
-
-        # Simplify complex sentences
-        complex_structures = [
-            "in order to", "due to the fact that", "it is important to note that",
-            "it should be noted that", "it is worth mentioning that", "it is clear that",
-            "it is evident that", "it is apparent that", "it is obvious that"
-        ]
-        replacements = [
-            "to", "because", "note that", "note that", "mention that", "clearly",
-            "evidently", "apparently", "obviously"
-        ]
-        for i, structure in enumerate(complex_structures):
-            optimized_text_pre_truncation = optimized_text_pre_truncation.replace(structure, replacements[i])
-
-        # Remove unnecessary whitespace
-        optimized_text_pre_truncation = " ".join(optimized_text_pre_truncation.split())
-        # --- END NEW ---
-
-        # Calculate current prompt tokens using the Gemini tokenizer on the pre-optimized text
-        prompt_tokens = self.tokenizer.count_tokens(optimized_text_pre_truncation)
+        # Calculate current prompt tokens using the Gemini tokenizer on the list of messages
+        prompt_tokens = self.tokenizer.count_tokens_from_messages(messages_for_optimization)
 
         # Get persona-specific token limits from settings
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
 
-        effective_input_limit = min(
-            persona_input_token_limit, self.summarizer_model_max_input_tokens
-        )
+        # The effective input limit should also consider the model's overall max input tokens
+        # and the summarizer's max input tokens if summarization is to be used.
+        # For now, we'll use the persona's configured limit.
+        effective_input_limit = persona_input_token_limit
 
         MIN_EFFECTIVE_INPUT_LIMIT = 50
         effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
@@ -196,18 +177,64 @@ class PromptOptimizer:
                 f"{persona_name} prompt exceeds effective input token limit ({prompt_tokens}/{effective_input_limit}). Optimizing..."
             )
 
-            optimized_prompt = self._summarize_text(
-                optimized_text_pre_truncation, # Use the pre-optimized text here
-                effective_input_limit,
-                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]",
-            )
+            # Truncate conversation history to fit the budget.
+            # Prioritize keeping the system message and the most recent messages.
+            optimized_messages = []
+            current_tokens = 0
+
+            # Add system message first (if present)
+            if system_message:
+                system_msg_tokens = self.tokenizer.count_tokens(system_message)
+                if system_msg_tokens <= effective_input_limit:
+                    optimized_messages.append({"role": "system", "content": system_message})
+                    current_tokens += system_msg_tokens
+                else:
+                    # If system message alone exceeds limit, truncate it
+                    truncated_system_message = self.tokenizer.truncate_to_token_limit(
+                        system_message, effective_input_limit - 50, # Reserve some for truncation indicator
+                        truncation_indicator="\n... (system prompt truncated)"
+                    )
+                    optimized_messages.append({"role": "system", "content": truncated_system_message})
+                    current_tokens += self.tokenizer.count_tokens(truncated_system_message)
+                    logger.warning(f"System message for {persona_name} was truncated.")
+                    return optimized_messages # Return early if system message alone fills budget
+
+            # Iterate through conversation history in reverse to keep recent messages
+            history_to_process = list(conversation_history) # Make a copy
+            temp_history_messages = [] # To build up messages in reverse order
+
+            for message in reversed(history_to_process):
+                message_content = message.get("content", "")
+                # Add a buffer for role and other metadata (e.g., 10 tokens)
+                message_tokens = self.tokenizer.count_tokens(message_content) + 10
+
+                if current_tokens + message_tokens <= effective_input_limit:
+                    temp_history_messages.insert(0, message) # Insert at beginning to maintain original order
+                    current_tokens += message_tokens
+                else:
+                    # If the current message is too large to fit, try to summarize it
+                    remaining_budget_for_message = effective_input_limit - current_tokens
+                    if remaining_budget_for_message > MIN_EFFECTIVE_INPUT_LIMIT: # Only summarize if meaningful space
+                        summarized_content = self._summarize_text(
+                            message_content,
+                            remaining_budget_for_message - 20, # Reserve tokens for indicator
+                            truncation_indicator="... (summarized)"
+                        )
+                        if summarized_content:
+                            temp_history_messages.insert(0, {"role": message["role"], "content": summarized_content})
+                            current_tokens += self.tokenizer.count_tokens(summarized_content) + 10
+                            logger.debug(f"Summarized a message for {persona_name}.")
+                    break # Stop adding messages once limit is reached
+
+            optimized_messages.extend(temp_history_messages)
 
             logger.info(
-                f"Prompt for {persona_name} optimized from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
+                f"Prompt for {persona_name} optimized from {prompt_tokens} to {self.tokenizer.count_tokens_from_messages(optimized_messages)} tokens."
             )
-            return optimized_prompt
+            return optimized_messages
 
-        return optimized_text_pre_truncation # Return the pre-optimized text if no further truncation/summarization needed
+        # If no optimization needed, return the original messages (with system message prepended if applicable)
+        return messages_for_optimization
 
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int

@@ -107,7 +107,7 @@ personas:
       **CRITICAL INSTRUCTION:** If the provided context or previous outputs are insufficient to perform a thorough critique or identify specific flaws, you MUST explicitly state this in your `summary` and `proposed_resolution_paths`. Focus on identifying the *lack of information* as a critical risk or flaw.
 
       Consider:
-      1.  **Relevance to Initial Prompt:** Is the analysis staying focused on the core objectives (e.g., reasoning quality, robustness, efficiency, maintainability of Project Chimera itself) or has it drifted?
+      1.  **Relevance to Initial Prompt:** Is the analysis staying focused on the core objectives (e.g., reasoning quality, robustness, efficiency, maintainability of Project Chimera itself) or has it drifted? The codebase context is provided as structured file content within the prompt.
       2.  **Over-Correction:** Could the proposed fixes introduce new problems?
       3.  **Complexity:** Do the proposed changes add unnecessary complexity?
       4.  **Assumptions:** Are there hidden assumptions in the proposed solutions?
@@ -147,7 +147,7 @@ personas:
       - Verify file paths against the actual project structure
       **CRITICAL FOCUS:** Enhance AI capabilities (reasoning quality, robustness, efficiency) and the self-improvement process.
       Prioritize: reasoning quality, robustness, efficiency, maintainability.
-      Provide concise, evidence-based rationale and actionable code modifications. Before providing your final assessment, thoroughly synthesize information from all preceding arguments and evidence presented. For each suggestion, also provide an `estimated_impact_score` (0.0 to 1.0) reflecting your confidence in its 80/20 impact.
+      Provide concise, evidence-based rationale and actionable code modifications. Before providing your final assessment, thoroughly synthesize information from all preceding arguments and evidence presented. For each suggestion, also provide an `estimated_impact_score` (0.0 to 1.0) reflecting your confidence in its 80/20 impact. The codebase context is provided as structured file content within the prompt.
 
       **CRITICAL: For EVERY suggestion, you MUST provide specific, actionable `CODE_CHANGES_SUGGESTED`. If a direct code modification is not immediately feasible or is conceptual, suggest creating a new documentation file (e.g., `docs/new_strategy.md`) with `ACTION: "CREATE"` and `FULL_CONTENT` outlining the conceptual change or strategy.**
       **CRITICAL: Your goal is to generate suggestions that are not only impactful but also *actionable and valid*. Consider the historical success rate of previous self-improvement suggestions and aim to produce outputs that minimize schema validation failures and content misalignment.**
@@ -285,7 +285,7 @@ personas:
       **CRITICAL INSTRUCTION:** First, generate detailed `CRITIQUE_POINTS` for each identified issue. Then, summarize these points and your mitigation strategies into the `SUGGESTIONS` field. Both fields are required.
       Your output MUST be a valid JSON object with the following structure:
       {
-        "CRITIQUE_SUMMARY": "A concise summary of the critique",
+        "CRITIQUE_SUMMARY": "A concise summary of the critique. Ensure this is a complete sentence.",
         "CRITIQUE_POINTS": [
           {
             "point_summary": "Summary of a critique point",
@@ -317,7 +317,7 @@ personas:
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
     temperature: 0.2
-    max_tokens: 8192
+    max_tokens: 12288 # Increased from 8192 to 12288 (50% increase)
     description: "Identifies security vulnerabilities, attack vectors, and compliance issues through threat modeling."
 
   - name: "DevOps_Engineer"

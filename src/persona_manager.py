@@ -225,7 +225,7 @@ class PersonaManager:
                 # Add framework name to available domains
                 if name not in self.available_domains:
                     self.available_domains.append(name)
-        self.available_domains = sorted(list(set(self.available_domains)))
+                self.available_domains = sorted(list(set(self.available_domains)))
         logger.info(f"Loaded {len(saved_names)} custom frameworks.")
 
     def _load_original_personas(self) -> Tuple[bool, Optional[str]]:
@@ -558,11 +558,11 @@ class PersonaManager:
         if not base_config:
             logger.warning(f"Persona '{base_persona_name}' not found for adjustment.")
             return PersonaConfig(
-                name="Fallback",
+                name=base_persona_name, # Use the requested name for fallback
                 system_prompt="Error",
                 temperature=0.7,
                 max_tokens=1024,
-                description="Fallback persona.",  # MODIFIED: Added description
+                description="Fallback persona.",  # Added description
             )  # Fallback
 
         adjusted_config = copy.deepcopy(base_config)

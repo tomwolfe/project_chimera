@@ -581,47 +581,46 @@ class ContextRelevanceAnalyzer:
         return relevant_files
 
     def generate_context_summary(
-        self, relevant_files: List[str], max_tokens: int, prompt: str = ""
+        self, relevant_files: List[Tuple[str, float]], max_tokens: int, prompt: str = ""
     ) -> str:
-        """
-        Generates a concise summary of the relevant codebase context.
-        Includes previews of critical files.
-        """
-        summary = f"Context Summary for prompt: '{prompt[:100]}...'\n\n"
-        summary += f"Relevant files ({len(relevant_files)}):\n"
-        for file_path in relevant_files:
-            summary += f"- {file_path}\n"
+        """Generates a detailed summary of the relevant codebase context, including actual file contents."""
+        current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
+        current_tokens = self.model.tokenizer.count_tokens(current_summary_parts[0])
 
-        # Use the raw_file_contents to get snippets for critical files
-        if self.raw_file_contents:
-            summary += "\nCritical Files Preview:\n"
-            # Define critical files to preview
-            critical_files_to_preview = [
-                "core.py",
-                "src/llm_provider.py",
-                "src/config/settings.py",
-                "app.py",
-                "personas.yaml",
-            ]
-            for filename in critical_files_to_preview:
-                snippet = self.raw_file_contents.get(filename, "")
-                if snippet:
-                    lines = snippet.splitlines()[:50]  # Get first 50 lines
-                    summary += f"\n--- {filename} (first 50 lines) ---\n{''.join(lines)}\n--------------------\n"
-                else:
-                    summary += f"\n--- {filename} (not found or empty) ---\n"
-        else:
-            summary += "\nNo critical files preview available.\n"
+        # Prioritize including content from the most relevant files
+        for file_path, _ in relevant_files: # Use the tuple from find_relevant_files
+            file_content = self.raw_file_contents.get(file_path, "")
+            if not file_content:
+                continue
 
-        summary += "\n(Detailed content summarization is a placeholder.)"
+            # Estimate tokens for this file's content
+            # Reserve some tokens for other parts of the prompt
+            remaining_tokens_for_content = max_tokens - current_tokens - 50 # 50 token buffer
+            if remaining_tokens_for_content <= 0:
+                break
 
-        # Estimate characters per token for truncation
-        chars_per_token_estimate = 4
-        # Truncate summary if it exceeds the token budget (approximated by characters)
-        if len(summary) > max_tokens * chars_per_token_estimate:
-            summary = summary[: max_tokens * chars_per_token_estimate] + "..."
+            truncated_content = self.model.tokenizer.truncate_to_token_limit(
+                file_content, remaining_tokens_for_content, truncation_indicator="\n... (truncated)"
+            )
+            
+            file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
+            file_block_tokens = self.model.tokenizer.count_tokens(file_block)
 
-        return summary
+            if current_tokens + file_block_tokens <= max_tokens:
+                current_summary_parts.append(file_block)
+                current_tokens += file_block_tokens
+            else:
+                # If even a truncated version of this file doesn't fit, try to add just the path
+                if self.model.tokenizer.count_tokens(f"- {file_path}\n") <= max_tokens - current_tokens:
+                    current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
+                    current_tokens += self.model.tokenizer.count_tokens(f"- {file_path}\n")
+                break
+
+        if current_tokens < max_tokens:
+            current_summary_parts.append(f"Remaining token budget for context: {max_tokens - current_tokens} tokens.\n")
+
+        final_summary = "".join(current_summary_parts)
+        return final_summary
 
     def get_context_summary(self) -> str:
         """Returns a summary of the raw file contents available."""

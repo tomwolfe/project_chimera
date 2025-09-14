@@ -1193,22 +1193,13 @@ class FocusedMetricsCollector:
     ) -> List[Dict[str, Any]]:
         """
         Iterates through suggestions and applies internal validation and auto-fixing
-        to code changes.
+        to code changes. This method is now primarily responsible for ensuring suggested file paths are valid
+        and converting MODIFY/REMOVE for non-existent files to CREATE/ignored.
         """
-        processed_suggestions = []
-        for suggestion in suggestions:
-            if (
-                "CODE_CHANGES_SUGGESTED" in suggestion
-                and suggestion["CODE_CHANGES_SUGGESTED"]
-            ):
-                processed_code_changes = []
-                for code_change in suggestion["CODE_CHANGES_SUGGESTED"]:
-                    processed_code_changes.append(
-                        self._validate_and_fix_code_suggestion(code_change)
-                    )
-                suggestion["CODE_CHANGES_SUGGESTED"] = processed_code_changes
-            processed_suggestions.append(suggestion)
-        return processed_suggestions
+        # This method is now primarily responsible for ensuring suggested file paths are valid
+        # and converting MODIFY/REMOVE for non-existent files to CREATE/ignored.
+        # The core.py:_consolidate_self_improvement_code_changes will handle the final logic.
+        return suggestions
 
     def _collect_code_quality_and_security_metrics(self):
         """

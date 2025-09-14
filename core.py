@@ -162,6 +162,7 @@ class SocraticDebate:
                 rich_console=self.rich_console,
                 request_id=self.request_id,
                 settings=self.settings,
+                summarizer_pipeline_instance=summarizer_pipeline_instance, # Pass to GeminiProvider
             )
         except LLMProviderError as e:
             self._log_with_context(
@@ -188,6 +189,13 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
+        # Initialize PromptOptimizer here, after tokenizer is available
+        self.prompt_optimizer = PromptOptimizer(
+            tokenizer=self.tokenizer,
+            settings=self.settings,
+            summarizer_pipeline=summarizer_pipeline_instance,
+        )
+
         self.persona_manager = persona_manager
         if not self.persona_manager:
             self.logger.warning(
@@ -197,6 +205,7 @@ class SocraticDebate:
                 self.settings.domain_keywords,
                 token_tracker=self.token_tracker,
                 settings=self.settings,
+                prompt_optimizer=self.prompt_optimizer, # Pass PromptOptimizer
             )
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
@@ -205,6 +214,7 @@ class SocraticDebate:
             self.persona_manager.settings = (
                 self.settings
             )
+            self.persona_manager.prompt_optimizer = self.prompt_optimizer # Ensure PromptOptimizer is set
             self.all_personas = self.persona_manager.all_personas
             self.persona_sets = self.persona_manager.persona_sets
 
@@ -271,16 +281,6 @@ class SocraticDebate:
             self.content_validator = ContentAlignmentValidator(
                 original_prompt=self.initial_prompt, debate_domain=self.domain
             )
-
-        if not summarizer_pipeline_instance:
-            raise ChimeraError(
-                "Summarizer pipeline instance must be provided for PromptOptimizer."
-            )
-        self.prompt_optimizer = PromptOptimizer(
-            tokenizer=self.tokenizer,
-            settings=self.settings,
-            summarizer_pipeline=summarizer_pipeline_instance,
-        )
 
         self._calculate_token_budgets()
         self.conflict_manager = ConflictResolutionManager(
@@ -2471,12 +2471,25 @@ class SocraticDebate:
         suggestion: Dict[str, Any],
         analysis_output: Dict[str, Any],
     ) -> Optional[CodeChange]:
-        """Processes and consolidates changes for a single file."""
+        """Processes and consolidates changes for a single file, with strict file existence validation."""
+        # Check if the file exists in the raw_file_contents (our source of truth for the codebase)
+        file_exists_in_codebase = file_path in self.raw_file_contents
+
         remove_actions = [c for c in changes_for_file if c.action == "REMOVE"]
         add_actions = [c for c in changes_for_file if c.action == "ADD"]
         modify_actions = [c for c in changes_for_file if c.action == "MODIFY"]
 
+        # Handle REMOVE actions
         if remove_actions:
+            if not file_exists_in_codebase:
+                self._log_with_context("warning", f"REMOVE action suggested for non-existent file: {file_path}. Skipping.")
+                analysis_output.setdefault("malformed_blocks", []).append({
+                    "type": "INVALID_REMOVE_ACTION",
+                    "message": f"REMOVE action suggested for non-existent file '{file_path}'. Suggestion ignored.",
+                    "file_path": file_path,
+                    "suggestion_area": suggestion.get("AREA"),
+                })
+                return None
             all_lines_to_remove = []
             for ra in remove_actions:
                 all_lines_to_remove.extend(ra.lines)
@@ -2485,9 +2498,49 @@ class SocraticDebate:
                 ACTION="REMOVE",
                 LINES=list(set(all_lines_to_remove)),
             )
-        elif add_actions:
+
+        # Handle ADD actions
+        if add_actions:
+            if file_exists_in_codebase:
+                self._log_with_context("warning", f"ADD action suggested for existing file: {file_path}. Converting to MODIFY if content provided.")
+                # If ADD is suggested for an existing file, convert to MODIFY if full_content is present
+                if add_actions[0].full_content:
+                    return CodeChange(
+                        FILE_PATH=file_path,
+                        ACTION="MODIFY",
+                        FULL_CONTENT=add_actions[0].full_content,
+                        DIFF_CONTENT=self._generate_unified_diff(file_path, self.raw_file_contents.get(file_path, ""), add_actions[0].full_content)
+                    )
+                else:
+                    analysis_output.setdefault("malformed_blocks", []).append({
+                        "type": "INVALID_ADD_ACTION",
+                        "message": f"ADD action suggested for existing file '{file_path}' without FULL_CONTENT. Suggestion ignored.",
+                        "file_path": file_path,
+                        "suggestion_area": suggestion.get("AREA"),
+                    })
+                    return None
             return add_actions[0]
-        elif modify_actions:
+
+        # Handle MODIFY actions
+        if modify_actions:
+            if not file_exists_in_codebase:
+                self._log_with_context("warning", f"MODIFY action suggested for non-existent file: {file_path}. Converting to CREATE if content provided.")
+                # If MODIFY is suggested for a non-existent file, convert to CREATE
+                if modify_actions[0].full_content:
+                    return CodeChange(
+                        FILE_PATH=file_path,
+                        ACTION="CREATE",
+                        FULL_CONTENT=modify_actions[0].full_content,
+                    )
+                else:
+                    analysis_output.setdefault("malformed_blocks", []).append({
+                        "type": "INVALID_MODIFY_ACTION",
+                        "message": f"MODIFY action suggested for non-existent file '{file_path}' without FULL_CONTENT. Suggestion ignored.",
+                        "file_path": file_path,
+                        "suggestion_area": suggestion.get("AREA"),
+                    })
+                    return None
+
             original_content = self.raw_file_contents.get(
                 file_path, ""
             )
