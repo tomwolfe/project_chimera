@@ -53,19 +53,19 @@ class ChimeraSettings(BaseModel):
 
     # Specific ratios for self-analysis prompts, also normalized.
     self_analysis_context_ratio: float = Field(
-        default=0.45,  # MODIFIED: Changed from 0.40 to 0.45
+        default=0.45,
         ge=0.1,
         le=0.6,
         description="Proportion of total budget for context analysis during self-analysis.",
     )
     self_analysis_debate_ratio: float = Field(
-        default=0.30,  # MODIFIED: Changed from 0.30 to 0.30 (no change from suggestion, but reflects reallocation)
+        default=0.30,
         ge=0.1,
         le=0.9,
         description="Proportion of total budget for debate turns during self-analysis.",
     )
     self_analysis_synthesis_ratio: float = Field(
-        default=0.25,  # MODIFIED: Changed from 0.15 to 0.25
+        default=0.25,
         ge=0.05,
         le=0.3,
         description="Proportion of total budget for synthesis during self-analysis.",
@@ -84,7 +84,7 @@ class ChimeraSettings(BaseModel):
     default_max_input_tokens_per_persona: int = Field(
         default=4000,
         ge=500,
-        le=64000,  # MODIFIED: Increased max limit for input tokens
+        le=64000,
         description="Default maximum input tokens for a persona's prompt if not specified.",
     )
     max_tokens_per_persona: Dict[str, int] = Field(

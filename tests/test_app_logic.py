@@ -34,7 +34,7 @@ class TestAppLogic(unittest.TestCase):
         sanitized = sanitize_user_input(prompt)
         self.assertEqual(
             sanitized,
-            "[CODE_EXECUTION_ATTEMPT]",  # FIX: Expect entire prompt to be replaced by tag
+            "[CODE_EXECUTION_ATTEMPT]",  # Expect entire prompt to be replaced by tag
         )
 
     def test_sanitize_user_input_long_prompt_truncation(self):
@@ -44,7 +44,7 @@ class TestAppLogic(unittest.TestCase):
         self.assertIn("[TRUNCATED]", sanitized)  # Check for the truncation indicator
         self.assertLessEqual(
             len(sanitized), 2000 + len(" [TRUNCATED]")
-        )  # FIX: Account for indicator length
+        )  # Account for indicator length
         self.assertLess(
             len(sanitized), len(long_prompt)
         )  # Ensure it's actually shorter
@@ -53,15 +53,12 @@ class TestAppLogic(unittest.TestCase):
         """Test balancing of quotes."""
         prompt = '{"key": "value}'
         sanitized = sanitize_user_input(prompt)
-        self.assertEqual(
-            sanitized, html.escape('{"key": "value"}')
-        )  # FIX: Expect html.escape of balanced JSON
+        # Expect HTML escaping, but no automatic balancing
+        self.assertEqual(sanitized, html.escape('{"key": "value}'))
 
         prompt_single = "'unbalanced"
         sanitized_single = sanitize_user_input(prompt_single)
-        self.assertEqual(
-            sanitized_single, html.escape("'unbalanced'")
-        )  # FIX: Expect html.escape of balanced string
+        self.assertEqual(sanitized_single, html.escape("'unbalanced"))
 
     def test_sanitize_user_input_special_token_manipulation(self):
         """Test detection of special token manipulation."""
@@ -69,7 +66,7 @@ class TestAppLogic(unittest.TestCase):
         sanitized = sanitize_user_input(prompt)
         self.assertEqual(
             sanitized, "[SPECIAL_TOKEN_MANIPULATION]"
-        )  # FIX: Expect entire prompt to be replaced by tag
+        )  # Expect entire prompt to be replaced by tag
 
     def test_sanitize_user_input_sensitive_data_probe(self):
         """Test detection of sensitive data probes."""
@@ -77,7 +74,7 @@ class TestAppLogic(unittest.TestCase):
         sanitized = sanitize_user_input(prompt)
         self.assertEqual(
             sanitized, "[SENSITIVE_DATA_PROBE]"
-        )  # FIX: Expect entire prompt to be replaced by tag
+        )  # Expect entire prompt to be replaced by tag
 
 
 if __name__ == "__main__":

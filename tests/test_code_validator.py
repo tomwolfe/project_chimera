@@ -1,7 +1,7 @@
 # tests/test_code_validator.py
 
 import pytest
-from unittest.mock import MagicMock, patch  # NEW: Import patch and MagicMock
+from unittest.mock import MagicMock, patch
 
 # Assuming src/utils/code_validator.py contains functions like validate_code_output
 from src.utils.code_validator import (
@@ -10,10 +10,8 @@ from src.utils.code_validator import (
     _run_bandit,
     _run_ast_security_checks,
 )
-from src.utils.command_executor import (
-    execute_command_safely,
-)  # NEW: Import execute_command_safely
-from src.utils.code_utils import _get_code_snippet  # NEW: Import _get_code_snippet
+from src.utils.command_executor import execute_command_safely
+from src.utils.code_utils import _get_code_snippet
 
 
 # Mock execute_command_safely for _run_ruff and _run_bandit
@@ -21,6 +19,7 @@ from src.utils.code_utils import _get_code_snippet  # NEW: Import _get_code_snip
 def mock_execute_command_safely():
     with patch("src.utils.code_validator.execute_command_safely") as mock_exec:
         # Default successful return for ruff and bandit
+        # Bandit's default output should be valid JSON
         mock_exec.return_value = (0, '{"results": []}', "")  # No issues found
         yield mock_exec
 

@@ -17,8 +17,8 @@ import tempfile
 
 from src.utils.code_utils import (
     _get_code_snippet,
-    ComplexityVisitor,
-)  # ADD ComplexityVisitor
+    ComplexityVisitor,  # ADD ComplexityVisitor
+)
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -81,6 +81,8 @@ class FocusedMetricsCollector:
         self.codebase_scanner = codebase_scanner  # NEW: Store the scanner
         self.raw_file_contents = (
             self.codebase_scanner.raw_file_contents
+            if self.codebase_scanner
+            else {}  # Provide a default empty dict if scanner is None
         )  # NEW: Access raw_file_contents via scanner
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
@@ -867,6 +869,8 @@ class FocusedMetricsCollector:
         number of functions, code smells, and potential bottlenecks.
         """
         try:
+            from src.utils.code_utils import ComplexityVisitor  # Local import
+
             tree = ast.parse(content)
             visitor = ComplexityVisitor(content_lines)
             visitor.visit(tree)

@@ -42,7 +42,7 @@ def mock_llm_client_success():
 def mock_llm_client_api_error():
     mock_client = MagicMock()
     # FIX: Correct APIError constructor: code is a positional argument, response_json is a dict
-    mock_client.models.generate_content.side_effect = APIError(
+    mock_client.models.generate_content.side_effect = genai.types.APIError(
         "Simulated API Error", 500, {"error": {"message": "Simulated API Error"}}
     )
     mock_client.models.count_tokens.return_value.total_tokens = 0
@@ -53,7 +53,7 @@ def mock_llm_client_api_error():
 def mock_llm_client_rate_limit():
     mock_client = MagicMock()
     # FIX: Correct APIError constructor: code is a positional argument, response_json is a dict
-    mock_client.models.generate_content.side_effect = APIError(
+    mock_client.models.generate_content.side_effect = genai.types.APIError(
         "Rate limit exceeded", 429, {"error": {"message": "Rate limit exceeded"}}
     )
     mock_client.models.count_tokens.return_value.total_tokens = 0
@@ -203,7 +203,7 @@ def test_llm_provider_tokenizer_integration(mock_llm_client_success):
 
         # Assert that the tokenizer's count_tokens method was called with the correct combined prompt
         mock_llm_client_success.models.count_tokens.assert_called_with(
-            combined_prompt
+            model="mock-model", contents=combined_prompt
         )  # FIX: Assert on the correct mock and argument
 
 
@@ -230,7 +230,9 @@ def test_llm_provider_generate_malformed_response_index_error():
             settings=ChimeraSettings(),
         )
 
-        with pytest.raises(LLMUnexpectedError, match="list index out of range"):
+        with pytest.raises(
+            LLMUnexpectedError, match="No candidates in response"
+        ):  # FIX: Match the specific error message
             provider.generate(
                 prompt="Test malformed response",
                 system_prompt="System prompt",
@@ -267,7 +269,9 @@ def test_llm_provider_generate_malformed_response_attribute_error():
             settings=ChimeraSettings(),
         )
 
-        with pytest.raises(LLMUnexpectedError, match="list index out of range"):
+        with pytest.raises(
+            LLMUnexpectedError, match="No content parts in response"
+        ):  # FIX: Match the specific error message
             provider.generate(
                 prompt="Test malformed response",
                 system_prompt="System prompt",
@@ -355,10 +359,14 @@ def test_llm_provider_generate_with_schema_validation_failure():
 def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
     """Tests that a 401 APIError (Unauthorized) raises GeminiAPIError."""
     # FIX: Correct APIError constructor: code is a positional argument
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError(
-        "Invalid API Key",
-        401,
-        {"error": {"message": "Invalid API Key"}},  # FIX: Pass dict for response_json
+    mock_llm_client_api_error.models.generate_content.side_effect = (
+        genai.types.APIError(
+            "Invalid API Key",
+            401,
+            {
+                "error": {"message": "Invalid API Key"}
+            },  # FIX: Pass dict for response_json
+        )
     )
     with patch("src.llm_provider.genai.Client", return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(
@@ -380,12 +388,14 @@ def test_llm_provider_generate_api_error_401(mock_llm_client_api_error):
 def test_llm_provider_generate_api_error_403(mock_llm_client_api_error):
     """Tests that a 403 APIError (Forbidden) raises GeminiAPIError."""
     # FIX: Correct APIError constructor: code is a positional argument
-    mock_llm_client_api_error.models.generate_content.side_effect = APIError(
-        "API Key lacks permissions",
-        403,
-        {
-            "error": {"message": "API Key lacks permissions"}
-        },  # FIX: Pass dict for response_json
+    mock_llm_client_api_error.models.generate_content.side_effect = (
+        genai.types.APIError(
+            "API Key lacks permissions",
+            403,
+            {
+                "error": {"message": "API Key lacks permissions"}
+            },  # FIX: Pass dict for response_json
+        )
     )
     with patch("src.llm_provider.genai.Client", return_value=mock_llm_client_api_error):
         mock_tokenizer = GeminiTokenizer(

@@ -54,11 +54,12 @@ from pathlib import Path
 from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 
-# NEW IMPORT FOR CODEBASE SCANNING
+# NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
 from src.context.context_analyzer import (
     ContextRelevanceAnalyzer,
     CodebaseScanner,
 )  # MODIFIED
+import gc  # Import garbage collector for explicit memory management
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
 from src.utils.session_manager import (
@@ -73,7 +74,7 @@ from src.utils.api_key_validator import fetch_api_key
 
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
-import gc  # NEW: Import garbage collector for explicit memory management
+
 
 # NEW IMPORT: For the summarization pipeline
 from transformers import pipeline  # NEW: Import pipeline for summarization
@@ -291,15 +292,6 @@ def sanitize_user_input(prompt: str) -> str:
         processed_prompt = (
             processed_prompt[:MAX_PROMPT_LENGTH] + " [TRUNCATED]"
         )  # Add truncation indicator
-
-    # Apply quote balancing BEFORE HTML escaping
-    for char_pair in [('"', '"'), ("'", "'"), ("(", ")"), ("{", "}"), ("[", "]")]:
-        open_count = processed_prompt.count(char_pair[0])
-        close_count = processed_prompt.count(char_pair[1])
-        if open_count > close_count:
-            processed_prompt += char_pair[1] * (open_count - close_count)
-        elif close_count > open_count:
-            processed_prompt += char_pair[0] * (close_count - open_count)
 
     sanitized = html.escape(processed_prompt)
 

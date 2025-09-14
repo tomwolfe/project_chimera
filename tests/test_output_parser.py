@@ -6,9 +6,9 @@ from src.models import (
     GeneralOutput,
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
-)  # NEW: Import SuggestionItem
+)
 from pydantic import ValidationError
-import json  # NEW: Import json for direct json.loads calls in tests
+import json
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def test_parse_and_validate_invalid_json_string(parser):
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert (
         "No valid JSON data could be extracted or parsed." in result["general_output"]
-    )  # FIX: Check for substring
+    )
     assert any(
         block["type"] == "JSON_EXTRACTION_FAILED"
         for block in result["malformed_blocks"]
@@ -99,7 +99,7 @@ def test_parse_and_validate_malformed_json_with_repair(parser):
     assert json.loads(result["general_output"]) == {
         "key": "value",
         "another_key": "another_value",
-    }  # FIX: Parse and compare dicts
+    }
     assert any(
         "JSON_REPAIR_ATTEMPTED" == block["type"] for block in result["malformed_blocks"]
     )
@@ -177,9 +177,7 @@ def test_parse_and_validate_unbalanced_quotes_repair(parser):
     """Tests repair of unbalanced quotes."""
     raw_output = '{"key": "value}'
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert json.loads(result["general_output"]) == {
-        "key": "value"
-    }  # FIX: Parse and compare dicts
+    assert json.loads(result["general_output"]) == {"key": "value"}
     assert any(b["type"] == "JSON_REPAIR_ATTEMPTED" for b in result["malformed_blocks"])
     assert any(
         "Added missing closing braces." in d["details"]
@@ -192,9 +190,7 @@ def test_parse_and_validate_unescaped_newline_repair(parser):
     """Tests repair of unescaped newlines within a string."""
     raw_output = '{"key": "value with\nnewline"}'
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert json.loads(result["general_output"]) == {
-        "key": "value with\\nnewline"
-    }  # FIX: Parse and compare dicts
+    assert json.loads(result["general_output"]) == {"key": "value with\\nnewline"}
     assert any(b["type"] == "JSON_REPAIR_ATTEMPTED" for b in result["malformed_blocks"])
     assert any(
         "Escaped unescaped newlines within strings." in d["details"]
@@ -276,7 +272,6 @@ def test_parse_and_validate_salvaged_fragment(parser):
     """Tests that a salvaged JSON fragment is recorded in malformed_blocks."""
     raw_output = 'Some text before. {"key": "value", "partial": "data" Some text after.'
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    # FIX: The salvaged fragment is now added to malformed_blocks, and the general_output is a fallback message.
     assert (
         "No valid JSON data could be extracted or parsed." in result["general_output"]
     )
@@ -286,9 +281,7 @@ def test_parse_and_validate_salvaged_fragment(parser):
     salvaged_block = next(
         b for b in result["malformed_blocks"] if b["type"] == "SALVAGED_JSON_FRAGMENT"
     )
-    assert (
-        '{"key": "value", "partial": "data"}' in salvaged_block["raw_string_snippet"]
-    )  # Should be the force-closed version
+    assert '{"key": "value", "partial": "data"}' in salvaged_block["raw_string_snippet"]
 
 
 def test_parse_and_validate_unknown_schema_model_string(parser):
@@ -324,8 +317,4 @@ def test_parse_and_validate_malformed_code_change_in_list(parser):
         for b in result["malformed_blocks"]
     )
     assert "INVALID_ACTION" in result["malformed_blocks"][0]["message"]
-    # The malformed suggestion should still be present, but its CODE_CHANGES_SUGGESTED might be empty or contain the problematic item depending on Pydantic's behavior.
-    # For this test, we check that the malformed_blocks are correctly populated.
-    assert (
-        len(result["IMPACTFUL_SUGGESTIONS"][0]["CODE_CHANGES_SUGGESTED"]) == 0
-    )  # FIX: Pydantic will drop invalid items
+    assert len(result["IMPACTFUL_SUGGESTIONS"][0]["CODE_CHANGES_SUGGESTED"]) == 0

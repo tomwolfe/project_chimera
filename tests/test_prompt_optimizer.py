@@ -2,8 +2,17 @@ import pytest
 from unittest.mock import MagicMock
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.llm_tokenizers.base import Tokenizer
-import json  # NEW: Import json
+import json
 from src.config.settings import ChimeraSettings
+
+
+@pytest.fixture
+def mock_summarizer_pipeline():
+    """Provides a mock Hugging Face summarization pipeline."""
+    mock_pipeline = MagicMock()
+    mock_pipeline.return_value = [{"summary_text": "Mock summary."}]
+    mock_pipeline.tokenizer.model_max_length = 1024  # Simulate distilbart's max input
+    return mock_pipeline
 
 
 @pytest.fixture
@@ -14,7 +23,7 @@ def mock_tokenizer():
     tokenizer.count_tokens.side_effect = lambda text: max(1, len(text) // 4)
 
     def mock_truncate(text, max_tokens, truncation_indicator=""):
-        # FIX: Simulate the actual tokenizer's behavior more closely
+        # Simulate the actual tokenizer's behavior more closely
         # Calculate tokens for the indicator first
         indicator_tokens = tokenizer.count_tokens(truncation_indicator)
         # Determine how many tokens are left for the main text
@@ -51,9 +60,13 @@ def mock_settings():
 
 
 @pytest.fixture
-def prompt_optimizer_instance(mock_tokenizer, mock_settings):
+def prompt_optimizer_instance(mock_tokenizer, mock_settings, mock_summarizer_pipeline):
     """Provides a PromptOptimizer instance with mocked dependencies."""
-    return PromptOptimizer(tokenizer=mock_tokenizer, settings=mock_settings)
+    return PromptOptimizer(
+        tokenizer=mock_tokenizer,
+        settings=mock_settings,
+        summarizer_pipeline=mock_summarizer_pipeline,
+    )
 
 
 def test_optimize_prompt_within_limit(prompt_optimizer_instance):
@@ -73,7 +86,7 @@ def test_optimize_prompt_within_limit(prompt_optimizer_instance):
 
 def test_optimize_prompt_exceeds_default_limit(prompt_optimizer_instance):
     """Test that prompt is truncated if it exceeds the default persona input limit."""
-    # FIX: Make long_prompt actually exceed the default limit (4000 tokens * 4 chars/token = 16000 chars)
+    # Make long_prompt actually exceed the default limit (4000 tokens * 4 chars/token = 16000 chars)
     long_prompt = "A" * 20000  # This is 5000 tokens, exceeding 4000 token limit
     persona_name = "GeneralPersona"
     max_output_tokens_for_turn = 1000
@@ -97,7 +110,7 @@ def test_optimize_prompt_exceeds_default_limit(prompt_optimizer_instance):
 
 def test_optimize_prompt_exceeds_specific_persona_limit(prompt_optimizer_instance):
     """Test that prompt is truncated if it exceeds a persona-specific input limit."""
-    # FIX: Make long_prompt actually exceed the specific persona limit (1000 tokens * 4 chars/token = 4000 chars)
+    # Make long_prompt actually exceed the specific persona limit (1000 tokens * 4 chars/token = 4000 chars)
     long_prompt = (
         "B" * 5000
     )  # This is 1250 tokens, exceeding 1000 token limit for HighTokenPersona
@@ -128,7 +141,7 @@ def test_optimize_prompt_self_improvement_structured_truncation(
 ):
     """Test structured truncation for Self_Improvement_Analyst persona."""
     # This prompt structure mimics the Self_Improvement_Analyst prompt
-    # FIX: Make the prompt long enough to exceed the persona's input limit (4000 tokens)
+    # Make the prompt long enough to exceed the persona's input limit (4000 tokens)
     long_self_improvement_prompt = (
         """
 Initial Problem: This is a very long initial problem description that needs to be truncated.
@@ -230,5 +243,5 @@ def test_optimize_debate_history_exceeds_limit(prompt_optimizer_instance):
         prompt_optimizer_instance.tokenizer.count_tokens(optimized_history)
         <= max_tokens
     )
-    assert "[...debate history further summarized/truncated...]\\n" in optimized_history
+    assert "... (debate history further summarized/truncated...)" in optimized_history
     prompt_optimizer_instance.tokenizer.truncate_to_token_limit.assert_called_once()

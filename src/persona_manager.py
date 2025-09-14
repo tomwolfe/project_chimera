@@ -165,21 +165,21 @@ class PersonaManager:
                     system_prompt="You are a visionary.",
                     temperature=0.7,
                     max_tokens=1024,
-                    description="Generates innovative solutions.",  # MODIFIED: Added description
+                    description="Generates innovative solutions.",
                 ),
                 "Skeptical_Generator": PersonaConfig(
                     name="Skeptical_Generator",
                     system_prompt="You are a skeptic.",
                     temperature=0.3,
                     max_tokens=1024,
-                    description="Identifies flaws.",  # MODIFIED: Added description
+                    description="Identifies flaws.",
                 ),
                 "Impartial_Arbitrator": PersonaConfig(
                     name="Impartial_Arbitrator",
                     system_prompt="You are an arbitrator.",
                     temperature=0.2,  # MODIFIED: Changed temperature to 0.2
                     max_tokens=1024,
-                    description="Synthesizes outcomes.",  # MODIFIED: Added description
+                    description="Synthesizes outcomes.",
                 ),
             }
             self.persona_sets = {
@@ -704,7 +704,7 @@ class PersonaManager:
                 if "_TRUNCATED" not in p_name:
                     optimized_sequence.append(f"{base_p_name}_TRUNCATED")
                     logger.info(
-                        f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f}) or high global token consumption."  # MODIFIED: Removed "if calculated"
+                        f"Optimizing persona sequence: '{base_p_name}' replaced with '{base_p_name}_TRUNCATED' due to high truncation rate ({truncation_rate:.2f}) or high global token consumption."
                     )
                 else:
                     optimized_sequence.append(p_name)

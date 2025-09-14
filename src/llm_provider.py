@@ -606,19 +606,20 @@ class GeminiProvider:
                 # The specific exception (e.g., GeminiAPIError for 429) should have been raised already.
                 # For other retryable errors (like 400 invalid JSON or network errors),
                 # raise a generic LLMProviderError here.
-                raise LLMProviderError(
-                    f"Max retries exceeded for retryable error: {error_msg}",
-                    original_exception=last_exception,
-                ) from last_exception  # MODIFIED: Use last_exception
-            # If not retryable, the specific exception should have already been raised.
-            # This `else` block is not needed here.
+                final_error_to_raise = (
+                    last_exception
+                    if last_exception
+                    else LLMProviderError(
+                        f"Max retries exceeded for retryable error: {error_msg}"
+                    )
+                )
+                raise final_error_to_raise from last_exception
 
-        # If the loop finishes without returning or raising, it means max retries were exceeded for a non-specific error.
-        # MODIFIED: Raise with last_exception if available, otherwise a generic message.
-        if last_exception:
-            raise LLMUnexpectedError(
-                "Max retries exceeded for generate call.",
-                original_exception=last_exception,
-            ) from last_exception
-        else:
-            raise LLMUnexpectedError("Max retries exceeded for generate call.")
+        # If the loop finishes without returning or raising, it means max retries were exceeded for a non-specific error,
+        # or no retryable error occurred but the loop completed without a successful return.
+        # This should ideally be caught by the `elif should_retry and attempt >= self.MAX_RETRIES:` block.
+        # If we reach here, it implies an unhandled scenario or a bug.
+        # Raise a generic unexpected error.
+        raise LLMUnexpectedError(
+            "An unexpected state was reached in LLM generation retry loop."
+        )

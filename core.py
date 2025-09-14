@@ -24,8 +24,8 @@ from src.models import (
     CodeChange,
     ContextAnalysisOutput,
     CritiqueOutput,
+    # ConflictReport,  # REMOVED: Will be locally imported in _handle_devils_advocate_turn
     GeneralOutput,
-    ConflictReport,  # ADD THIS LINE
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
@@ -1449,6 +1449,9 @@ class SocraticDebate:
         Handles the specific logic for the Devils_Advocate persona's output.
         If a conflict is found, it returns the ConflictReport for the main loop to handle resolution.
         """
+        # FIX: Local import to resolve NameError
+        from src.models import ConflictReport
+
         try:
             conflict_report = ConflictReport.model_validate(output)
             if conflict_report.conflict_found:

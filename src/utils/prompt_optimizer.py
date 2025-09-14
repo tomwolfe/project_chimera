@@ -1,3 +1,4 @@
+# src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from src.llm_tokenizers.base import Tokenizer
@@ -49,7 +50,9 @@ class PromptOptimizer:
                 1024  # Common default for many summarization models (e.g., distilbart)
             )
 
-    def _summarize_text(self, text: str, target_tokens: int) -> str:
+    def _summarize_text(
+        self, text: str, target_tokens: int, truncation_indicator: str = ""
+    ) -> str:
         """Summarizes text to a target token count using a pre-trained model."""
         if not self.summarizer_pipeline:
             logger.error(
@@ -57,10 +60,10 @@ class PromptOptimizer:
             )
             # Fallback to simple truncation if summarizer is not available
             # NEW: Explicitly delete text to free memory if summarizer is not available
-            del text
-            # import gc # REMOVED
-            # gc.collect() # REMOVED
-            return self.tokenizer.truncate_to_token_limit(text, target_tokens)
+            # del text # Removed, as text is needed for truncation
+            return self.tokenizer.truncate_to_token_limit(
+                text, target_tokens, truncation_indicator
+            )
 
         try:
             pre_truncated_text = text
@@ -92,7 +95,9 @@ class PromptOptimizer:
 
                 # Log if pre-truncation occurred
                 if (
-                    len(tokenized_input["input_ids"][0])
+                    self.tokenizer.count_tokens(
+                        text
+                    )  # Use Gemini tokenizer for original text token count
                     > self.summarizer_model_max_input_tokens
                 ):
                     logger.warning(
@@ -156,11 +161,11 @@ class PromptOptimizer:
 
             # NEW: Explicitly delete summary_result to free memory
             del summary_result
-            gc.collect()
+            # gc.collect() # Removed, as gc is handled at app level
 
             # Use the Gemini tokenizer to ensure the final summary fits the overall target_tokens
             final_summary = self.tokenizer.truncate_to_token_limit(
-                summary, target_tokens, truncation_indicator="... (summary truncated)"
+                summary, target_tokens, truncation_indicator
             )
             if (
                 not final_summary and text.strip()
@@ -172,7 +177,9 @@ class PromptOptimizer:
                 f"Summarization failed: {e}. Falling back to truncation.", exc_info=True
             )
             # Fallback to simple truncation if summarization fails
-            return self.tokenizer.truncate_to_token_limit(text, target_tokens)
+            return self.tokenizer.truncate_to_token_limit(
+                text, target_tokens, truncation_indicator
+            )
 
     def optimize_prompt(
         self, prompt: str, persona_name: str, max_output_tokens_for_turn: int
@@ -208,7 +215,11 @@ class PromptOptimizer:
 
             # Use summarization for optimization
             # The target_tokens for summarization should be `effective_input_limit`
-            optimized_prompt = self._summarize_text(prompt, effective_input_limit)
+            optimized_prompt = self._summarize_text(
+                prompt,
+                effective_input_limit,
+                truncation_indicator="\n\n[TRUNCATED - focusing on most critical aspects]",
+            )
 
             logger.info(
                 f"Prompt for {persona_name} optimized from {prompt_tokens} to {self.tokenizer.count_tokens(optimized_prompt)} tokens."
@@ -233,4 +244,8 @@ class PromptOptimizer:
             max_tokens,
         )
         # Use the summarizer pipeline for debate history as well
-        return self._summarize_text(debate_history_json_str, max_tokens)
+        return self._summarize_text(
+            debate_history_json_str,
+            max_tokens,
+            truncation_indicator="... (debate history further summarized/truncated...)",
+        )

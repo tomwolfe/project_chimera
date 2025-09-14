@@ -6,15 +6,7 @@ based on prompt analysis and intermediate results.
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import (
-    List,
-    Dict,
-    Set,
-    Optional,
-    Any,
-    Tuple,
-    TYPE_CHECKING,
-)  # Added TYPE_CHECKING
+from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING
 import re
 import logging
 from functools import lru_cache
@@ -169,7 +161,7 @@ class PersonaRouter:
         Determine if Test_Engineer persona is needed based on prompt, context, and domain.
         For 'Self-Improvement' domain, Test_Engineer is always relevant.
         """
-        if domain == "self-improvement":
+        if domain.lower() == "self-improvement":
             return True  # Test_Engineer is always relevant for self-improvement
 
         testing_keywords = [
@@ -190,8 +182,8 @@ class PersonaRouter:
             "test suite",
             "pytest",
             "unittest",
-            "robustness",  # Added for broader relevance
-            "maintainability",  # Added for broader relevance
+            "robustness",
+            "maintainability",
         ]
         if any(keyword in prompt_lower for keyword in testing_keywords):
             return True
@@ -248,18 +240,49 @@ class PersonaRouter:
                     "Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis."
                 )
 
-        adjusted_sequence = sequence.copy()
+        # Ensure Code_Architect is only present if explicitly needed for architectural concerns
+        # and not just as a default for Software Engineering if the prompt is not architectural.
+        # This logic is now more robust to avoid misclassification.
+        if "Code_Architect" in sequence:
+            # Check if the prompt has strong architectural keywords
+            architectural_keywords_in_prompt = any(
+                term in prompt_lower
+                for term in [
+                    "architecture",
+                    "design",
+                    "structure",
+                    "refactor",
+                    "codebase",
+                    "system design",
+                    "modularity",
+                    "scalability",
+                    "maintainability",
+                ]
+            )
+            # Check if context analysis explicitly highlighted architectural patterns or key modules
+            context_has_architectural_focus = context_analysis_results and (
+                context_analysis_results.get("architectural_patterns")
+                or context_analysis_results.get("key_modules")
+            )
 
-        if "Code_Architect" in adjusted_sequence:
+            # If Code_Architect is in the sequence but no strong architectural focus is detected, remove it.
+            if not (
+                architectural_keywords_in_prompt or context_has_architectural_focus
+            ):
+                if "Code_Architect" in sequence:
+                    sequence.remove("Code_Architect")
+                    logger.info(
+                        "Removed Code_Architect from sequence as no strong architectural context/keywords detected."
+                    )
+
+            # Handle potential misclassification for "building architecture" vs "software architecture"
+            # This is a more nuanced check to prevent removing Code_Architect for valid software architecture prompts.
             building_arch_terms = [
                 "building",
                 "construction",
-                "structural",
                 "physical",
                 "blueprint",
-                "skyscraper",
                 "house",
-                "design",
                 "floor plan",
             ]
             software_arch_terms = [
@@ -271,14 +294,12 @@ class PersonaRouter:
                 "backend",
                 "frontend",
             ]
-
             building_count = sum(
                 1 for term in building_arch_terms if term in prompt_lower
             )
             software_count = sum(
                 1 for term in software_arch_terms if term in prompt_lower
             )
-
             if (
                 building_count > software_count
                 and building_count >= 2
@@ -287,38 +308,17 @@ class PersonaRouter:
                 logger.warning(
                     f"Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
                 )
-                adjusted_sequence.remove("Code_Architect")
+                if "Code_Architect" in sequence:
+                    sequence.remove("Code_Architect")
                 if (
-                    "Creative_Thinker" not in adjusted_sequence
+                    "Creative_Thinker" not in sequence
                     and "Creative_Thinker" in self.all_personas
                 ):
-                    self._insert_persona_before_arbitrator(
-                        adjusted_sequence, "Creative_Thinker"
-                    )
+                    self._insert_persona_before_arbitrator(sequence, "Creative_Thinker")
 
-        # Ensure Code_Architect is only present if explicitly needed for architectural concerns
-        # and not just as a default for Software Engineering if the prompt is not architectural.
-        if "Code_Architect" in adjusted_sequence and not (
-            "architecture" in prompt_lower
-            or "design" in prompt_lower
-            or "structure" in prompt_lower
-            or "refactor" in prompt_lower
-            or "codebase" in prompt_lower
-            or (
-                context_analysis_results
-                and (
-                    context_analysis_results.get("architectural_patterns")
-                    or context_analysis_results.get("key_modules")
-                )
-            )
-        ):
-            adjusted_sequence.remove("Code_Architect")
-            logger.info(
-                "Removed Code_Architect from sequence as no architectural context/keywords detected."
-            )
+        adjusted_sequence = sequence.copy()
 
         if domain == "Software Engineering" or domain == "Self-Improvement":
-            # MODIFIED: Pass domain to _should_include_test_engineer
             if (
                 "Test_Engineer" in adjusted_sequence
                 and not self._should_include_test_engineer(

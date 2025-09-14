@@ -33,8 +33,7 @@ WORKDIR /home/appuser
 COPY requirements-prod.txt .
 
 # Install production dependencies (as root, so they are in system PATH and accessible to appuser)
-# ADDED: tiktoken to the pip install command
-RUN pip install --no-cache-dir -r requirements-prod.txt tiktoken
+RUN pip install --no-cache-dir -r requirements-prod.txt
 
 # Create the .cache/huggingface directory structure for appuser and ensure appuser owns it
 # This must be done as root.

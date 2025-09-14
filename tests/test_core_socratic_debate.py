@@ -101,42 +101,49 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
             system_prompt="Visionary",
             temperature=0.7,
             max_tokens=1024,
+            description="Visionary persona",  # Added description
         ),
         "Skeptical_Generator": PersonaConfig(
             name="Skeptical_Generator",
             system_prompt="Skeptical",
             temperature=0.3,
             max_tokens=1024,
+            description="Skeptical persona",  # Added description
         ),
         "Constructive_Critic": PersonaConfig(
             name="Constructive_Critic",
             system_prompt="Critic",
             temperature=0.15,
             max_tokens=8192,
+            description="Constructive Critic persona",  # Added description
         ),
         "Impartial_Arbitrator": PersonaConfig(
             name="Impartial_Arbitrator",
             system_prompt="Arbitrator",
             temperature=0.1,
             max_tokens=4096,
+            description="Impartial Arbitrator persona",  # Added description
         ),
         "Devils_Advocate": PersonaConfig(
             name="Devils_Advocate",
             system_prompt="Devils Advocate",
             temperature=0.1,
             max_tokens=4096,
+            description="Devils Advocate persona",  # Added description
         ),
         "Self_Improvement_Analyst": PersonaConfig(
             name="Self_Improvement_Analyst",
             system_prompt="Self-Improvement Analyst",
             temperature=0.1,
             max_tokens=8192,
+            description="Self-Improvement Analyst persona",  # Added description
         ),
         "Context_Aware_Assistant": PersonaConfig(
             name="Context_Aware_Assistant",
             system_prompt="Context Assistant",
             temperature=0.1,
             max_tokens=3072,
+            description="Context Aware Assistant persona",  # Added description
         ),
     }
     pm.persona_sets = {
@@ -160,10 +167,11 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         name.replace("_TRUNCATED", ""),
         MagicMock(
             spec=PersonaConfig,
-            name=name,
+            name=name,  # Ensure mock PersonaConfig has a name attribute
             system_prompt="Fallback",
             temperature=0.5,
             max_tokens=1024,
+            description="Fallback persona",  # Added description
         ),
     )
     pm.prompt_analyzer = MagicMock()
@@ -235,6 +243,7 @@ def mock_conflict_manager():
             "malformed_blocks": [],
         },
         "resolution_summary": "Mock conflict resolved.",
+        "malformed_blocks": [],
     }
     return manager
 
@@ -381,24 +390,34 @@ def test_socratic_debate_run_debate_success(  # noqa: F811
     socratic_debate_instance, mock_gemini_provider, mock_output_parser
 ):
     """Tests a successful end-to-end debate run."""
-    mock_gemini_provider.generate.return_value = (
-        '{"general_output": "Final Answer"}',
-        100,
-        50,
-        False,
-    )  # Mock LLM output
-    mock_output_parser.parse_and_validate.return_value = {
-        "general_output": "Final Answer",
-        "malformed_blocks": [],
-    }
+    # Reset mock_output_parser.parse_and_validate for this specific test
+    mock_output_parser.parse_and_validate.side_effect = [
+        {
+            "general_output": "Visionary idea",
+            "malformed_blocks": [],
+        },  # Visionary_Generator
+        {
+            "general_output": "Skeptical idea",
+            "malformed_blocks": [],
+        },  # Skeptical_Generator
+        {
+            "general_output": "Final Answer",
+            "malformed_blocks": [],
+        },  # Impartial_Arbitrator
+    ]
+    mock_gemini_provider.generate.side_effect = [
+        ('{"general_output": "Visionary idea"}', 100, 50, False),  # Visionary_Generator
+        ('{"general_output": "Skeptical idea"}', 100, 50, False),  # Skeptical_Generator
+        ('{"general_output": "Final Answer"}', 100, 50, False),  # Impartial_Arbitrator
+    ]
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
 
     assert final_answer["general_output"] == "Final Answer"  # noqa: F841
     assert "Total_Tokens_Used" in intermediate_steps
     assert "Total_Estimated_Cost_USD" in intermediate_steps
-    assert mock_gemini_provider.generate.call_count > 0
-    assert mock_output_parser.parse_and_validate.call_count > 0
+    assert mock_gemini_provider.generate.call_count == 3  # 3 personas in sequence
+    assert mock_output_parser.parse_and_validate.call_count == 3
 
 
 def test_socratic_debate_malformed_output_triggers_conflict_manager(  # noqa: F811
@@ -490,6 +509,8 @@ def test_socratic_debate_token_budget_exceeded(  # noqa: F811
 
     with pytest.raises(TokenBudgetExceededError):
         socratic_debate_instance.run_debate()
+    # Ensure generate was called at least once before the budget was exceeded
+    assert mock_gemini_provider.generate.call_count >= 1
 
 
 def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
@@ -544,7 +565,12 @@ def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
     # Assert that the final output is the valid one
     assert output["CRITIQUE_SUMMARY"] == "Valid critique"
     # Assert that a malformed block for retry was recorded (if applicable, depends on mock behavior)
-    # For this test, we primarily care that the retry mechanism works and a valid output is eventually produced.
+    assert any(
+        block["type"] == "RETRYABLE_VALIDATION_ERROR"
+        for block in socratic_debate_instance.intermediate_steps.get(
+            "malformed_blocks", []
+        )
+    )
 
 
 def test_socratic_debate_self_analysis_flow(  # noqa: F811
@@ -574,8 +600,6 @@ def test_socratic_debate_self_analysis_flow(  # noqa: F811
         False,
     )
     socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
-        # Context_Aware_Assistant (if in sequence)
-        ({"general_overview": "Context overview", "malformed_blocks": []}),
         # Self_Improvement_Analyst (final synthesis)
         (
             {
@@ -583,7 +607,7 @@ def test_socratic_debate_self_analysis_flow(  # noqa: F811
                 "IMPACTFUL_SUGGESTIONS": [],
                 "malformed_blocks": [],
             }
-        ),
+        )
     ]
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
