@@ -68,9 +68,8 @@ from src.utils.api_key_validator import (
 import os
 from src.utils.output_parser import LLMOutputParser
 
-# NEW IMPORT for PromptOptimizer
-from src.utils.prompt_optimizer import PromptOptimizer
-
+# NEW IMPORT: For PromptOptimizer
+from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
@@ -82,6 +81,8 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiProvider:
+    # REMOVED: MAX_RETRIES, INITIAL_BACKOFF_SECONDS, BACKOFF_FACTOR, RETRYABLE_ERROR_CODES, RETRYABLE_HTTP_CODES, RETRYABLE_LLM_EXCEPTIONS
+
     def __init__(
         self,
         api_key: str,
@@ -92,7 +93,8 @@ class GeminiProvider:
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
         settings: Optional[Any] = None,
-        summarizer_pipeline_instance: Any = None, # NEW: Add summarizer_pipeline_instance
+        # NEW: Add summarizer_pipeline_instance to init
+        summarizer_pipeline_instance: Any = None,
     ):
         self.model_name = model_name
         self.model_registry = ModelRegistry()
@@ -101,8 +103,10 @@ class GeminiProvider:
         self._log_extra = {"request_id": self.request_id or "N/A"}
         self.output_parser = LLMOutputParser()
         self.settings = settings or ChimeraSettings()
+        self.summarizer_pipeline_instance = summarizer_pipeline_instance # NEW: Store the instance
 
         try:
+            # Prioritize API key from fetch_api_key, which handles secrets manager and env var fallback
             resolved_api_key = api_key or fetch_api_key()
             if not resolved_api_key:
                 logger.critical(
@@ -113,6 +117,7 @@ class GeminiProvider:
 
             self._api_key = resolved_api_key
 
+            # Validate API key format and functionality early
             is_valid_format, format_message = validate_gemini_api_key_format(
                 self._api_key
             )
@@ -169,25 +174,26 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        # NEW: Initialize PromptOptimizer
-        if summarizer_pipeline_instance is None:
-            logger.warning("Summarizer pipeline instance not provided to GeminiProvider. PromptOptimizer will be limited.")
-            # Fallback to a mock summarizer pipeline if not provided, to allow PromptOptimizer to initialize
-            mock_summarizer_pipeline = MagicMock()
-            mock_summarizer_pipeline.return_value = [{"summary_text": "Mock summary."}]
-            mock_summarizer_pipeline.tokenizer.model_max_length = 1024
+        # NEW: Initialize PromptOptimizer here
+        if self.summarizer_pipeline_instance:
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=mock_summarizer_pipeline,
+                summarizer_pipeline=self.summarizer_pipeline_instance,
             )
         else:
+            logger.warning(
+                "Summarizer pipeline instance not provided to GeminiProvider. PromptOptimizer will be limited."
+            )
+            # Fallback to a PromptOptimizer that only uses truncation if summarizer is not available
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=summarizer_pipeline_instance,
+                summarizer_pipeline=None, # Explicitly pass None
             )
 
+        # The max_retries and max_backoff_seconds from settings will be used by the @retry decorator implicitly.
+        # No need to store them as instance variables for the custom retry logic anymore.
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -231,11 +237,12 @@ class GeminiProvider:
     def _get_pricing_model_name(self) -> str:
         model_spec = self.get_model_specification(self.model_name)
         if model_spec:
+            # Map to pricing model names if they differ from actual model names
             if "flash" in model_spec.name:
                 return "gemini-1.5-flash"
             if "pro" in model_spec.name:
                 return "gemini-1.5-pro"
-        return "gemini-1.5-flash"
+        return "gemini-1.5-flash"  # Fallback
 
     def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
         pricing_model = self._get_pricing_model_name()
@@ -251,6 +258,8 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
+    # REMOVED: The entire _generate_with_retry method is removed.
+
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
         failure_threshold=3,
@@ -261,22 +270,22 @@ class GeminiProvider:
             SchemaValidationError,
             LLMUnexpectedError,
             GeminiAPIError,
-            RetryError,
-            RateLimitExceededError,
+            RetryError,  # NEW: Add RetryError to expected exceptions for CircuitBreaker
+            RateLimitExceededError,  # NEW: Add RateLimitExceededError
         ),
     )
     @retry(
         wait=wait_exponential(
             multiplier=1, min=4, max=60
-        ),
+        ),  # Use settings for max_backoff_seconds if desired, or keep fixed
         stop=stop_after_attempt(
             5
-        ),
-        reraise=True,
+        ),  # Use settings.max_retries if desired, or keep fixed
+        reraise=True,  # Ensure RetryError is raised after max attempts
         retry=(
             retry_if_exception_type(APIError)
             | retry_if_exception_type(SchemaValidationError)
-            | retry_if_exception_type(socket.gaierror)
+            | retry_if_exception_type(socket.gaierror)  # For network issues
         ),
     )
     def generate(
@@ -295,6 +304,7 @@ class GeminiProvider:
         """
         final_model_to_use = requested_model_name
 
+        # Get max_output_tokens from ModelRegistry for the current model
         current_model_spec = self.get_model_specification(
             final_model_to_use or self.model_name
         )
@@ -342,13 +352,15 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
+        # --- Core API Call Logic (moved from _generate_with_retry and adapted for tenacity) ---
         try:
             # Optimize prompt before sending to LLM
-            # The persona_config.name is used to get persona-specific input token limits
+            # Ensure persona_config is not None before accessing its name
+            persona_name_for_optimization = persona_config.name if persona_config else "Unknown"
             optimized_prompt = self.prompt_optimizer.optimize_prompt(
-                prompt, persona_config.name, max_tokens # Pass max_tokens as max_output_tokens_for_turn
+                prompt, persona_name_for_optimization, max_tokens
             )
-            
+
             prompt_with_system = (
                 f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt
             )
@@ -370,7 +382,7 @@ class GeminiProvider:
                 temperature=config.temperature,
                 max_output_tokens=config.max_output_tokens,
                 full_system_prompt=system_prompt,
-                full_user_prompt=optimized_prompt, # Log the optimized prompt
+                full_user_prompt=optimized_prompt, # Log optimized prompt
                 input_tokens=input_tokens,
             )
 
@@ -378,6 +390,7 @@ class GeminiProvider:
                 model=current_model_name, contents=optimized_prompt, config=config # Use optimized_prompt here
             )
 
+            # --- START Fix Malformed Response Handling ---
             if not response.candidates:
                 raise LLMUnexpectedError(
                     "No candidates in response", details={"response": response}
@@ -387,14 +400,17 @@ class GeminiProvider:
                 raise LLMUnexpectedError(
                     "No content parts in response", details={"response": response}
                 )
+            # --- END Fix Malformed Response Handling ---
 
             generated_text = response.candidates[0].content.parts[0].text
 
+            # NEW: Enforce schema compliance if a schema is provided
             if output_schema:
                 try:
                     cleaned_generated_text = self.output_parser._clean_llm_output(
                         generated_text
                     )
+                    # Attempt to parse the LLM output into the Pydantic model
                     if hasattr(output_schema, "model_validate_json"):
                         output_schema.model_validate_json(cleaned_generated_text)
                     else:
@@ -404,14 +420,17 @@ class GeminiProvider:
                     self._log_with_context(
                         "warning", error_msg, llm_output_snippet=generated_text[:200]
                     )
+                    # Raise SchemaValidationError directly to trigger tenacity's retry mechanism
                     raise SchemaValidationError(
                         error_type="EARLY_SCHEMA_VALIDATION_FAILED",
                         field_path="LLM_OUTPUT",
                         invalid_value=generated_text[:500],
                         original_exception=ve,
                     )
+            # --- END NEW: Enforce schema compliance ---
 
             output_tokens = self.tokenizer.count_tokens(generated_text)
+            # MODIFIED: Calculate is_truncated based on actual output tokens vs max_output_tokens
             is_truncated = output_tokens >= config.max_output_tokens * 0.95
             self._log_with_context(
                 "debug",
@@ -440,6 +459,7 @@ class GeminiProvider:
         except APIError as e:
             error_msg = str(e)
             error_msg_lower = error_msg.lower()
+            # Ensure response_json is always a dictionary
             response_json = (
                 e.response_json
                 if isinstance(e.response_json, dict)
@@ -469,6 +489,7 @@ class GeminiProvider:
                     original_exception=e,
                 ) from e
             elif e.code == 429:
+                # Raise RateLimitExceededError to be caught by CircuitBreaker and potentially app.py
                 raise RateLimitExceededError(
                     f"Rate limit exceeded: {error_msg}", original_exception=e
                 ) from e
@@ -484,18 +505,21 @@ class GeminiProvider:
                 or "invalid json format" in error_msg_lower
                 or "invalid response format" in error_msg_lower
             ):
+                # Treat as SchemaValidationError to trigger tenacity retry
                 raise SchemaValidationError(
                     error_type="API_INVALID_JSON",
                     field_path="LLM_OUTPUT",
                     invalid_value=error_msg[:500],
                     original_exception=e,
                 ) from e
-            else:
+            else:  # Non-retryable APIError not specifically handled
                 raise LLMProviderError(error_msg, original_exception=e) from e
         except socket.gaierror as e:
+            # Network errors are retryable by tenacity
             raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
         except Exception as e:
             error_msg = str(e)
+            # Check for generic context window exceeded if not caught by APIError 400
             if (
                 "context window exceeded" in error_msg.lower()
                 or "prompt too large" in error_msg.lower()
@@ -503,4 +527,5 @@ class GeminiProvider:
                 raise LLMUnexpectedError(
                     f"LLM context window exceeded: {error_msg}", original_exception=e
                 ) from e
+            # For other unexpected exceptions, raise LLMProviderError
             raise LLMProviderError(error_msg, original_exception=e) from e
