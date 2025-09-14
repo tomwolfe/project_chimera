@@ -15,7 +15,7 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
+from src.utils.code_utils import _get_code_snippet
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 from src.models import (
     ConfigurationAnalysisOutput,

@@ -76,7 +76,7 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
                                     "message": issue.get("message"),
                                     "source": "ruff_lint",
                                     "code_snippet": _get_code_snippet(
-                                        content_lines, line_num
+                                        content_lines, line_num, context_lines=3
                                     ),
                                 }
                             )
@@ -246,7 +246,7 @@ def _run_bandit(
                                     "message": f"[{issue.get('severity')}] {issue.get('description')}",
                                     "source": "bandit",
                                     "code_snippet": _get_code_snippet(
-                                        content_lines, line_num
+                                        content_lines, line_num, context_lines=3
                                     ),
                                 }
                             )
@@ -364,7 +364,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 self.generic_visit(node)
 
             def visit_Call(self, node):
-                snippet = _get_code_snippet(self.content_lines, node.lineno)
+                snippet = _get_code_snippet(self.content_lines, node.lineno, context_lines=3)
 
                 # Check for eval() and exec()
                 if isinstance(node.func, ast.Name):
@@ -632,7 +632,7 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 "line": se.lineno,
                 "column": se.offset,
                 "message": f"Invalid Python syntax: {se.msg}",
-                "code_snippet": _get_code_snippet(content_lines, se.lineno),
+                "code_snippet": _get_code_snippet(content_lines, se.lineno, context_lines=3),
             }
         )
     except Exception as e:

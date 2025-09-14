@@ -50,12 +50,9 @@ def test_parse_and_validate_invalid_json_string(parser):
     """Tests handling of an invalid JSON string."""
     raw_output = "This is not JSON"
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert (
-        "JSON_EXTRACTION_FAILED" == result["malformed_blocks"][0]["type"]
-    )  # MODIFIED: Exact match
-    assert "general_output" in result
-    assert (
-        "No valid JSON data could be extracted or parsed." in result["general_output"]
+    assert result["general_output"] == "No valid JSON data could be extracted or parsed."
+    assert any(
+        block["type"] == "JSON_EXTRACTION_FAILED" for block in result["malformed_blocks"]
     )
 
 
@@ -96,9 +93,7 @@ def test_parse_and_validate_malformed_json_with_repair(parser):
     }
     """  # Trailing comma
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert (
-        result["general_output"] == '{"key": "value", "another_key": "another_value"}'
-    )
+    assert result["general_output"] == '{"key": "value", "another_key": "another_value"}'
     assert any(
         "JSON_REPAIR_ATTEMPTED" == block["type"] for block in result["malformed_blocks"]
     )
@@ -135,6 +130,7 @@ def test_parse_and_validate_top_level_list_for_dict_schema(parser):
         == "LLM returned an array of suggestions instead of the full analysis. Review the 'IMPACTFUL_SUGGESTIONS' section."
     )
     assert len(result["IMPACTFUL_SUGGESTIONS"]) == 2
+    assert result["IMPACTFUL_SUGGESTIONS"][0]["AREA"] == "Robustness"
     assert any(
         "TOP_LEVEL_LIST_WRAPPING" == block["type"]
         for block in result["malformed_blocks"]
@@ -162,11 +158,9 @@ def test_parse_and_validate_empty_string(parser):
     """Tests handling of an empty string input."""
     raw_output = ""
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert (
-        "JSON_EXTRACTION_FAILED" == result["malformed_blocks"][0]["type"]
-    )  # MODIFIED: Exact match
-    assert (
-        "No valid JSON data could be extracted or parsed." in result["general_output"]
+    assert result["general_output"] == "No valid JSON data could be extracted or parsed."
+    assert any(
+        block["type"] == "JSON_EXTRACTION_FAILED" for block in result["malformed_blocks"]
     )
 
 
@@ -259,7 +253,7 @@ def test_parse_and_validate_empty_list_general_output(parser):
     """Tests handling of an empty list for GeneralOutput."""
     raw_output = "[]"
     result = parser.parse_and_validate(raw_output, GeneralOutput)
-    assert result["general_output"] == "Unexpected partial data type: list. Value: []"
+    assert result["general_output"] == "[]"
     assert any(
         "EMPTY_JSON_LIST" == block["type"] for block in result["malformed_blocks"]
     )

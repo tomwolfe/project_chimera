@@ -5,10 +5,9 @@ google-genai
 pyyaml
 pydantic # Ensure pydantic is available for models (used in models.py)
 rich
-sentence-transformers # Ensure sentence-transformers is available
+sentence-transformers
 python-json-logger
-pytest-cov # Required for test coverage metrics collection in production
-tiktoken # ADDED: For token counting
+tiktoken # For token counting
 
 # Code quality and security tools required by src/utils/code_validator.py in production
 pycodestyle

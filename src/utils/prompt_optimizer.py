@@ -5,7 +5,7 @@ from src.llm_tokenizers.base import Tokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
-import gc # NEW: Import garbage collector
+import gc  # NEW: Import garbage collector
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class PromptOptimizer:
             settings: An instance of ChimeraSettings.
             summarizer_pipeline: An instance of the Hugging Face summarization pipeline.
         """
-        self.tokenizer = tokenizer # This is the Gemini tokenizer
+        self.tokenizer = tokenizer
         self.settings = settings
         self.summarizer_pipeline = summarizer_pipeline # Store the passed pipeline instance
 

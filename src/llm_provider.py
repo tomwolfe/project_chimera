@@ -359,6 +359,7 @@ class GeminiProvider:
         for attempt in range(1, self.MAX_RETRIES + 1):
             should_retry = False  # Define should_retry before using it
             error_msg = "" # Initialize error_msg
+            e = None # Initialize e to None for consistent scope
             error_details = {} # Initialize error_details
             try:
                 prompt_with_system = (

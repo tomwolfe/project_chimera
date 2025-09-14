@@ -27,6 +27,16 @@ from src.models import (
     CritiqueOutput,
     SelfImprovementAnalysisOutputV1,
 )  # Import specific models
+from transformers import pipeline # NEW: Import pipeline for summarization
+
+
+@pytest.fixture
+def mock_summarizer_pipeline():
+    """Provides a mock Hugging Face summarization pipeline."""
+    mock_pipeline = MagicMock()
+    mock_pipeline.return_value = [{"summary_text": "Mock summary."}]
+    mock_pipeline.tokenizer.model_max_length = 1024 # Simulate distilbart's max input
+    return mock_pipeline
 
 
 @pytest.fixture
@@ -298,6 +308,7 @@ def socratic_debate_instance(  # noqa: F811
     mock_output_parser,
     mock_conflict_manager,
     mock_metrics_collector,
+    mock_summarizer_pipeline, # NEW: Add mock_summarizer_pipeline
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     with (
@@ -308,7 +319,14 @@ def socratic_debate_instance(  # noqa: F811
         patch("core.LLMOutputParser", return_value=mock_output_parser),
         patch("core.ConflictResolutionManager", return_value=mock_conflict_manager),
         patch("core.FocusedMetricsCollector", return_value=mock_metrics_collector),
+        patch("core.PromptOptimizer", autospec=True), # Patch PromptOptimizer
     ):
+        # Mock the PromptOptimizer constructor to return a mock instance
+        core.PromptOptimizer.return_value = MagicMock()
+        core.PromptOptimizer.return_value.optimize_prompt.side_effect = lambda p, pn, mot: p # Default to no-op
+        core.PromptOptimizer.return_value.optimize_debate_history.side_effect = lambda h, mt: h # Default to no-op
+        core.PromptOptimizer.return_value.tokenizer = mock_gemini_provider.tokenizer # Ensure tokenizer is set
+
         debate = SocraticDebate(
             initial_prompt="Test prompt",
             api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
@@ -316,12 +334,13 @@ def socratic_debate_instance(  # noqa: F811
             domain="General",  # Use 'General' for simple questions
             persona_manager=mock_persona_manager,  # Pass the persona manager
             context_analyzer=mock_context_analyzer,  # Pass the mock context analyzer
-            token_tracker=mock_token_tracker,  # Pass the mock token tracker
+            token_tracker=mock_token_tracker,  # Pass the token tracker
             settings=mock_settings,  # Pass mock_settings
             structured_codebase_context={},  # NEW: Add structured_codebase_context
             raw_file_contents={"file1.py": "content"},  # NEW: Add raw_file_contents
             status_callback=MagicMock(),  # FIX: Ensure status_callback is a callable MagicMock
             rich_console=MagicMock(),
+            summarizer_pipeline_instance=mock_summarizer_pipeline, # NEW: Pass the mock summarizer
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager

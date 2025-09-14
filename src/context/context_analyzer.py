@@ -371,7 +371,7 @@ class ContextRelevanceAnalyzer:
         raw_file_contents: Optional[
             Dict[str, str]
         ] = None,  # MODIFIED: Renamed codebase_context to raw_file_contents
-        max_file_content_size: int = 100000, # NEW: Add max_file_content_size (100KB default)
+        max_file_content_size: int = 500000, # Increased to 500KB to include core files
     ):
         """
         Initializes the analyzer.

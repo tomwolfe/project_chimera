@@ -61,11 +61,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [
-                sys.executable,
-                "-m",
-                "false_command",
-            ],  # FIX: Expect sys.executable -m for 'false_command'
+            [sys.executable, "-m", "false_command"], # Correctly expect sys.executable -m for Python tools
             capture_output=True,
             text=True,
             check=False,
@@ -87,11 +83,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command)
 
         self.mock_run.assert_called_once_with(
-            [
-                sys.executable,
-                "-m",
-                "error_command",
-            ],  # FIX: Expect sys.executable -m for 'error_command'
+            [sys.executable, "-m", "error_command"], # Correctly expect sys.executable -m for Python tools
             capture_output=True,
             text=True,
             check=False,
@@ -109,8 +101,8 @@ class TestCommandExecutor(unittest.TestCase):
         self.mock_run.side_effect = subprocess.TimeoutExpired(cmd=command, timeout=1)
 
         with pytest.raises(
-            subprocess.TimeoutExpired
-        ):  # FIX: Expect TimeoutExpired to be re-raised
+            subprocess.TimeoutExpired # Expect TimeoutExpired to be re-raised
+        ) as excinfo:
             execute_command_safely(command, timeout=1)
         self.mock_run.assert_called_once_with(
             command, capture_output=True, text=True, check=False, shell=False, timeout=1
@@ -126,7 +118,7 @@ class TestCommandExecutor(unittest.TestCase):
         return_code, stdout, stderr = execute_command_safely(command, check=True)
 
         self.mock_run.assert_called_once_with(
-            command,  # 'echo' is not a Python tool, so no sys.executable -m
+            command, # 'echo' is not a Python tool, so no sys.executable -m
             capture_output=True,
             text=True,
             check=True,
@@ -144,12 +136,10 @@ class TestCommandExecutor(unittest.TestCase):
             returncode=1, cmd=command, stderr="Error message"
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
-            execute_command_safely(
-                command, check=True
-            )  # FIX: Expect CalledProcessError to be re-raised
+        with pytest.raises(subprocess.CalledProcessError) as excinfo: # Expect CalledProcessError to be re-raised
+            execute_command_safely(command, check=True) # Expect CalledProcessError to be re-raised
         self.mock_run.assert_called_once_with(
-            [sys.executable, "-m", "false_command"],  # FIX: Expect sys.executable -m
+            [sys.executable, "-m", "false_command"], # Correctly expect sys.executable -m
             capture_output=True,
             text=True,
             check=True,
@@ -248,9 +238,7 @@ class TestCommandExecutor(unittest.TestCase):
             mock_logger_instance = MagicMock()
             mock_logger.return_value = mock_logger_instance
 
-            with pytest.raises(
-                OSError
-            ):  # FIX: Expect the original exception to be re-raised
+            with pytest.raises(OSError) as excinfo: # Expect the original exception to be re-raised
                 execute_command_safely(command)
 
             mock_logger_instance.error.assert_called_once_with(
@@ -258,7 +246,7 @@ class TestCommandExecutor(unittest.TestCase):
                 exc_info=True,  # FIX: Ensure exc_info is passed
             )
             self.mock_run.assert_called_once_with(
-                [sys.executable, "-m", "some_command"],  # FIX: Expect sys.executable -m
+                [sys.executable, "-m", "some_command"], # Correctly expect sys.executable -m
                 capture_output=True,
                 text=True,
                 check=False,

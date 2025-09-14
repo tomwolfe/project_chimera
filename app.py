@@ -10,7 +10,7 @@ import contextlib
 import re
 import datetime
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 import logging
 from rich.console import Console
 from core import SocraticDebate
@@ -212,10 +212,11 @@ EXAMPLE_PROMPTS = {
 # MODIFIED: Pass the cached instances to _initialize_session_state
 if "initialized" not in st.session_state:
     _initialize_session_state(
-        settings_instance,
-        EXAMPLE_PROMPTS,
-        get_context_relevance_analyzer_instance,  # Pass the cached function
-        get_codebase_scanner_instance,  # Pass the cached function
+        app_config=settings_instance, # Renamed parameter for clarity
+        example_prompts=EXAMPLE_PROMPTS, # Renamed parameter for clarity
+        get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,  # Pass the cached function
+        get_codebase_scanner_instance=get_codebase_scanner_instance,  # Pass the cached function
+        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance, # NEW: Pass the cached function
     )
     st.session_state.api_key_input = fetch_api_key() or ""
 # --- END Session State Initialization Call ---
