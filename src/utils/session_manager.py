@@ -31,6 +31,9 @@ def _initialize_session_state(
         [ChimeraSettings], ContextRelevanceAnalyzer
     ],
     get_codebase_scanner_instance: Callable[[], CodebaseScanner],
+    get_summarizer_pipeline_instance: Callable[
+        [], Any
+    ],  # NEW: Add summarizer pipeline instance callable
 ):
     """Initializes or resets all session state variables to their default values."""
     MAX_TOKENS_LIMIT = app_config.total_budget
@@ -115,7 +118,7 @@ def _initialize_session_state(
 
     if "context_analyzer" not in st.session_state:
         analyzer = get_context_relevance_analyzer_instance(
-            app_config
+            _settings=app_config
         )  # Use passed function
         analyzer.raw_file_contents = (
             st.session_state.raw_file_contents
@@ -148,32 +151,6 @@ def _initialize_session_state(
         st.session_state.api_key_valid_format = is_valid_format
         st.session_state.api_key_format_message = message
 
-    if (
-        "user_prompt_input" not in st.session_state
-        or not st.session_state.user_prompt_input
-    ):
-        if not example_prompts:
-            example_prompts = {
-                "Coding & Implementation": {
-                    "Implement Python API Endpoint": {
-                        "prompt": "Implement a new FastAPI endpoint.",
-                        "description": "Generate an API endpoint.",
-                        "framework_hint": "Software Engineering",
-                    }
-                }
-            }
-
-        default_example_category = list(example_prompts.keys())[0]
-        default_example_name = list(example_prompts[default_example_category].keys())[0]
-        st.session_state.user_prompt_input = example_prompts[default_example_category][
-            default_example_name
-        ]["prompt"]
-        st.session_state.selected_example_name = default_example_name
-        st.session_state.selected_prompt_category = default_example_category
-        st.session_state.active_example_framework_hint = example_prompts[
-            default_example_category
-        ][default_example_name].get("framework_hint")
-
 
 def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
     """Resets all session state variables to their default values."""
@@ -182,13 +159,15 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
     from app import (
         get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance,
+        get_summarizer_pipeline_instance, # NEW: Import the summarizer pipeline instance
     )
 
     _initialize_session_state(
-        app_config,
-        example_prompts,
-        get_context_relevance_analyzer_instance,
-        get_codebase_scanner_instance,
+        app_config=app_config,
+        example_prompts=example_prompts,
+        get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
+        get_codebase_scanner_instance=get_codebase_scanner_instance,
+        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance, # NEW: Pass the summarizer pipeline instance
     )
     st.rerun()
 
@@ -210,12 +189,14 @@ def check_session_expiration(
             from app import (
                 get_context_relevance_analyzer_instance,
                 get_codebase_scanner_instance,
+                get_summarizer_pipeline_instance, # NEW: Import the summarizer pipeline instance
             )
 
             _initialize_session_state(
-                app_config,
-                example_prompts,
-                get_context_relevance_analyzer_instance,
-                get_codebase_scanner_instance,
+                app_config=app_config,
+                example_prompts=example_prompts,
+                get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
+                get_codebase_scanner_instance=get_codebase_scanner_instance,
+                get_summarizer_pipeline_instance=get_summarizer_pipeline_instance, # NEW: Pass the summarizer pipeline instance
             )
             st.rerun()
