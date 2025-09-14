@@ -1,11 +1,11 @@
-# tests/test_conflict_resolution.py
 import pytest
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Assuming ConflictResolutionManager is in src/conflict_resolution.py
 from src.conflict_resolution import ConflictResolutionManager
 from src.models import CritiqueOutput  # NEW: Import CritiqueOutput for schema mocking
+from src.utils.output_parser import LLMOutputParser  # NEW: Import LLMOutputParser
 
 
 @pytest.fixture
@@ -35,9 +35,18 @@ def conflict_manager():
         "GeneralOutput": MagicMock(),  # Mock GeneralOutput
     }
 
-    return ConflictResolutionManager(
-        llm_provider=mock_llm_provider, persona_manager=mock_persona_manager
-    )
+    # Create a real instance of LLMOutputParser and then mock its method
+    real_output_parser = LLMOutputParser()
+    with patch.object(
+        real_output_parser, "parse_and_validate"
+    ) as mock_parse_and_validate:
+        manager = ConflictResolutionManager(
+            llm_provider=mock_llm_provider, persona_manager=mock_persona_manager
+        )
+        manager.output_parser = (
+            real_output_parser  # Ensure the manager uses this mocked parser
+        )
+        yield manager
 
 
 def test_resolve_conflict_with_malformed_string(conflict_manager):
@@ -132,7 +141,7 @@ def test_resolve_conflict_with_malformed_dict_no_summary(conflict_manager):
         )
     ]
     # FIX: Mock the parser for the self-correction attempt correctly
-    conflict_manager.output_parser.parse_and_validate.side_effect = [
+    conflict_manager.output_parser.parse_and_validate.side_effect = [  # FIX: Access the mocked method directly
         {
             "CRITIQUE_SUMMARY": "Self-corrected output",
             "CRITIQUE_POINTS": [],
@@ -171,7 +180,7 @@ def test_resolve_conflict_with_insufficient_history(conflict_manager):
         ('{"invalid": "output"}', 10, 10, True)
     ]
     # FIX: Mock the parser for the self-correction attempt correctly
-    conflict_manager.output_parser.parse_and_validate.side_effect = [
+    conflict_manager.output_parser.parse_and_validate.side_effect = [  # FIX: Access the mocked method directly
         {"invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}
     ]
 
@@ -217,7 +226,7 @@ def test_resolve_conflict_with_valid_history_and_problematic_output(conflict_man
         ('{"invalid": "output"}', 10, 10, True)
     ]
     # FIX: Mock the parser for the self-correction attempt correctly
-    conflict_manager.output_parser.parse_and_validate.side_effect = [
+    conflict_manager.output_parser.parse_and_validate.side_effect = [  # FIX: Access the mocked method directly
         {"invalid": "output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}
     ]
 
@@ -258,8 +267,12 @@ def test_resolve_conflict_no_problem_in_latest_output(conflict_manager):
     # The current implementation prioritizes synthesis if called.
     result = conflict_manager.resolve_conflict(history)
     assert result is not None
-    assert result["resolution_strategy"] == "synthesis_from_history"
-    assert "Valid output 2" in result["resolved_output"]["CONFLICT_RESOLUTION_ATTEMPT"]
+    assert (
+        result["resolution_strategy"] == "synthesis_from_history"
+    )  # FIX: Expect synthesis from history
+    assert (
+        "Valid output 2" in result["resolved_output"]["resolution_summary"]
+    )  # FIX: Check resolution_summary
 
 
 def test_resolve_conflict_empty_history(conflict_manager):
@@ -289,7 +302,7 @@ def test_retry_persona_with_feedback_success(conflict_manager):
             False,
         )
     ]
-    conflict_manager.output_parser.parse_and_validate.side_effect = [
+    conflict_manager.output_parser.parse_and_validate.side_effect = [  # FIX: Access the mocked method directly
         {
             "CRITIQUE_SUMMARY": "Corrected output",
             "CRITIQUE_POINTS": [],
@@ -323,7 +336,7 @@ def test_retry_persona_with_feedback_failure(conflict_manager):
         ('{"invalid": "output2"}', 10, 10, True),
         ('{"invalid": "output3"}', 10, 10, True),  # Max retries is 2, so 3 calls total
     ]
-    conflict_manager.output_parser.parse_and_validate.side_effect = [
+    conflict_manager.output_parser.parse_and_validate.side_effect = [  # FIX: Access the mocked method directly
         {
             "invalid": "output",
             "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}],

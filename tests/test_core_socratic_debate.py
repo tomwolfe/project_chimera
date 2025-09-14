@@ -1,4 +1,5 @@
-from core import SocraticDebate  # Corrected import path
+import core  # ADD THIS LINE
+from core import SocraticDebate
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -27,7 +28,7 @@ from src.models import (
     CritiqueOutput,
     SelfImprovementAnalysisOutputV1,
 )  # Import specific models
-from transformers import pipeline # NEW: Import pipeline for summarization
+from transformers import pipeline  # NEW: Import pipeline for summarization
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def mock_summarizer_pipeline():
     """Provides a mock Hugging Face summarization pipeline."""
     mock_pipeline = MagicMock()
     mock_pipeline.return_value = [{"summary_text": "Mock summary."}]
-    mock_pipeline.tokenizer.model_max_length = 1024 # Simulate distilbart's max input
+    mock_pipeline.tokenizer.model_max_length = 1024  # Simulate distilbart's max input
     return mock_pipeline
 
 
@@ -308,7 +309,7 @@ def socratic_debate_instance(  # noqa: F811
     mock_output_parser,
     mock_conflict_manager,
     mock_metrics_collector,
-    mock_summarizer_pipeline, # NEW: Add mock_summarizer_pipeline
+    mock_summarizer_pipeline,  # NEW: Add mock_summarizer_pipeline
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     with (
@@ -319,13 +320,23 @@ def socratic_debate_instance(  # noqa: F811
         patch("core.LLMOutputParser", return_value=mock_output_parser),
         patch("core.ConflictResolutionManager", return_value=mock_conflict_manager),
         patch("core.FocusedMetricsCollector", return_value=mock_metrics_collector),
-        patch("core.PromptOptimizer", autospec=True), # Patch PromptOptimizer
+        patch(
+            "core.PromptOptimizer"
+        ) as MockPromptOptimizer,  # MODIFIED: Patch the class directly
     ):
         # Mock the PromptOptimizer constructor to return a mock instance
-        core.PromptOptimizer.return_value = MagicMock()
-        core.PromptOptimizer.return_value.optimize_prompt.side_effect = lambda p, pn, mot: p # Default to no-op
-        core.PromptOptimizer.return_value.optimize_debate_history.side_effect = lambda h, mt: h # Default to no-op
-        core.PromptOptimizer.return_value.tokenizer = mock_gemini_provider.tokenizer # Ensure tokenizer is set
+        MockPromptOptimizer.return_value = (
+            MagicMock()
+        )  # MODIFIED: Use MockPromptOptimizer
+        MockPromptOptimizer.return_value.optimize_prompt.side_effect = (
+            lambda p, pn, mot: p
+        )  # Default to no-op
+        MockPromptOptimizer.return_value.optimize_debate_history.side_effect = (
+            lambda h, mt: h
+        )  # Default to no-op
+        MockPromptOptimizer.return_value.tokenizer = (
+            mock_gemini_provider.tokenizer
+        )  # Ensure tokenizer is set
 
         debate = SocraticDebate(
             initial_prompt="Test prompt",
@@ -340,7 +351,7 @@ def socratic_debate_instance(  # noqa: F811
             raw_file_contents={"file1.py": "content"},  # NEW: Add raw_file_contents
             status_callback=MagicMock(),  # FIX: Ensure status_callback is a callable MagicMock
             rich_console=MagicMock(),
-            summarizer_pipeline_instance=mock_summarizer_pipeline, # NEW: Pass the mock summarizer
+            summarizer_pipeline_instance=mock_summarizer_pipeline,  # NEW: Pass the mock summarizer
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager

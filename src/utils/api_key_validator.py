@@ -38,11 +38,12 @@ def fetch_api_key() -> Optional[str]:
     # 2. Check Streamlit secrets if running in Streamlit
     try:
         import streamlit as st
+
         if "GEMINI_API_KEY" in st.secrets:
             logger.info("API key fetched from Streamlit secrets.")
             return st.secrets["GEMINI_API_KEY"]
     except ImportError:
-        pass # Not running in Streamlit or streamlit not installed
+        pass  # Not running in Streamlit or streamlit not installed
 
     # 3. Fallback to a secrets manager (if configured)
     secrets_manager_key = _secrets_manager_client.get_secret("GEMINI_API_KEY_SECRET")
@@ -50,7 +51,9 @@ def fetch_api_key() -> Optional[str]:
         logger.info("API key fetched from secrets manager.")
         return secrets_manager_key
 
-    logger.warning("No Gemini API key found in environment variables, Streamlit secrets, or secrets manager.")
+    logger.warning(
+        "No Gemini API key found in environment variables, Streamlit secrets, or secrets manager."
+    )
     return None
 
 

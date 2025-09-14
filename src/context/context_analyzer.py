@@ -371,22 +371,27 @@ class ContextRelevanceAnalyzer:
         raw_file_contents: Optional[
             Dict[str, str]
         ] = None,  # MODIFIED: Renamed codebase_context to raw_file_contents
-        max_file_content_size: int = 500000, # Increased to 500KB to include core files
+        max_file_content_size: int = 500000,  # Increased to 500KB to include core files
     ):
         """
         Initializes the analyzer.
         """
         self.cache_dir = cache_dir
-        self.max_file_content_size = max_file_content_size # NEW: Store max_file_content_size
-        
+        self.max_file_content_size = (
+            max_file_content_size  # NEW: Store max_file_content_size
+        )
+
         # NEW: Filter raw_file_contents based on size during initialization
         if raw_file_contents is not None:
             self.raw_file_contents = {
-                k: v for k, v in raw_file_contents.items()
+                k: v
+                for k, v in raw_file_contents.items()
                 if len(v) < self.max_file_content_size
             }
             if len(raw_file_contents) != len(self.raw_file_contents):
-                self.logger.warning(f"Filtered out {len(raw_file_contents) - len(self.raw_file_contents)} large files from initial raw_file_contents in ContextRelevanceAnalyzer init.")
+                self.logger.warning(
+                    f"Filtered out {len(raw_file_contents) - len(self.raw_file_contents)} large files from initial raw_file_contents in ContextRelevanceAnalyzer init."
+                )
         else:
             self.raw_file_contents = {}
 
@@ -453,10 +458,14 @@ class ContextRelevanceAnalyzer:
             # Filter out empty file contents and large files before encoding
             files_to_encode = {}
             for k, v in context.items():
-                if v and len(v) < self.max_file_content_size: # NEW: Filter by max_file_content_size
+                if (
+                    v and len(v) < self.max_file_content_size
+                ):  # NEW: Filter by max_file_content_size
                     files_to_encode[k] = v
                 elif v:
-                    self.logger.warning(f"Skipping embedding for large file: {k} ({len(v)} bytes > {self.max_file_content_size} bytes)")
+                    self.logger.warning(
+                        f"Skipping embedding for large file: {k} ({len(v)} bytes > {self.max_file_content_size} bytes)"
+                    )
 
             if not files_to_encode:
                 self.logger.warning(

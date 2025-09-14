@@ -51,5 +51,7 @@ def test_format_prompt_missing_key():
     """Test format_prompt handles missing keys gracefully."""
     template = "Hello, {name}!"
     kwargs = {"age": 30}  # Missing 'name'
-    result = format_prompt(template, **kwargs) # The function logs a warning, but doesn't modify the returned string with the warning.
-    assert result == "Hello, {name}!" # The placeholder should remain if not formatted
+    result = format_prompt(
+        template, **kwargs
+    )  # The function logs a warning, but doesn't modify the returned string with the warning.
+    assert result == "Hello, {name}!"  # The placeholder should remain if not formatted

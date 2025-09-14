@@ -159,7 +159,7 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
     from app import (
         get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance,
-        get_summarizer_pipeline_instance, # NEW: Import the summarizer pipeline instance
+        get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
     )
 
     _initialize_session_state(
@@ -167,7 +167,7 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
         example_prompts=example_prompts,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance, # NEW: Pass the summarizer pipeline instance
+        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # NEW: Pass the summarizer pipeline instance
     )
     st.rerun()
 
@@ -189,7 +189,7 @@ def check_session_expiration(
             from app import (
                 get_context_relevance_analyzer_instance,
                 get_codebase_scanner_instance,
-                get_summarizer_pipeline_instance, # NEW: Import the summarizer pipeline instance
+                get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
             )
 
             _initialize_session_state(
@@ -197,6 +197,6 @@ def check_session_expiration(
                 example_prompts=example_prompts,
                 get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
                 get_codebase_scanner_instance=get_codebase_scanner_instance,
-                get_summarizer_pipeline_instance=get_summarizer_pipeline_instance, # NEW: Pass the summarizer pipeline instance
+                get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # NEW: Pass the summarizer pipeline instance
             )
             st.rerun()

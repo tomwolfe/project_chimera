@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # --- Helper to get a snippet around a line number ---
 def _get_code_snippet(
     content_lines: List[str], line_number: Optional[int], context_lines: int = 2
-) -> str: # Changed return type from Optional[str] to str
+) -> str:  # Changed return type from Optional[str] to str
     """
     Retrieves a snippet of code around a specific line number from a list of lines.
 
@@ -28,8 +28,13 @@ def _get_code_snippet(
         A formatted string snippet of the code, or an empty string if input is invalid.
     """
     # Ensure line_number is valid and within bounds
-    if line_number is None or not content_lines or line_number < 1 or line_number > len(content_lines):
-        return "" # Return empty string instead of None
+    if (
+        line_number is None
+        or not content_lines
+        or line_number < 1
+        or line_number > len(content_lines)
+    ):
+        return ""  # Return empty string instead of None
 
     # Adjust line_number to be 0-indexed for list access
     actual_line_idx = line_number - 1

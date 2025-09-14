@@ -8,7 +8,9 @@ from pathlib import Path
 import numpy as np
 import numbers
 import logging
-from src.utils.json_utils import convert_to_json_friendly # NEW: Import the shared utility
+from src.utils.json_utils import (
+    convert_to_json_friendly,
+)  # NEW: Import the shared utility
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +110,11 @@ def generate_markdown_report(
             tokens_used = intermediate_steps.get(token_count_key, "N/A")
 
             md_content += f"### {display_name}\n\n"
-            if isinstance(content, dict): # Check if it's a dict before dumping
+            if isinstance(content, dict):  # Check if it's a dict before dumping
                 md_content += "```json\n"
-                md_content += json.dumps(content, indent=2, default=convert_to_json_friendly)
+                md_content += json.dumps(
+                    content, indent=2, default=convert_to_json_friendly
+                )
                 md_content += "\n```\n"
             else:
                 # If content is not a dict, convert it to a serializable string for markdown display
@@ -119,9 +123,11 @@ def generate_markdown_report(
     md_content += "---\n\n"
     md_content += "## Final Synthesized Answer\n\n"
 
-    if isinstance(final_answer, dict): # Check if it's a dict before dumping
+    if isinstance(final_answer, dict):  # Check if it's a dict before dumping
         md_content += "```json\n"
-        md_content += json.dumps(final_answer, indent=2, default=convert_to_json_friendly)
+        md_content += json.dumps(
+            final_answer, indent=2, default=convert_to_json_friendly
+        )
     else:
         # If final_answer is not a dict, convert it to a serializable string for markdown display
         md_content += f"{convert_to_json_friendly(final_answer)}\n\n"

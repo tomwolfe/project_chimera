@@ -9,7 +9,7 @@ from src.models import (
     GeneralOutput,
     LLMOutput,
     CritiqueOutput,
-    ConflictReport,
+    ConflictReport,  # ADD THIS LINE
     SelfImprovementAnalysisOutputV1,
     ContextAnalysisOutput,
     ConfigurationAnalysisOutput,
@@ -411,7 +411,7 @@ class ConflictResolutionManager:
             else:
                 error_message = f"Specific validation errors: {json.dumps(problematic_output['malformed_blocks'], indent=2)}"
         elif isinstance(problematic_output, str):
-            error_message = f"Previous output was a malformed string: '{self.output_parser._clean_llm_output(problematic_output)[:200]}...'"
+            error_message = f"Previous output was a malformed string: '{self.output_parser._clean_llm_output(str(problematic_output))[:200]}...'"
 
         feedback_prompt = f"""
         Your previous response for the persona '{persona_name}' was problematic.

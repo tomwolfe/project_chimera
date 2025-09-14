@@ -295,12 +295,14 @@ class LLMOutputParser:
             json_str = temp_str
 
         # Heuristic 9: Replace null values for fields that should be arrays with empty arrays
-        # This is a common LLM error where it outputs "field": null instead of "field": []
         # This is a more aggressive repair and might need to be conditional.
         temp_str = re.sub(r'":\s*null([,\}\]])', r'": []\1', json_str)
         if temp_str != json_str:
             repair_log.append(
-                {"action": "initial_repair", "details": "Replaced 'null' with '[]' for array fields."}
+                {
+                    "action": "initial_repair",
+                    "details": "Replaced 'null' with '[]' for array fields.",
+                }
             )
             json_str = temp_str
 
@@ -1286,7 +1288,15 @@ class LLMOutputParser:
                     )
             else:
                 # Use model_validate for Pydantic v2, fallback to parse_obj for v1
-                if hasattr(schema_model, "model_validate"):
+                # FIX: Ensure the fallback for GeneralOutput returns a string for general_output
+                if schema_model == GeneralOutput:
+                    validated_fallback = GeneralOutput(
+                        general_output=fallback_data_for_model.get(
+                            "general_output", error_message_from_partial
+                        ),
+                        malformed_blocks=current_malformed_blocks,
+                    )
+                elif hasattr(schema_model, "model_validate"):
                     validated_fallback = schema_model.model_validate(
                         fallback_data_for_model
                     )
@@ -1299,8 +1309,51 @@ class LLMOutputParser:
                 f"CRITICAL ERROR: Fallback output for schema {schema_model.__name__} is itself invalid: {e}. Returning raw error dict.",
                 exc_info=True,
             )
-            return {
-                "general_output": f"CRITICAL PARSING ERROR: Fallback for {schema_model.__name__} is invalid. {str(e)}",
-                "malformed_blocks": current_malformed_blocks
-                + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}],
-            }
+            # FIX: Return a structured error that matches the schema's expected output, even if minimal
+            if schema_model == GeneralOutput:
+                return {
+                    "general_output": f"CRITICAL PARSING ERROR: Fallback for {schema_model.__name__} is invalid. {str(e)}",
+                    "malformed_blocks": current_malformed_blocks
+                    + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}],
+                }
+            else:
+                # For other schemas, try to create a minimal valid structure
+                try:
+                    minimal_fallback_data = schema_model.model_json_schema().get(
+                        "properties", {}
+                    )
+                    for prop, details in minimal_fallback_data.items():
+                        if "default" in details:
+                            minimal_fallback_data[prop] = details["default"]
+                        elif details.get("type") == "string":
+                            minimal_fallback_data[prop] = (
+                                f"CRITICAL PARSING ERROR: {str(e)}"
+                            )
+                        elif details.get("type") == "array":
+                            minimal_fallback_data[prop] = []
+                        elif details.get("type") == "boolean":
+                            minimal_fallback_data[prop] = False
+                        elif details.get("type") == "number":
+                            minimal_fallback_data[prop] = 0.0
+                    minimal_fallback_data["malformed_blocks"] = (
+                        current_malformed_blocks
+                        + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
+                    )
+                    return schema_model.model_validate(
+                        minimal_fallback_data
+                    ).model_dump(by_alias=True)
+                except Exception as inner_e:
+                    self.logger.critical(
+                        f"Double CRITICAL ERROR: Minimal fallback for {schema_model.__name__} also failed: {inner_e}",
+                        exc_info=True,
+                    )
+                    return {
+                        "general_output": f"DOUBLE CRITICAL PARSING ERROR: {str(inner_e)}",
+                        "malformed_blocks": current_malformed_blocks
+                        + [
+                            {
+                                "type": "DOUBLE_CRITICAL_FALLBACK_ERROR",
+                                "message": str(inner_e),
+                            }
+                        ],
+                    }

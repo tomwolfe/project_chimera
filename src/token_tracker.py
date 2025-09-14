@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 class TokenUsageTracker:
     """Tracks token usage across the reasoning process with predictive capabilities."""
 
-    def __init__(self, budget: int = 128000, max_history: int = 100): # NEW: Add max_history parameter
+    def __init__(
+        self, budget: int = 128000, max_history: int = 100
+    ):  # NEW: Add max_history parameter
         """
         Initializes the token tracker.
 
@@ -23,7 +25,7 @@ class TokenUsageTracker:
         self.current_usage = 0
         self.usage_history = []  # Stores (timestamp, tokens_used) tuples
         self.persona_token_map = {}  # Stores total tokens used per persona: persona_name: total_tokens
-        self.max_history = max_history # NEW: Store max_history
+        self.max_history = max_history  # NEW: Store max_history
 
         # NEW: Attributes for semantic token weighting
         self.high_value_tokens = 0
@@ -44,7 +46,7 @@ class TokenUsageTracker:
 
         # NEW: Keep only the most recent max_history items
         if len(self.usage_history) > self.max_history:
-            self.usage_history = self.usage_history[-self.max_history:]
+            self.usage_history = self.usage_history[-self.max_history :]
             logger.debug(f"Token usage history truncated to {self.max_history} items.")
 
         # Attribute tokens to persona if provided

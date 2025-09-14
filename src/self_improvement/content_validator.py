@@ -238,7 +238,8 @@ class ContentAlignmentValidator:
 
         # Get top N most frequent words as keywords
         sorted_keywords = sorted(
-            word_counts.items(), key=lambda item: item[1], reverse=True)
+            word_counts.items(), key=lambda item: item[1], reverse=True
+        )
         return [kw[0] for kw in sorted_keywords[:num_keywords]]
 
     def validate(
@@ -410,7 +411,11 @@ class ContentAlignmentValidator:
             ]
             if any(phrase in output_text_lower for phrase in no_content_phrases):
                 nuanced_feedback["is_aligned"] = True
-                return True, "Devils_Advocate correctly reported lack of content to critique.", nuanced_feedback
+                return (
+                    True,
+                    "Devils_Advocate correctly reported lack of content to critique.",
+                    nuanced_feedback,
+                )
 
         if not effective_focus_areas:
             logger.debug(
@@ -439,10 +444,12 @@ class ContentAlignmentValidator:
         # Increased threshold for Self_Improvement_Analyst and Devils_Advocate for stricter alignment
         if (
             persona_name == "Self_Improvement_Analyst"
-            or persona_name.startswith("Devils_Advocate") # Handle _TRUNCATED versions
+            or persona_name.startswith("Devils_Advocate")  # Handle _TRUNCATED versions
         ):
             # FIX: Lowered threshold for Devils_Advocate to account for it critiquing lack of info
-            alignment_threshold = 0.05 if persona_name.startswith("Devils_Advocate") else 0.5 # Very low threshold for Devils_Advocate
+            alignment_threshold = (
+                0.05 if persona_name.startswith("Devils_Advocate") else 0.5
+            )  # Very low threshold for Devils_Advocate
         else:
             alignment_threshold = 0.3  # Default for others
 

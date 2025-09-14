@@ -15,7 +15,10 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import _get_code_snippet
+from src.utils.code_utils import (
+    _get_code_snippet,
+    ComplexityVisitor,
+)  # ADD ComplexityVisitor
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -31,7 +34,7 @@ from src.models import (
 )
 from src.utils.command_executor import execute_command_safely
 from src.utils.path_utils import PROJECT_ROOT
-from src.context.context_analyzer import CodebaseScanner # NEW: Import CodebaseScanner
+from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ class FocusedMetricsCollector:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        codebase_scanner: CodebaseScanner, # NEW: Accept codebase_scanner
+        codebase_scanner: CodebaseScanner,  # NEW: Accept codebase_scanner
     ):
         """
         Initializes the analyst with collected metrics and context.
@@ -75,8 +78,10 @@ class FocusedMetricsCollector:
         self.initial_prompt = initial_prompt
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.codebase_scanner = codebase_scanner # NEW: Store the scanner
-        self.raw_file_contents = self.codebase_scanner.raw_file_contents # NEW: Access raw_file_contents via scanner
+        self.codebase_scanner = codebase_scanner  # NEW: Store the scanner
+        self.raw_file_contents = (
+            self.codebase_scanner.raw_file_contents
+        )  # NEW: Access raw_file_contents via scanner
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
@@ -220,6 +225,7 @@ class FocusedMetricsCollector:
                     ci_config_raw = yaml.safe_load(f) or {}
                 with open(ci_yml_path, "r", encoding="utf-8") as f:
                     ci_content_lines = f.readlines()
+
                     ci_workflow_jobs = {}
 
                     jobs_section = ci_config_raw.get("jobs")
@@ -1214,7 +1220,7 @@ class FocusedMetricsCollector:
         ruff_violations = []
 
         # Define a token limit for code snippets in issues
-        CODE_SNIPPET_TOKEN_LIMIT = 50 # Adjust as needed
+        CODE_SNIPPET_TOKEN_LIMIT = 50  # Adjust as needed
 
         for file_path_str, content in self.raw_file_contents.items():
             if file_path_str.endswith(".py"):

@@ -153,7 +153,9 @@ def test_determine_persona_sequence_with_context_analysis(persona_router_instanc
     # Code_Architect is a default for Software Engineering, but the new logic might remove it if not architectural.
     # For this specific test, the prompt "Check security of the code." is not strongly architectural,
     # so Code_Architect might be removed by _apply_dynamic_adjustment.
-    assert "Code_Architect" not in sequence # Expect it to be removed if not explicitly architectural
+    assert (
+        "Code_Architect" not in sequence
+    )  # Expect it to be removed if not explicitly architectural
 
 
 def test_should_include_test_engineer_self_improvement_domain(persona_router_instance):

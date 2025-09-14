@@ -35,11 +35,14 @@ def execute_command_safely(
         # MODIFIED: Also check if command[0] is already '-m' to prevent double-prepending
         if (
             command
-            and command[0] in ["pytest", "ruff", "bandit"]
-            and not (command[0] == sys.executable and command[1] == "-m")
+            and len(command) > 0
+            and command[0]
+            in ["pytest", "ruff", "bandit"]  # Only prepend for known Python tools
+            and not (
+                command[0] == sys.executable and len(command) > 1 and command[1] == "-m"
+            )  # Avoid double prepending
         ):
-            command.insert(0, "-m")
-            command.insert(0, sys.executable)
+            command = [sys.executable, "-m"] + command  # Prepend for Python tools
             logger.debug(f"Adjusted command to use sys.executable: {command}")
         # Ensure shell=False for security when passing a list of arguments
         logger.info(f"Executing command: {command}")
@@ -47,7 +50,7 @@ def execute_command_safely(
             command,
             capture_output=True,
             text=True,
-            check=False,  # Always set to False here, handle check logic manually below
+            check=check,  # FIX: Pass the 'check' parameter directly to subprocess.run
             shell=False,  # Explicitly set to False for security
             timeout=timeout,
         )
@@ -55,46 +58,34 @@ def execute_command_safely(
         stdout_output = process.stdout.strip()
         stderr_output = process.stderr.strip()
 
-        if return_code != 0:
-            logger.error(
-                f"Command failed with exit code {return_code}: {command}. Stderr: {stderr_output}. Stdout: {stdout_output}"
-            )
-            if check:  # If check was True, re-raise as CalledProcessError
-                raise subprocess.CalledProcessError(
-                    return_code, command, stdout=stdout_output, stderr=stderr_output
-                )
-        else:
-            logger.info(f"Command executed successfully. STDOUT:\n{stdout_output}")
-
     except subprocess.TimeoutExpired as e:
         logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")
-        if check:
-            raise  # Re-raise if check is True
         return_code = 124  # Standard timeout exit code
         stderr_output = f"Command timed out: {e}"
+        if check:
+            raise e  # Re-raise if check is True
     except subprocess.CalledProcessError as e:
-        # This block is now primarily for when check=True was passed to subprocess.run directly,
-        # but we've set check=False above. So this block might not be hit.
-        # However, if it is, we handle it.
+        # This exception is caught here if subprocess.run was called with check=True
+        # and the command failed.
         logger.error(
             f"Command failed with non-zero exit code (check=True): {e.returncode}. Stderr: {e.stderr.strip()}"
         )
-        if check:
-            raise
         return_code = e.returncode
         stdout_output = e.stdout.strip()
         stderr_output = e.stderr.strip()
+        if check:
+            raise e  # Re-raise if check is True
     except FileNotFoundError as e:
         logger.error(f"Command not found: {command[0]}. Error: {e}", exc_info=True)
-        if check:
-            raise
         return_code = 127  # Standard command not found exit code
         stderr_output = f"Command not found: {command[0]}. Error: {e}"
+        if check:
+            raise e  # Re-raise if check is True
     except Exception as e:
         logger.error(f"An error occurred while executing command: {e}", exc_info=True)
-        if check:
-            raise
         return_code = 1  # Generic error
         stderr_output = f"Unexpected error: {e}"
+        if check:
+            raise e  # Re-raise if check is True
 
     return return_code, stdout_output, stderr_output

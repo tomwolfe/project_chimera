@@ -48,12 +48,61 @@ def mock_config_persistence():
                 "max_tokens": 1024,
                 "description": "Identifies flaws.",
             },
+            {  # ADDED
+                "name": "Constructive_Critic",
+                "system_prompt": "Critic",
+                "temperature": 0.15,
+                "max_tokens": 8192,
+                "description": "Provides constructive criticism.",
+            },
+            {  # ADDED
+                "name": "Conflict_Resolution_Manager",
+                "system_prompt": "Mediator",
+                "temperature": 0.1,
+                "max_tokens": 4096,
+                "description": "Manages conflicts.",
+            },
+            {  # ADDED
+                "name": "Devils_Advocate",
+                "system_prompt": "Devils Advocate",
+                "temperature": 0.1,
+                "max_tokens": 4096,
+                "description": "Challenges assumptions.",
+            },
+            {  # ADDED
+                "name": "General_Synthesizer",
+                "system_prompt": "Synthesizer",
+                "temperature": 0.2,
+                "max_tokens": 2048,
+                "description": "Synthesizes information.",
+            },
             {
                 "name": "Impartial_Arbitrator",
                 "system_prompt": "Arbitrator",
                 "temperature": 0.1,
                 "max_tokens": 4096,
                 "description": "Synthesizes outcomes.",
+            },
+            {  # ADDED
+                "name": "Code_Architect",
+                "system_prompt": "Architect",
+                "temperature": 0.4,
+                "max_tokens": 8192,
+                "description": "Analyzes system design.",
+            },
+            {  # ADDED
+                "name": "Security_Auditor",
+                "system_prompt": "Security Auditor",
+                "temperature": 0.2,
+                "max_tokens": 8192,
+                "description": "Identifies security vulnerabilities.",
+            },
+            {  # ADDED
+                "name": "DevOps_Engineer",
+                "system_prompt": "DevOps Engineer",
+                "temperature": 0.3,
+                "max_tokens": 8192,
+                "description": "Focuses on CI/CD and operations.",
             },
             {
                 "name": "Test_Engineer",
@@ -75,12 +124,52 @@ def mock_config_persistence():
                 "Visionary_Generator",
                 "Skeptical_Generator",
                 "Impartial_Arbitrator",
+                "Constructive_Critic",  # ADDED
+                "Conflict_Resolution_Manager",  # ADDED
+                "Devils_Advocate",  # ADDED
+                "General_Synthesizer",  # ADDED
             ],
             "Software Engineering": [
                 "Visionary_Generator",
                 "Skeptical_Generator",
                 "Test_Engineer",
+                "Code_Architect",  # ADDED
+                "Security_Auditor",  # ADDED
+                "DevOps_Engineer",  # ADDED
+                "Constructive_Critic",  # ADDED
+                "Devils_Advocate",  # ADDED
                 "Impartial_Arbitrator",
+            ],
+            "Self-Improvement": [  # ADDED
+                "Self_Improvement_Analyst",
+                "Code_Architect",
+                "Security_Auditor",
+                "DevOps_Engineer",
+                "Test_Engineer",
+                "Constructive_Critic",
+                "Devils_Advocate",
+                "Impartial_Arbitrator",
+            ],
+            "Science": [  # ADDED
+                "Scientific_Visionary",
+                "Scientific_Analyst",
+                "Constructive_Critic",
+                "Devils_Advocate",
+                "General_Synthesizer",
+            ],
+            "Business": [  # ADDED
+                "Business_Innovator",
+                "Business_Strategist",
+                "Constructive_Critic",
+                "Devils_Advocate",
+                "General_Synthesizer",
+            ],
+            "Creative": [  # ADDED
+                "Creative_Visionary",
+                "Creative_Thinker",
+                "Constructive_Critic",
+                "Devils_Advocate",
+                "General_Synthesizer",
             ],
         },
     }
@@ -113,6 +202,14 @@ def mock_settings():
         "Skeptical_Generator": 1024,
         "Impartial_Arbitrator": 4096,
         "Test_Engineer": 4096,
+        "Constructive_Critic": 8192,  # ADDED
+        "Conflict_Resolution_Manager": 4096,  # ADDED
+        "Devils_Advocate": 4096,  # ADDED
+        "General_Synthesizer": 2048,  # ADDED
+        "Code_Architect": 8192,  # ADDED
+        "Security_Auditor": 8192,  # ADDED
+        "DevOps_Engineer": 8192,  # ADDED
+        "SelfImprovementAnalyst": 8192,  # ADDED
     }
     return settings
 
@@ -168,12 +265,18 @@ def persona_manager_for_metrics(
 def test_persona_manager_initialization(persona_manager_instance):
     """Tests that PersonaManager initializes correctly and loads default personas."""
     assert "Visionary_Generator" in persona_manager_instance.all_personas
+    assert (
+        "Constructive_Critic" in persona_manager_instance.all_personas
+    )  # FIX: Assert new personas
     assert "General" in persona_manager_instance.persona_sets
     assert persona_manager_instance.default_persona_set_name == "General"
     # The order of available_domains is sorted alphabetically
-    # FIX: Sort for consistent comparison
     assert sorted(persona_manager_instance.available_domains) == [
+        "Business",  # FIX: Updated expected domains
+        "Creative",
         "General",
+        "Science",
+        "Self-Improvement",
         "Software Engineering",
     ]
     assert persona_manager_instance.persona_router is not None
@@ -184,11 +287,14 @@ def test_persona_manager_initialization(persona_manager_instance):
 def test_get_persona_sequence_for_framework(persona_manager_instance):
     """Tests retrieving a persona sequence for a known framework."""
     sequence = persona_manager_instance.get_persona_sequence_for_framework("General")
-    # FIX: Ensure this matches the mock_config_persistence
     assert sequence == [
         "Visionary_Generator",
         "Skeptical_Generator",
         "Impartial_Arbitrator",
+        "Constructive_Critic",  # FIX: Updated expected sequence
+        "Conflict_Resolution_Manager",  # FIX: Updated expected sequence
+        "Devils_Advocate",  # FIX: Updated expected sequence
+        "General_Synthesizer",  # FIX: Updated expected sequence
     ]
 
     sequence_se = persona_manager_instance.get_persona_sequence_for_framework(
@@ -198,6 +304,11 @@ def test_get_persona_sequence_for_framework(persona_manager_instance):
         "Visionary_Generator",
         "Skeptical_Generator",
         "Test_Engineer",
+        "Code_Architect",  # FIX: Updated expected sequence
+        "Security_Auditor",  # FIX: Updated expected sequence
+        "DevOps_Engineer",  # FIX: Updated expected sequence
+        "Constructive_Critic",  # FIX: Updated expected sequence
+        "Devils_Advocate",  # FIX: Updated expected sequence
         "Impartial_Arbitrator",
     ]
 
@@ -209,11 +320,14 @@ def test_get_persona_sequence_for_unknown_framework_falls_back_to_general(
     sequence = persona_manager_instance.get_persona_sequence_for_framework(
         "UnknownFramework"
     )
-    # FIX: Ensure this matches the fallback to "General" in mock_config_persistence
     assert sequence == [
         "Visionary_Generator",
         "Skeptical_Generator",
         "Impartial_Arbitrator",
+        "Constructive_Critic",  # FIX: Updated expected sequence
+        "Conflict_Resolution_Manager",  # FIX: Updated expected sequence
+        "Devils_Advocate",  # FIX: Updated expected sequence
+        "General_Synthesizer",  # FIX: Updated expected sequence
     ]
 
 
