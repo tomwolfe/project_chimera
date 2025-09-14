@@ -9,8 +9,8 @@ from src.models import (
     GeneralOutput,
     LLMOutput,
     CritiqueOutput,
-    ConflictReport,  # ADD THIS LINE
-    SelfImprovementAnalysisOutputV1,
+    ConflictReport,
+    SelfImprovementAnalysisOutputV1, # Keep this import for the new error handling
     ContextAnalysisOutput,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
@@ -21,6 +21,7 @@ from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError
+from pydantic import ValidationError # Import ValidationError for model_validate
 
 # Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
@@ -195,6 +196,59 @@ class ConflictResolutionManager:
         # NEW: Conflict resolution strategy based on type
         conflict_type = self._detect_conflict_type(debate_history)
         logger.info(f"Detected conflict type: {conflict_type}")
+
+        # Extract the latest ConflictReport if available, especially from Devils_Advocate
+        latest_conflict_report = None
+        for turn in reversed(debate_history):
+            if turn["persona"] == "Devils_Advocate" and isinstance(turn["output"], dict):
+                try:
+                    latest_conflict_report = ConflictReport.model_validate(turn["output"])
+                    break
+                except ValidationError:
+                    continue
+
+        # --- START NEW LOGIC FOR MISSING CODEBASE CONTEXT ---
+        if latest_conflict_report and (
+            "lack of information" in latest_conflict_report.summary.lower()
+            or "no codebase context" in latest_conflict_report.summary.lower()
+        ):
+            logger.warning("ConflictResolutionManager: Detected conflict due to missing codebase context.")
+            # Construct a SelfImprovementAnalysisOutputV1 compliant response
+            resolved_output_data = SelfImprovementAnalysisOutputV1(
+                ANALYSIS_SUMMARY="Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
+                IMPACTFUL_SUGGESTIONS=[
+                    SuggestionItem(
+                        AREA="Maintainability",
+                        PROBLEM="Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase.",
+                        PROPOSED_SOLUTION="Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
+                        EXPECTED_IMPACT="Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                        CODE_CHANGES_SUGGESTED=[
+                            {
+                                "FILE_PATH": "docs/project_chimera_context.md",
+                                "ACTION": "CREATE",
+                                "FULL_CONTENT": "# Project Chimera Codebase Context\n\nThis document outlines the codebase structure and key files required for AI analysis. Please populate this file with relevant information."
+                            }
+                        ]
+                    )
+                ],
+                malformed_blocks=[
+                    {
+                        "type": "CODEBASE_ACCESS_REQUIRED",
+                        "message": "Analysis requires codebase access.",
+                    }
+                ],
+            ).model_dump(by_alias=True) # Ensure it's a dict
+
+            return {
+                "resolution_strategy": "missing_codebase_context",
+                "resolved_output": resolved_output_data,
+                "resolution_summary": "Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
+                "malformed_blocks": [
+                    {"type": "CODEBASE_ACCESS_REQUIRED", "message": "Analysis requires codebase access."}
+                ],
+            }
+        # --- END NEW LOGIC FOR MISSING CODEBASE CONTEXT ---
+
 
         if conflict_type == "SECURITY_VS_ARCHITECTURE":
             logger.info(
