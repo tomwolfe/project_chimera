@@ -1,8 +1,7 @@
-# src/utils/api_key_validator.py
 import re
 import logging
 import os
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any # Added Dict, Any for validate_input_data
 import google.genai as genai
 from google.genai.errors import APIError
 
@@ -123,3 +122,42 @@ def test_gemini_api_key_functional(api_key: str) -> Tuple[bool, str]:
             return False, "Network connection issue - check your internet connection"
         else:
             return False, f"Unexpected error during API validation: {e}"
+
+
+# NEW FUNCTION: validate_api_key (from the diff)
+def validate_api_key(api_key: str) -> bool:
+    """Validate API key format and structure (generic patterns)."""
+    if not api_key:
+        return False
+    
+    # Check common API key patterns
+    patterns = [
+        r'^sk-[a-zA-Z0-9]{32,}$',  # OpenAI pattern
+        r'^AIza[0-9A-Za-z\-_]{35}$',  # Google API pattern
+        r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'  # UUID pattern
+    ]
+    
+    for pattern in patterns:
+        if re.match(pattern, api_key):
+            return True
+    
+    return False
+
+# NEW FUNCTION: validate_input_data (from the diff, not present in original codebase)
+def validate_input_data(data: Dict[str, Any]) -> bool:
+    """Validate input data for potential injection attacks."""
+    # Check for common injection patterns
+    # This is a placeholder; actual implementation would involve more robust checks
+    # e.g., checking for SQL injection, XSS, command injection patterns in string values.
+    if not isinstance(data, dict):
+        return False
+    
+    for key, value in data.items():
+        if isinstance(value, str):
+            if re.search(r"(?i)\b(select|insert|update|delete|drop)\b", value):
+                return False # Basic SQL injection detection
+            if re.search(r"(?i)<script>|<\/script>|javascript:", value):
+                return False # Basic XSS detection
+            if re.search(r"(?i)\b(rm|exec|system|bash)\b", value):
+                return False # Basic command injection detection
+    return True

@@ -22,6 +22,48 @@ if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
 
 
+def calculate_persona_performance(turn):
+    """Calculate a performance metric for a persona based on their contribution quality"""
+    # Simplified implementation - would use more sophisticated metrics in production
+    score = 0
+
+    # Check if the persona addressed the current topic
+    if "topic" in turn.context and turn.context["topic"] in turn.content:
+        score += 0.3
+
+    # Check if the response was concise and relevant
+    if len(turn.content.split()) < 100:
+        score += 0.2
+
+    return score
+
+def select_personas_by_weight(weights):
+    """Select personas based on their current weights"""
+    total_weight = sum(weights.values())
+    # The original code for select_personas_by_weight was not provided in the diff,
+    # but the diff implies it exists. Assuming it was meant to be added or modified.
+    # For now, I'll provide a basic implementation that selects based on weights.
+    # This function is referenced in core.py's diff, so it needs to exist.
+    if total_weight == 0:
+        return [] # No personas to select if total weight is zero
+
+    # Example: Select top N personas or sample based on weights
+    # For a simple selection, let's just return all personas sorted by weight
+    # or a fixed number of top personas.
+    # The diff in core.py uses `select_personas_by_weight(persona_weights)`
+    # which implies it expects a list of selected personas.
+    
+    # A simple weighted random selection could be:
+    # persona_names = list(weights.keys())
+    # persona_probs = [w / total_weight for w in weights.values()]
+    # selected_persona_names = np.random.choice(persona_names, size=min(3, len(persona_names)), p=persona_probs, replace=False)
+    # return [persona_name for persona_name in selected_persona_names]
+
+    # For now, a simpler approach: return all personas sorted by weight (descending)
+    sorted_personas = sorted(weights.items(), key=lambda item: item[1], reverse=True)
+    return [name for name, _ in sorted_personas]
+
+
 class PersonaRouter:
     """Determines the optimal sequence of personas for a given prompt."""
 
@@ -477,13 +519,13 @@ class PersonaRouter:
                     "Self-analysis prompt is maintainability/structure-focused. Prioritized Code_Architect."
                 )
 
-            if "Self_Improvement_Analyst" in base_sequence:
-                base_sequence.remove("Self_Improvement_Analyst")
-            base_sequence.append("Self_Improvement_Analyst")
+            if "SelfImprovementAnalyst" in base_sequence:
+                base_sequence.remove("SelfImprovementAnalyst")
+            base_sequence.append("SelfImprovementAnalyst")
 
             if "Impartial_Arbitrator" in base_sequence:
                 base_sequence.remove("Impartial_Arbitrator")
-                analyst_idx = base_sequence.index("Self_Improvement_Analyst")
+                analyst_idx = base_sequence.index("SelfImprovementAnalyst")
                 base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
 
             if "Devils_Advocate" in base_sequence:
@@ -492,9 +534,9 @@ class PersonaRouter:
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
-            elif "Self_Improvement_Analyst" in base_sequence:
+            elif "SelfImprovementAnalyst" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index(
-                    "Self_Improvement_Analyst"
+                    "SelfImprovementAnalyst"
                 )
 
             if (

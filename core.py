@@ -15,7 +15,8 @@ import gc  # NEW: Import garbage collector for explicit memory management
 
 # --- IMPORT MODIFICATIONS ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer
-from src.persona.routing import PersonaRouter
+# MODIFIED: Added calculate_persona_performance and select_personas_by_weight
+from src.persona.routing import PersonaRouter, calculate_persona_performance, select_personas_by_weight 
 from src.utils.output_parser import LLMOutputParser
 from src.models import (
     PersonaConfig,
