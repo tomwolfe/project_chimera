@@ -33,7 +33,7 @@ from src.exceptions import (
     LLMUnexpectedError,
     TokenBudgetExceededError,
     CircuitBreakerError,
-    SchemaValidationError, # NEW: Import SchemaValidationError
+    SchemaValidationError,
 )
 
 # --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
@@ -69,7 +69,7 @@ import os
 from src.utils.output_parser import LLMOutputParser
 
 # NEW IMPORT: For PromptOptimizer
-from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
+from src.utils.prompt_optimizer import PromptOptimizer
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
@@ -81,8 +81,6 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiProvider:
-    # REMOVED: MAX_RETRIES, INITIAL_BACKOFF_SECONDS, BACKOFF_FACTOR, RETRYABLE_ERROR_CODES, RETRYABLE_HTTP_CODES, RETRYABLE_LLM_EXCEPTIONS
-
     def __init__(
         self,
         api_key: str,
@@ -93,7 +91,6 @@ class GeminiProvider:
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
         settings: Optional[Any] = None,
-        # NEW: Add summarizer_pipeline_instance to init
         summarizer_pipeline_instance: Any = None,
     ):
         self.model_name = model_name
@@ -103,10 +100,9 @@ class GeminiProvider:
         self._log_extra = {"request_id": self.request_id or "N/A"}
         self.output_parser = LLMOutputParser()
         self.settings = settings or ChimeraSettings()
-        self.summarizer_pipeline_instance = summarizer_pipeline_instance # NEW: Store the instance
+        self.summarizer_pipeline_instance = summarizer_pipeline_instance
 
         try:
-            # Prioritize API key from fetch_api_key, which handles secrets manager and env var fallback
             resolved_api_key = api_key or fetch_api_key()
             if not resolved_api_key:
                 logger.critical(
@@ -117,7 +113,6 @@ class GeminiProvider:
 
             self._api_key = resolved_api_key
 
-            # Validate API key format and functionality early
             is_valid_format, format_message = validate_gemini_api_key_format(
                 self._api_key
             )
@@ -174,7 +169,6 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        # NEW: Initialize PromptOptimizer here
         if self.summarizer_pipeline_instance:
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
@@ -185,15 +179,11 @@ class GeminiProvider:
             logger.warning(
                 "Summarizer pipeline instance not provided to GeminiProvider. PromptOptimizer will be limited."
             )
-            # Fallback to a PromptOptimizer that only uses truncation if summarizer is not available
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=None, # Explicitly pass None
+                summarizer_pipeline=None,
             )
-
-        # The max_retries and max_backoff_seconds from settings will be used by the @retry decorator implicitly.
-        # No need to store them as instance variables for the custom retry logic anymore.
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -237,12 +227,11 @@ class GeminiProvider:
     def _get_pricing_model_name(self) -> str:
         model_spec = self.get_model_specification(self.model_name)
         if model_spec:
-            # Map to pricing model names if they differ from actual model names
             if "flash" in model_spec.name:
                 return "gemini-1.5-flash"
             if "pro" in model_spec.name:
                 return "gemini-1.5-pro"
-        return "gemini-1.5-flash"  # Fallback
+        return "gemini-1.5-flash"
 
     def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
         pricing_model = self._get_pricing_model_name()
@@ -258,34 +247,49 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    # REMOVED: The entire _generate_with_retry method is removed.
+    # Add these methods to the GeminiProvider class
+    def _adjust_prompt_for_schema_validation(self, prompt: str, output_schema: Type[BaseModel]) -> str:
+        # Add more specific instructions about the required schema
+        schema_info = self._get_schema_info(output_schema)
+        new_prompt = (
+            f"{prompt}\n\n"
+            "CRITICAL: Your output MUST strictly adhere to the following JSON schema:\n"
+            f"{schema_info}\n"
+            "DO NOT include any conversational text or markdown fences outside the JSON. "
+            "Focus solely on providing a correct, valid JSON response."
+        )
+        return new_prompt
+
+    def _get_schema_info(self, output_schema: Type[BaseModel]) -> str:
+        # Convert the schema to a string representation
+        schema = output_schema.model_json_schema()
+        return json.dumps(schema, indent=2)
 
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
-        failure_threshold=3,
+        failure_threshold=5, # Changed from 3 to 5
         recovery_timeout=60,
         expected_exception=(
             APIError,
             CircuitBreakerError,
-            SchemaValidationError,
             LLMUnexpectedError,
             GeminiAPIError,
-            RetryError,  # NEW: Add RetryError to expected exceptions for CircuitBreaker
-            RateLimitExceededError,  # NEW: Add RateLimitExceededError
+            RetryError,
+            RateLimitExceededError,
         ),
     )
     @retry(
         wait=wait_exponential(
             multiplier=1, min=4, max=60
-        ),  # Use settings for max_backoff_seconds if desired, or keep fixed
+        ),
         stop=stop_after_attempt(
             5
-        ),  # Use settings.max_retries if desired, or keep fixed
-        reraise=True,  # Ensure RetryError is raised after max attempts
+        ),
+        reraise=True,
         retry=(
             retry_if_exception_type(APIError)
-            | retry_if_exception_type(SchemaValidationError) # NEW: Add SchemaValidationError to retry exceptions
-            | retry_if_exception_type(socket.gaierror)  # For network issues
+            | retry_if_exception_type(socket.gaierror)
+            # SchemaValidationError is now handled by the internal retry loop
         ),
     )
     def generate(
@@ -304,7 +308,6 @@ class GeminiProvider:
         """
         final_model_to_use = requested_model_name
 
-        # Get max_output_tokens from ModelRegistry for the current model
         current_model_spec = self.get_model_specification(
             final_model_to_use or self.model_name
         )
@@ -352,180 +355,177 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
-        # --- Core API Call Logic (moved from _generate_with_retry and adapted for tenacity) ---
-        try:
-            # Optimize prompt before sending to LLM
-            # Ensure persona_config is not None before accessing its name
-            persona_name_for_optimization = persona_config.name if persona_config else "Unknown"
-            optimized_prompt = self.prompt_optimizer.optimize_prompt(
-                prompt, persona_name_for_optimization, max_tokens
-            )
+        max_schema_retries = 3
+        current_prompt_for_llm = prompt
 
-            prompt_with_system = (
-                f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt
-            )
-            input_tokens = self.tokenizer.count_tokens(prompt_with_system)
-
-            self._log_with_context(
-                "debug",
-                "LLM Prompt Snippet",
-                model=current_model_name,
-                input_tokens=input_tokens,
-                prompt_snippet=prompt_with_system[:500] + "..."
-                if len(prompt_with_system) > 500
-                else prompt_with_system,
-            )
-            self._log_with_context(
-                "info",
-                "LLM Prompt Sent",
-                model=current_model_name,
-                temperature=config.temperature,
-                max_output_tokens=config.max_output_tokens,
-                full_system_prompt=system_prompt,
-                full_user_prompt=optimized_prompt, # Log optimized prompt
-                input_tokens=input_tokens,
-            )
-
-            response = self.client.models.generate_content(
-                model=current_model_name, contents=optimized_prompt, config=config # Use optimized_prompt here
-            )
-
-            # --- START Fix Malformed Response Handling ---
-            if not response.candidates:
-                raise LLMUnexpectedError(
-                    "No candidates in response", details={"response": response}
+        for i in range(max_schema_retries):
+            try:
+                persona_name_for_optimization = persona_config.name if persona_config else "Unknown"
+                optimized_prompt = self.prompt_optimizer.optimize_prompt(
+                    current_prompt_for_llm, persona_name_for_optimization, max_tokens
                 )
 
-            if not response.candidates[0].content.parts:
-                raise LLMUnexpectedError(
-                    "No content parts in response", details={"response": response}
+                prompt_with_system = (
+                    f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt
                 )
-            # --- END Fix Malformed Response Handling ---
+                input_tokens = self.tokenizer.count_tokens(prompt_with_system)
 
-            generated_text = response.candidates[0].content.parts[0].text
+                self._log_with_context(
+                    "debug",
+                    "LLM Prompt Snippet",
+                    model=current_model_name,
+                    input_tokens=input_tokens,
+                    prompt_snippet=prompt_with_system[:500] + "..."
+                    if len(prompt_with_system) > 500
+                    else prompt_with_system,
+                )
+                self._log_with_context(
+                    "info",
+                    "LLM Prompt Sent",
+                    model=current_model_name,
+                    temperature=config.temperature,
+                    max_output_tokens=config.max_output_tokens,
+                    full_system_prompt=system_prompt,
+                    full_user_prompt=optimized_prompt,
+                    input_tokens=input_tokens,
+                )
 
-            # NEW: Enforce schema compliance if a schema is provided
-            if output_schema:
-                try:
-                    cleaned_generated_text = self.output_parser._clean_llm_output(
-                        generated_text
+                response = self.client.models.generate_content(
+                    model=current_model_name, contents=optimized_prompt, config=config
+                )
+
+                if not response.candidates:
+                    raise LLMUnexpectedError(
+                        "No candidates in response", details={"response": response}
                     )
-                    # Attempt to parse the LLM output into the Pydantic model
-                    if hasattr(output_schema, "model_validate_json"):
-                        output_schema.model_validate_json(cleaned_generated_text)
-                    else:
-                        output_schema.parse_raw(cleaned_generated_text)
-                except ValidationError as ve:
-                    error_msg = f"LLM output failed schema validation: {ve}"
-                    self._log_with_context(
-                        "warning", error_msg, llm_output_snippet=generated_text[:200]
+
+                if not response.candidates[0].content.parts:
+                    raise LLMUnexpectedError(
+                        "No content parts in response", details={"response": response}
                     )
-                    # Raise SchemaValidationError directly to trigger tenacity's retry mechanism
-                    raise SchemaValidationError(
-                        error_type="EARLY_SCHEMA_VALIDATION_FAILED",
-                        field_path="LLM_OUTPUT",
-                        invalid_value=generated_text[:500],
-                        original_exception=ve,
-                    )
-            # --- END NEW: Enforce schema compliance ---
 
-            output_tokens = self.tokenizer.count_tokens(generated_text)
-            # MODIFIED: Calculate is_truncated based on actual output tokens vs max_output_tokens
-            is_truncated = output_tokens >= config.max_output_tokens * 0.95
-            self._log_with_context(
-                "debug",
-                f"Generated response (model: {current_model_name}, input: {input_tokens}, output: {output_tokens} tokens)",
-            )
+                generated_text = response.candidates[0].content.parts[0].text
 
-            self._log_with_context(
-                "debug",
-                "LLM Response Snippet",
-                model=current_model_name,
-                output_tokens=output_tokens,
-                generated_text_snippet=generated_text[:500] + "..."
-                if len(generated_text) > 500
-                else generated_text,
-            )
-            self._log_with_context(
-                "info",
-                "LLM Response Received",
-                model=current_model_name,
-                output_tokens=output_tokens,
-                full_generated_text=generated_text,
-            )
+                if output_schema:
+                    try:
+                        cleaned_generated_text = self.output_parser._clean_llm_output(
+                            generated_text
+                        )
+                        if hasattr(output_schema, "model_validate_json"):
+                            output_schema.model_validate_json(cleaned_generated_text)
+                        else:
+                            output_schema.parse_raw(cleaned_generated_text)
+                    except ValidationError as ve:
+                        error_msg = f"LLM output failed schema validation: {ve}"
+                        self._log_with_context(
+                            "warning", error_msg, llm_output_snippet=generated_text[:200]
+                        )
+                        raise SchemaValidationError(
+                            error_type="EARLY_SCHEMA_VALIDATION_FAILED",
+                            field_path="LLM_OUTPUT",
+                            invalid_value=generated_text[:500],
+                            original_exception=ve,
+                        )
 
-            return generated_text, input_tokens, output_tokens, is_truncated
+                output_tokens = self.tokenizer.count_tokens(generated_text)
+                is_truncated = output_tokens >= config.max_output_tokens * 0.95
+                self._log_with_context(
+                    "debug",
+                    f"Generated response (model: {current_model_name}, input: {input_tokens}, output: {output_tokens} tokens)",
+                )
 
-        except APIError as e:
-            error_msg = str(e)
-            error_msg_lower = error_msg.lower()
-            # Ensure response_json is always a dictionary
-            response_json = (
-                e.response_json
-                if isinstance(e.response_json, dict)
-                else {
-                    "error": {
-                        "code": e.code,
-                        "message": error_msg,
-                        "raw_response": str(e.response_json)
-                        if e.response_json is not None
-                        else None,
+                self._log_with_context(
+                    "debug",
+                    "LLM Response Snippet",
+                    model=current_model_name,
+                    output_tokens=output_tokens,
+                    generated_text_snippet=generated_text[:500] + "..."
+                    if len(generated_text) > 500
+                    else generated_text,
+                )
+                self._log_with_context(
+                    "info",
+                    "LLM Response Received",
+                    model=current_model_name,
+                    output_tokens=output_tokens,
+                    full_generated_text=generated_text,
+                )
+
+                return generated_text, input_tokens, output_tokens, is_truncated
+
+            except SchemaValidationError as e:
+                if i < max_schema_retries - 1:
+                    current_prompt_for_llm = self._adjust_prompt_for_schema_validation(current_prompt_for_llm, output_schema)
+                    continue
+                else:
+                    raise e
+            except APIError as e:
+                error_msg = str(e)
+                error_msg_lower = error_msg.lower()
+                response_json = (
+                    e.response_json
+                    if isinstance(e.response_json, dict)
+                    else {
+                        "error": {
+                            "code": e.code,
+                            "message": error_msg,
+                            "raw_response": str(e.response_json)
+                            if e.response_json is not None
+                            else None,
+                        }
                     }
-                }
-            )
+                )
 
-            if e.code == 401:
-                raise GeminiAPIError(
-                    f"Invalid API Key: {error_msg}",
-                    code=e.code,
-                    response_details=response_json,
-                    original_exception=e,
-                ) from e
-            elif e.code == 403:
-                raise GeminiAPIError(
-                    f"API Key lacks permissions: {error_msg}",
-                    code=e.code,
-                    response_details=response_json,
-                    original_exception=e,
-                ) from e
-            elif e.code == 429:
-                # Raise RateLimitExceededError to be caught by CircuitBreaker and potentially app.py
-                raise RateLimitExceededError(
-                    f"Rate limit exceeded: {error_msg}", original_exception=e
-                ) from e
-            elif e.code == 400 and (
-                "context window exceeded" in error_msg_lower
-                or "prompt too large" in error_msg_lower
-            ):
-                raise LLMUnexpectedError(
-                    f"LLM context window exceeded: {error_msg}", original_exception=e
-                ) from e
-            elif e.code == 400 and (
-                "invalid json" in error_msg_lower
-                or "invalid json format" in error_msg_lower
-                or "invalid response format" in error_msg_lower
-            ):
-                # Treat as SchemaValidationError to trigger tenacity retry
-                raise SchemaValidationError(
-                    error_type="API_INVALID_JSON",
-                    field_path="LLM_OUTPUT",
-                    invalid_value=error_msg[:500],
-                    original_exception=e,
-                ) from e
-            else:  # Non-retryable APIError not specifically handled
+                if e.code == 401:
+                    raise GeminiAPIError(
+                        f"Invalid API Key: {error_msg}",
+                        code=e.code,
+                        response_details=response_json,
+                        original_exception=e,
+                    ) from e
+                elif e.code == 403:
+                    raise GeminiAPIError(
+                        f"API Key lacks permissions: {error_msg}",
+                        code=e.code,
+                        response_details=response_json,
+                        original_exception=e,
+                    ) from e
+                elif e.code == 429:
+                    raise RateLimitExceededError(
+                        f"Rate limit exceeded: {error_msg}", original_exception=e
+                    ) from e
+                elif e.code == 400 and (
+                    "context window exceeded" in error_msg_lower
+                    or "prompt too large" in error_msg_lower
+                ):
+                    raise LLMUnexpectedError(
+                        f"LLM context window exceeded: {error_msg}", original_exception=e
+                    ) from e
+                elif e.code == 400 and (
+                    "invalid json" in error_msg_lower
+                    or "invalid json format" in error_msg_lower
+                    or "invalid response format" in error_msg_lower
+                ):
+                    # Treat as SchemaValidationError to trigger tenacity retry
+                    raise SchemaValidationError(
+                        error_type="API_INVALID_JSON",
+                        field_path="LLM_OUTPUT",
+                        invalid_value=error_msg[:500],
+                        original_exception=e,
+                    ) from e
+                else:
+                    raise LLMProviderError(error_msg, original_exception=e) from e
+            except socket.gaierror as e:
+                raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
+            except Exception as e:
+                error_msg = str(e)
+                if (
+                    "context window exceeded" in error_msg.lower()
+                    or "prompt too large" in error_msg.lower()
+                ):
+                    raise LLMUnexpectedError(
+                        f"LLM context window exceeded: {error_msg}", original_exception=e
+                    ) from e
                 raise LLMProviderError(error_msg, original_exception=e) from e
-        except socket.gaierror as e:
-            # Network errors are retryable by tenacity
-            raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
-        except Exception as e:
-            error_msg = str(e)
-            # Check for generic context window exceeded if not caught by APIError 400
-            if (
-                "context window exceeded" in error_msg.lower()
-                or "prompt too large" in error_msg.lower()
-            ):
-                raise LLMUnexpectedError(
-                    f"LLM context window exceeded: {error_msg}", original_exception=e
-                ) from e
-            # For other unexpected exceptions, raise LLMProviderError
-            raise LLMProviderError(error_msg, original_exception=e) from e
+        
+        raise LLMProviderError("Failed to generate valid response after all schema retries.")

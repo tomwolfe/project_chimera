@@ -24,7 +24,7 @@ class CircuitBreaker:
 
     def __init__(
         self,
-        failure_threshold=5,
+        failure_threshold=5,  # Changed from 3 to 5 as per suggestion
         recovery_timeout=60,
         expected_exception: Tuple[Type[Exception], ...] = (Exception,),
     ):
@@ -51,7 +51,7 @@ class CircuitBreaker:
                 )
                 return True  # Allow one attempt in HALF-OPEN
             return False
-        return self.state == "HALF_OPEN"  # Allow one attempt in HALF-OPEN
+        return self.state == "HALF_OPEN"  # Allow one attempt in HALF_OPEN
 
     def record_failure(self):
         """Record a failure and potentially open the circuit."""
