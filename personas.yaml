@@ -48,7 +48,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -107,7 +107,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
     temperature: 0.1
@@ -142,7 +142,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **Output a `ConflictReport` JSON object.**
     temperature: 0.1 # Lower temperature for stricter adherence
@@ -171,7 +171,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
@@ -231,7 +231,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
@@ -302,7 +302,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -350,7 +350,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -404,7 +404,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **JSON Schema for CritiqueOutput:**
       ```json
@@ -450,7 +450,7 @@ personas:
       +    print("new")
       +    print("added")
       ```
-      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+      **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed (as strings). `FULL_CONTENT` and `DIFF_CONTENT` MUST be null. If the `ACTION` is not "REMOVE", the `LINES` field MUST be omitted or set to null.
 
       **JSON Schema for CritiqueOutput:**
       ```json

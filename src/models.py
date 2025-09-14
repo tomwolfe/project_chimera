@@ -210,7 +210,12 @@ class CodeChange(BaseModel):
         ..., alias="ACTION"
     )
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
-    lines: List[str] = Field(default_factory=list, alias="LINES")
+    # MODIFIED: Allow 'lines' to be Optional[List[str]] to accept 'null' from LLM
+    lines: Optional[List[str]] = Field(
+        None,
+        alias="LINES",
+        description="List of line numbers or content for REMOVE action",
+    )
     diff_content: Optional[str] = Field(
         None,
         alias="DIFF_CONTENT",
@@ -283,9 +288,16 @@ class CodeChange(BaseModel):
                     f"Either FULL_CONTENT or DIFF_CONTENT is required for action 'MODIFY' on file '{self.file_path}'."
                 )
         elif self.action == "REMOVE":
+            # MODIFIED: Ensure self.lines is a non-empty list of strings for REMOVE action
             if not isinstance(self.lines, list) or not self.lines:
                 raise ValueError(
                     f"LINES must be a non-empty list for action 'REMOVE' on file '{self.file_path}'."
+                )
+            if not all(
+                isinstance(x, str) for x in self.lines
+            ):  # NEW: Explicitly check for string type
+                raise ValueError(
+                    f"LINES must contain only strings for action 'REMOVE' on file '{self.file_path}'."
                 )
             if self.full_content is not None or self.diff_content is not None:
                 raise ValueError(

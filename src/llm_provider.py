@@ -36,6 +36,17 @@ from src.exceptions import (
     SchemaValidationError,
 )
 
+# --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    RetryError,
+    retry_if_exception_type,
+)
+from src.middleware.rate_limiter import RateLimitExceededError
+# --- END NEW IMPORTS ---
+
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
 from src.resilience.circuit_breaker import CircuitBreaker
 # --- END NEW IMPORT ---
@@ -68,15 +79,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiProvider:
-    MAX_RETRIES = 10
-    INITIAL_BACKOFF_SECONDS = 1
-    BACKOFF_FACTOR = 2
-    # MAX_BACKOFF_SECONDS = 60 # REMOVED: Will be set from settings - MODIFIED LINE
-
-    RETRYABLE_ERROR_CODES = {429, 500, 502, 503, 504}
-    RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
-    # NEW: Add SchemaValidationError to retryable exceptions for internal retry logic
-    RETRYABLE_LLM_EXCEPTIONS = (SchemaValidationError,)
+    # REMOVED: MAX_RETRIES, INITIAL_BACKOFF_SECONDS, BACKOFF_FACTOR, RETRYABLE_ERROR_CODES, RETRYABLE_HTTP_CODES, RETRYABLE_LLM_EXCEPTIONS
 
     def __init__(
         self,
@@ -166,14 +169,8 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        self.MAX_RETRIES = (
-            max_retries if max_retries is not None else self.settings.max_retries
-        )
-        self.MAX_BACKOFF_SECONDS = (
-            max_backoff_seconds
-            if max_backoff_seconds is not None
-            else self.settings.max_backoff_seconds
-        )
+        # The max_retries and max_backoff_seconds from settings will be used by the @retry decorator implicitly.
+        # No need to store them as instance variables for the custom retry logic anymore.
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -238,6 +235,8 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
+    # REMOVED: The entire _generate_with_retry method is removed.
+
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
         failure_threshold=3,
@@ -248,6 +247,22 @@ class GeminiProvider:
             SchemaValidationError,
             LLMUnexpectedError,
             GeminiAPIError,
+            RetryError,  # NEW: Add RetryError to expected exceptions for CircuitBreaker
+            RateLimitExceededError,  # NEW: Add RateLimitExceededError
+        ),
+    )
+    @retry(
+        wait=wait_exponential(
+            multiplier=1, min=4, max=60
+        ),  # Use settings for max_backoff_seconds if desired, or keep fixed
+        stop=stop_after_attempt(
+            5
+        ),  # Use settings.max_retries if desired, or keep fixed
+        reraise=True,  # Ensure RetryError is raised after max attempts
+        retry=(
+            retry_if_exception_type(APIError)
+            | retry_if_exception_type(SchemaValidationError)
+            | retry_if_exception_type(socket.gaierror)  # For network issues
         ),
     )
     def generate(
@@ -257,14 +272,13 @@ class GeminiProvider:
         output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: int = 100,
-        persona_config: Any = None,  # Changed to Any to avoid circular import with PersonaConfig
+        persona_config: Any = None,
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
     ) -> tuple[str, int, int, bool]:
         """
-        Generates content using the Gemini API, protected by a circuit breaker.
+        Generates content using the Gemini API, protected by a circuit breaker and tenacity retries.
         """
-
         final_model_to_use = requested_model_name
 
         # Get max_output_tokens from ModelRegistry for the current model
@@ -315,311 +329,173 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
-        generated_text, input_tokens, output_tokens, is_truncated = (
-            self._generate_with_retry(
-                prompt, system_prompt, config, current_model_name, output_schema
+        # --- Core API Call Logic (moved from _generate_with_retry and adapted for tenacity) ---
+        try:
+            prompt_with_system = (
+                f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
             )
-        )
+            input_tokens = self.tokenizer.count_tokens(prompt_with_system)
 
-        # NEW: Enforce schema compliance if a schema is provided
-        if output_schema:
-            try:
-                cleaned_generated_text = self.output_parser._clean_llm_output(
-                    generated_text
-                )
-                # Attempt to parse the LLM output into the Pydantic model
-                # Use model_validate_json for Pydantic v2, parse_raw for v1
-                if hasattr(output_schema, "model_validate_json"):
-                    output_schema.model_validate_json(cleaned_generated_text)
-                else:
-                    output_schema.parse_raw(cleaned_generated_text)
-            except ValidationError as ve:
-                error_msg = f"LLM output failed schema validation: {ve}"
-                self._log_with_context(
-                    "warning", error_msg, llm_output_snippet=generated_text[:200]
-                )
-                # Raise SchemaValidationError directly to trigger core.py's retry mechanism
-                raise SchemaValidationError(
-                    error_type="SCHEMA_VALIDATION_FAILED",
-                    field_path="LLM_OUTPUT",
-                    invalid_value=generated_text[:500],
-                    original_exception=ve,
-                )
-        return generated_text, input_tokens, output_tokens, is_truncated
+            self._log_with_context(
+                "debug",
+                "LLM Prompt Snippet",
+                model=current_model_name,
+                input_tokens=input_tokens,
+                prompt_snippet=prompt_with_system[:500] + "..."
+                if len(prompt_with_system) > 500
+                else prompt_with_system,
+            )
+            self._log_with_context(
+                "info",
+                "LLM Prompt Sent",
+                model=current_model_name,
+                temperature=config.temperature,
+                max_output_tokens=config.max_output_tokens,
+                full_system_prompt=system_prompt,
+                full_user_prompt=prompt,
+                input_tokens=input_tokens,
+            )
 
-    def _generate_with_retry(
-        self,
-        prompt: str,
-        system_prompt: str,
-        config: types.GenerateContentConfig,
-        model_name_to_use: str = None,
-        output_schema: Optional[Type[BaseModel]] = None,
-    ) -> tuple[str, int, int, bool]:
-        """Internal method to handle retries for API calls, called by the circuit breaker."""
-        last_exception = (
-            None  # NEW: Initialize last_exception to capture the last error
-        )
-        for attempt in range(1, self.MAX_RETRIES + 1):
-            should_retry = False
-            error_msg = ""
-            e = None  # Initialize e to None for consistent scope within the loop
-            error_details = {}
-            try:
-                prompt_with_system = (
-                    f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-                )
-                input_tokens = self.tokenizer.count_tokens(prompt_with_system)
+            response = self.client.models.generate_content(
+                model=current_model_name, contents=prompt, config=config
+            )
 
-                self._log_with_context(
-                    "debug",
-                    "LLM Prompt Snippet",
-                    model=model_name_to_use or self.model_name,
-                    input_tokens=input_tokens,
-                    prompt_snippet=prompt_with_system[:500] + "..."
-                    if len(prompt_with_system) > 500
-                    else prompt_with_system,
-                )
-                self._log_with_context(
-                    "info",
-                    "LLM Prompt Sent",
-                    model=model_name_to_use or self.model_name,
-                    temperature=config.temperature,
-                    max_output_tokens=config.max_output_tokens,
-                    full_system_prompt=system_prompt,
-                    full_user_prompt=prompt,
-                    input_tokens=input_tokens,
+            # --- START Fix Malformed Response Handling ---
+            if not response.candidates:
+                raise LLMUnexpectedError(
+                    "No candidates in response", details={"response": response}
                 )
 
-                response = self.client.models.generate_content(
-                    model=model_name_to_use or self.model_name,
-                    contents=prompt,
-                    config=config,
+            if not response.candidates[0].content.parts:
+                raise LLMUnexpectedError(
+                    "No content parts in response", details={"response": response}
                 )
+            # --- END Fix Malformed Response Handling ---
 
-                # --- START Fix Malformed Response Handling ---
-                if not response.candidates:
-                    raise LLMUnexpectedError(
-                        "No candidates in response", details={"response": response}
+            generated_text = response.candidates[0].content.parts[0].text
+
+            # NEW: Enforce schema compliance if a schema is provided
+            if output_schema:
+                try:
+                    cleaned_generated_text = self.output_parser._clean_llm_output(
+                        generated_text
                     )
-
-                if not response.candidates[0].content.parts:
-                    raise LLMUnexpectedError(
-                        "No content parts in response", details={"response": response}
+                    # Attempt to parse the LLM output into the Pydantic model
+                    if hasattr(output_schema, "model_validate_json"):
+                        output_schema.model_validate_json(cleaned_generated_text)
+                    else:
+                        output_schema.parse_raw(cleaned_generated_text)
+                except ValidationError as ve:
+                    error_msg = f"LLM output failed schema validation: {ve}"
+                    self._log_with_context(
+                        "warning", error_msg, llm_output_snippet=generated_text[:200]
                     )
-                # --- END Fix Malformed Response Handling ---
+                    # Raise SchemaValidationError directly to trigger tenacity's retry mechanism
+                    raise SchemaValidationError(
+                        error_type="EARLY_SCHEMA_VALIDATION_FAILED",
+                        field_path="LLM_OUTPUT",
+                        invalid_value=generated_text[:500],
+                        original_exception=ve,
+                    )
+            # --- END NEW: Enforce schema compliance ---
 
-                generated_text = response.candidates[0].content.parts[0].text
+            output_tokens = self.tokenizer.count_tokens(generated_text)
+            # MODIFIED: Calculate is_truncated based on actual output tokens vs max_output_tokens
+            is_truncated = output_tokens >= config.max_output_tokens * 0.95
+            self._log_with_context(
+                "debug",
+                f"Generated response (model: {current_model_name}, input: {input_tokens}, output: {output_tokens} tokens)",
+            )
 
-                # NEW: Early schema validation before returning
-                if output_schema:
-                    try:
-                        cleaned_generated_text = self.output_parser._clean_llm_output(
-                            generated_text
-                        )
-                        # Attempt to parse the LLM output into the Pydantic model
-                        # Use model_validate_json for Pydantic v2, parse_raw for v1
-                        if hasattr(output_schema, "model_validate_json"):
-                            output_schema.model_validate_json(cleaned_generated_text)
-                        else:
-                            output_schema.parse_raw(cleaned_generated_text)
-                    except ValidationError as ve:
-                        # If validation fails here, it's a retryable error for the LLM
-                        self._log_with_context(
-                            "warning",
-                            f"Early schema validation failed (retryable): {ve}",
-                            llm_output_snippet=generated_text[:200],
-                        )
-                        # Re-raise as SchemaValidationError to trigger the retry logic in the outer loop
-                        raise SchemaValidationError(
-                            error_type="EARLY_SCHEMA_VALIDATION_FAILED",
-                            field_path="LLM_OUTPUT",
-                            invalid_value=generated_text[:500],
-                            original_exception=ve,
-                        )
+            self._log_with_context(
+                "debug",
+                "LLM Response Snippet",
+                model=current_model_name,
+                output_tokens=output_tokens,
+                generated_text_snippet=generated_text[:500] + "..."
+                if len(generated_text) > 500
+                else generated_text,
+            )
+            self._log_with_context(
+                "info",
+                "LLM Response Received",
+                model=current_model_name,
+                output_tokens=output_tokens,
+                full_generated_text=generated_text,
+            )
 
-                output_tokens = self.tokenizer.count_tokens(generated_text)
-                # MODIFIED: Calculate is_truncated based on actual output tokens vs max_output_tokens
-                is_truncated = output_tokens >= config.max_output_tokens * 0.95
-                self._log_with_context(
-                    "debug",
-                    f"Generated response (model: {model_name_to_use}, input: {input_tokens}, output: {output_tokens} tokens)",
-                )
+            return generated_text, input_tokens, output_tokens, is_truncated
 
-                self._log_with_context(
-                    "debug",
-                    "LLM Response Snippet",
-                    model=model_name_to_use or self.model_name,
-                    output_tokens=output_tokens,
-                    generated_text_snippet=generated_text[:500] + "..."
-                    if len(generated_text) > 500
-                    else generated_text,
-                )
-                self._log_with_context(
-                    "info",
-                    "LLM Response Received",
-                    model=model_name_to_use or self.model_name,
-                    output_tokens=output_tokens,
-                    full_generated_text=generated_text,
-                )
-
-                return generated_text, input_tokens, output_tokens, is_truncated
-
-            except self.RETRYABLE_LLM_EXCEPTIONS as caught_e:  # MODIFIED: Use caught_e
-                error_msg = str(caught_e)
-                should_retry = True
-                error_details = {"error_type": type(caught_e).__name__}
-                last_exception = caught_e  # NEW: Store the last caught exception
-
-            except APIError as caught_e:  # MODIFIED: Use caught_e
-                error_msg = str(caught_e)
-                error_msg_lower = error_msg.lower()
-                # Ensure response_json is always a dictionary
-                if isinstance(caught_e.response_json, dict):  # MODIFIED: Use caught_e
-                    response_json = caught_e.response_json
-                else:
-                    # Create a minimal dictionary with error info
-                    response_json = {
-                        "error": {
-                            "code": caught_e.code,
-                            "message": error_msg,
-                            "raw_response": str(caught_e.response_json)
-                            if caught_e.response_json is not None
-                            else None,
-                        }  # MODIFIED: Use caught_e
+        except APIError as e:
+            error_msg = str(e)
+            error_msg_lower = error_msg.lower()
+            # Ensure response_json is always a dictionary
+            response_json = (
+                e.response_json
+                if isinstance(e.response_json, dict)
+                else {
+                    "error": {
+                        "code": e.code,
+                        "message": error_msg,
+                        "raw_response": str(e.response_json)
+                        if e.response_json is not None
+                        else None,
                     }
+                }
+            )
 
-                if caught_e.code == 401:  # MODIFIED: Use caught_e
-                    raise GeminiAPIError(
-                        f"Invalid API Key: {error_msg}",
-                        code=caught_e.code,  # MODIFIED: Use caught_e
-                        response_details=response_json,
-                        original_exception=caught_e,
-                    ) from caught_e  # MODIFIED: Use caught_e
-                elif caught_e.code == 403:  # MODIFIED: Use caught_e
-                    raise GeminiAPIError(
-                        f"API Key lacks permissions: {error_msg}",
-                        code=caught_e.code,  # MODIFIED: Use caught_e
-                        response_details=response_json,
-                        original_exception=caught_e,
-                    ) from caught_e  # MODIFIED: Use caught_e
-                elif caught_e.code == 429:  # MODIFIED: Use caught_e
-                    should_retry = True  # Set should_retry for backoff
-                    error_details = {
-                        "api_error_code": caught_e.code
-                    }  # MODIFIED: Use caught_e
-                    last_exception = caught_e  # NEW: Store the last caught exception
-                elif caught_e.code == 400 and (  # MODIFIED: Use caught_e
-                    "context window exceeded" in error_msg_lower
-                    or "prompt too large" in error_msg_lower
-                ):
-                    self._log_with_context(
-                        "error",
-                        f"LLM context window exceeded: {error_msg}",
-                        error_details={
-                            "api_error_code": caught_e.code
-                        },  # MODIFIED: Use caught_e
-                    )
-                    raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}",
-                        original_exception=caught_e,  # MODIFIED: Use caught_e
-                    ) from caught_e  # MODIFIED: Use caught_e
-                elif caught_e.code == 400 and (  # MODIFIED: Use caught_e
-                    "invalid json" in error_msg_lower
-                    or "invalid json format" in error_msg_lower
-                    or "invalid response format" in error_msg_lower
-                ):
-                    should_retry = True  # Set should_retry for backoff
-                    error_details = {
-                        "api_error_code": caught_e.code
-                    }  # MODIFIED: Use caught_e
-                    last_exception = caught_e  # NEW: Store the last caught exception
-                elif (
-                    caught_e.code in self.RETRYABLE_ERROR_CODES
-                ):  # MODIFIED: Use caught_e
-                    should_retry = True
-                    error_details = {
-                        "api_error_code": caught_e.code
-                    }  # MODIFIED: Use caught_e
-                    last_exception = caught_e  # NEW: Store the last caught exception
-                else:  # Non-retryable APIError not specifically handled
-                    raise LLMProviderError(
-                        error_msg, original_exception=caught_e
-                    ) from caught_e  # MODIFIED: Use caught_e
-                last_exception = caught_e  # NEW: Store the last caught exception
-
-            except socket.gaierror as caught_e:  # MODIFIED: Use caught_e
-                error_msg = str(caught_e)
-                should_retry = True
-                error_details = {
-                    "network_error": "socket.gaierror"
-                }  # Initialize error_details here
-                last_exception = caught_e  # NEW: Store the last caught exception
-
-            except Exception as caught_e:  # MODIFIED: Use caught_e
-                error_msg = str(caught_e)
-                # Check for generic context window exceeded if not caught by APIError 400
-                if (
-                    "context window exceeded" in error_msg.lower()
-                    or "prompt too large" in error_msg.lower()
-                ):
-                    self._log_with_context(
-                        "error",
-                        f"LLM context window exceeded: {error_msg}",
-                        error_details={
-                            "error_type": type(caught_e).__name__
-                        },  # MODIFIED: Use caught_e
-                    )
-                    raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}",
-                        original_exception=caught_e,  # MODIFIED: Use caught_e
-                    ) from caught_e  # MODIFIED: Use caught_e
-                else:
-                    raise LLMProviderError(
-                        error_msg, original_exception=caught_e
-                    ) from caught_e  # MODIFIED: Use caught_e
-                last_exception = caught_e  # NEW: Store the last caught exception
-
-            # This block handles the actual retry logic if should_retry is True
-            if should_retry and attempt < self.MAX_RETRIES:
-                backoff_time = min(
-                    self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
-                    self.MAX_BACKOFF_SECONDS,
-                )
-                jitter = secrets.SystemRandom().uniform(
-                    0,
-                    0.5
-                    * min(
-                        self.INITIAL_BACKOFF_SECONDS * (self.BACKOFF_FACTOR**attempt),
-                        self.MAX_BACKOFF_SECONDS,
-                    ),
-                )
-                sleep_time = backoff_time + jitter
-
-                log_message = f"Error: {error_msg}. Retrying in {sleep_time:.2f} seconds... (Attempt {attempt}/{self.MAX_RETRIES})"
-                if self.rich_console:
-                    self.rich_console.print(f"[yellow]{log_message}[/yellow]")
-                else:
-                    self._log_with_context("warning", log_message, **error_details)
-                time.sleep(sleep_time)
-            elif should_retry and attempt >= self.MAX_RETRIES:
-                # If it was retryable but max retries reached, raise a final error
-                # The specific exception (e.g., GeminiAPIError for 429) should have been raised already.
-                # For other retryable errors (like 400 invalid JSON or network errors),
-                # raise a generic LLMProviderError here.
-                final_error_to_raise = (
-                    last_exception
-                    if last_exception
-                    else LLMProviderError(
-                        f"Max retries exceeded for retryable error: {error_msg}"
-                    )
-                )
-                raise final_error_to_raise from last_exception
-
-        # If the loop finishes without returning or raising, it means max retries were exceeded for a non-specific error,
-        # or no retryable error occurred but the loop completed without a successful return.
-        # This should ideally be caught by the `elif should_retry and attempt >= self.MAX_RETRIES:` block.
-        # If we reach here, it implies an unhandled scenario or a bug.
-        # Raise a generic unexpected error.
-        raise LLMUnexpectedError(
-            "An unexpected state was reached in LLM generation retry loop."
-        )
+            if e.code == 401:
+                raise GeminiAPIError(
+                    f"Invalid API Key: {error_msg}",
+                    code=e.code,
+                    response_details=response_json,
+                    original_exception=e,
+                ) from e
+            elif e.code == 403:
+                raise GeminiAPIError(
+                    f"API Key lacks permissions: {error_msg}",
+                    code=e.code,
+                    response_details=response_json,
+                    original_exception=e,
+                ) from e
+            elif e.code == 429:
+                # Raise RateLimitExceededError to be caught by CircuitBreaker and potentially app.py
+                raise RateLimitExceededError(
+                    f"Rate limit exceeded: {error_msg}", original_exception=e
+                ) from e
+            elif e.code == 400 and (
+                "context window exceeded" in error_msg_lower
+                or "prompt too large" in error_msg_lower
+            ):
+                raise LLMUnexpectedError(
+                    f"LLM context window exceeded: {error_msg}", original_exception=e
+                ) from e
+            elif e.code == 400 and (
+                "invalid json" in error_msg_lower
+                or "invalid json format" in error_msg_lower
+                or "invalid response format" in error_msg_lower
+            ):
+                # Treat as SchemaValidationError to trigger tenacity retry
+                raise SchemaValidationError(
+                    error_type="API_INVALID_JSON",
+                    field_path="LLM_OUTPUT",
+                    invalid_value=error_msg[:500],
+                    original_exception=e,
+                ) from e
+            else:  # Non-retryable APIError not specifically handled
+                raise LLMProviderError(error_msg, original_exception=e) from e
+        except socket.gaierror as e:
+            # Network errors are retryable by tenacity
+            raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
+        except Exception as e:
+            error_msg = str(e)
+            # Check for generic context window exceeded if not caught by APIError 400
+            if (
+                "context window exceeded" in error_msg.lower()
+                or "prompt too large" in error_msg.lower()
+            ):
+                raise LLMUnexpectedError(
+                    f"LLM context window exceeded: {error_msg}", original_exception=e
+                ) from e
+            # For other unexpected exceptions, raise LLMProviderError
+            raise LLMProviderError(error_msg, original_exception=e) from e
