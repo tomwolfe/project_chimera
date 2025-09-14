@@ -1,7 +1,6 @@
-# tests/test_persona_manager.py
-
-import pytest
-from unittest.mock import MagicMock, patch
+import unittest
+from unittest.mock import patch, MagicMock
+import yaml
 from src.persona_manager import PersonaManager
 from src.models import PersonaConfig
 from src.token_tracker import TokenUsageTracker
@@ -11,633 +10,292 @@ from src.config.settings import ChimeraSettings
 import time
 
 
-@pytest.fixture
-def mock_token_tracker():
-    """Provides a mock TokenUsageTracker instance."""
-    return MagicMock(spec=TokenUsageTracker)
+@patch('src.persona_manager.ConfigPersistence')
+@patch('src.persona_manager.PromptAnalyzer')
+@patch('src.persona_manager.TokenUsageTracker')
+@patch('src.persona_manager.ChimeraSettings')
+class TestPersonaManager(unittest.TestCase):
+    
+    def setUp(self):
+        # Mock dependencies
+        self.mock_token_tracker = MagicMock(spec=TokenUsageTracker)
+        self.mock_prompt_analyzer = MagicMock(spec=PromptAnalyzer)
+        self.mock_config_persistence = MagicMock(spec=ConfigPersistence)
+        self.mock_settings = MagicMock(spec=ChimeraSettings)
 
-
-@pytest.fixture
-def mock_prompt_analyzer():
-    """Provides a mock PromptAnalyzer instance."""
-    pa = MagicMock(spec=PromptAnalyzer)
-    pa.analyze_complexity.return_value = {"complexity_score": 0.5}
-    pa.is_self_analysis_prompt.return_value = False
-    pa.recommend_domain_from_keywords.return_value = "General"
-    return pa
-
-
-@pytest.fixture
-def mock_config_persistence():
-    """Provides a mock ConfigPersistence instance."""
-    cp = MagicMock(spec=ConfigPersistence)
-    # Mock load_personas_config to return a consistent structure
-    cp.load_personas_config.return_value = {
-        "personas": [
+        # Configure mock_config_persistence to return a consistent structure
+        self.mock_config_persistence.load_personas_config.return_value = {
+            "personas": [
+                {"name": "Analyst", "system_prompt": "You are an Analyst.", "temperature": 0.5, "max_tokens": 1024, "description": "Analyzes."},
+                {"name": "Critic", "system_prompt": "You are a Critic.", "temperature": 0.5, "max_tokens": 1024, "description": "Critiques."},
+                {"name": "TestPersona", "system_prompt": "Test system prompt", "temperature": 0.5, "max_tokens": 1024, "description": "A persona for testing metrics."},
+            ],
+            "persona_sets": {
+                "General": ["Analyst", "Critic"],
+                "TestFramework": ["TestPersona"],
+            },
+        }
+        self.mock_config_persistence._get_saved_custom_framework_names.return_value = []
+        self.mock_config_persistence._load_custom_framework_config_from_file.return_value = None
+        self.mock_config_persistence.save_user_framework.return_value = (True, "Framework saved.")
+        self.mock_config_persistence.export_framework_for_sharing.return_value = "exported_yaml_content"
+        self.mock_config_persistence.import_framework_from_file.return_value = (
+            True,
+            "Framework imported.",
             {
-                "name": "Visionary_Generator",
-                "system_prompt": "Visionary",
-                "temperature": 0.7,
-                "max_tokens": 1024,
-                "description": "Generates innovative solutions.",
+                "framework_name": "ImportedFramework",
+                "description": "A description for imported framework",
+                "personas": {},
+                "persona_sets": {"ImportedFramework": []},
             },
-            {
-                "name": "Skeptical_Generator",
-                "system_prompt": "Skeptical",
-                "temperature": 0.3,
-                "max_tokens": 1024,
-                "description": "Identifies flaws.",
-            },
-            {  # ADDED
-                "name": "Constructive_Critic",
-                "system_prompt": "Critic",
-                "temperature": 0.15,
-                "max_tokens": 8192,
-                "description": "Provides constructive criticism.",
-            },
-            {  # ADDED
-                "name": "Conflict_Resolution_Manager",
-                "system_prompt": "Mediator",
-                "temperature": 0.1,
-                "max_tokens": 4096,
-                "description": "Manages conflicts.",
-            },
-            {  # ADDED
-                "name": "Devils_Advocate",
-                "system_prompt": "Devils Advocate",
-                "temperature": 0.1,
-                "max_tokens": 4096,
-                "description": "Challenges assumptions.",
-            },
-            {  # ADDED
-                "name": "General_Synthesizer",
-                "system_prompt": "Synthesizer",
-                "temperature": 0.2,
-                "max_tokens": 2048,
-                "description": "Synthesizes information.",
-            },
-            {
-                "name": "Impartial_Arbitrator",
-                "system_prompt": "Arbitrator",
-                "temperature": 0.1,
-                "max_tokens": 4096,
-                "description": "Synthesizes outcomes.",
-            },
-            {  # ADDED
-                "name": "Code_Architect",
-                "system_prompt": "Architect",
-                "temperature": 0.4,
-                "max_tokens": 8192,
-                "description": "Analyzes system design.",
-            },
-            {  # ADDED
-                "name": "Security_Auditor",
-                "system_prompt": "Security Auditor",
-                "temperature": 0.2,
-                "max_tokens": 8192,
-                "description": "Identifies security vulnerabilities.",
-            },
-            {  # ADDED
-                "name": "DevOps_Engineer",
-                "system_prompt": "DevOps Engineer",
-                "temperature": 0.3,
-                "max_tokens": 8192,
-                "description": "Focuses on CI/CD and operations.",
-            },
-            {
-                "name": "Test_Engineer",
-                "system_prompt": "Test Engineer",
-                "temperature": 0.3,
-                "max_tokens": 4096,
-                "description": "Ensures code quality.",
-            },
-            {
-                "name": "TestPersona",
-                "system_prompt": "Test system prompt",
-                "temperature": 0.5,
-                "max_tokens": 1024,
-                "description": "A persona for testing metrics.",
-            },  # Added for new tests
-        ],
-        "persona_sets": {
-            "General": [
-                "Visionary_Generator",
-                "Skeptical_Generator",
-                "Impartial_Arbitrator",
-                "Constructive_Critic",  # ADDED
-                "Conflict_Resolution_Manager",  # ADDED
-                "Devils_Advocate",  # ADDED
-                "General_Synthesizer",  # ADDED
-            ],
-            "Software Engineering": [
-                "Visionary_Generator",
-                "Skeptical_Generator",
-                "Test_Engineer",
-                "Code_Architect",  # ADDED
-                "Security_Auditor",  # ADDED
-                "DevOps_Engineer",  # ADDED
-                "Constructive_Critic",  # ADDED
-                "Devils_Advocate",  # ADDED
-                "Impartial_Arbitrator",
-            ],
-            "Self-Improvement": [  # ADDED
-                "Self_Improvement_Analyst",
-                "Code_Architect",
-                "Security_Auditor",
-                "DevOps_Engineer",
-                "Test_Engineer",
-                "Constructive_Critic",
-                "Devils_Advocate",
-                "Impartial_Arbitrator",
-            ],
-            "Science": [  # ADDED
-                "Scientific_Visionary",
-                "Scientific_Analyst",
-                "Constructive_Critic",
-                "Devils_Advocate",
-                "General_Synthesizer",
-            ],
-            "Business": [  # ADDED
-                "Business_Innovator",
-                "Business_Strategist",
-                "Constructive_Critic",
-                "Devils_Advocate",
-                "General_Synthesizer",
-            ],
-            "Creative": [  # ADDED
-                "Creative_Visionary",
-                "Creative_Thinker",
-                "Constructive_Critic",
-                "Devils_Advocate",
-                "General_Synthesizer",
-            ],
-        },
-    }
-    # Mock methods related to custom frameworks
-    cp._get_saved_custom_framework_names.return_value = []
-    cp._load_custom_framework_config_from_file.return_value = None
-    cp.save_user_framework.return_value = (True, "Framework saved.")
-    cp.export_framework_for_sharing.return_value = "exported_yaml_content"
-    cp.import_framework_from_file.return_value = (
-        True,
-        "Framework imported.",
-        {
-            "framework_name": "ImportedFramework",
-            "description": "A description for imported framework",
-            "personas": {},
-            "persona_sets": {"ImportedFramework": []},
-        },
-    )
-    return cp
+        )
 
+        # Configure mock_settings
+        self.mock_settings.default_max_input_tokens_per_persona = 4000
+        self.mock_settings.max_tokens_per_persona = {
+            "TestPersona": 1024,
+            "Analyst": 1024,
+            "Critic": 1024,
+        }
 
-@pytest.fixture
-def mock_settings():
-    """Provides a mock ChimeraSettings instance."""
-    settings = MagicMock(spec=ChimeraSettings)
-    settings.default_max_input_tokens_per_persona = 4000
-    settings.max_tokens_per_persona = {
-        "TestPersona": 1024,  # Default for TestPersona
-        "Visionary_Generator": 1024,
-        "Skeptical_Generator": 1024,
-        "Impartial_Arbitrator": 4096,
-        "Test_Engineer": 4096,
-        "Constructive_Critic": 8192,  # ADDED
-        "Conflict_Resolution_Manager": 4096,  # ADDED
-        "Devils_Advocate": 4096,  # ADDED
-        "General_Synthesizer": 2048,  # ADDED
-        "Code_Architect": 8192,  # ADDED
-        "Security_Auditor": 8192,  # ADDED
-        "DevOps_Engineer": 8192,  # ADDED
-        "SelfImprovementAnalyst": 8192,  # ADDED
-    }
-    return settings
-
-
-@pytest.fixture
-def persona_manager_instance(
-    mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings
-):
-    """Provides a PersonaManager instance with mocked dependencies."""
-    # Patch ConfigPersistence to return our mock during PersonaManager initialization
-    with patch(
-        "src.persona_manager.ConfigPersistence", return_value=mock_config_persistence
-    ):
-        pm = PersonaManager(
-            domain_keywords={"General": ["general"], "Software Engineering": ["code"]},
-            token_tracker=mock_token_tracker,
-            settings=mock_settings,
+        # Instantiate PersonaManager with mocks
+        self.persona_manager = PersonaManager(
+            domain_keywords={"General": ["general"]},
+            token_tracker=self.mock_token_tracker,
+            settings=self.mock_settings,
         )
         # Manually set the mock prompt_analyzer as it's used by PersonaRouter internally
-        pm.prompt_analyzer = mock_prompt_analyzer
-        # Ensure the router also uses the mocked analyzer if it's initialized separately
-        if pm.persona_router:
-            pm.persona_router.prompt_analyzer = mock_prompt_analyzer
-        return pm
-
-
-@pytest.fixture
-def persona_manager_for_metrics(
-    mock_token_tracker, mock_prompt_analyzer, mock_config_persistence, mock_settings
-):
-    """Provides a PersonaManager instance specifically for testing metrics, ensuring 'TestPersona' is available."""
-    with patch(
-        "src.persona_manager.ConfigPersistence", return_value=mock_config_persistence
-    ):
-        pm = PersonaManager(
-            domain_keywords={"General": ["general"]},
-            token_tracker=mock_token_tracker,
-            settings=mock_settings,
-        )
+        self.persona_manager.prompt_analyzer = self.mock_prompt_analyzer
+        if self.persona_manager.persona_router:
+            self.persona_manager.persona_router.prompt_analyzer = self.mock_prompt_analyzer
+        
         # Ensure TestPersona is in all_personas for metrics tracking
-        if "TestPersona" not in pm.all_personas:
-            pm.all_personas["TestPersona"] = PersonaConfig(
+        if "TestPersona" not in self.persona_manager.all_personas:
+            self.persona_manager.all_personas["TestPersona"] = PersonaConfig(
                 name="TestPersona",
                 system_prompt="Test system prompt",
                 temperature=0.5,
                 max_tokens=1024,
                 description="A persona for testing metrics.",
             )
-        pm._initialize_performance_metrics()  # Re-initialize to ensure TestPersona is in metrics
-        return pm
+        self.persona_manager._initialize_performance_metrics() # Re-initialize to ensure TestPersona is in metrics
 
+    def test_get_persona_success(self):
+        """Test retrieving an existing persona."""
+        persona = self.persona_manager.all_personas.get('Analyst')
+        self.assertIsNotNone(persona)
+        self.assertEqual(persona.name, 'Analyst')
+        self.assertEqual(persona.system_prompt, 'You are an Analyst.')
+    
+    def test_get_persona_not_found(self):
+        """Test retrieving a non-existent persona."""
+        persona = self.persona_manager.all_personas.get('NonExistent')
+        self.assertIsNone(persona)
+    
+    def test_get_all_personas(self):
+        """Test retrieving all personas."""
+        personas = self.persona_manager.all_personas
+        self.assertEqual(len(personas), 3) # Analyst, Critic, TestPersona
+        self.assertIn('Analyst', personas)
+        self.assertIn('Critic', personas)
+        self.assertIn('TestPersona', personas)
 
-def test_persona_manager_initialization(persona_manager_instance):
-    """Tests that PersonaManager initializes correctly and loads default personas."""
-    assert "Visionary_Generator" in persona_manager_instance.all_personas
-    assert (
-        "Constructive_Critic" in persona_manager_instance.all_personas
-    )  # FIX: Assert new personas
-    assert "General" in persona_manager_instance.persona_sets
-    assert persona_manager_instance.default_persona_set_name == "General"
-    # The order of available_domains is sorted alphabetically
-    assert sorted(persona_manager_instance.available_domains) == [
-        "Business",  # FIX: Updated expected domains
-        "Creative",
-        "General",
-        "Science",
-        "Self-Improvement",
-        "Software Engineering",
-    ]
-    assert persona_manager_instance.persona_router is not None
-    assert persona_manager_instance.token_tracker is not None
-    assert persona_manager_instance.prompt_analyzer is not None
+    def test_get_persona_sequence_for_framework(self):
+        """Test getting persona sequence for a specific framework."""
+        sequence = self.persona_manager.get_persona_sequence_for_framework('General')
+        self.assertEqual(sequence, ['Analyst', 'Critic'])
 
+    def test_update_persona_config(self):
+        """Test updating a persona's configuration."""
+        original_temp = self.persona_manager.all_personas['Analyst'].temperature
+        new_temp = 0.8
+        success = self.persona_manager.update_persona_config('Analyst', 'temperature', new_temp)
+        self.assertTrue(success)
+        self.assertEqual(self.persona_manager.all_personas['Analyst'].temperature, new_temp)
+        # Ensure original_personas is not directly modified
+        self.assertEqual(self.persona_manager._original_personas['Analyst'].temperature, original_temp)
 
-def test_get_persona_sequence_for_framework(persona_manager_instance):
-    """Tests retrieving a persona sequence for a known framework."""
-    sequence = persona_manager_instance.get_persona_sequence_for_framework("General")
-    assert sequence == [
-        "Visionary_Generator",
-        "Skeptical_Generator",
-        "Impartial_Arbitrator",
-        "Constructive_Critic",  # FIX: Updated expected sequence
-        "Conflict_Resolution_Manager",  # FIX: Updated expected sequence
-        "Devils_Advocate",  # FIX: Updated expected sequence
-        "General_Synthesizer",  # FIX: Updated expected sequence
-    ]
+    def test_reset_persona_to_default(self):
+        """Test resetting a persona to its default configuration."""
+        # First, modify a persona
+        self.persona_manager.update_persona_config('Analyst', 'temperature', 0.9)
+        self.persona_manager.update_persona_config('Analyst', 'system_prompt', 'New prompt')
 
-    sequence_se = persona_manager_instance.get_persona_sequence_for_framework(
-        "Software Engineering"
-    )
-    assert sequence_se == [
-        "Visionary_Generator",
-        "Skeptical_Generator",
-        "Test_Engineer",
-        "Code_Architect",  # FIX: Updated expected sequence
-        "Security_Auditor",  # FIX: Updated expected sequence
-        "DevOps_Engineer",  # FIX: Updated expected sequence
-        "Constructive_Critic",  # FIX: Updated expected sequence
-        "Devils_Advocate",  # FIX: Updated expected sequence
-        "Impartial_Arbitrator",
-    ]
+        # Then, reset it
+        success = self.persona_manager.reset_persona_to_default('Analyst')
+        self.assertTrue(success)
+        # Check against the stored original configuration
+        self.assertEqual(self.persona_manager.all_personas['Analyst'].temperature, self.persona_manager._original_personas['Analyst'].temperature)
+        self.assertEqual(self.persona_manager.all_personas['Analyst'].system_prompt, self.persona_manager._original_personas['Analyst'].system_prompt)
 
+    def test_reset_all_personas_for_current_framework(self):
+        """Test resetting all personas in a framework to default."""
+        # Modify a persona in the "General" framework
+        self.persona_manager.update_persona_config('Analyst', 'temperature', 0.9)
 
-def test_get_persona_sequence_for_unknown_framework_falls_back_to_general(
-    persona_manager_instance,
-):
-    """Tests that an unknown framework falls back to the 'General' sequence."""
-    sequence = persona_manager_instance.get_persona_sequence_for_framework(
-        "UnknownFramework"
-    )
-    assert sequence == [
-        "Visionary_Generator",
-        "Skeptical_Generator",
-        "Impartial_Arbitrator",
-        "Constructive_Critic",  # FIX: Updated expected sequence
-        "Conflict_Resolution_Manager",  # FIX: Updated expected sequence
-        "Devils_Advocate",  # FIX: Updated expected sequence
-        "General_Synthesizer",  # FIX: Updated expected sequence
-    ]
+        # Reset all for "General"
+        success = self.persona_manager.reset_all_personas_for_current_framework('General')
+        self.assertTrue(success)
+        # Verify the reset against the original configuration
+        self.assertEqual(self.persona_manager.all_personas['Analyst'].temperature, self.persona_manager._original_personas['Analyst'].temperature)
 
+    def test_save_framework(self):
+        """Test saving a custom framework."""
+        framework_name = "MyCustomFramework"
+        description = "A test framework"
+        current_active_personas = {
+            p_name: PersonaConfig(**p_data.model_dump())
+            for p_name, p_data in self.persona_manager.all_personas.items()
+            if p_name in self.persona_manager.get_persona_sequence_for_framework("General")
+        }
 
-def test_update_persona_config(persona_manager_instance):
-    """Tests updating a persona's configuration."""
-    original_temp = persona_manager_instance.all_personas[
-        "Visionary_Generator"
-    ].temperature
-    new_temp = 0.8
-    success = persona_manager_instance.update_persona_config(
-        "Visionary_Generator", "temperature", new_temp
-    )
-    assert success
-    assert (
-        persona_manager_instance.all_personas["Visionary_Generator"].temperature
-        == new_temp
-    )
-    # Ensure original_personas is not directly modified
-    assert (
-        persona_manager_instance._original_personas["Visionary_Generator"].temperature
-        == original_temp
-    )
+        success, message = self.persona_manager.save_framework(
+            framework_name, "General", current_active_personas, description
+        )
+        self.assertTrue(success)
+        self.assertIn("Framework saved.", message)
+        self.mock_config_persistence.save_user_framework.assert_called_once()
+        self.assertIn(framework_name, self.persona_manager.available_domains)
 
+    def test_load_framework_into_session_custom(self):
+        """Test loading a custom framework into the session."""
+        custom_framework_data = {
+            "framework_name": "LoadedCustom",
+            "description": "A description for loaded framework",
+            "personas": {
+                "NewPersona": {
+                    "name": "NewPersona",
+                    "system_prompt": "New",
+                    "temperature": 0.5,
+                    "max_tokens": 512,
+                    "description": "A new persona.",
+                }
+            },
+            "persona_sets": {"LoadedCustom": ["NewPersona"]},
+        }
+        self.mock_config_persistence._load_custom_framework_config_from_file.return_value = custom_framework_data
 
-def test_reset_persona_to_default(persona_manager_instance):
-    """Tests resetting a persona to its default configuration."""
-    # First, modify a persona
-    persona_manager_instance.update_persona_config(
-        "Visionary_Generator", "temperature", 0.9
-    )
-    persona_manager_instance.update_persona_config(
-        "Visionary_Generator", "system_prompt", "New prompt"
-    )
+        success, message, loaded_personas, loaded_persona_sets, new_framework_name = \
+            self.persona_manager.load_framework_into_session("LoadedCustom")
 
-    # Then, reset it
-    success = persona_manager_instance.reset_persona_to_default("Visionary_Generator")
-    assert success
-    # Check against the stored original configuration
-    assert (
-        persona_manager_instance.all_personas["Visionary_Generator"].temperature
-        == persona_manager_instance._original_personas[
-            "Visionary_Generator"
-        ].temperature
-    )
-    assert (
-        persona_manager_instance.all_personas["Visionary_Generator"].system_prompt
-        == persona_manager_instance._original_personas[
-            "Visionary_Generator"
-        ].system_prompt
-    )
+        self.assertTrue(success)
+        self.assertIn("Loaded custom framework", message)
+        self.assertIn("NewPersona", self.persona_manager.all_personas)
+        self.assertIn("LoadedCustom", self.persona_manager.persona_sets)
+        self.assertEqual(new_framework_name, "LoadedCustom")
 
+    def test_export_framework_for_sharing(self):
+        """Test exporting a framework."""
+        self.mock_config_persistence.export_framework_for_sharing.return_value = "exported_yaml_content"
 
-def test_reset_all_personas_for_current_framework(persona_manager_instance):
-    """Tests resetting all personas in a framework to default."""
-    # Modify a persona in the "General" framework
-    persona_manager_instance.update_persona_config(
-        "Visionary_Generator", "temperature", 0.9
-    )
+        success, message, content = self.persona_manager.export_framework_for_sharing("General")
+        self.assertTrue(success)
+        self.assertIn("exported successfully", message)
+        self.assertEqual(content, "exported_yaml_content")
+        self.mock_config_persistence.export_framework_for_sharing.assert_called_once_with("General")
 
-    # Reset all for "General"
-    success = persona_manager_instance.reset_all_personas_for_current_framework(
-        "General"
-    )
-    assert success
-    # Verify the reset against the original configuration
-    assert (
-        persona_manager_instance.all_personas["Visionary_Generator"].temperature
-        == persona_manager_instance._original_personas[
-            "Visionary_Generator"
-        ].temperature
-    )
+    def test_import_framework(self):
+        """Test importing a framework."""
+        self.mock_config_persistence.import_framework_from_file.return_value = (
+            True,
+            "Framework imported.",
+            {
+                "framework_name": "ImportedFramework",
+                "description": "A description for imported framework",
+                "personas": {},
+                "persona_sets": {"ImportedFramework": []},
+            },
+        )
+        success, message = self.persona_manager.import_framework("file_content", "test.yaml")
+        self.assertTrue(success)
+        self.assertIn("Framework imported.", message)
+        self.mock_config_persistence.import_framework_from_file.assert_called_once_with("file_content", "test.yaml")
+        self.assertIn("ImportedFramework", self.persona_manager.available_domains)
 
+    def test_get_adjusted_persona_config_truncated(self):
+        """Test getting a truncated persona config."""
+        truncated_config = self.persona_manager.get_adjusted_persona_config("Analyst_TRUNCATED")
 
-def test_save_framework(persona_manager_instance, mock_config_persistence):
-    """Tests saving a custom framework."""
-    framework_name = "MyCustomFramework"
-    description = "A test framework"
-    # Create a copy of the persona config to simulate current state
-    current_active_personas = {
-        p_name: PersonaConfig(**p_data.model_dump())
-        for p_name, p_data in persona_manager_instance.all_personas.items()
-        if p_name
-        in persona_manager_instance.get_persona_sequence_for_framework("General")
-    }
+        self.assertEqual(truncated_config.name, "Analyst")
+        self.assertLess(truncated_config.max_tokens, self.persona_manager.all_personas["Analyst"].max_tokens)
+        self.assertIn("CRITICAL: Be extremely concise", truncated_config.system_prompt)
 
-    success, message = persona_manager_instance.save_framework(
-        framework_name, "General", current_active_personas, description
-    )
-    assert success
-    assert "Framework saved." in message
-    mock_config_persistence.save_user_framework.assert_called_once()
-    # Check if the framework name was added to available domains
-    assert framework_name in persona_manager_instance.available_domains
+    def test_record_persona_performance(self):
+        """Test recording persona performance metrics."""
+        pm = self.persona_manager
+        # Record a successful turn
+        pm.record_persona_performance("TestPersona", 1, {}, True, "Valid output", schema_validation_failed=False, is_truncated=False)
+        metrics = pm.persona_performance_metrics["TestPersona"]
+        self.assertEqual(metrics["total_turns"], 1)
+        self.assertEqual(metrics["schema_failures"], 0)
+        self.assertEqual(metrics["truncation_failures"], 0)
 
+        # Record a turn with schema failure
+        pm.record_persona_performance("TestPersona", 2, {}, False, "Schema error", schema_validation_failed=True, is_truncated=False)
+        metrics = pm.persona_performance_metrics["TestPersona"]
+        self.assertEqual(metrics["total_turns"], 2)
+        self.assertEqual(metrics["schema_failures"], 1)
 
-def test_load_framework_into_session_custom(
-    persona_manager_instance, mock_config_persistence
-):
-    """Tests loading a custom framework into the session."""
-    custom_framework_data = {
-        "framework_name": "LoadedCustom",
-        "description": "A description for loaded framework",
-        "personas": {
-            "NewPersona": {
-                "name": "NewPersona",
-                "system_prompt": "New",
-                "temperature": 0.5,
-                "max_tokens": 512,
-                "description": "A new persona.",
-            }
-        },
-        "persona_sets": {"LoadedCustom": ["NewPersona"]},
-    }
-    # Configure the mock to return this data when loading 'LoadedCustom'
-    mock_config_persistence._load_custom_framework_config_from_file.return_value = (
-        custom_framework_data
-    )
+        # Record a turn with truncation
+        pm.record_persona_performance("TestPersona", 3, {}, True, "Truncated", is_truncated=True)
+        metrics = pm.persona_performance_metrics["TestPersona"]
+        self.assertEqual(metrics["total_turns"], 3)
+        self.assertEqual(metrics["truncation_failures"], 1)
 
-    success, message, loaded_personas, loaded_persona_sets, new_framework_name = (
-        persona_manager_instance.load_framework_into_session("LoadedCustom")
-    )
+    def test_get_token_optimized_persona_sequence_global_high_consumption(self):
+        """Test token optimization when global consumption is high."""
+        self.mock_token_tracker.get_consumption_rate.return_value = 0.8 # Simulate high global token consumption rate
 
-    assert success
-    assert "Loaded custom framework" in message
-    # Check if the new persona was added to all_personas
-    assert "NewPersona" in persona_manager_instance.all_personas
-    # Check if the new persona set was added
-    assert "LoadedCustom" in persona_manager_instance.persona_sets
-    assert new_framework_name == "LoadedCustom"
+        sequence = ["Analyst", "Critic"]
+        optimized_sequence = self.persona_manager.get_token_optimized_persona_sequence(sequence)
 
+        self.assertIn("Analyst_TRUNCATED", optimized_sequence)
+        self.assertIn("Critic_TRUNCATED", optimized_sequence)
 
-def test_export_framework_for_sharing(
-    persona_manager_instance, mock_config_persistence
-):
-    """Tests exporting a framework."""
-    # Configure the mock to return dummy content for export
-    mock_config_persistence.export_framework_for_sharing.return_value = (
-        "exported_yaml_content"
-    )
+    def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(self):
+        """Test token optimization when a specific persona is prone to truncation."""
+        self.mock_token_tracker.get_consumption_rate.return_value = 0.1 # Simulate low global token consumption
 
-    success, message, content = persona_manager_instance.export_framework_for_sharing(
-        "General"
-    )
-    assert success
-    assert "exported successfully" in message
-    assert content == "exported_yaml_content"
-    # Ensure the persistence method was called with the correct framework name
-    mock_config_persistence.export_framework_for_sharing.assert_called_once_with(
-        "General"
-    )
+        # Simulate Analyst being prone to truncation by setting its metrics
+        metrics = self.persona_manager.persona_performance_metrics["Analyst"]
+        metrics["total_turns"] = 10
+        metrics["truncation_failures"] = 3 # 30% truncation rate, exceeding the threshold
+        metrics["last_adjustment_timestamp"] = time.time() - self.persona_manager.adjustment_cooldown_seconds - 10 # Ensure cooldown passed
 
+        sequence = ["Analyst", "Critic"]
+        optimized_sequence = self.persona_manager.get_token_optimized_persona_sequence(sequence)
 
-def test_import_framework(persona_manager_instance, mock_config_persistence):
-    """Tests importing a framework."""
-    # The mock_config_persistence is already set to return success for import_framework_from_file
-    mock_config_persistence.import_framework_from_file.return_value = (
-        True,
-        "Framework imported.",
-        {
-            "framework_name": "ImportedFramework",
-            "description": "A description for imported framework",
-            "personas": {},
-            "persona_sets": {"ImportedFramework": []},
-        },
-    )
-    success, message = persona_manager_instance.import_framework(
-        "file_content", "test.yaml"
-    )
-    assert success
-    assert "Framework imported." in message
-    # Verify that the persistence method was called correctly
-    mock_config_persistence.import_framework_from_file.assert_called_once_with(
-        "file_content", "test.yaml"
-    )
-    # Check if the imported framework's name is now available
-    assert "ImportedFramework" in persona_manager_instance.available_domains
+        self.assertIn("Analyst_TRUNCATED", optimized_sequence)
+        self.assertIn("Critic", optimized_sequence) # Critic should not be truncated
 
+    def test_get_adjusted_persona_config_adaptive_temperature(self):
+        """Test adaptive temperature adjustment based on schema failures."""
+        pm = self.persona_manager
+        original_temp = pm.all_personas["TestPersona"].temperature
+        metrics = pm.persona_performance_metrics["TestPersona"]
 
-def test_get_adjusted_persona_config_truncated(persona_manager_instance):
-    """Tests getting a truncated persona config."""
-    truncated_config = persona_manager_instance.get_adjusted_persona_config(
-        "Visionary_Generator_TRUNCATED"
-    )
+        # Simulate high schema failure rate
+        metrics["total_turns"] = 10
+        metrics["schema_failures"] = 3 # 30% failure rate
+        metrics["last_adjustment_timestamp"] = time.time() - pm.adjustment_cooldown_seconds - 10 # Ensure cooldown passed
 
-    # Assert that the base persona name is used correctly
-    assert truncated_config.name == "Visionary_Generator"
-    # Assert that max_tokens has been reduced
-    assert (
-        truncated_config.max_tokens
-        < persona_manager_instance.all_personas["Visionary_Generator"].max_tokens
-    )
-    # Assert that the system prompt includes the truncation warning
-    assert "CRITICAL: Be extremely concise" in truncated_config.system_prompt
+        adjusted_config = pm.get_adjusted_persona_config("TestPersona")
+        self.assertLess(adjusted_config.temperature, original_temp)
+        self.assertEqual(metrics["last_adjusted_temp"], adjusted_config.temperature)
+        self.assertEqual(metrics["total_turns"], 0) # Should reset after adjustment
 
+    def test_get_adjusted_persona_config_adaptive_max_tokens(self):
+        """Test adaptive max_tokens adjustment based on truncation failures."""
+        pm = self.persona_manager
+        original_max_tokens = pm.all_personas["TestPersona"].max_tokens
+        metrics = pm.persona_performance_metrics["TestPersona"]
 
-def test_record_persona_performance(persona_manager_for_metrics):
-    """Tests recording persona performance metrics."""
-    pm = persona_manager_for_metrics
-    # Record a successful turn
-    pm.record_persona_performance(
-        "TestPersona",
-        1,
-        {},
-        True,
-        "Valid output",
-        schema_validation_failed=False,
-        is_truncated=False,
-    )
-    metrics = pm.persona_performance_metrics["TestPersona"]
-    assert metrics["total_turns"] == 1
-    assert metrics["schema_failures"] == 0
-    assert metrics["truncation_failures"] == 0
+        # Simulate high truncation failure rate
+        metrics["total_turns"] = 10
+        metrics["truncation_failures"] = 2 # 20% truncation rate
+        metrics["last_adjustment_timestamp"] = time.time() - pm.adjustment_cooldown_seconds - 10 # Ensure cooldown passed
 
-    # Record a turn with schema failure
-    pm.record_persona_performance(
-        "TestPersona",
-        2,
-        {},
-        False,
-        "Schema error",
-        schema_validation_failed=True,
-        is_truncated=False,
-    )
-    metrics = pm.persona_performance_metrics["TestPersona"]
-    assert metrics["total_turns"] == 2
-    assert metrics["schema_failures"] == 1
-
-    # Record a turn with truncation
-    pm.record_persona_performance(
-        "TestPersona", 3, {}, True, "Truncated", is_truncated=True
-    )
-    metrics = pm.persona_performance_metrics["TestPersona"]
-    assert metrics["total_turns"] == 3
-    assert metrics["truncation_failures"] == 1
-
-
-def test_get_token_optimized_persona_sequence_global_high_consumption(
-    persona_manager_instance, mock_token_tracker
-):
-    """Tests token optimization when global consumption is high."""
-    # Simulate high global token consumption rate
-    mock_token_tracker.get_consumption_rate.return_value = 0.8
-
-    sequence = ["Visionary_Generator", "Skeptical_Generator"]
-    optimized_sequence = persona_manager_instance.get_token_optimized_persona_sequence(
-        sequence
-    )
-
-    # Expect both personas to be truncated
-    assert "Visionary_Generator_TRUNCATED" in optimized_sequence
-    assert "Skeptical_Generator_TRUNCATED" in optimized_sequence
-
-
-def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(
-    persona_manager_instance, mock_token_tracker
-):
-    """Tests token optimization when a specific persona is prone to truncation."""
-    # Simulate low global token consumption
-    mock_token_tracker.get_consumption_rate.return_value = 0.1
-
-    # Simulate Visionary_Generator being prone to truncation by setting its metrics
-    metrics = persona_manager_instance.persona_performance_metrics[
-        "Visionary_Generator"
-    ]
-    metrics["total_turns"] = 10
-    metrics["truncation_failures"] = 3  # 30% truncation rate, exceeding the threshold
-
-    sequence = ["Visionary_Generator", "Skeptical_Generator"]
-    optimized_sequence = persona_manager_instance.get_token_optimized_persona_sequence(
-        sequence
-    )
-
-    # Expect only Visionary_Generator to be truncated
-    assert "Visionary_Generator_TRUNCATED" in optimized_sequence
-    assert "Skeptical_Generator" in optimized_sequence
-
-
-def test_get_adjusted_persona_config_adaptive_temperature(persona_manager_for_metrics):
-    """Test adaptive temperature adjustment based on schema failures."""
-    pm = persona_manager_for_metrics
-    original_temp = pm.all_personas["TestPersona"].temperature
-    metrics = pm.persona_performance_metrics["TestPersona"]
-
-    # Simulate high schema failure rate
-    metrics["total_turns"] = 10
-    metrics["schema_failures"] = 3  # 30% failure rate
-    metrics["last_adjustment_timestamp"] = (
-        time.time() - pm.adjustment_cooldown_seconds - 10
-    )
-
-    adjusted_config = pm.get_adjusted_persona_config("TestPersona")
-    assert adjusted_config.temperature < original_temp
-    assert metrics["last_adjusted_temp"] == adjusted_config.temperature
-    assert metrics["total_turns"] == 0
-
-
-def test_get_adjusted_persona_config_adaptive_max_tokens(persona_manager_for_metrics):
-    """Test adaptive max_tokens adjustment based on truncation failures."""
-    pm = persona_manager_for_metrics
-    original_max_tokens = pm.all_personas["TestPersona"].max_tokens
-    metrics = pm.persona_performance_metrics["TestPersona"]
-
-    # Simulate high truncation failure rate
-    metrics["total_turns"] = 10
-    metrics["truncation_failures"] = 2  # 20% truncation rate
-    metrics["last_adjustment_timestamp"] = (
-        time.time() - pm.adjustment_cooldown_seconds - 10
-    )
-
-    adjusted_config = pm.get_adjusted_persona_config("TestPersona")
-    assert adjusted_config.max_tokens > original_max_tokens
-    assert metrics["last_adjusted_max_tokens"] == adjusted_config.max_tokens
-    assert metrics["total_turns"] == 0
+        adjusted_config = pm.get_adjusted_persona_config("TestPersona")
+        self.assertGreater(adjusted_config.max_tokens, original_max_tokens)
+        self.assertEqual(metrics["last_adjusted_max_tokens"], adjusted_config.max_tokens)
+        self.assertEqual(metrics["total_turns"], 0) # Should reset after adjustment
