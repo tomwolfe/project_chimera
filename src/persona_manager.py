@@ -28,6 +28,7 @@ from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 from src.exceptions import SchemaValidationError
 from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
+from src.utils.prompt_optimizer import PromptOptimizer # NEW: Import PromptOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class PersonaManager:
         domain_keywords: Dict[str, List[str]],
         token_tracker: Optional[TokenUsageTracker] = None,
         settings: Optional[ChimeraSettings] = None,  # NEW: Add settings parameter
+        prompt_optimizer: Optional[PromptOptimizer] = None, # NEW: Add prompt_optimizer parameter
     ):
         self.all_personas: Dict[str, PersonaConfig] = {}
         self.persona_sets: Dict[str, List[str]] = {}
@@ -90,6 +92,7 @@ class PersonaManager:
 
         # Initialize PromptAnalyzer first
         self.prompt_analyzer = PromptAnalyzer(domain_keywords)
+        self.prompt_optimizer = prompt_optimizer # NEW: Store prompt_optimizer
 
         # Load initial data and custom frameworks, handle errors internally
         load_success, load_msg = self._load_initial_data()
@@ -579,6 +582,18 @@ class PersonaManager:
             # Note: We don't record truncation_failures here, but when the LLM call is made and returns `is_truncated`.
             # This ensures we only count actual truncations, not just requests for truncated personas.
             return adjusted_config
+
+        # NEW: Apply system prompt optimization for high-token personas
+        if self.prompt_optimizer:
+            # Convert PersonaConfig to dict, optimize, then convert back
+            optimized_system_prompt_data = self.prompt_optimizer.optimize_persona_system_prompt(
+                adjusted_config.model_dump()
+            )
+            adjusted_config = PersonaConfig.model_validate(optimized_system_prompt_data)
+            # Log the change if it occurred (check if system_prompt actually changed)
+            if adjusted_config.system_prompt != base_config.system_prompt:
+                logger.debug(f"System prompt for {persona_name} optimized by PromptOptimizer.")
+
 
         if (
             not metrics

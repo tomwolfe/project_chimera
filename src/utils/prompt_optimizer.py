@@ -149,16 +149,16 @@ class PromptOptimizer:
         """
         # --- NEW: Apply basic text optimization (redundant phrases, sentence simplification) ---
         optimized_text_pre_truncation = prompt
-        
+
         # Remove redundant phrases
         redundant_phrases = [
-            "please", "kindly", "could you", "would you", "i would like to", 
-            "i need you to", "i want you to", "i am asking you to", 
+            "please", "kindly", "could you", "would you", "i would like to",
+            "i need you to", "i want you to", "i am asking you to",
             "i am requesting you to", "i am hoping you can", "i am hoping that you can"
         ]
         for phrase in redundant_phrases:
             optimized_text_pre_truncation = optimized_text_pre_truncation.replace(phrase, "")
-        
+
         # Simplify complex sentences
         complex_structures = [
             "in order to", "due to the fact that", "it is important to note that",
@@ -171,7 +171,7 @@ class PromptOptimizer:
         ]
         for i, structure in enumerate(complex_structures):
             optimized_text_pre_truncation = optimized_text_pre_truncation.replace(structure, replacements[i])
-        
+
         # Remove unnecessary whitespace
         optimized_text_pre_truncation = " ".join(optimized_text_pre_truncation.split())
         # --- END NEW ---
@@ -229,3 +229,30 @@ class PromptOptimizer:
             max_tokens,
             truncation_indicator="... (debate history further summarized/truncated...)",
         )
+
+    def optimize_persona_system_prompt(self, persona_config_data: Dict) -> Dict:
+        """
+        Optimizes a persona's system prompt by removing redundant generic instructions
+        and adding specific token optimization directives for high-token personas.
+        """
+        persona_name = persona_config_data.get("name")
+        if persona_name in ["Security_Auditor", "Self_Improvement_Analyst", "Code_Architect"]:
+            system_prompt = persona_config_data["system_prompt"]
+
+            # Remove generic instructions that aren't specific to the persona
+            system_prompt = system_prompt.replace("You are a highly analytical AI assistant.", "")
+            system_prompt = system_prompt.replace("Provide clear and concise responses.", "")
+
+            # Add specific token optimization instructions
+            system_prompt += """
+            **Token Optimization Instructions:**
+            - Be concise but thorough
+            - Avoid repeating information
+            - Use bullet points for clear structure
+            - Prioritize the most critical information first
+            - Limit your response to the most essential points
+            """
+
+            persona_config_data["system_prompt"] = system_prompt
+            logger.info(f"Optimized system prompt for high-token persona: {persona_name}")
+        return persona_config_data
