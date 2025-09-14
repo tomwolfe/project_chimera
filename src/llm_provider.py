@@ -33,7 +33,7 @@ from src.exceptions import (
     LLMUnexpectedError,
     TokenBudgetExceededError,
     CircuitBreakerError,
-    SchemaValidationError,
+    SchemaValidationError, # NEW: Import SchemaValidationError
 )
 
 # --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
@@ -284,7 +284,7 @@ class GeminiProvider:
         reraise=True,  # Ensure RetryError is raised after max attempts
         retry=(
             retry_if_exception_type(APIError)
-            | retry_if_exception_type(SchemaValidationError)
+            | retry_if_exception_type(SchemaValidationError) # NEW: Add SchemaValidationError to retry exceptions
             | retry_if_exception_type(socket.gaierror)  # For network issues
         ),
     )
