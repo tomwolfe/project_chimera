@@ -12,6 +12,7 @@ import difflib
 import uuid
 import numpy as np
 import gc
+import copy # ADDED: Import copy for deepcopy
 
 # --- IMPORT MODIFICATIONS ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer
@@ -207,16 +208,14 @@ class SocraticDebate:
                 settings=self.settings,
                 prompt_optimizer=self.prompt_optimizer, # Pass PromptOptimizer
             )
-            self.all_personas = self.persona_manager.all_personas
-            self.persona_sets = self.persona_manager.persona_sets
-        else:
-            self.persona_manager.token_tracker = self.token_tracker
-            self.persona_manager.settings = (
-                self.settings
-            )
-            self.persona_manager.prompt_optimizer = self.prompt_optimizer # Ensure PromptOptimizer is set
-            self.all_personas = self.persona_manager.all_personas
-            self.persona_sets = self.persona_manager.persona_sets
+        # Ensure persona_manager's attributes are correctly set and then stored locally in SocraticDebate
+        self.persona_manager.token_tracker = self.token_tracker
+        self.persona_manager.settings = self.settings
+        self.persona_manager.prompt_optimizer = self.prompt_optimizer # Ensure PromptOptimizer is set
+
+        # Now, get the personas and persona_sets from the (now fully configured) persona_manager
+        self.all_personas = self.persona_manager.all_personas
+        self.persona_sets = self.persona_manager.persona_sets
 
         self.persona_router = self.persona_manager.persona_router
         if not self.persona_router:
@@ -1958,71 +1957,38 @@ class SocraticDebate:
         MAX_TURNS_TO_INCLUDE = 3
 
         for turn in reversed(debate_history[-MAX_TURNS_TO_INCLUDE:]):
-            turn_copy = json.loads(json.dumps(turn, default=convert_to_json_friendly))
-
-            if "output" in turn_copy and isinstance(turn_copy["output"], dict):
-                if "CRITIQUE_SUMMARY" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "CRITIQUE_SUMMARY": turn_copy["output"]["CRITIQUE_SUMMARY"][:50]
-                        + "..."
-                        if len(turn_copy["output"]["CRITIQUE_SUMMARY"]) > 50
-                        else turn_copy["output"]["CRITIQUE_SUMMARY"]
-                    }
-                elif "ANALYSIS_SUMMARY" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "ANALYSIS_SUMMARY": turn_copy["output"]["ANALYSIS_SUMMARY"][:50]
-                        + "..."
-                        if len(turn_copy["output"]["ANALYSIS_SUMMARY"]) > 50
-                        else turn_copy["output"]["ANALYSIS_SUMMARY"]
-                    }
-                elif "general_output" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "general_output": turn_copy["output"]["general_output"][:30]
-                        + "..."
-                        if len(turn_copy["output"]["general_output"]) > 30
-                        else turn_copy["output"]["general_output"]
-                    }
-                elif "analysisTitle" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "analysisTitle": turn_copy["output"]["analysisTitle"][:50]
-                        + "..."
-                    }
-                elif "architectural_analysis" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "overall_assessment": turn_copy["output"][
-                            "architectural_analysis"
-                        ].get("assessment", "Architectural analysis performed.")[:50]
-                        + "..."
-                    }
-                elif "security_analysis" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "overall_assessment": turn_copy["output"][
-                            "security_analysis"
-                        ].get("overall_assessment", "Security analysis performed.")[:50]
-                        + "..."
-                    }
-                elif "CRITIQUE_POINTS" in turn_copy["output"]:
-                    turn_copy["output"] = {
-                        "CRITIQUE_SUMMARY": turn_copy["output"].get(
-                            "CRITIQUE_SUMMARY", "Critique provided."
-                        )[:50]
-                        + "..."
-                    }
-                else:
-                    turn_copy["output"] = {
-                        k: str(v)[:20] for k, v in list(turn_copy["output"].items())[:1]
-                    }
-            elif "output" in turn_copy and isinstance(turn_copy["output"], str):
+            # Create a deep copy of the turn object
+            turn_copy = copy.deepcopy(turn)
+            
+            # Truncate the output field if it's a string
+            if "output" in turn_copy and isinstance(turn_copy["output"], str):
                 turn_copy["output"] = (
                     turn_copy["output"][:30] + "..."
                     if len(turn_copy["output"]) > 30
                     else turn_copy["output"]
                 )
-
-            turn_tokens = self.tokenizer.count_tokens(
-                json.dumps(turn_copy, default=convert_to_json_friendly)
-            )
-
+            # Truncate specific fields in the output if it's a dict
+            elif "output" in turn_copy and isinstance(turn_copy["output"], dict):
+                # Truncate specific fields in the output dict
+                # For example, truncate "general_output" to 50 chars
+                if "general_output" in turn_copy["output"]:
+                    turn_copy["output"]["general_output"] = (
+                        turn_copy["output"]["general_output"][:50] + "..."
+                        if len(turn_copy["output"]["general_output"]) > 50
+                        else turn_copy["output"]["general_output"]
+                    )
+                # Truncate other fields as needed
+                if "CRITIQUE_SUMMARY" in turn_copy["output"]:
+                    turn_copy["output"]["CRITIQUE_SUMMARY"] = (
+                        turn_copy["output"]["CRITIQUE_SUMMARY"][:50] + "..."
+                        if len(turn_copy["output"]["CRITIQUE_SUMMARY"]) > 50
+                        else turn_copy["output"]["CRITIQUE_SUMMARY"]
+                    )
+                # Add more field truncations as needed
+            
+            # Convert turn_copy to a JSON string to count tokens
+            turn_json = json.dumps(turn_copy, default=convert_to_json_friendly)
+            turn_tokens = self.tokenizer.count_tokens(turn_json)
             if current_tokens + turn_tokens <= max_tokens:
                 summarized_history.insert(0, turn_copy)
                 current_tokens += turn_tokens
@@ -2032,7 +1998,6 @@ class SocraticDebate:
                     f"Stopped summarizing debate history due to token limit. Included {len(summarized_history)} turns.",
                 )
                 break
-
         if not summarized_history and debate_history:
             self._log_with_context(
                 "warning", "Debate history too large, providing minimal summary."
@@ -2042,7 +2007,6 @@ class SocraticDebate:
                     "summary": f"Debate history contains {len(debate_history)} turns. Too verbose to include in full."
                 }
             ]
-
         return summarized_history
 
     def _perform_synthesis_phase(
