@@ -2,13 +2,12 @@
 """Gemini-specific tokenizer implementation."""
 
 import logging
-from typing import Optional, Dict, Any, TYPE_CHECKING, List
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from .base import Tokenizer  # This import is relative, so it remains the same
 import hashlib
 import re
 import sys
 from functools import lru_cache
-import google.genai as genai # NEW: Import genai for count_tokens_from_messages
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class GeminiTokenizer(Tokenizer):
             model_name: The Gemini model name to use for token counting.
             genai_client: An initialized google.genai.Client instance.
         """
-        if genai_client === None: # MODIFIED: Changed === to is
+        if genai_client is None:
             raise ValueError(
                 "genai_client must be provided to GeminiTokenizer for token counting."
             )
@@ -109,7 +108,7 @@ class GeminiTokenizer(Tokenizer):
         combined_text = f"{context_str}\n\n{prompt}"
         return self.count_tokens(combined_text)
 
-    def truncate_to_token_limit(
+    def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
         """
@@ -156,22 +155,3 @@ class GeminiTokenizer(Tokenizer):
             return trimmed_text + truncation_indicator
 
         return trimmed_text
-
-    def count_tokens_from_messages(self, messages: List[Dict[str, str]]) -> int:
-        """
-        Counts tokens in a list of message dictionaries using the Gemini API.
-        This is crucial for ChatCompletion-style prompts.
-        """
-        if not messages:
-            return 0
-        try:
-            # The genai.Client.models.count_tokens method can accept a list of messages
-            response = self.genai_client.models.count_tokens(
-                model=self.model_name, contents=messages
-            )
-            return response.total_tokens
-        except Exception as e:
-            logger.error(f"Gemini token counting for messages failed: {e}")
-            # Fallback: concatenate messages and count as a single string
-            combined_text = "\n".join([m.get("content", "") for m in messages])
-            return self.count_tokens(combined_text)
