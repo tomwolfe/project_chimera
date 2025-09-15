@@ -292,6 +292,48 @@ class SocraticDebate:
         self.synthesis_persona_name_for_metrics: Optional[str] = None
         self.file_analysis_cache: Dict[str, Dict[str, Any]] = {}
         self.output_parser = LLMOutputParser()
+        self._cleanup_performed = False # ADDED: Flag to track if cleanup has been performed
+
+    # ADDED: Explicit close method for resource cleanup
+    def close(self):
+        """
+        Explicitly cleans up resources held by the SocraticDebate instance.
+        This method should be called deterministically when the debate is finished.
+        """
+        if self._cleanup_performed:
+            self._log_with_context("debug", "SocraticDebate cleanup already performed.")
+            return
+
+        self._log_with_context("info", "Cleaning up SocraticDebate resources...")
+
+        # 1. Clean up LLM Provider resources
+        if hasattr(self, 'llm_provider') and self.llm_provider:
+            try:
+                # Assuming GeminiProvider will have a close() method
+                if hasattr(self.llm_provider, 'close') and callable(self.llm_provider.close):
+                    self.llm_provider.close()
+                    self._log_with_context("debug", "LLM Provider resources closed.")
+                else:
+                    self._log_with_context("warning", "LLM Provider does not have a close() method.")
+            except Exception as e:
+                self._log_with_context("error", f"Error closing LLM Provider: {e}", exc_info=True)
+
+        # 2. Clear large in-memory objects not managed by Streamlit's cache
+        # (These are already handled in app.py's finally block, but good to be explicit here too if needed)
+        if hasattr(self, 'file_analysis_cache'):
+            self.file_analysis_cache = {}
+        if hasattr(self, 'intermediate_steps'):
+            self.intermediate_steps = {}
+        # Assuming debate_history is an instance attribute that might hold large data
+        if hasattr(self, 'debate_history'):
+            self.debate_history = []
+
+        # 3. Explicitly trigger garbage collection (optional, but can help with memory)
+        gc.collect()
+        self._log_with_context("debug", "Garbage collection triggered during SocraticDebate cleanup.")
+
+        self._cleanup_performed = True
+        self._log_with_context("info", "SocraticDebate resources cleaned up.")
 
     def _log_with_context(self, level: str, message: str, **kwargs):
         """Helper to add request context to all logs from this instance using the class-specific logger."""
@@ -2321,113 +2363,117 @@ class SocraticDebate:
         Orchestrates the full Socratic debate process by calling phase-specific methods.
         Returns the final synthesized answer and a dictionary of intermediate steps.
         """
-        self._initialize_debate_state()
-        initial_persona_sequence = self._get_final_persona_sequence(
-            self.initial_prompt, None
-        )
-        self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
+        try:
+            self._initialize_debate_state()
+            initial_persona_sequence = self._get_final_persona_sequence(
+                self.initial_prompt, None
+            )
+            self.intermediate_steps["Persona_Sequence_Initial"] = initial_persona_sequence
 
-        context_analysis_results = self._perform_context_analysis_phase(
-            tuple(initial_persona_sequence)
-        )
-        self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
+            context_analysis_results = self._perform_context_analysis_phase(
+                tuple(initial_persona_sequence)
+            )
+            self.intermediate_steps["Context_Analysis_Output"] = context_analysis_results
 
-        persona_sequence = self._get_final_persona_sequence(
-            self.initial_prompt, context_analysis_results
-        )
-        persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
-            persona_sequence
-        )
-        self.intermediate_steps["Persona_Sequence"] = persona_sequence
+            persona_sequence = self._get_final_persona_sequence(
+                self.initial_prompt, context_analysis_results
+            )
+            persona_sequence = self.persona_manager.get_token_optimized_persona_sequence(
+                persona_sequence
+            )
+            self.intermediate_steps["Persona_Sequence"] = persona_sequence
 
-        self._distribute_debate_persona_budgets(persona_sequence)
+            self._distribute_debate_persona_budgets(persona_sequence)
 
-        context_persona_turn_results = None
-        if "Context_Aware_Assistant" in persona_sequence:
+            context_persona_turn_results = None
+            if "Context_Aware_Assistant" in persona_sequence:
+                self.status_callback(
+                    "Phase 2: Context-Aware Assistant Turn...",
+                    state="running",
+                    current_total_tokens=self.token_tracker.current_usage,
+                    current_total_cost=self.get_total_estimated_cost(),
+                    progress_pct=self.get_progress_pct("debate"),
+                    current_persona_name="Context_Aware_Assistant",
+                )
+                context_persona_turn_results = self._process_context_persona_turn(
+                    persona_sequence, context_analysis_results
+                )
+                self.intermediate_steps["Context_Aware_Assistant_Output"] = (
+                    context_persona_turn_results
+                )
+
             self.status_callback(
-                "Phase 2: Context-Aware Assistant Turn...",
+                "Phase 3: Executing Debate Turns...",
                 state="running",
                 current_total_tokens=self.token_tracker.current_usage,
                 current_total_cost=self.get_total_estimated_cost(),
                 progress_pct=self.get_progress_pct("debate"),
-                current_persona_name="Context_Aware_Assistant",
             )
-            context_persona_turn_results = self._process_context_persona_turn(
-                persona_sequence, context_analysis_results
-            )
-            self.intermediate_steps["Context_Aware_Assistant_Output"] = (
+            debate_persona_results = self._execute_debate_persona_turns(
+                persona_sequence,
                 context_persona_turn_results
+                if context_persona_turn_results is not None
+                else {},
+            )
+            self.intermediate_steps["Debate_History"] = debate_persona_results
+
+            self.status_callback(
+                "Phase 4: Synthesizing Final Answer...",
+                state="running",
+                current_total_tokens=self.token_tracker.current_usage,
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=self.get_progress_pct("synthesis"),
             )
 
-        self.status_callback(
-            "Phase 3: Executing Debate Turns...",
-            state="running",
-            current_total_tokens=self.token_tracker.current_usage,
-            current_total_cost=self.get_total_estimated_cost(),
-            progress_pct=self.get_progress_pct("debate"),
-        )
-        debate_persona_results = self._execute_debate_persona_turns(
-            persona_sequence,
-            context_persona_turn_results
-            if context_persona_turn_results is not None
-            else {},
-        )
-        self.intermediate_steps["Debate_History"] = debate_persona_results
-
-        self.status_callback(
-            "Phase 4: Synthesizing Final Answer...",
-            state="running",
-            current_total_tokens=self.token_tracker.current_usage,
-            current_total_cost=self.get_total_estimated_cost(),
-            progress_pct=self.get_progress_pct("synthesis"),
-        )
-
-        synthesis_persona_results, metrics_collector_instance_from_synthesis_phase = (
-            self._perform_synthesis_phase(persona_sequence, debate_persona_results)
-        )
-        self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
-
-        if (
-            self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
-            and metrics_collector_instance_from_synthesis_phase
-        ):
-            is_successful_suggestion = not self._is_problematic_output(
-                synthesis_persona_results
+            synthesis_persona_results, metrics_collector_instance_from_synthesis_phase = (
+                self._perform_synthesis_phase(persona_sequence, debate_persona_results)
             )
-            metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome(
-                self.synthesis_persona_name_for_metrics,
-                is_successful_suggestion,
-                schema_failed=bool(synthesis_persona_results.get("malformed_blocks")),
+            self.intermediate_steps["Final_Synthesis_Output"] = synthesis_persona_results
+
+            if (
+                self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
+                and metrics_collector_instance_from_synthesis_phase
+            ):
+                is_successful_suggestion = not self._is_problematic_output(
+                    synthesis_persona_results
+                )
+                metrics_collector_instance_from_synthesis_phase.record_self_improvement_suggestion_outcome(
+                    self.synthesis_persona_name_for_metrics,
+                    is_successful_suggestion,
+                    schema_failed=bool(synthesis_persona_results.get("malformed_blocks")),
+                )
+
+            self.status_callback(
+                "Finalizing Results...",
+                state="running",
+                current_total_tokens=self.token_tracker.current_usage,
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=0.95,
+            )
+            final_answer, intermediate_steps = self._finalize_debate_results(
+                context_persona_turn_results,
+                debate_persona_results,
+                synthesis_persona_results,
             )
 
-        self.status_callback(
-            "Finalizing Results...",
-            state="running",
-            current_total_tokens=self.token_tracker.current_usage,
-            current_total_cost=self.get_total_estimated_cost(),
-            progress_pct=0.95,
-        )
-        final_answer, intermediate_steps = self._finalize_debate_results(
-            context_persona_turn_results,
-            debate_persona_results,
-            synthesis_persona_results,
-        )
+            self.status_callback(
+                "Socratic Debate Complete!",
+                state="complete",
+                current_total_tokens=self.token_tracker.current_usage,
+                current_total_cost=self.get_total_estimated_cost(),
+                progress_pct=1.0,
+            )
+            self._log_with_context(
+                "info",
+                "Socratic Debate process completed successfully.",
+                total_tokens=self.token_tracker.current_usage,
+                total_cost=self.get_total_estimated_cost(),
+            )
 
-        self.status_callback(
-            "Socratic Debate Complete!",
-            state="complete",
-            current_total_tokens=self.token_tracker.current_usage,
-            current_total_cost=self.get_total_estimated_cost(),
-            progress_pct=1.0,
-        )
-        self._log_with_context(
-            "info",
-            "Socratic Debate process completed successfully.",
-            total_tokens=self.token_tracker.current_usage,
-            total_cost=self.get_total_estimated_cost(),
-        )
-
-        return final_answer, intermediate_steps
+            return final_answer, intermediate_steps
+        finally:
+            # ADDED: Ensure cleanup is called regardless of success or failure
+            self.close()
 
     def _generate_unified_diff(
         self, file_path: str, original_content: str, new_content: str

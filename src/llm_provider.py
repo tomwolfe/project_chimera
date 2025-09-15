@@ -543,3 +543,17 @@ class GeminiProvider:
                 raise LLMProviderError(error_msg, original_exception=e) from e
         
         raise LLMProviderError("Failed to generate valid response after all schema retries.")
+
+    def close(self):
+        """
+        Explicitly releases resources held by the GeminiProvider.
+        For google.genai, this primarily involves setting the client to None
+        to encourage garbage collection.
+        """
+        if hasattr(self, 'client') and self.client:
+            logger.info("Closing GeminiProvider: Releasing LLM client resources.")
+            # There's no explicit .close() method for google.genai.Client
+            # Setting to None helps with garbage collection.
+            self.client = None
+        else:
+            logger.debug("GeminiProvider: No active client to close.")

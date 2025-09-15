@@ -2,6 +2,9 @@
 
 import streamlit as st
 import os
+import sys # NEW: Import sys for graceful exit
+from src.utils.api_key_validator import fetch_api_key # ADD THIS LINE
+
 
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -47,7 +50,7 @@ from src.utils.code_validator import validate_code_output_batch
 import json
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # NEW: Import RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path
 
@@ -58,8 +61,8 @@ from src.token_tracker import TokenUsageTracker
 from src.context.context_analyzer import (
     ContextRelevanceAnalyzer,
     CodebaseScanner,
-)  # MODIFIED
-import gc  # Import garbage collector for explicit memory management
+)
+import gc
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
 from src.utils.session_manager import (
@@ -69,15 +72,14 @@ from src.utils.session_manager import (
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
 )
-from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key
-from src.utils.api_key_validator import fetch_api_key
+from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key, shutdown_streamlit # NEW: Import shutdown_streamlit
 
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
 
 
 # NEW IMPORT: For the summarization pipeline
-from transformers import pipeline  # NEW: Import pipeline for summarization
+from transformers import pipeline
 
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
@@ -121,7 +123,7 @@ def get_app_logger():
 
 logger = get_app_logger()
 
-if logger is None:  # MODIFIED: Changed === to is
+if logger is None:
     st.error(
         "❌ Critical: Logging system failed to initialize and fallback also failed. Please check src/logging_config.py."
     )
@@ -149,13 +151,12 @@ def get_codebase_scanner_instance():
 
 # NEW: Instantiate ContextRelevanceAnalyzer once and cache it
 @st.cache_resource
-# MODIFIED: Renamed 'settings' to '_settings' to prevent UnhashableParamError
 def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
     """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
     logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
     return ContextRelevanceAnalyzer(
-        cache_dir=_settings.sentence_transformer_cache_dir,  # Use _settings here
-        raw_file_contents={},  # Initialize empty, will be updated dynamically
+        cache_dir=_settings.sentence_transformer_cache_dir,
+        raw_file_contents={},
     )
 
 
@@ -167,10 +168,6 @@ def get_summarizer_pipeline_instance():
         "Initializing Hugging Face summarization pipeline (sshleifer/distilbart-cnn-6-6) via st.cache_resource."
     )
     return pipeline("summarization", model="sshleifer/distilbart-cnn-6-6")
-
-
-# REMOVED: get_prompt_optimizer_instance from app.py
-# It will be initialized within SocraticDebate to ensure tokenizer availability.
 
 
 EXAMPLE_PROMPTS = {
@@ -216,14 +213,13 @@ EXAMPLE_PROMPTS = {
 }
 
 # --- Session State Initialization Call ---
-# MODIFIED: Pass the cached instances to _initialize_session_state
 if "initialized" not in st.session_state:
     _initialize_session_state(
-        app_config=settings_instance,  # Renamed parameter for clarity
-        example_prompts=EXAMPLE_PROMPTS,  # Renamed parameter for clarity
-        get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,  # Pass the cached function
-        get_codebase_scanner_instance=get_codebase_scanner_instance,  # Pass the cached function
-        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # NEW: Pass the cached function
+        app_config=settings_instance,
+        example_prompts=EXAMPLE_PROMPTS,
+        get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
+        get_codebase_scanner_instance=get_codebase_scanner_instance,
+        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,
     )
     st.session_state.api_key_input = fetch_api_key() or ""
 # --- END Session State Initialization Call ---
@@ -242,12 +238,11 @@ def calculate_token_count(text: str, tokenizer) -> int:
         return tokenizer.count_tokens(text)
     elif hasattr(tokenizer, 'encode'):
         return len(tokenizer.encode(text))
-    elif hasattr(tokenizer, 'tokenize'): # Fallback for tokenizers with a .tokenize method
+    elif hasattr(tokenizer, 'tokenize'):
         return len(tokenizer.tokenize(text))
     else:
-        # Fallback for unknown tokenizers, or raise an error if no known method
         logger.warning(f"Unknown tokenizer type for {type(tokenizer).__name__}. Falling back to character count / 4 estimate.")
-        return len(text) // 4  # Rough estimate
+        return len(text) // 4
 # --- END NEW HELPER FUNCTION ---
 
 
@@ -255,7 +250,7 @@ def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
     issues = []
 
-    processed_prompt = prompt  # Initialize processed_prompt with original prompt
+    processed_prompt = prompt
 
     injection_patterns = [
         (
@@ -296,24 +291,21 @@ def sanitize_user_input(prompt: str) -> str:
     ]
 
     MAX_PROMPT_LENGTH = 2000
-    # Apply injection pattern replacements first, and if found, replace the entire prompt
     for pattern, replacement_tag in injection_patterns:
-        if re.search(pattern, prompt):  # Check original prompt for injection
-            processed_prompt = f"[{replacement_tag}]"  # Replace entire prompt with tag
-            return processed_prompt  # Return immediately if injection detected
+        if re.search(pattern, prompt):
+            processed_prompt = f"[{replacement_tag}]"
+            return processed_prompt
 
-    # Apply truncation AFTER checking for injection, but BEFORE other processing
     if len(processed_prompt) > MAX_PROMPT_LENGTH:
         issues.append(
             f"Prompt length exceeded ({len(processed_prompt)} > {MAX_PROMPT_LENGTH}). Truncating."
         )
         processed_prompt = (
             processed_prompt[:MAX_PROMPT_LENGTH] + " [TRUNCATED]"
-        )  # Add truncation indicator
+        )
 
     sanitized = html.escape(processed_prompt)
 
-    # Apply repeated character reduction after HTML escaping
     sanitized = re.sub(
         r'([\\/*\-+!@#$%^&*()_+={}\[\]:;"\'<>?,.])\1{3,}', r"\1\1\1", sanitized
     )
@@ -326,7 +318,6 @@ def handle_debate_errors(error: Exception):
     error_type = type(error).__name__
     error_str = str(error).lower()
 
-    # Prioritize specific API key errors
     if "invalid_api_key" in error_str or "api key not valid" in error_str:
         st.error("""
         🔑 **API Key Error: Invalid or Missing Key**
@@ -339,7 +330,6 @@ def handle_debate_errors(error: Exception):
         [Get a Gemini API key from Google AI Studio](https://aistudio.google.com/apikey)
         """)
         logger.error(f"API Key Error: {error_str}", exc_info=True)
-    # Prioritize specific exception types
     elif isinstance(error, RateLimitExceededError):
         st.error(f"""
         ⏳ **Rate Limit Exceeded**
@@ -401,7 +391,6 @@ def handle_debate_errors(error: Exception):
         - Try a different LLM model (e.g., `gemini-2.5-pro` for more complex tasks).
         """)
         logger.error(f"Schema Validation Error: {error_str}", exc_info=True)
-    # NEW: Specific handling for the TypeError seen in logs
     elif isinstance(error, TypeError) and "unexpected keyword argument" in error_str:
         st.error(f"""
         🐛 **Internal Configuration Error: Type Mismatch**
@@ -415,7 +404,6 @@ def handle_debate_errors(error: Exception):
         logger.error(
             f"Internal Configuration Error (TypeError): {error_str}", exc_info=True
         )
-    # Generic network issues
     elif (
         "connection" in error_str
         or "timeout" in error_str
@@ -435,7 +423,6 @@ def handle_debate_errors(error: Exception):
         Google API status: [Cloud Status Dashboard](https://status.cloud.google.com/)
         """)
         logger.error(f"Network Connection Issue: {error_str}", exc_info=True)
-    # Content safety filter (now with exclusion for ChimeraError to prevent misclassification)
     elif (
         ("safety" in error_str and "chimera_error" not in error_str)
         or "blocked" in error_str
@@ -453,7 +440,6 @@ def handle_debate_errors(error: Exception):
         - Try a less detailed request first.
         """)
         logger.error(f"Content Safety Filter Triggered: {error_str}", exc_info=True)
-    # Generic Chimera internal error (should be caught by more specific handlers first)
     elif isinstance(error, ChimeraError):
         st.error(f"""
         🔥 **Project Chimera Internal Error**
@@ -465,7 +451,6 @@ def handle_debate_errors(error: Exception):
         Please report this issue if it persists.
         """)
         logger.error(f"Project Chimera Internal Error: {error_str}", exc_info=True)
-    # Catch-all for any other unexpected errors
     else:
         st.error(f"""
         ❌ **An Unexpected Error Occurred**
@@ -707,6 +692,11 @@ with st.sidebar:
                 "Estimated Cost", f"${st.session_state.current_debate_cost_usd:.6f}"
             )
         st.caption("These metrics update in real-time during the debate.")
+
+    st.markdown("---")
+    # NEW: Add a "Shutdown App" button
+    if st.button("🛑 Shutdown App", use_container_width=True, type="secondary"):
+        shutdown_streamlit()
 
 
 st.header("Project Setup & Input")
@@ -1402,9 +1392,6 @@ def _run_socratic_debate_process():
 
     request_id = str(uuid.uuid4())[:8]
 
-    # REMOVED: structured_codebase_context_for_debate: Dict[str, Any] = {}
-    # REMOVED: codebase_raw_file_contents_for_debate: Dict[str, str] = {}
-
     is_self_analysis_prompt_detected = (
         st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
             user_prompt
@@ -1416,11 +1403,9 @@ def _run_socratic_debate_process():
             "Self-analysis prompt detected. Loading Project Chimera's codebase context..."
         )
         try:
-            # Use the cached CodebaseScanner instance
             scanner = get_codebase_scanner_instance()
             full_codebase_analysis = scanner.load_own_codebase_context()
 
-            # Update the cached instances directly
             st.session_state.codebase_scanner.file_structure = (
                 full_codebase_analysis.get("file_structure", {})
             )
@@ -1428,7 +1413,6 @@ def _run_socratic_debate_process():
                 full_codebase_analysis.get("raw_file_contents", {})
             )
 
-            # Also update context_analyzer's raw_file_contents and recompute embeddings
             st.session_state.context_analyzer.raw_file_contents = (
                 st.session_state.codebase_scanner.raw_file_contents
             )
@@ -1439,7 +1423,6 @@ def _run_socratic_debate_process():
                 frozenset(st.session_state.context_analyzer.raw_file_contents.items())
             )
 
-            # RE-ADD: Populate session state variables for codebase context
             st.session_state.codebase_context = st.session_state.codebase_scanner.file_structure
             st.session_state.raw_file_contents = st.session_state.codebase_scanner.raw_file_contents
 
@@ -1489,7 +1472,10 @@ def _run_socratic_debate_process():
 
     try:
         st.session_state.session_rate_limiter_instance(lambda: None)()
-    except Exception as e:
+    except RateLimitExceededError as e: # Catch specific RateLimitExceededError
+        handle_debate_errors(e)
+        return
+    except Exception as e: # Catch any other unexpected errors from rate limiter
         handle_debate_errors(e)
         return
 
@@ -1524,7 +1510,6 @@ def _run_socratic_debate_process():
             }
         ],
     }
-    # REMOVED: intermediate_steps = { ... } # This local variable is no longer needed here
     final_total_tokens = 0
     final_total_cost = 0.0
 
@@ -1642,10 +1627,6 @@ def _run_socratic_debate_process():
                     f"Domain selection logic - Final domain_for_run: {domain_for_run}"
                 )
 
-                # NEW: Ensure context_analyzer has the latest raw_file_contents and re-computes embeddings if needed
-                # This block is now redundant as the codebase_scanner already updates context_analyzer
-                # and context_analyzer.raw_file_contents is now sourced from codebase_scanner.
-                # Keeping it for now, but it could be simplified.
                 if (
                     st.session_state.context_analyzer
                     and st.session_state.codebase_scanner
@@ -1692,15 +1673,13 @@ def _run_socratic_debate_process():
                     domain=domain_for_run,
                     status_callback=update_status_with_realtime_metrics,
                     rich_console=rich_console_instance,
-                    # REMOVED: structured_codebase_context=structured_codebase_context_for_debate,
-                    # REMOVED: raw_file_contents=codebase_raw_file_contents_for_debate,
-                    context_analyzer=st.session_state.context_analyzer,  # Pass cached instance
+                    context_analyzer=st.session_state.context_analyzer,
                     is_self_analysis=is_self_analysis_prompt_detected,
                     settings=settings_instance,
                     persona_manager=st.session_state.persona_manager,
-                    token_tracker=st.session_state.token_tracker, # FIX: Use st.session_state.token_tracker
-                    codebase_scanner=get_codebase_scanner_instance(),  # Pass cached instance
-                    summarizer_pipeline_instance=get_summarizer_pipeline_instance(),  # NEW: Pass the cached summarizer pipeline
+                    token_tracker=st.session_state.token_tracker,
+                    codebase_scanner=get_codebase_scanner_instance(),
+                    summarizer_pipeline_instance=get_summarizer_pipeline_instance(),
                 )
 
                 logger.info(
@@ -1713,7 +1692,7 @@ def _run_socratic_debate_process():
 
                 final_answer, st.session_state.intermediate_steps_output = (
                     debate_instance.run_debate()
-                )  # MODIFIED: Store directly in session state
+                )
 
                 if (
                     hasattr(debate_instance, "file_analysis_cache")
@@ -1736,7 +1715,6 @@ def _run_socratic_debate_process():
 
                 st.session_state.process_log_output_text = rich_output_buffer.getvalue()
                 st.session_state.final_answer_output = final_answer
-                # REMOVED: st.session_state.intermediate_steps_output = intermediate_steps # Already done above
                 st.session_state.last_config_params = {
                     "max_tokens_budget": st.session_state.max_tokens_budget_input,
                     "model_name": st.session_state.selected_model_selectbox,
@@ -1749,10 +1727,10 @@ def _run_socratic_debate_process():
                 )
                 final_total_tokens = st.session_state.intermediate_steps_output.get(
                     "Total_Tokens_Used", 0
-                )  # MODIFIED
+                )
                 final_total_cost = st.session_state.intermediate_steps_output.get(
                     "Total_Estimated_Cost_USD", 0.0
-                )  # MODIFIED
+                )
 
             except (
                 TokenBudgetExceededError,
@@ -1760,7 +1738,7 @@ def _run_socratic_debate_process():
                 ChimeraError,
                 CircuitBreakerError,
                 LLMProviderError,
-                TypeError,  # NEW: Catch TypeError explicitly
+                TypeError,
             ) as e:
                 handle_debate_errors(e)
                 status.update(
@@ -1801,25 +1779,25 @@ def _run_socratic_debate_process():
                 )
             finally:
                 # Explicitly clear large objects and trigger garbage collection
-                # These lines are already present, but ensure they are correctly placed
-                # and that `debate_instance` is also explicitly deleted.
                 if st.session_state.context_analyzer:
                     st.session_state.context_analyzer._last_raw_file_contents_hash = (
                         None
                     )
-                    # It's generally better to clear the contents rather than deleting the cached instance
                     st.session_state.context_analyzer.file_embeddings = {}
                     st.session_state.context_analyzer.raw_file_contents = {}
 
-                # Clear raw_file_contents and structured_codebase_context from session state
                 st.session_state.raw_file_contents = {}
                 st.session_state.structured_codebase_context = {}
 
-                st.session_state.file_analysis_cache = None  # Clear this cache
+                st.session_state.file_analysis_cache = None
 
                 if debate_instance:
-                    del debate_instance  # Explicitly delete the debate instance
-                gc.collect()  # Force garbage collection
+                    # If SocraticDebate has a 'close' method, call it for explicit cleanup
+                    if hasattr(debate_instance, 'close') and callable(debate_instance.close):
+                        logger.info(f"Calling close() on SocraticDebate instance {id(debate_instance)}.")
+                        debate_instance.close()
+                    del debate_instance # Explicitly delete the instance
+                gc.collect()
                 logger.info(
                     "Explicit garbage collection triggered in app.py after debate process."
                 )
@@ -2282,7 +2260,7 @@ if st.session_state.debate_ran:
             st.subheader("Intermediate Reasoning Steps")
             display_steps = {
                 k: v
-                for k, v in st.session_state.intermediate_steps_output.items()  # MODIFIED
+                for k, v in st.session_state.intermediate_steps_output.items()
                 if not k.endswith("_Tokens_Used")
                 and not k.endswith("_Estimated_Cost_USD")
                 and k != "Total_Tokens_Used"
@@ -2312,15 +2290,15 @@ if st.session_state.debate_ran:
                 token_count_key = f"{token_base_name}_Tokens_Used"
                 tokens_used = st.session_state.intermediate_steps_output.get(
                     token_count_key, "N/A"
-                )  # MODIFIED
+                )
 
                 actual_temp = (
-                    st.session_state.intermediate_steps_output.get(  # MODIFIED
+                    st.session_state.intermediate_steps_output.get(
                         f"{persona_name}_Actual_Temperature"
                     )
                 )
                 actual_max_tokens = (
-                    st.session_state.intermediate_steps_output.get(  # MODIFIED
+                    st.session_state.intermediate_steps_output.get(
                         f"{persona_name}_Actual_Max_Tokens"
                     )
                 )

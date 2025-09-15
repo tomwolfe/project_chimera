@@ -1,11 +1,14 @@
 import streamlit as st
 import logging
 from typing import Dict, Any
+import os # NEW: Import os
+import signal # NEW: Import signal
+import sys # NEW: Import sys
 
 from src.utils.api_key_validator import (
     validate_gemini_api_key_format,
     test_gemini_api_key_functional,
-)  # NEW: Import from api_key_validator
+)
 from src.utils.session_manager import update_activity_timestamp
 
 logger = logging.getLogger(__name__)
@@ -61,3 +64,13 @@ def test_api_key():
     is_functional, message = test_gemini_api_key_functional(api_key)
     st.session_state.api_key_functional = is_functional
     st.session_state.api_key_functional_message = message
+
+
+# NEW FUNCTION: For proper process termination
+def shutdown_streamlit():
+    """Properly shutdown Streamlit application."""
+    logger.info("Shutting down Streamlit application...")
+    print("Shutting down Streamlit application...")
+    # Force exit to ensure all processes terminate
+    # This is a strong measure, but necessary for Streamlit's multi-process nature
+    os._exit(0)
