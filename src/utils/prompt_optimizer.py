@@ -43,6 +43,17 @@ class PromptOptimizer:
             self.summarizer_tokenizer = None
             self.summarizer_model_max_input_tokens = 1024
 
+    def _count_tokens_robustly(self, text: str) -> int:
+        """Robustly counts tokens using available tokenizer methods."""
+        if hasattr(self.tokenizer, 'count_tokens'):
+            return self.tokenizer.count_tokens(text)
+        elif hasattr(self.tokenizer, 'encode'):
+            return len(self.tokenizer.encode(text))
+        else:
+            # Fallback for unknown tokenizer types
+            logger.warning(f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate.")
+            return len(text) // 4 # Rough estimate
+
     def _summarize_text(
         self, text: str, target_tokens: int, truncation_indicator: str = ""
     ) -> str:
@@ -79,12 +90,12 @@ class PromptOptimizer:
                 )
 
                 if (
-                    self.tokenizer.count_tokens(text)
+                    self._count_tokens_robustly(text) # MODIFIED
                     > self.summarizer_model_max_input_tokens
                 ):
                     logger.warning(
                         f"Input text for summarizer was pre-truncated using summarizer's tokenizer. "
-                        f"Original tokens (approx): {self.tokenizer.count_tokens(text)}, "
+                        f"Original tokens (approx): {self._count_tokens_robustly(text)}, " # MODIFIED
                         f"Summarizer's max input: {self.summarizer_model_max_input_tokens}."
                     )
             else:
@@ -92,11 +103,11 @@ class PromptOptimizer:
                     text, self.summarizer_model_max_input_tokens
                 )
                 if (
-                    self.tokenizer.count_tokens(text)
+                    self._count_tokens_robustly(text) # MODIFIED
                     > self.summarizer_model_max_input_tokens
                 ):
                     logger.warning(
-                        f"Input text for summarizer is too long ({self.tokenizer.count_tokens(text)} tokens). "
+                        f"Input text for summarizer is too long ({self._count_tokens_robustly(text)} tokens). " # MODIFIED
                         f"Pre-truncating to {self.summarizer_model_max_input_tokens} tokens using Gemini tokenizer (fallback)."
                     )
 
@@ -155,7 +166,7 @@ class PromptOptimizer:
         """
         # Calculate current prompt tokens (including system message for accurate total)
         # This is the total input tokens that will be sent to the LLM
-        full_input_tokens = self.tokenizer.count_tokens(system_message_for_token_count + user_prompt_text)
+        full_input_tokens = self._count_tokens_robustly(system_message_for_token_count + user_prompt_text) # MODIFIED
 
         # Get persona-specific token limits from settings
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
@@ -179,7 +190,7 @@ class PromptOptimizer:
 
             # Calculate how many tokens are available for the user_prompt_text
             # after accounting for the system_message.
-            system_message_tokens = self.tokenizer.count_tokens(system_message_for_token_count)
+            system_message_tokens = self._count_tokens_robustly(system_message_for_token_count) # MODIFIED
             available_for_user_prompt = effective_input_limit - system_message_tokens
 
             if available_for_user_prompt <= MIN_EFFECTIVE_INPUT_LIMIT:
@@ -195,7 +206,7 @@ class PromptOptimizer:
                 truncation_indicator="\n... (user prompt truncated)"
             )
             logger.info(
-                f"User prompt for {persona_name} optimized from {self.tokenizer.count_tokens(user_prompt_text)} to {self.tokenizer.count_tokens(optimized_user_prompt_text)} tokens."
+                f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_user_prompt_text)} tokens." # MODIFIED
             )
             return optimized_user_prompt_text
 
@@ -207,7 +218,7 @@ class PromptOptimizer:
         """
         Dynamically optimizes debate history by summarizing or prioritizing turns.
         """
-        current_tokens = self.tokenizer.count_tokens(debate_history_json_str)
+        current_tokens = self._count_tokens_robustly(debate_history_json_str) # MODIFIED
         if current_tokens <= max_tokens:
             return debate_history_json_str
 

@@ -264,6 +264,17 @@ class GeminiProvider:
         schema = output_schema.model_json_schema()
         return json.dumps(schema, indent=2)
 
+    def _count_tokens_robustly(self, text: str) -> int:
+        """Robustly counts tokens using available tokenizer methods."""
+        if hasattr(self.tokenizer, 'count_tokens'):
+            return self.tokenizer.count_tokens(text)
+        elif hasattr(self.tokenizer, 'encode'):
+            return len(self.tokenizer.encode(text))
+        else:
+            # Fallback for unknown tokenizer types
+            logger.warning(f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate.")
+            return len(text) // 4 # Rough estimate
+
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
         failure_threshold=5, # Changed from 3 to 5
@@ -366,7 +377,7 @@ class GeminiProvider:
                 prompt_with_system = (
                     f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt
                 )
-                input_tokens = self.tokenizer.count_tokens(prompt_with_system)
+                input_tokens = self._count_tokens_robustly(prompt_with_system) # MODIFIED
 
                 self._log_with_context(
                     "debug",
@@ -425,7 +436,7 @@ class GeminiProvider:
                             original_exception=ve,
                         )
 
-                output_tokens = self.tokenizer.count_tokens(generated_text)
+                output_tokens = self._count_tokens_robustly(generated_text) # MODIFIED
                 is_truncated = output_tokens >= config.max_output_tokens * 0.95
                 self._log_with_context(
                     "debug",

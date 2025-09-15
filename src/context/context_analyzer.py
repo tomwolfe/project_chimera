@@ -563,7 +563,7 @@ class ContextRelevanceAnalyzer:
         avg_file_tokens = 500
 
         for file_path, score in sorted_files:
-            if score < 0:  # Skip files where similarity calculation failed
+            if score < 0:  # Skip files where similarity calculation fails
                 continue
 
             # Estimate tokens for the file content. A more precise method would count tokens.
@@ -580,13 +580,25 @@ class ContextRelevanceAnalyzer:
         )
         return relevant_files
 
+    # NEW METHOD: Add a helper for robust token counting within the class
+    def _count_tokens_robustly(self, text: str) -> int:
+        """Robustly counts tokens using available tokenizer methods on the SentenceTransformer's internal tokenizer."""
+        if hasattr(self.model.tokenizer, 'count_tokens'):
+            return self.model.tokenizer.count_tokens(text)
+        elif hasattr(self.model.tokenizer, 'encode'):
+            return len(self.model.tokenizer.encode(text))
+        else:
+            # Fallback for other tokenizer types, or raise an error if no known method
+            logger.warning(f"Unknown tokenizer type for {type(self.model.tokenizer).__name__}. Falling back to character count / 4 estimate.")
+            return len(text) // 4 # Rough estimate
+
     def generate_context_summary(
         self, relevant_files: List[Tuple[str, float]], max_tokens: int, prompt: str = ""
     ) -> str:
         """Generates a detailed summary of the relevant codebase context, including actual file contents."""
         current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
-        # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
-        current_tokens = len(self.model.tokenizer.encode(current_summary_parts[0]))
+        # MODIFIED: Use the robust token counting logic
+        current_tokens = self._count_tokens_robustly(current_summary_parts[0])
 
         # Prioritize including content from the most relevant files
         for file_path, _ in relevant_files: # Use the tuple from find_relevant_files
@@ -605,18 +617,17 @@ class ContextRelevanceAnalyzer:
             )
             
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
-            # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
-            file_block_tokens = len(self.model.tokenizer.encode(file_block))
+            # MODIFIED: Use the robust token counting logic
+            file_block_tokens = self._count_tokens_robustly(file_block)
 
             if current_tokens + file_block_tokens <= max_tokens:
                 current_summary_parts.append(file_block)
                 current_tokens += file_block_tokens
             else:
-                # If even a truncated version of this file doesn't fit, try to add just the path
-                # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
-                if len(self.model.tokenizer.encode(f"- {file_path}\n")) <= max_tokens - current_tokens:
+                # MODIFIED: Use the robust token counting logic
+                if self._count_tokens_robustly(f"- {file_path}\n") <= max_tokens - current_tokens:
                     current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
-                    current_tokens += len(self.model.tokenizer.encode(f"- {file_path}\n"))
+                    current_tokens += self._count_tokens_robustly(f"- {file_path}\n")
                 break
 
         if current_tokens < max_tokens:

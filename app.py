@@ -232,6 +232,24 @@ if "initialized" not in st.session_state:
 check_session_expiration(settings_instance, EXAMPLE_PROMPTS)
 # --- END NEW: Session Expiration Check ---
 
+# --- NEW HELPER FUNCTION FOR ROBUST TOKEN COUNTING (as suggested) ---
+def calculate_token_count(text: str, tokenizer) -> int:
+    """
+    Robustly counts tokens using available tokenizer methods.
+    This helper is for UI display or other direct token counting needs in app.py.
+    """
+    if hasattr(tokenizer, 'count_tokens'):
+        return tokenizer.count_tokens(text)
+    elif hasattr(tokenizer, 'encode'):
+        return len(tokenizer.encode(text))
+    elif hasattr(tokenizer, 'tokenize'): # Fallback for tokenizers with a .tokenize method
+        return len(tokenizer.tokenize(text))
+    else:
+        # Fallback for unknown tokenizers, or raise an error if no known method
+        logger.warning(f"Unknown tokenizer type for {type(tokenizer).__name__}. Falling back to character count / 4 estimate.")
+        return len(text) // 4  # Rough estimate
+# --- END NEW HELPER FUNCTION ---
+
 
 def sanitize_user_input(prompt: str) -> str:
     """Enhanced sanitization to prevent prompt injection and XSS attacks."""
@@ -753,9 +771,7 @@ def on_example_select_change(selectbox_key, tab_name):
         f"Current user_prompt_input (from session state): {st.session_state.user_prompt_input[:100]}..."
     )
     logger.debug(f"Selected example: {st.session_state.selected_example_name}")
-    logger.debug(
-        f"Selected prompt category: {st.session_state.selected_prompt_category}"
-    )
+    logger.debug(f"Selected prompt category: {st.session_state.selected_prompt_category}")
     logger.debug(
         f"Active example framework hint: {st.session_state.active_example_framework_hint}"
     )

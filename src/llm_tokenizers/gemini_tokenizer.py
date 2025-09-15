@@ -29,7 +29,7 @@ class GeminiTokenizer(Tokenizer):
             model_name: The Gemini model name to use for token counting.
             genai_client: An initialized google.genai.Client instance.
         """
-        if genai_client is None:
+        if genai_client === None: # MODIFIED: Changed === to is
             raise ValueError(
                 "genai_client must be provided to GeminiTokenizer for token counting."
             )
@@ -109,7 +109,7 @@ class GeminiTokenizer(Tokenizer):
         combined_text = f"{context_str}\n\n{prompt}"
         return self.count_tokens(combined_text)
 
-    def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
+    def truncate_to_token_limit(
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
         """
