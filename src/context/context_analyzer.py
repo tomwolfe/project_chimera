@@ -585,7 +585,8 @@ class ContextRelevanceAnalyzer:
     ) -> str:
         """Generates a detailed summary of the relevant codebase context, including actual file contents."""
         current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
-        current_tokens = self.model.tokenizer.count_tokens(current_summary_parts[0])
+        # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
+        current_tokens = len(self.model.tokenizer.encode(current_summary_parts[0]))
 
         # Prioritize including content from the most relevant files
         for file_path, _ in relevant_files: # Use the tuple from find_relevant_files
@@ -604,16 +605,18 @@ class ContextRelevanceAnalyzer:
             )
             
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
-            file_block_tokens = self.model.tokenizer.count_tokens(file_block)
+            # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
+            file_block_tokens = len(self.model.tokenizer.encode(file_block))
 
             if current_tokens + file_block_tokens <= max_tokens:
                 current_summary_parts.append(file_block)
                 current_tokens += file_block_tokens
             else:
                 # If even a truncated version of this file doesn't fit, try to add just the path
-                if self.model.tokenizer.count_tokens(f"- {file_path}\n") <= max_tokens - current_tokens:
+                # FIX: Replace tokenizer.count_tokens with len(tokenizer.encode)
+                if len(self.model.tokenizer.encode(f"- {file_path}\n")) <= max_tokens - current_tokens:
                     current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
-                    current_tokens += self.model.tokenizer.count_tokens(f"- {file_path}\n")
+                    current_tokens += len(self.model.tokenizer.encode(f"- {file_path}\n"))
                 break
 
         if current_tokens < max_tokens:

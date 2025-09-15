@@ -32,7 +32,8 @@ class TestGeminiProvider(unittest.TestCase):
     def test_generate_with_valid_json(self):
         """Test generate method with valid JSON response."""
         mock_response = MagicMock()
-        mock_response.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='{"test_field": "value"}')))]
+        # FIX: Add missing closing parenthesis to fix syntax error
+        mock_response.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='{"test_field": "value"}')]))]
         self.mock_client.models.generate_content.return_value = mock_response
         
         response, input_tokens, output_tokens, is_truncated = self.provider.generate(
