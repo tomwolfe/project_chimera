@@ -1,4 +1,3 @@
-# src/context/context_analyzer.py
 import os
 import logging
 from pathlib import Path
@@ -201,6 +200,7 @@ class CodebaseScanner:
         missing = []
         for file in required_files:
             if not (project_root / file).exists():
+                logger.warning(f"Missing critical file for self-analysis: {file}")
                 missing.append(file)
 
         if missing:
@@ -364,26 +364,28 @@ class ContextRelevanceAnalyzer:
     Analyzes the relevance of codebase context to the prompt and personas,
     using semantic search and keyword matching.
     """
+    _model_instance = None  # Singleton instance for the model
+    _model_name_cached = None # To ensure we don't load different models
+    _cache_dir_cached = None # To ensure consistent cache dir
 
     def __init__(
         self,
         cache_dir: str,
         raw_file_contents: Optional[
             Dict[str, str]
-        ] = None,  # MODIFIED: Renamed codebase_context to raw_file_contents
-        max_file_content_size: int = 500000,  # Increased to 500KB to include core files
-        codebase_scanner: Optional[CodebaseScanner] = None, # NEW PARAMETER
+        ] = None,
+        max_file_content_size: int = 500000,
+        codebase_scanner: Optional[CodebaseScanner] = None,
+        model_name: str = "all-MiniLM-L6-v2", # NEW: Make model_name configurable
     ):
         """
         Initializes the analyzer.
         """
         self.cache_dir = cache_dir
-        self.max_file_content_size = (
-            max_file_content_size  # NEW: Store max_file_content_size
-        )
-        self.codebase_scanner = codebase_scanner # Store it
+        self.max_file_content_size = max_file_content_size
+        self.codebase_scanner = codebase_scanner
+        self.model_name = model_name # Store model name
 
-        # NEW: Filter raw_file_contents based on size during initialization
         if raw_file_contents is not None:
             self.raw_file_contents = {
                 k: v
@@ -399,33 +401,42 @@ class ContextRelevanceAnalyzer:
 
         self.logger = logger
         self.persona_router = None
-        self.file_embeddings: Dict[str, Any] = {}  # Initialize empty
-        self._last_raw_file_contents_hash: Optional[int] = (
-            None  # NEW: Store hash of last processed content
-        )
+        self.file_embeddings: Dict[str, Any] = {}
+        self._last_raw_file_contents_hash: Optional[int] = None
 
-        try:
-            # Ensure the cache directory exists
-            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
-            # Initialize SentenceTransformer model
-            # This will download the model if not already cached in self.cache_dir
+        self._load_model() # Call the method to load/get the singleton model
 
-            self.model = SentenceTransformer(
-                "all-MiniLM-L6-v2", cache_folder=self.cache_dir
+        if self.raw_file_contents:
+            self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
+            self._last_raw_file_contents_hash = hash(
+                frozenset(self.raw_file_contents.items())
             )
-            self.logger.info(f"SentenceTransformer model loaded from {self.cache_dir}")
+
+    def _load_model(self):
+        """Loads the SentenceTransformer model using the singleton pattern."""
+        try:
+            # Use class method to get/load the singleton model
+            self.model = ContextRelevanceAnalyzer._get_model_instance(self.model_name, self.cache_dir)
         except Exception as e:
             self.logger.error(
                 f"Failed to load SentenceTransformer model: {e}", exc_info=True
             )
             raise RuntimeError(f"Failed to initialize SentenceTransformer: {e}") from e
 
-        # NEW: Compute initial embeddings and store hash if raw_file_contents are provided
-        if self.raw_file_contents:
-            self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
-            self._last_raw_file_contents_hash = hash(
-                frozenset(self.raw_file_contents.items())
-            )
+    @classmethod
+    def _get_model_instance(cls, model_name: str, cache_dir: str):
+        """
+        Provides a singleton instance of the SentenceTransformer model.
+        Ensures the model is loaded only once and from the specified cache directory.
+        """
+        if cls._model_instance is None or cls._model_name_cached != model_name or cls._cache_dir_cached != cache_dir:
+            # Ensure the cache directory exists before loading
+            Path(cache_dir).mkdir(parents=True, exist_ok=True)
+            cls._model_instance = SentenceTransformer(model_name, cache_folder=cache_dir)
+            cls._model_name_cached = model_name
+            cls._cache_dir_cached = cache_dir
+            logger.info(f"SentenceTransformer model loaded (singleton) from {cache_dir}")
+        return cls._model_instance
 
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
         """
@@ -462,7 +473,7 @@ class ContextRelevanceAnalyzer:
             for k, v in context.items():
                 if (
                     v and len(v) < self.max_file_content_size
-                ):  # NEW: Filter by max_file_content_size
+                ):
                     files_to_encode[k] = v
                 elif v:
                     self.logger.warning(
@@ -477,7 +488,6 @@ class ContextRelevanceAnalyzer:
                 self._last_raw_file_contents_hash = None
                 return {}
 
-            # NEW: Log if the model.encode call fails
             if not hasattr(self, "model") or self.model is None:
                 raise RuntimeError(
                     "SentenceTransformer model not loaded for embedding."
@@ -487,7 +497,6 @@ class ContextRelevanceAnalyzer:
             file_contents = list(files_to_encode.values())
 
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
-            # Ensure file_contents are not empty before encoding
             if not file_contents:
                 self.logger.warning("No file contents to encode for embeddings.")
             file_embeddings_list = self.model.encode(file_contents)
@@ -497,9 +506,8 @@ class ContextRelevanceAnalyzer:
 
         except Exception as e:
             self.logger.error(f"Error computing file embeddings: {e}", exc_info=True)
-            embeddings = {}  # Return empty dict on error
+            embeddings = {}
 
-        # Store the newly computed embeddings and the hash of the content that generated them
         self.file_embeddings = embeddings
         self._last_raw_file_contents_hash = current_context_hash
         return self.file_embeddings
@@ -582,7 +590,6 @@ class ContextRelevanceAnalyzer:
         )
         return relevant_files
 
-    # NEW METHOD: Add a helper for robust token counting within the class
     def _count_tokens_robustly(self, text: str) -> int:
         """Robustly counts tokens using available tokenizer methods on the SentenceTransformer's internal tokenizer."""
         if hasattr(self.model.tokenizer, 'count_tokens'):
@@ -599,18 +606,14 @@ class ContextRelevanceAnalyzer:
     ) -> str:
         """Generates a detailed summary of the relevant codebase context, including actual file contents."""
         current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
-        # MODIFIED: Use the robust token counting logic
         current_tokens = self._count_tokens_robustly(current_summary_parts[0])
 
-        # Prioritize including content from the most relevant files
-        for file_path, _ in relevant_files: # Use the tuple from find_relevant_files
+        for file_path, _ in relevant_files:
             file_content = self.raw_file_contents.get(file_path, "")
             if not file_content:
                 continue
 
-            # Estimate tokens for this file's content
-            # Reserve some tokens for other parts of the prompt
-            remaining_tokens_for_content = max_tokens - current_tokens - 50 # 50 token buffer
+            remaining_tokens_for_content = max_tokens - current_tokens - 50
             if remaining_tokens_for_content <= 0:
                 break
 
@@ -619,14 +622,12 @@ class ContextRelevanceAnalyzer:
             )
             
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
-            # MODIFIED: Use the robust token counting logic
             file_block_tokens = self._count_tokens_robustly(file_block)
 
             if current_tokens + file_block_tokens <= max_tokens:
                 current_summary_parts.append(file_block)
                 current_tokens += file_block_tokens
             else:
-                # MODIFIED: Use the robust token counting logic
                 if self._count_tokens_robustly(f"- {file_path}\n") <= max_tokens - current_tokens:
                     current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
                     current_tokens += self._count_tokens_robustly(f"- {file_path}\n")
@@ -640,11 +641,10 @@ class ContextRelevanceAnalyzer:
 
     def get_context_summary(self) -> str:
         """Returns a summary of the raw file contents available."""
-        if self.raw_file_contents:  # MODIFIED: Check raw_file_contents
+        if self.raw_file_contents:
             return f"Raw file contents available ({len(self.raw_file_contents)} files). See details in intermediate steps."
         return "No raw file contents provided or scanned."
 
-    # NEW METHOD: analyze_codebase as per suggested change 3
     def analyze_codebase(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
         """
         Scans the codebase using the associated CodebaseScanner and updates internal context.
@@ -654,13 +654,10 @@ class ContextRelevanceAnalyzer:
             logger.error("CodebaseScanner not initialized in ContextRelevanceAnalyzer.")
             return {}, {}
 
-        # Call the existing comprehensive scan method from CodebaseScanner
         full_codebase_analysis = self.codebase_scanner.scan_codebase()
         structured_context = full_codebase_analysis.get("file_structure", {})
         raw_contents = full_codebase_analysis.get("raw_file_contents", {})
 
-        # Update the ContextRelevanceAnalyzer's internal raw_file_contents
-        # and recompute embeddings if the content has changed.
         if raw_contents:
             current_files_hash = hash(frozenset(raw_contents.items()))
             if (
