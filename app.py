@@ -1439,8 +1439,10 @@ def _run_socratic_debate_process():
                 frozenset(st.session_state.context_analyzer.raw_file_contents.items())
             )
 
-            # REMOVED: st.session_state.structured_codebase_context = structured_codebase_context_for_debate
-            # REMOVED: st.session_state.raw_file_contents = codebase_raw_file_contents_for_debate
+            # RE-ADD: Populate session state variables for codebase context
+            st.session_state.codebase_context = st.session_state.codebase_scanner.file_structure
+            st.session_state.raw_file_contents = st.session_state.codebase_scanner.raw_file_contents
+
             logger.info(
                 "Successfully loaded Project Chimera's codebase context for self-analysis into cached instances."
             )
@@ -1696,7 +1698,7 @@ def _run_socratic_debate_process():
                     is_self_analysis=is_self_analysis_prompt_detected,
                     settings=settings_instance,
                     persona_manager=st.session_state.persona_manager,
-                    token_tracker=st.session_state.token_tracker,
+                    token_tracker=st.session_state.token_tracker, # FIX: Use st.session_state.token_tracker
                     codebase_scanner=get_codebase_scanner_instance(),  # Pass cached instance
                     summarizer_pipeline_instance=get_summarizer_pipeline_instance(),  # NEW: Pass the cached summarizer pipeline
                 )

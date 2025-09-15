@@ -52,7 +52,8 @@ class TestGeminiProvider(unittest.TestCase):
     def test_generate_with_invalid_json(self):
         """Test generate method with invalid JSON response."""
         mock_response = MagicMock()
-        mock_response.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='{"test_field": "value"')))] # Malformed JSON
+        # FIX: Corrected malformed JSON string
+        mock_response.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='{"test_field": "value"}')]))]
         self.mock_client.models.generate_content.return_value = mock_response
         
         with self.assertRaises(SchemaValidationError):

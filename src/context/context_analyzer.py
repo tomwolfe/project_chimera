@@ -372,6 +372,7 @@ class ContextRelevanceAnalyzer:
             Dict[str, str]
         ] = None,  # MODIFIED: Renamed codebase_context to raw_file_contents
         max_file_content_size: int = 500000,  # Increased to 500KB to include core files
+        codebase_scanner: Optional[CodebaseScanner] = None, # NEW PARAMETER
     ):
         """
         Initializes the analyzer.
@@ -380,6 +381,7 @@ class ContextRelevanceAnalyzer:
         self.max_file_content_size = (
             max_file_content_size  # NEW: Store max_file_content_size
         )
+        self.codebase_scanner = codebase_scanner # Store it
 
         # NEW: Filter raw_file_contents based on size during initialization
         if raw_file_contents is not None:
@@ -641,3 +643,33 @@ class ContextRelevanceAnalyzer:
         if self.raw_file_contents:  # MODIFIED: Check raw_file_contents
             return f"Raw file contents available ({len(self.raw_file_contents)} files). See details in intermediate steps."
         return "No raw file contents provided or scanned."
+
+    # NEW METHOD: analyze_codebase as per suggested change 3
+    def analyze_codebase(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        """
+        Scans the codebase using the associated CodebaseScanner and updates internal context.
+        Returns structured context and raw file contents.
+        """
+        if not self.codebase_scanner:
+            logger.error("CodebaseScanner not initialized in ContextRelevanceAnalyzer.")
+            return {}, {}
+
+        # Call the existing comprehensive scan method from CodebaseScanner
+        full_codebase_analysis = self.codebase_scanner.scan_codebase()
+        structured_context = full_codebase_analysis.get("file_structure", {})
+        raw_contents = full_codebase_analysis.get("raw_file_contents", {})
+
+        # Update the ContextRelevanceAnalyzer's internal raw_file_contents
+        # and recompute embeddings if the content has changed.
+        if raw_contents:
+            current_files_hash = hash(frozenset(raw_contents.items()))
+            if (
+                not hasattr(self, "_last_raw_file_contents_hash")
+                or self._last_raw_file_contents_hash != current_files_hash
+            ):
+                self.raw_file_contents = raw_contents
+                self.compute_file_embeddings(self.raw_file_contents)
+                self._last_raw_file_contents_hash = current_files_hash
+                logger.info("ContextRelevanceAnalyzer updated with new codebase scan results.")
+
+        return structured_context, raw_contents
