@@ -293,7 +293,7 @@ personas:
             - Limit your response to the most essential points
             
     temperature: 0.4
-    max_tokens: 8192
+    max_tokens: 12288 # Increased from 8192 to provide more room for detailed architectural suggestions
     description: "Analyzes the system design, focusing on scalability, maintainability, and architectural best practices."
 
   - name: "Security_Auditor"
@@ -345,7 +345,7 @@ personas:
             - Limit your response to the most essential points
             
     temperature: 0.2
-    max_tokens: 12288 # Increased from 8192 to 12288 (50% increase)
+    max_tokens: 12288
     description: "Identifies security vulnerabilities, attack vectors, and compliance issues through threat modeling."
 
   - name: "DevOps_Engineer"
@@ -395,7 +395,7 @@ personas:
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
     temperature: 0.3
-    max_tokens: 8192
+    max_tokens: 12288 # Increased from 8192 to prevent JSON truncation for complex operational analysis
     description: "Focuses on CI/CD, infrastructure, monitoring, operational efficiency, and reliability."
 
   - name: "Test_Engineer"
@@ -438,7 +438,7 @@ personas:
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
     temperature: 0.3
-    max_tokens: 8192
+    max_tokens: 12288 # Increased from 8192 to allow for comprehensive test case suggestions
     description: "Ensures code quality by critiquing test coverage and suggesting comprehensive test strategies."
 
   - name: "Context_Aware_Assistant"
