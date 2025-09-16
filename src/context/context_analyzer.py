@@ -1,3 +1,5 @@
+# src/context/context_analyzer.py
+
 import os
 import logging
 from pathlib import Path
@@ -93,12 +95,8 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
     sanitized_path_str = re.sub(
         r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path
     )  # Removed '/' from invalid chars
-    sanitized_path_str = re.sub(
-        r"\.\./", "", sanitized_path_str
-    )  # Remove parent directory traversal
-    sanitized_path_str = re.sub(
-        r"//+", "/", sanitized_path_str
-    )  # Normalize multiple slashes
+    sanitized_path_str = re.sub(r"\.\./", "", sanitized_path_str)
+    sanitized_path_str = re.sub(r"//+", "/", sanitized_path_str)
 
     path_obj = Path(sanitized_path_str)
 
@@ -636,9 +634,20 @@ class ContextRelevanceAnalyzer:
                 self.logger.info(f"Context token budget exhausted. Stopping at file: {file_path}")
                 break
 
-            truncated_content = self.model.tokenizer.truncate_to_token_limit(
-                file_content, remaining_tokens_for_content, truncation_indicator="\n... (truncated)"
+            # --- START FIX ---
+            # Replace the incorrect truncate_to_token_limit with the correct transformers library pattern.
+            token_ids = self.model.tokenizer.encode(
+                file_content,
+                max_length=remaining_tokens_for_content,
+                truncation=True
             )
+            truncated_content = self.model.tokenizer.decode(
+                token_ids,
+                skip_special_tokens=True
+            )
+            if len(token_ids) >= remaining_tokens_for_content:
+                truncated_content += "\n... (truncated)"
+            # --- END FIX ---
             
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
             file_block_tokens = self._count_tokens_robustly(file_block)
