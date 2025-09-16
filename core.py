@@ -1116,7 +1116,7 @@ class SocraticDebate:
             )
 
             context_summary_str = self.context_analyzer.generate_context_summary(
-                [f[0] for f in relevant_files],
+                relevant_files,
                 self.phase_budgets["context"],
                 self.initial_prompt,
             )
