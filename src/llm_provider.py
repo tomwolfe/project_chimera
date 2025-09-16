@@ -11,8 +11,8 @@ import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
-from google.genai.errors import APIError
-from google.genai import types
+from google.genai.errors import APIError, ServerError  # MODIFIED: Import ServerError
+import google.genai as genai_types  # MODIFIED: Use alias to avoid conflict
 import hashlib
 import secrets
 import socket
@@ -361,7 +361,7 @@ class GeminiProvider:
         else:
             current_model_name = self.model_name
 
-        config = types.GenerateContentConfig(
+        config = genai_types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
             max_output_tokens=max_tokens,
@@ -485,53 +485,70 @@ class GeminiProvider:
                     continue
                 else:
                     raise e
+            except ServerError as e:  # MODIFIED: Catch ServerError specifically
+                # This is the fix for the AttributeError. ServerError does not have response_json.
+                error_msg = str(e)
+                self._log_with_context(
+                    "error",
+                    f"Gemini ServerError encountered: {error_msg}",
+                    exc_info=True,
+                )
+                # Re-raise as a retryable APIError for tenacity
+                raise APIError(message=error_msg, code=503) from e
             except APIError as e:
                 error_msg = str(e)
                 error_msg_lower = error_msg.lower()
+                # MODIFIED: Add hasattr check for response_json
                 response_json = (
                     e.response_json
-                    if isinstance(e.response_json, dict)
+                    if hasattr(e, "response_json") and isinstance(e.response_json, dict)
                     else {
                         "error": {
-                            "code": e.code,
+                            "code": e.code if hasattr(e, "code") else 500,
                             "message": error_msg,
-                            "raw_response": str(e.response_json)
-                            if e.response_json is not None
-                            else None,
+                            "raw_response": str(getattr(e, "response_json", None)),
                         }
                     }
                 )
 
-                if e.code == 401:
+                if hasattr(e, "code") and e.code == 401:
                     raise GeminiAPIError(
                         f"Invalid API Key: {error_msg}",
                         code=e.code,
                         response_details=response_json,
                         original_exception=e,
                     ) from e
-                elif e.code == 403:
+                elif hasattr(e, "code") and e.code == 403:
                     raise GeminiAPIError(
                         f"API Key lacks permissions: {error_msg}",
                         code=e.code,
                         response_details=response_json,
                         original_exception=e,
                     ) from e
-                elif e.code == 429:
+                elif hasattr(e, "code") and e.code == 429:
                     raise RateLimitExceededError(
                         f"Rate limit exceeded: {error_msg}", original_exception=e
                     ) from e
-                elif e.code == 400 and (
-                    "context window exceeded" in error_msg_lower
-                    or "prompt too large" in error_msg_lower
+                elif (
+                    hasattr(e, "code")
+                    and e.code == 400
+                    and (
+                        "context window exceeded" in error_msg_lower
+                        or "prompt too large" in error_msg_lower
+                    )
                 ):
                     raise LLMUnexpectedError(
                         f"LLM context window exceeded: {error_msg}",
                         original_exception=e,
                     ) from e
-                elif e.code == 400 and (
-                    "invalid json" in error_msg_lower
-                    or "invalid json format" in error_msg_lower
-                    or "invalid response format" in error_msg_lower
+                elif (
+                    hasattr(e, "code")
+                    and e.code == 400
+                    and (
+                        "invalid json" in error_msg_lower
+                        or "invalid json format" in error_msg_lower
+                        or "invalid response format" in error_msg_lower
+                    )
                 ):
                     # Treat as SchemaValidationError to trigger tenacity retry
                     raise SchemaValidationError(
