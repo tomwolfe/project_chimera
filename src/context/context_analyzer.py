@@ -608,24 +608,32 @@ class ContextRelevanceAnalyzer:
         current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
         current_tokens = self._count_tokens_robustly(current_summary_parts[0])
 
-        for item in relevant_files:
-            # Defensive check: ensure item is a tuple/list and has at least one element
-            if not isinstance(item, (list, tuple)) or len(item) < 1:
-                self.logger.warning(f"Skipping malformed item in relevant_files: {item}")
+        # Diagnostic print to inspect relevant_files before the loop
+        self.logger.debug(f"Relevant files received for summary: {relevant_files}")
+
+        for i, item in enumerate(relevant_files):
+            file_path = None
+            score = None
+            try:
+                # Explicitly try to unpack, catching the ValueError if it occurs
+                file_path, score = item
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Skipping malformed item at index {i} in relevant_files: {item}. Error: {e}")
                 continue
             
-            file_path = item[0]
-            # Defensive check: ensure file_path is a string
+            # Additional defensive checks for type
             if not isinstance(file_path, str):
-                self.logger.warning(f"Skipping item with non-string file path: {item}")
+                self.logger.warning(f"Skipping item with non-string file path at index {i}: {item}")
                 continue
 
             file_content = self.raw_file_contents.get(file_path, "")
             if not file_content:
+                self.logger.debug(f"Skipping empty or non-existent content for file: {file_path}")
                 continue
 
             remaining_tokens_for_content = max_tokens - current_tokens - 50
             if remaining_tokens_for_content <= 0:
+                self.logger.info(f"Context token budget exhausted. Stopping at file: {file_path}")
                 break
 
             truncated_content = self.model.tokenizer.truncate_to_token_limit(
@@ -642,6 +650,7 @@ class ContextRelevanceAnalyzer:
                 if self._count_tokens_robustly(f"- {file_path}\n") <= max_tokens - current_tokens:
                     current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
                     current_tokens += self._count_tokens_robustly(f"- {file_path}\n")
+                self.logger.info(f"Context token budget exhausted. Stopping at file: {file_path}")
                 break
 
         if current_tokens < max_tokens:
