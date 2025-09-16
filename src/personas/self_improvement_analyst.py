@@ -1,18 +1,16 @@
-# src/personas/self_improvement_analyst.py
 import logging
-from typing import Dict, Any, List  # Added List
-from datetime import datetime  # Added for _create_file_backup
-import shutil  # Added for _create_file_backup
-import os  # Added for _create_file_backup, _run_targeted_tests, _get_relevant_test_files
-import subprocess  # Added for _run_targeted_tests
-import re  # Added for _get_relevant_test_files
-import json  # Added for _calculate_improvement_score, save_improvement_results
-from pathlib import Path  # Added for Path.cwd()
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+import shutil
+import os
+import subprocess
+import re
+import json
+from pathlib import Path
 
 # Assuming FocusedMetricsCollector and other necessary classes/functions are importable
-# from src.self_improvement.metrics_collector import FocusedMetricsCollector
-# from src.utils.prompt_engineering import create_self_improvement_prompt # Not directly needed here, but for context
-# from src.models import LLMOutput # Assuming this might be relevant for return types, though not explicitly in suggestions
+
+logger = logging.getLogger(__name__)
 
 
 # Mock classes from original file for context, but they will be replaced by actual logic
@@ -35,23 +33,7 @@ class MockModel:
         pass
 
 
-class MockLogger:
-    """A mock logger for demonstration purposes."""
-
-    def log_metrics(
-        self,
-        evaluation_results: Dict,
-        adaptability_score: float,
-        robustness_score: float,
-    ):
-        logger.info(
-            f"Metrics logged: Evaluation={evaluation_results}, Adaptability={adaptability_score:.2f}, Robustness={robustness_score:.2f}"
-        )
-
-
 # Placeholder functions for adaptability and robustness calculation
-# In a real system, these would involve complex logic, potentially
-# interacting with a dedicated testing harness or evaluation module.
 def calculate_adaptability(model: Any, novel_data: Any) -> float:
     """
     Calculates a score indicating the model's adaptability to novel data.
@@ -68,9 +50,6 @@ def calculate_robustness(model: Any, adversarial_data: Any) -> float:
     """
     logger.debug("Calculating robustness score (placeholder).")
     return 0.82  # Placeholder value
-
-
-logger = logging.getLogger(__name__)
 
 
 class SelfImprovementAnalyst:
@@ -90,7 +69,7 @@ class SelfImprovementAnalyst:
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
-        metrics_collector: Any,  # NEW: Add metrics_collector to init
+        metrics_collector: Any,
     ):
         """
         Initializes the analyst with collected metrics and context.
@@ -99,17 +78,13 @@ class SelfImprovementAnalyst:
         self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
-        self.codebase_raw_file_contents = (
-            codebase_raw_file_contents  # NEW: Renamed for clarity
-        )
+        self.codebase_raw_file_contents = codebase_raw_file_contents
         self.tokenizer = tokenizer
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
-        self.metrics_collector = metrics_collector  # NEW: Store metrics_collector
-        self.codebase_path = (
-            Path.cwd()
-        )  # Assuming the analyst operates from the project root
+        self.metrics_collector = metrics_collector
+        self.codebase_path = Path.cwd()
 
     def get_prompt(self, context: dict) -> str:
         """
@@ -125,9 +100,7 @@ class SelfImprovementAnalyst:
         # Ensure context is properly formatted, handling potential missing keys gracefully.
         metrics_context = context.get("metrics", "No metrics provided.")
         reasoning_quality_context = context.get("reasoning_quality", "N/A")
-        historical_analysis_context = context.get(
-            "historical_analysis", "N/A"
-        )  # NEW: Add historical context
+        historical_analysis_context = context.get("historical_analysis", "N/A")
 
         # Construct the prompt using f-string for clarity
         self_improvement_prompt = f"""Analyze Project Chimera for high-impact self-improvement (80/20).
@@ -172,7 +145,6 @@ Historical Self-Improvement Effectiveness:
 Summarize findings concisely.
 """
         return self_improvement_prompt
-        # --- END MODIFIED PROMPT ---
 
     def analyze(self) -> List[Dict[str, Any]]:
         """
@@ -200,7 +172,7 @@ Summarize findings concisely.
             if (
                 historical_data.get("success_rate", 0) < 0.5
                 and historical_data.get("total_attempts", 0) > 5
-            ):  # If overall success rate is low and enough data
+            ):
                 suggestions.append(
                     {
                         "AREA": "Reasoning Quality",
@@ -273,7 +245,44 @@ Summarize findings concisely.
                     }
                 )
 
-        final_suggestions = suggestions[:3]
+        # --- START SUGGESTED CHANGES INTEGRATION ---
+        # Validate and correct file paths against actual codebase
+        validated_suggestions_temp = []
+        for suggestion in suggestions:
+            processed_suggestion = suggestion.copy()
+            processed_code_changes = []
+            for change in processed_suggestion.get("CODE_CHANGES_SUGGESTED", []):
+                if change["ACTION"] in ["MODIFY", "REMOVE"]:
+                    # Check if file exists in codebase context
+                    if change["FILE_PATH"] not in self.codebase_raw_file_contents:
+                        # Convert common path patterns to actual paths
+                        corrected_path = self._validate_file_path(change["FILE_PATH"])
+
+                        if (
+                            corrected_path
+                            and corrected_path in self.codebase_raw_file_contents
+                        ):
+                            change["FILE_PATH"] = corrected_path
+                        else:
+                            # File doesn't exist - convert to CREATE action
+                            change["ACTION"] = "CREATE"
+                            change["FULL_CONTENT"] = (
+                                self._generate_default_file_content(change["FILE_PATH"])
+                            )
+                            change["DIFF_CONTENT"] = None
+                            change["LINES"] = None
+                            logger.warning(
+                                f"File '{change['FILE_PATH']}' doesn't exist. Converting to CREATE action."
+                            )
+                processed_code_changes.append(change)
+
+            processed_suggestion["CODE_CHANGES_SUGGESTED"] = processed_code_changes
+            validated_suggestions_temp.append(processed_suggestion)
+        # --- END SUGGESTED CHANGES INTEGRATION ---
+
+        final_suggestions = validated_suggestions_temp[
+            :3
+        ]  # Apply slicing after validation
 
         logger.info(
             f"Generated {len(suggestions)} potential suggestions. Finalizing with top {len(final_suggestions)}."
@@ -281,7 +290,64 @@ Summarize findings concisely.
 
         return self.metrics_collector._process_suggestions_for_quality(
             final_suggestions
-        )  # NEW: Process suggestions for quality
+        )
+
+    # --- START NEW HELPER METHODS ---
+    def _validate_file_path(self, file_path: str) -> Optional[str]:
+        """Validate and correct file path based on actual codebase structure."""
+        normalized_path = file_path.strip()
+
+        # Handle common path patterns
+        if normalized_path.startswith("services/"):
+            # Example: services/reasoning_engine.py -> src/core.py
+            # Example: services/token_manager.py -> src/token_tracker.py
+            if "reasoning_engine.py" in normalized_path:
+                return "src/core.py"
+            elif "token_manager.py" in normalized_path:
+                return "src/token_tracker.py"
+            else:  # General mapping for other files in 'services/'
+                corrected_path = f"src/{normalized_path.split('/', 1)[1]}"
+                if corrected_path in self.codebase_raw_file_contents:
+                    return corrected_path
+        elif normalized_path.startswith("api/"):
+            # Example: api/routes.py -> app.py
+            if "routes.py" in normalized_path:
+                return "app.py"
+            else:  # General mapping for other files in 'api/'
+                # Assuming 'api/' maps to 'src/' for other files, adjust if needed
+                corrected_path = f"src/{normalized_path.split('/', 1)[1]}"
+                if corrected_path in self.codebase_raw_file_contents:
+                    return corrected_path
+        # Direct file name mappings
+        elif normalized_path == "reasoning_engine.py":
+            if "src/core.py" in self.codebase_raw_file_contents:
+                return "src/core.py"
+        elif normalized_path == "token_manager.py":
+            if "src/token_tracker.py" in self.codebase_raw_file_contents:
+                return "src/token_tracker.py"
+        elif normalized_path == "routes.py":
+            if "app.py" in self.codebase_raw_file_contents:
+                return "app.py"
+
+        # If no specific mapping, check if the path exists as is
+        if normalized_path in self.codebase_raw_file_contents:
+            return normalized_path
+
+        return None
+
+    def _generate_default_file_content(self, file_path: str) -> str:
+        """Generates default content for a new file based on type."""
+        if file_path.endswith(".py"):
+            return f"# Automatically generated file: {file_path}\n\n"
+        elif file_path.endswith(".json"):
+            return "{}"
+        elif file_path.endswith(".yaml") or file_path.endswith(".yml"):
+            return "# Automatically generated configuration file\n\n"
+        elif file_path.endswith(".md"):
+            return f"# {file_path}\n\n"
+        return ""
+
+    # --- END NEW HELPER METHODS ---
 
     def analyze_codebase_structure(self) -> Dict[str, Any]:
         logger.info("Analyzing codebase structure.")
