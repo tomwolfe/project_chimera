@@ -801,8 +801,8 @@ class FocusedMetricsCollector:
         }
         try:
             # --- START FIX ---
-            # MODIFIED: Run only unit tests to prevent timeouts during self-analysis.
-            command = [sys.executable, "-m", "pytest", "-q", "tests/unit/"]
+            # MODIFIED: Corrected path from 'tests/unit/' to 'tests/' to match project structure.
+            command = [sys.executable, "-m", "pytest", "-q", "tests/"]
             # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
                 command, timeout=60, check=False
