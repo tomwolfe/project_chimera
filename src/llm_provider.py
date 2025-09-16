@@ -487,20 +487,22 @@ class GeminiProvider:
                     continue
                 else:
                     raise e
-            except ServerError as e:  # MODIFIED: Catch ServerError specifically
-                # This is the fix for the AttributeError. ServerError does not have response_json.
+            except ServerError as e:  # Catch 5xx errors first
                 error_msg = str(e)
                 self._log_with_context(
                     "error",
                     f"Gemini ServerError encountered: {error_msg}",
                     exc_info=True,
                 )
-                # Re-raise as a retryable APIError for tenacity
-                raise APIError(message=error_msg, code=503) from e
-            except APIError as e:
+                # Re-raise as a custom LLMProviderError for tenacity to retry
+                raise LLMProviderError(
+                    message=f"Gemini ServerError: {error_msg}",
+                    provider_error_code=e.code if hasattr(e, "code") else 500,
+                    original_exception=e,
+                ) from e
+            except APIError as e:  # Catch other API errors (4xx)
                 error_msg = str(e)
                 error_msg_lower = error_msg.lower()
-                # MODIFIED: Add hasattr check for response_json
                 response_json = (
                     e.response_json
                     if hasattr(e, "response_json") and isinstance(e.response_json, dict)
