@@ -2472,7 +2472,6 @@ class SocraticDebate:
             new_content.splitlines(keepends=True),
             fromfile=f"a/{file_path}",
             tofile=f"b/{file_path}",
-            lineterm="",
         )
         return "".join(diff_lines)
 
