@@ -15,7 +15,10 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
+from src.utils.code_utils import (
+    _get_code_snippet,
+    ComplexityVisitor,  # ADD ComplexityVisitor
+)
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -31,7 +34,7 @@ from src.models import (
 )
 from src.utils.command_executor import execute_command_safely
 from src.utils.path_utils import PROJECT_ROOT
-from src.context.context_analyzer import CodebaseScanner
+from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,7 @@ class FocusedMetricsCollector:
         Initializes the analyst with collected metrics and context.
         """
         self.initial_prompt = initial_prompt
-        self.metrics = metrics
+        self.metrics: Dict[str, Any] = {}  # Initialize internally
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_scanner = codebase_scanner  # NEW: Store the scanner

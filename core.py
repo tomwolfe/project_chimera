@@ -12,7 +12,7 @@ import difflib
 import uuid
 import numpy as np
 import gc
-import copy  # ADDED: Import copy for deepcopy
+import copy
 
 # --- IMPORT MODIFICATIONS ---
 from src.context.context_analyzer import ContextRelevanceAnalyzer
@@ -31,7 +31,7 @@ from src.models import (
     CritiqueOutput,
     GeneralOutput,
     SelfImprovementAnalysisOutput,
-    SelfImprovementAnalysisOutputV1,  # Keep this import for the new error handling
+    SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
 )
 from src.config.settings import ChimeraSettings
@@ -2194,10 +2194,9 @@ class SocraticDebate:
                 content_validator=self.content_validator,
                 codebase_scanner=self.codebase_scanner,
             )
+            # Collect all metrics once and store them in the collector instance
+            local_metrics_collector.collect_all_metrics()
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache
-
-            # Collect raw metrics
-            collected_metrics = local_metrics_collector.collect_all_metrics()
 
             # Summarize the collected metrics to reduce token usage in the final prompt
             effective_metrics_budget = max(
@@ -2208,22 +2207,13 @@ class SocraticDebate:
                 ),
             )
             summarized_metrics = self._summarize_metrics_for_llm(
-                collected_metrics, effective_metrics_budget
+                local_metrics_collector.collected_metrics, effective_metrics_budget
             )
-            # Store the summarized version in intermediate_steps
             self.intermediate_steps["Self_Improvement_Metrics"] = summarized_metrics
             synthesis_prompt_parts.append(
                 f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2, default=convert_to_json_friendly)}\n\n"
             )
 
-            synthesis_prompt_parts.append(
-                "Based on the debate history, conflict resolution (if any), and objective metrics, "
-                "critically analyze Project Chimera's codebase for self-improvement. "
-                "Identify the most impactful code changes for self-improvement, focusing on the 80/20 Pareto principle. "
-                "Prioritize enhancements to reasoning quality, robustness, efficiency, and developer maintainability. "
-                "For each suggestion, provide a clear rationale and a specific, actionable code modification. "
-                "Your output MUST strictly adhere to the SelfImprovementAnalysisOutputV1 JSON schema."
-            )
             self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (
                 SelfImprovementAnalysisOutputV1
             )
@@ -2278,9 +2268,16 @@ class SocraticDebate:
             self.synthesis_persona_name_for_metrics == "Self_Improvement_Analyst"
             and local_metrics_collector
         ):
+            # Analyze reasoning quality BEFORE recording outcome, as outcome might depend on it
             local_metrics_collector.analyze_reasoning_quality(synthesis_output)
             self.intermediate_steps["Self_Improvement_Metrics"] = (
                 local_metrics_collector.collected_metrics
+            )
+            is_successful_suggestion = not self._is_problematic_output(synthesis_output)
+            local_metrics_collector.record_self_improvement_suggestion_outcome(
+                self.synthesis_persona_name_for_metrics,
+                is_successful_suggestion,
+                schema_failed=bool(synthesis_output.get("malformed_blocks")),
             )
 
         return (synthesis_output, local_metrics_collector)
