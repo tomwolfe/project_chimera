@@ -179,7 +179,7 @@ class SocraticDebate:
         except AttributeError:
             raise ChimeraError("LLM provider tokenizer is not available.")
 
-        # Initialize PromptOptimizer here, after tokenizer is available
+        # Removed PromptOptimizer initialization from here. It's now passed in.
         self.prompt_optimizer = PromptOptimizer(
             tokenizer=self.tokenizer,
             settings=self.settings,
@@ -829,6 +829,8 @@ class SocraticDebate:
 
         full_system_prompt_parts = [persona_config.system_prompt]
 
+        # Ensure all personas get the shared JSON instructions if they are expected to produce structured output.
+        # This is a more robust fix than modifying every single persona in personas.yaml
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
 
         full_system_prompt_parts.append(

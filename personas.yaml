@@ -34,7 +34,7 @@ personas:
       - Provide vague or non-actionable advice.
       - Deviate from the core task of critique and improvement.
 
-      Focus analysis and recommendations on core self-improvement areas (reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage), referencing objective metrics.
+      Focus analysis and recommendations on core self-improvement areas (reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage), referencing objective metrics where applicable.
       Your output MUST be a valid JSON object with the following structure:
       {
         "CRITIQUE_SUMMARY": "A concise summary of the critique",
