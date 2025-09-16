@@ -15,10 +15,7 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import (
-    _get_code_snippet,
-    ComplexityVisitor,  # ADD ComplexityVisitor
-)
+from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
 from src.models import (
     ConfigurationAnalysisOutput,
@@ -34,7 +31,7 @@ from src.models import (
 )
 from src.utils.command_executor import execute_command_safely
 from src.utils.path_utils import PROJECT_ROOT
-from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
+from src.context.context_analyzer import CodebaseScanner
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +73,7 @@ class FocusedMetricsCollector:
         Initializes the analyst with collected metrics and context.
         """
         self.initial_prompt = initial_prompt
+        self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_scanner = codebase_scanner  # NEW: Store the scanner
@@ -800,8 +798,8 @@ class FocusedMetricsCollector:
         }
         try:
             # --- START FIX ---
-            # Removed slow coverage flags to prevent timeouts.
-            command = [sys.executable, "-m", "pytest", "-q", "tests/"]
+            # MODIFIED: Run only unit tests to prevent timeouts during self-analysis.
+            command = [sys.executable, "-m", "pytest", "-q", "tests/unit/"]
             # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
                 command, timeout=60, check=False

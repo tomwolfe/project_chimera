@@ -2196,9 +2196,10 @@ class SocraticDebate:
             )
             self.file_analysis_cache = local_metrics_collector.file_analysis_cache
 
+            # Collect raw metrics
             collected_metrics = local_metrics_collector.collect_all_metrics()
-            self.intermediate_steps["Self_Improvement_Metrics"] = collected_metrics
 
+            # Summarize the collected metrics to reduce token usage in the final prompt
             effective_metrics_budget = max(
                 300,
                 min(
@@ -2209,6 +2210,8 @@ class SocraticDebate:
             summarized_metrics = self._summarize_metrics_for_llm(
                 collected_metrics, effective_metrics_budget
             )
+            # Store the summarized version in intermediate_steps
+            self.intermediate_steps["Self_Improvement_Metrics"] = summarized_metrics
             synthesis_prompt_parts.append(
                 f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2, default=convert_to_json_friendly)}\n\n"
             )
