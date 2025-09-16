@@ -795,20 +795,14 @@ class FocusedMetricsCollector:
         Executes pytest to check for basic test suite health.
         """
         coverage_data = {
-            "overall_coverage_percentage": 0.0,  # Will be -1.0 as coverage is not run
+            "overall_coverage_percentage": 0.0,
             "coverage_details": "Failed to run pytest.",
         }
         try:
-            # MODIFIED: Removed '--cov=src' and '--cov-report' which are slow and cause hangs.
-            # A simple test run is sufficient to check for basic test suite health.
-            command = [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",  # Use quiet mode for faster execution
-                "tests/",
-            ]
-            # MODIFIED: Reduced timeout to 60s as a full coverage report is no longer generated.
+            # --- START FIX ---
+            # Removed slow coverage flags to prevent timeouts.
+            command = [sys.executable, "-m", "pytest", "-q", "tests/"]
+            # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
                 command, timeout=60, check=False
             )
@@ -817,9 +811,10 @@ class FocusedMetricsCollector:
                 coverage_data["coverage_details"] = (
                     "Pytest execution successful (tests passed)."
                 )
-                coverage_data[
-                    "overall_coverage_percentage"
-                ] = -1.0  # Indicate coverage was not run
+                # --- START FIX ---
+                # Since coverage is no longer run, report -1.0 to indicate this.
+                coverage_data["overall_coverage_percentage"] = -1.0
+                # --- END FIX ---
             else:
                 logger.warning(
                     f"Pytest execution failed with return code {return_code}. Stderr: {stderr}"

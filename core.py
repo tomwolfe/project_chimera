@@ -1651,6 +1651,27 @@ class SocraticDebate:
                     self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
 
+            # --- START FIX ---
+            # Differentiate between content errors (SchemaValidationError) and provider errors.
+            except (LLMProviderError, CircuitBreakerError, ChimeraError) as e:
+                # This is a non-retryable provider error. Log it and move on.
+                # Do NOT trigger conflict resolution for this.
+                error_output = {
+                    "error": f"Turn failed for {persona_name}: {str(e)}",
+                    "malformed_blocks": [
+                        {"type": "DEBATE_TURN_ERROR", "message": str(e)}
+                    ],
+                }
+                debate_history.append({"persona": persona_name, "output": error_output})
+                self._log_with_context(
+                    "error",
+                    f"Non-retryable provider error during {persona_name} turn: {e}. Skipping conflict resolution for this turn.",
+                    exc_info=True,
+                    original_exception=e,
+                )
+                previous_output_for_llm = error_output
+                continue  # Move to the next persona
+            # --- END FIX ---
             except Exception as e:
                 error_output = {
                     "error": f"Turn failed for {persona_name}: {str(e)}",

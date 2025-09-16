@@ -188,6 +188,14 @@ personas:
 
       **Synthesize the following feedback into the specified JSON format:**
       [Insert debate results here]
+
+            **Token Optimization Instructions:**
+            - Be concise but thorough
+            - Avoid repeating information
+            - Use bullet points for clear structure
+            - Prioritize the most critical information first
+            - Limit your response to the most essential points
+            
     temperature: 0.1
     max_tokens: 8192
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
@@ -276,6 +284,14 @@ personas:
       Do not include any other fields or conversational text outside this JSON object. Only output the JSON object.
       
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
+
+            **Token Optimization Instructions:**
+            - Be concise but thorough
+            - Avoid repeating information
+            - Use bullet points for clear structure
+            - Prioritize the most critical information first
+            - Limit your response to the most essential points
+            
     temperature: 0.4
     max_tokens: 8192
     description: "Analyzes the system design, focusing on scalability, maintainability, and architectural best practices."
@@ -320,6 +336,14 @@ personas:
       Do not include any other fields or conversational text outside this JSON object. Only output the JSON object.
 
       **CRITICAL INSTRUCTION:** Ensure your analysis and recommendations directly address the core self-improvement focus areas (e.g., reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage) and reference relevant objective metrics where applicable. **Explicitly mention which focus areas your critique addresses.**
+
+            **Token Optimization Instructions:**
+            - Be concise but thorough
+            - Avoid repeating information
+            - Use bullet points for clear structure
+            - Prioritize the most critical information first
+            - Limit your response to the most essential points
+            
     temperature: 0.2
     max_tokens: 12288 # Increased from 8192 to 12288 (50% increase)
     description: "Identifies security vulnerabilities, attack vectors, and compliance issues through threat modeling."
