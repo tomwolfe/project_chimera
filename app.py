@@ -2,8 +2,8 @@
 
 import streamlit as st
 import os
-import sys # NEW: Import sys for graceful exit
-from src.utils.api_key_validator import fetch_api_key # ADD THIS LINE
+import sys  # NEW: Import sys for graceful exit
+from src.utils.api_key_validator import fetch_api_key  # ADD THIS LINE
 
 
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
@@ -50,7 +50,10 @@ from src.utils.code_validator import validate_code_output_batch
 import json
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError # NEW: Import RateLimitExceededError
+from src.middleware.rate_limiter import (
+    RateLimiter,
+    RateLimitExceededError,
+)  # NEW: Import RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path
 
@@ -58,10 +61,7 @@ from src.utils.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
-from src.context.context_analyzer import (
-    ContextRelevanceAnalyzer,
-    CodebaseScanner,
-)
+from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
 import gc
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
@@ -72,7 +72,12 @@ from src.utils.session_manager import (
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
 )
-from src.utils.ui_helpers import on_api_key_change, display_key_status, test_api_key, shutdown_streamlit # NEW: Import shutdown_streamlit
+from src.utils.ui_helpers import (
+    on_api_key_change,
+    display_key_status,
+    test_api_key,
+    shutdown_streamlit,
+)  # NEW: Import shutdown_streamlit
 
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
@@ -155,8 +160,7 @@ def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
     """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
     logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
     return ContextRelevanceAnalyzer(
-        cache_dir=_settings.sentence_transformer_cache_dir,
-        raw_file_contents={},
+        cache_dir=_settings.sentence_transformer_cache_dir, raw_file_contents={}
     )
 
 
@@ -228,21 +232,26 @@ if "initialized" not in st.session_state:
 check_session_expiration(settings_instance, EXAMPLE_PROMPTS)
 # --- END NEW: Session Expiration Check ---
 
+
 # --- NEW HELPER FUNCTION FOR ROBUST TOKEN COUNTING (as suggested) ---
 def calculate_token_count(text: str, tokenizer) -> int:
     """
     Robustly counts tokens using available tokenizer methods.
     This helper is for UI display or other direct token counting needs in app.py.
     """
-    if hasattr(tokenizer, 'count_tokens'):
+    if hasattr(tokenizer, "count_tokens"):
         return tokenizer.count_tokens(text)
-    elif hasattr(tokenizer, 'encode'):
+    elif hasattr(tokenizer, "encode"):
         return len(tokenizer.encode(text))
-    elif hasattr(tokenizer, 'tokenize'):
+    elif hasattr(tokenizer, "tokenize"):
         return len(tokenizer.tokenize(text))
     else:
-        logger.warning(f"Unknown tokenizer type for {type(tokenizer).__name__}. Falling back to character count / 4 estimate.")
+        logger.warning(
+            f"Unknown tokenizer type for {type(tokenizer).__name__}. Falling back to character count / 4 estimate."
+        )
         return len(text) // 4
+
+
 # --- END NEW HELPER FUNCTION ---
 
 
@@ -300,9 +309,7 @@ def sanitize_user_input(prompt: str) -> str:
         issues.append(
             f"Prompt length exceeded ({len(processed_prompt)} > {MAX_PROMPT_LENGTH}). Truncating."
         )
-        processed_prompt = (
-            processed_prompt[:MAX_PROMPT_LENGTH] + " [TRUNCATED]"
-        )
+        processed_prompt = processed_prompt[:MAX_PROMPT_LENGTH] + " [TRUNCATED]"
 
     sanitized = html.escape(processed_prompt)
 
@@ -761,7 +768,9 @@ def on_example_select_change(selectbox_key, tab_name):
         f"Current user_prompt_input (from session state): {st.session_state.user_prompt_input[:100]}..."
     )
     logger.debug(f"Selected example: {st.session_state.selected_example_name}")
-    logger.debug(f"Selected prompt category: {st.session_state.selected_prompt_category}")
+    logger.debug(
+        f"Selected prompt category: {st.session_state.selected_prompt_category}"
+    )
     logger.debug(
         f"Active example framework hint: {st.session_state.active_example_framework_hint}"
     )
@@ -1423,8 +1432,12 @@ def _run_socratic_debate_process():
                 frozenset(st.session_state.context_analyzer.raw_file_contents.items())
             )
 
-            st.session_state.codebase_context = st.session_state.codebase_scanner.file_structure
-            st.session_state.raw_file_contents = st.session_state.codebase_scanner.raw_file_contents
+            st.session_state.codebase_context = (
+                st.session_state.codebase_scanner.file_structure
+            )
+            st.session_state.raw_file_contents = (
+                st.session_state.codebase_scanner.raw_file_contents
+            )
 
             logger.info(
                 "Successfully loaded Project Chimera's codebase context for self-analysis into cached instances."
@@ -1472,10 +1485,10 @@ def _run_socratic_debate_process():
 
     try:
         st.session_state.session_rate_limiter_instance(lambda: None)()
-    except RateLimitExceededError as e: # Catch specific RateLimitExceededError
+    except RateLimitExceededError as e:  # Catch specific RateLimitExceededError
         handle_debate_errors(e)
         return
-    except Exception as e: # Catch any other unexpected errors from rate limiter
+    except Exception as e:  # Catch any other unexpected errors from rate limiter
         handle_debate_errors(e)
         return
 
@@ -1781,12 +1794,18 @@ def _run_socratic_debate_process():
                 # Explicitly clear large objects and trigger garbage collection
                 if debate_instance:
                     # If SocraticDebate has a 'close' method, call it for explicit cleanup
-                    if hasattr(debate_instance, 'close') and callable(debate_instance.close):
-                        logger.info(f"Calling close() on SocraticDebate instance {id(debate_instance)}.")
+                    if hasattr(debate_instance, "close") and callable(
+                        debate_instance.close
+                    ):
+                        logger.info(
+                            f"Calling close() on SocraticDebate instance {id(debate_instance)}."
+                        )
                         debate_instance.close()
-                    del debate_instance # Explicitly delete the instance
+                    del debate_instance  # Explicitly delete the instance
                 gc.collect()
-                logger.info("Explicit garbage collection triggered in app.py after debate process.")
+                logger.info(
+                    "Explicit garbage collection triggered in app.py after debate process."
+                )
 
 
 if run_button_clicked:
@@ -2278,15 +2297,11 @@ if st.session_state.debate_ran:
                     token_count_key, "N/A"
                 )
 
-                actual_temp = (
-                    st.session_state.intermediate_steps_output.get(
-                        f"{persona_name}_Actual_Temperature"
-                    )
+                actual_temp = st.session_state.intermediate_steps_output.get(
+                    f"{persona_name}_Actual_Temperature"
                 )
-                actual_max_tokens = (
-                    st.session_state.intermediate_steps_output.get(
-                        f"{persona_name}_Actual_Max_Tokens"
-                    )
+                actual_max_tokens = st.session_state.intermediate_steps_output.get(
+                    f"{persona_name}_Actual_Max_Tokens"
                 )
 
                 persona_params_info = ""

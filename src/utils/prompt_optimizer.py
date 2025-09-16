@@ -1,6 +1,6 @@
 # src/utils/prompt_optimizer.py
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Union # ADDED Union
+from typing import Dict, Any, List, Optional, Tuple, Union  # ADDED Union
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
@@ -45,14 +45,16 @@ class PromptOptimizer:
 
     def _count_tokens_robustly(self, text: str) -> int:
         """Robustly counts tokens using available tokenizer methods."""
-        if hasattr(self.tokenizer, 'count_tokens'):
+        if hasattr(self.tokenizer, "count_tokens"):
             return self.tokenizer.count_tokens(text)
-        elif hasattr(self.tokenizer, 'encode'):
+        elif hasattr(self.tokenizer, "encode"):
             return len(self.tokenizer.encode(text))
         else:
             # Fallback for unknown tokenizer types
-            logger.warning(f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate.")
-            return len(text) // 4 # Rough estimate
+            logger.warning(
+                f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate."
+            )
+            return len(text) // 4  # Rough estimate
 
     def _summarize_text(
         self, text: str, target_tokens: int, truncation_indicator: str = ""
@@ -85,17 +87,16 @@ class PromptOptimizer:
                     return_tensors="pt",
                 )
                 pre_truncated_text = self.summarizer_tokenizer.decode(
-                    tokenized_input["input_ids"][0],
-                    skip_special_tokens=True,
+                    tokenized_input["input_ids"][0], skip_special_tokens=True
                 )
 
                 if (
-                    self._count_tokens_robustly(text) # MODIFIED
+                    self._count_tokens_robustly(text)  # MODIFIED
                     > self.summarizer_model_max_input_tokens
                 ):
                     logger.warning(
                         f"Input text for summarizer was pre-truncated using summarizer's tokenizer. "
-                        f"Original tokens (approx): {self._count_tokens_robustly(text)}, " # MODIFIED
+                        f"Original tokens (approx): {self._count_tokens_robustly(text)}, "  # MODIFIED
                         f"Summarizer's max input: {self.summarizer_model_max_input_tokens}."
                     )
             else:
@@ -103,11 +104,11 @@ class PromptOptimizer:
                     text, self.summarizer_model_max_input_tokens
                 )
                 if (
-                    self._count_tokens_robustly(text) # MODIFIED
+                    self._count_tokens_robustly(text)  # MODIFIED
                     > self.summarizer_model_max_input_tokens
                 ):
                     logger.warning(
-                        f"Input text for summarizer is too long ({self._count_tokens_robustly(text)} tokens). " # MODIFIED
+                        f"Input text for summarizer is too long ({self._count_tokens_robustly(text)} tokens). "  # MODIFIED
                         f"Pre-truncating to {self.summarizer_model_max_input_tokens} tokens using Gemini tokenizer (fallback)."
                     )
 
@@ -115,9 +116,7 @@ class PromptOptimizer:
             summarizer_internal_max_output_tokens = min(
                 target_tokens, DISTILBART_MAX_OUTPUT_TOKENS
             )
-            summarizer_internal_min_output_tokens = max(
-                5, int(target_tokens * 0.2)
-            )
+            summarizer_internal_min_output_tokens = max(5, int(target_tokens * 0.2))
 
             summarizer_internal_max_output_tokens = max(
                 summarizer_internal_max_output_tokens,
@@ -153,11 +152,11 @@ class PromptOptimizer:
 
     def optimize_prompt(
         self,
-        user_prompt_text: str, # MODIFIED: Expect a single string for the user's part
+        user_prompt_text: str,  # MODIFIED: Expect a single string for the user's part
         persona_name: str,
         max_output_tokens_for_turn: int,
-        system_message_for_token_count: str = "" # NEW: System message for accurate token counting
-    ) -> str: # MODIFIED: Returns a single string
+        system_message_for_token_count: str = "",  # NEW: System message for accurate token counting
+    ) -> str:  # MODIFIED: Returns a single string
         """
         Optimizes a user prompt string for a specific persona based on context and token limits.
         This method aims to reduce the input prompt size if it, combined with the expected output,
@@ -166,7 +165,9 @@ class PromptOptimizer:
         """
         # Calculate current prompt tokens (including system message for accurate total)
         # This is the total input tokens that will be sent to the LLM
-        full_input_tokens = self._count_tokens_robustly(system_message_for_token_count + user_prompt_text) # MODIFIED
+        full_input_tokens = self._count_tokens_robustly(
+            system_message_for_token_count + user_prompt_text
+        )  # MODIFIED
 
         # Get persona-specific token limits from settings
         persona_input_token_limit = self.settings.max_tokens_per_persona.get(
@@ -190,27 +191,31 @@ class PromptOptimizer:
 
             # Calculate how many tokens are available for the user_prompt_text
             # after accounting for the system_message.
-            system_message_tokens = self._count_tokens_robustly(system_message_for_token_count) # MODIFIED
+            system_message_tokens = self._count_tokens_robustly(
+                system_message_for_token_count
+            )  # MODIFIED
             available_for_user_prompt = effective_input_limit - system_message_tokens
 
             if available_for_user_prompt <= MIN_EFFECTIVE_INPUT_LIMIT:
                 # If very little space, return a very short summary or indicator for the user prompt
                 return self.tokenizer.truncate_to_token_limit(
-                    user_prompt_text, MIN_EFFECTIVE_INPUT_LIMIT, truncation_indicator="... (user prompt too long)"
+                    user_prompt_text,
+                    MIN_EFFECTIVE_INPUT_LIMIT,
+                    truncation_indicator="... (user prompt too long)",
                 )
 
             # Truncate the user_prompt_text itself
             optimized_user_prompt_text = self.tokenizer.truncate_to_token_limit(
                 user_prompt_text,
                 available_for_user_prompt,
-                truncation_indicator="\n... (user prompt truncated)"
+                truncation_indicator="\n... (user prompt truncated)",
             )
             logger.info(
-                f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_user_prompt_text)} tokens." # MODIFIED
+                f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_user_prompt_text)} tokens."  # MODIFIED
             )
             return optimized_user_prompt_text
 
-        return user_prompt_text # No optimization needed
+        return user_prompt_text  # No optimization needed
 
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int
@@ -218,7 +223,9 @@ class PromptOptimizer:
         """
         Dynamically optimizes debate history by summarizing or prioritizing turns.
         """
-        current_tokens = self._count_tokens_robustly(debate_history_json_str) # MODIFIED
+        current_tokens = self._count_tokens_robustly(
+            debate_history_json_str
+        )  # MODIFIED
         if current_tokens <= max_tokens:
             return debate_history_json_str
 
@@ -239,13 +246,21 @@ class PromptOptimizer:
         and adding specific token optimization directives for high-token personas.
         """
         persona_name = persona_config_data.get("name")
-        if persona_name in ["Security_Auditor", "Self_Improvement_Analyst", "Code_Architect"]:
+        if persona_name in [
+            "Security_Auditor",
+            "Self_Improvement_Analyst",
+            "Code_Architect",
+        ]:
             system_prompt = persona_config_data["system_prompt"]
 
             # Remove generic instructions that aren't specific to the persona
             # These are examples, adjust based on actual common redundancies
-            system_prompt = re.sub(r"You are a highly analytical AI assistant\.", "", system_prompt)
-            system_prompt = re.sub(r"Provide clear and concise responses\.", "", system_prompt)
+            system_prompt = re.sub(
+                r"You are a highly analytical AI assistant\.", "", system_prompt
+            )
+            system_prompt = re.sub(
+                r"Provide clear and concise responses\.", "", system_prompt
+            )
 
             # Add specific token optimization instructions
             token_optimization_directives = """
@@ -261,5 +276,7 @@ class PromptOptimizer:
                 system_prompt += token_optimization_directives
 
             persona_config_data["system_prompt"] = system_prompt
-            logger.info(f"Optimized system prompt for high-token persona: {persona_name}")
+            logger.info(
+                f"Optimized system prompt for high-token persona: {persona_name}"
+            )
         return persona_config_data

@@ -9,7 +9,9 @@ class TokenUsageTracker:
     """Tracks token usage across the reasoning process with predictive capabilities."""
 
     def __init__(
-        self, budget: int = 128000, max_history_items: int = 100 # NEW: Add max_history_items parameter
+        self,
+        budget: int = 128000,
+        max_history_items: int = 100,  # NEW: Add max_history_items parameter
     ):
         """
         Initializes the token tracker.
@@ -44,7 +46,9 @@ class TokenUsageTracker:
         # NEW: Keep only the most recent max_history_items items
         if len(self.usage_history) > self.max_history_items:
             self.usage_history = self.usage_history[-self.max_history_items :]
-            logger.debug(f"Token usage history truncated to {self.max_history_items} items.")
+            logger.debug(
+                f"Token usage history truncated to {self.max_history_items} items."
+            )
 
         # Attribute tokens to persona if provided
         if persona:

@@ -92,7 +92,9 @@ class GeminiProvider:
         request_id: Optional[str] = None,
         settings: Optional[Any] = None,
         summarizer_pipeline_instance: Any = None,
-        prompt_optimizer_instance: Optional[PromptOptimizer] = None, # NEW: Accept PromptOptimizer instance
+        prompt_optimizer_instance: Optional[
+            PromptOptimizer
+        ] = None,  # NEW: Accept PromptOptimizer instance
     ):
         self.model_name = model_name
         self.model_registry = ModelRegistry()
@@ -102,7 +104,9 @@ class GeminiProvider:
         self.output_parser = LLMOutputParser()
         self.settings = settings or ChimeraSettings()
         self.summarizer_pipeline_instance = summarizer_pipeline_instance
-        self.prompt_optimizer = prompt_optimizer_instance # NEW: Store the passed instance
+        self.prompt_optimizer = (
+            prompt_optimizer_instance  # NEW: Store the passed instance
+        )
 
         try:
             resolved_api_key = api_key or fetch_api_key()
@@ -180,9 +184,8 @@ class GeminiProvider:
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=self.summarizer_pipeline_instance, # Pass the summarizer if available
+                summarizer_pipeline=self.summarizer_pipeline_instance,  # Pass the summarizer if available
             )
-
 
     def __hash__(self):
         tokenizer_type_hash = hash(type(self.tokenizer))
@@ -247,7 +250,9 @@ class GeminiProvider:
         return input_cost + output_cost
 
     # Add these methods to the GeminiProvider class
-    def _adjust_prompt_for_schema_validation(self, prompt: str, output_schema: Type[BaseModel]) -> str:
+    def _adjust_prompt_for_schema_validation(
+        self, prompt: str, output_schema: Type[BaseModel]
+    ) -> str:
         # Add more specific instructions about the required schema
         schema_info = self._get_schema_info(output_schema)
         new_prompt = (
@@ -266,18 +271,20 @@ class GeminiProvider:
 
     def _count_tokens_robustly(self, text: str) -> int:
         """Robustly counts tokens using available tokenizer methods."""
-        if hasattr(self.tokenizer, 'count_tokens'):
+        if hasattr(self.tokenizer, "count_tokens"):
             return self.tokenizer.count_tokens(text)
-        elif hasattr(self.tokenizer, 'encode'):
+        elif hasattr(self.tokenizer, "encode"):
             return len(self.tokenizer.encode(text))
         else:
             # Fallback for unknown tokenizer types
-            logger.warning(f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate.")
-            return len(text) // 4 # Rough estimate
+            logger.warning(
+                f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate."
+            )
+            return len(text) // 4  # Rough estimate
 
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
-        failure_threshold=5, # Changed from 3 to 5
+        failure_threshold=5,  # Changed from 3 to 5
         recovery_timeout=60,
         expected_exception=(
             APIError,
@@ -289,22 +296,17 @@ class GeminiProvider:
         ),
     )
     @retry(
-        wait=wait_exponential(
-            multiplier=1, min=4, max=60
-        ),
-        stop=stop_after_attempt(
-            5
-        ),
+        wait=wait_exponential(multiplier=1, min=4, max=60),
+        stop=stop_after_attempt(5),
         reraise=True,
         retry=(
-            retry_if_exception_type(APIError)
-            | retry_if_exception_type(socket.gaierror)
+            retry_if_exception_type(APIError) | retry_if_exception_type(socket.gaierror)
             # SchemaValidationError is now handled by the internal retry loop
         ),
     )
     def generate(
         self,
-        prompt: str, # This prompt is now assumed to be already optimized by core.py
+        prompt: str,  # This prompt is now assumed to be already optimized by core.py
         system_prompt: str = "",
         output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
@@ -366,7 +368,7 @@ class GeminiProvider:
         )
 
         max_schema_retries = 3
-        current_prompt_for_llm = prompt # This is the already optimized user prompt
+        current_prompt_for_llm = prompt  # This is the already optimized user prompt
 
         for i in range(max_schema_retries):
             try:
@@ -375,9 +377,13 @@ class GeminiProvider:
                 optimized_prompt = current_prompt_for_llm
 
                 prompt_with_system = (
-                    f"{system_prompt}\n\n{optimized_prompt}" if system_prompt else optimized_prompt
+                    f"{system_prompt}\n\n{optimized_prompt}"
+                    if system_prompt
+                    else optimized_prompt
                 )
-                input_tokens = self._count_tokens_robustly(prompt_with_system) # MODIFIED
+                input_tokens = self._count_tokens_robustly(
+                    prompt_with_system
+                )  # MODIFIED
 
                 self._log_with_context(
                     "debug",
@@ -427,7 +433,9 @@ class GeminiProvider:
                     except ValidationError as ve:
                         error_msg = f"LLM output failed schema validation: {ve}"
                         self._log_with_context(
-                            "warning", error_msg, llm_output_snippet=generated_text[:200]
+                            "warning",
+                            error_msg,
+                            llm_output_snippet=generated_text[:200],
                         )
                         raise SchemaValidationError(
                             error_type="EARLY_SCHEMA_VALIDATION_FAILED",
@@ -436,7 +444,7 @@ class GeminiProvider:
                             original_exception=ve,
                         )
 
-                output_tokens = self._count_tokens_robustly(generated_text) # MODIFIED
+                output_tokens = self._count_tokens_robustly(generated_text)  # MODIFIED
                 is_truncated = output_tokens >= config.max_output_tokens * 0.95
                 self._log_with_context(
                     "debug",
@@ -464,12 +472,16 @@ class GeminiProvider:
                 if output_schema:
                     # If schema validation was performed and passed, cleaned_generated_text holds the valid JSON string.
                     # We ensure this cleaned string is returned.
-                    final_output_to_return = self.output_parser._clean_llm_output(generated_text)
+                    final_output_to_return = self.output_parser._clean_llm_output(
+                        generated_text
+                    )
                 return final_output_to_return, input_tokens, output_tokens, is_truncated
 
             except SchemaValidationError as e:
                 if i < max_schema_retries - 1:
-                    current_prompt_for_llm = self._adjust_prompt_for_schema_validation(current_prompt_for_llm, output_schema)
+                    current_prompt_for_llm = self._adjust_prompt_for_schema_validation(
+                        current_prompt_for_llm, output_schema
+                    )
                     continue
                 else:
                     raise e
@@ -513,7 +525,8 @@ class GeminiProvider:
                     or "prompt too large" in error_msg_lower
                 ):
                     raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}", original_exception=e
+                        f"LLM context window exceeded: {error_msg}",
+                        original_exception=e,
                     ) from e
                 elif e.code == 400 and (
                     "invalid json" in error_msg_lower
@@ -530,7 +543,9 @@ class GeminiProvider:
                 else:
                     raise LLMProviderError(error_msg, original_exception=e) from e
             except socket.gaierror as e:
-                raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
+                raise LLMUnexpectedError(
+                    f"Network error: {e}", original_exception=e
+                ) from e
             except Exception as e:
                 error_msg = str(e)
                 if (
@@ -538,11 +553,14 @@ class GeminiProvider:
                     or "prompt too large" in error_msg.lower()
                 ):
                     raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}", original_exception=e
+                        f"LLM context window exceeded: {error_msg}",
+                        original_exception=e,
                     ) from e
                 raise LLMProviderError(error_msg, original_exception=e) from e
-        
-        raise LLMProviderError("Failed to generate valid response after all schema retries.")
+
+        raise LLMProviderError(
+            "Failed to generate valid response after all schema retries."
+        )
 
     def close(self):
         """
@@ -550,7 +568,7 @@ class GeminiProvider:
         For google.genai, this primarily involves setting the client to None
         to encourage garbage collection.
         """
-        if hasattr(self, 'client') and self.client:
+        if hasattr(self, "client") and self.client:
             logger.info("Closing GeminiProvider: Releasing LLM client resources.")
             # There's no explicit .close() method for google.genai.Client
             # Setting to None helps with garbage collection.

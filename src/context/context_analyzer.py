@@ -362,19 +362,18 @@ class ContextRelevanceAnalyzer:
     Analyzes the relevance of codebase context to the prompt and personas,
     using semantic search and keyword matching.
     """
+
     _model_instance = None  # Singleton instance for the model
-    _model_name_cached = None # To ensure we don't load different models
-    _cache_dir_cached = None # To ensure consistent cache dir
+    _model_name_cached = None  # To ensure we don't load different models
+    _cache_dir_cached = None  # To ensure consistent cache dir
 
     def __init__(
         self,
         cache_dir: str,
-        raw_file_contents: Optional[
-            Dict[str, str]
-        ] = None,
+        raw_file_contents: Optional[Dict[str, str]] = None,
         max_file_content_size: int = 500000,
         codebase_scanner: Optional[CodebaseScanner] = None,
-        model_name: str = "all-MiniLM-L6-v2", # NEW: Make model_name configurable
+        model_name: str = "all-MiniLM-L6-v2",  # NEW: Make model_name configurable
     ):
         """
         Initializes the analyzer.
@@ -382,7 +381,7 @@ class ContextRelevanceAnalyzer:
         self.cache_dir = cache_dir
         self.max_file_content_size = max_file_content_size
         self.codebase_scanner = codebase_scanner
-        self.model_name = model_name # Store model name
+        self.model_name = model_name  # Store model name
 
         if raw_file_contents is not None:
             self.raw_file_contents = {
@@ -402,7 +401,7 @@ class ContextRelevanceAnalyzer:
         self.file_embeddings: Dict[str, Any] = {}
         self._last_raw_file_contents_hash: Optional[int] = None
 
-        self._load_model() # Call the method to load/get the singleton model
+        self._load_model()  # Call the method to load/get the singleton model
 
         if self.raw_file_contents:
             self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
@@ -414,7 +413,9 @@ class ContextRelevanceAnalyzer:
         """Loads the SentenceTransformer model using the singleton pattern."""
         try:
             # Use class method to get/load the singleton model
-            self.model = ContextRelevanceAnalyzer._get_model_instance(self.model_name, self.cache_dir)
+            self.model = ContextRelevanceAnalyzer._get_model_instance(
+                self.model_name, self.cache_dir
+            )
         except Exception as e:
             self.logger.error(
                 f"Failed to load SentenceTransformer model: {e}", exc_info=True
@@ -427,13 +428,21 @@ class ContextRelevanceAnalyzer:
         Provides a singleton instance of the SentenceTransformer model.
         Ensures the model is loaded only once and from the specified cache directory.
         """
-        if cls._model_instance is None or cls._model_name_cached != model_name or cls._cache_dir_cached != cache_dir:
+        if (
+            cls._model_instance is None
+            or cls._model_name_cached != model_name
+            or cls._cache_dir_cached != cache_dir
+        ):
             # Ensure the cache directory exists before loading
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
-            cls._model_instance = SentenceTransformer(model_name, cache_folder=cache_dir)
+            cls._model_instance = SentenceTransformer(
+                model_name, cache_folder=cache_dir
+            )
             cls._model_name_cached = model_name
             cls._cache_dir_cached = cache_dir
-            logger.info(f"SentenceTransformer model loaded (singleton) from {cache_dir}")
+            logger.info(
+                f"SentenceTransformer model loaded (singleton) from {cache_dir}"
+            )
         return cls._model_instance
 
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
@@ -469,9 +478,7 @@ class ContextRelevanceAnalyzer:
             # Filter out empty file contents and large files before encoding
             files_to_encode = {}
             for k, v in context.items():
-                if (
-                    v and len(v) < self.max_file_content_size
-                ):
+                if v and len(v) < self.max_file_content_size:
                     files_to_encode[k] = v
                 elif v:
                     self.logger.warning(
@@ -590,20 +597,24 @@ class ContextRelevanceAnalyzer:
 
     def _count_tokens_robustly(self, text: str) -> int:
         """Robustly counts tokens using available tokenizer methods on the SentenceTransformer's internal tokenizer."""
-        if hasattr(self.model.tokenizer, 'count_tokens'):
+        if hasattr(self.model.tokenizer, "count_tokens"):
             return self.model.tokenizer.count_tokens(text)
-        elif hasattr(self.model.tokenizer, 'encode'):
+        elif hasattr(self.model.tokenizer, "encode"):
             return len(self.model.tokenizer.encode(text))
         else:
             # Fallback for other tokenizer types, or raise an error if no known method
-            logger.warning(f"Unknown tokenizer type for {type(self.model.tokenizer).__name__}. Falling back to character count / 4 estimate.")
-            return len(text) // 4 # Rough estimate
+            logger.warning(
+                f"Unknown tokenizer type for {type(self.model.tokenizer).__name__}. Falling back to character count / 4 estimate."
+            )
+            return len(text) // 4  # Rough estimate
 
     def generate_context_summary(
         self, relevant_files: List[Tuple[str, float]], max_tokens: int, prompt: str = ""
     ) -> str:
         """Generates a detailed summary of the relevant codebase context, including actual file contents."""
-        current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
+        current_summary_parts = [
+            f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"
+        ]
         current_tokens = self._count_tokens_robustly(current_summary_parts[0])
 
         # Diagnostic print to inspect relevant_files before the loop
@@ -616,39 +627,44 @@ class ContextRelevanceAnalyzer:
                 # Explicitly try to unpack, catching the ValueError if it occurs
                 file_path, score = item
             except (ValueError, TypeError) as e:
-                self.logger.warning(f"Skipping malformed item at index {i} in relevant_files: {item}. Error: {e}")
+                self.logger.warning(
+                    f"Skipping malformed item at index {i} in relevant_files: {item}. Error: {e}"
+                )
                 continue
-            
+
             # Additional defensive checks for type
             if not isinstance(file_path, str):
-                self.logger.warning(f"Skipping item with non-string file path at index {i}: {item}")
+                self.logger.warning(
+                    f"Skipping item with non-string file path at index {i}: {item}"
+                )
                 continue
 
             file_content = self.raw_file_contents.get(file_path, "")
             if not file_content:
-                self.logger.debug(f"Skipping empty or non-existent content for file: {file_path}")
+                self.logger.debug(
+                    f"Skipping empty or non-existent content for file: {file_path}"
+                )
                 continue
 
             remaining_tokens_for_content = max_tokens - current_tokens - 50
             if remaining_tokens_for_content <= 0:
-                self.logger.info(f"Context token budget exhausted. Stopping at file: {file_path}")
+                self.logger.info(
+                    f"Context token budget exhausted. Stopping at file: {file_path}"
+                )
                 break
 
             # --- START FIX ---
             # Replace the incorrect truncate_to_token_limit with the correct transformers library pattern.
             token_ids = self.model.tokenizer.encode(
-                file_content,
-                max_length=remaining_tokens_for_content,
-                truncation=True
+                file_content, max_length=remaining_tokens_for_content, truncation=True
             )
             truncated_content = self.model.tokenizer.decode(
-                token_ids,
-                skip_special_tokens=True
+                token_ids, skip_special_tokens=True
             )
             if len(token_ids) >= remaining_tokens_for_content:
                 truncated_content += "\n... (truncated)"
             # --- END FIX ---
-            
+
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
             file_block_tokens = self._count_tokens_robustly(file_block)
 
@@ -656,14 +672,23 @@ class ContextRelevanceAnalyzer:
                 current_summary_parts.append(file_block)
                 current_tokens += file_block_tokens
             else:
-                if self._count_tokens_robustly(f"- {file_path}\n") <= max_tokens - current_tokens:
-                    current_summary_parts.append(f"- {file_path} (content omitted due to token limits)\n")
+                if (
+                    self._count_tokens_robustly(f"- {file_path}\n")
+                    <= max_tokens - current_tokens
+                ):
+                    current_summary_parts.append(
+                        f"- {file_path} (content omitted due to token limits)\n"
+                    )
                     current_tokens += self._count_tokens_robustly(f"- {file_path}\n")
-                self.logger.info(f"Context token budget exhausted. Stopping at file: {file_path}")
+                self.logger.info(
+                    f"Context token budget exhausted. Stopping at file: {file_path}"
+                )
                 break
 
         if current_tokens < max_tokens:
-            current_summary_parts.append(f"Remaining token budget for context: {max_tokens - current_tokens} tokens.\n")
+            current_summary_parts.append(
+                f"Remaining token budget for context: {max_tokens - current_tokens} tokens.\n"
+            )
 
         final_summary = "".join(current_summary_parts)
         return final_summary
@@ -696,6 +721,8 @@ class ContextRelevanceAnalyzer:
                 self.raw_file_contents = raw_contents
                 self.compute_file_embeddings(self.raw_file_contents)
                 self._last_raw_file_contents_hash = current_files_hash
-                logger.info("ContextRelevanceAnalyzer updated with new codebase scan results.")
+                logger.info(
+                    "ContextRelevanceAnalyzer updated with new codebase scan results."
+                )
 
         return structured_context, raw_contents

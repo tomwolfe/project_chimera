@@ -796,7 +796,7 @@ class FocusedMetricsCollector:
         Executes pytest to check for basic test suite health.
         """
         coverage_data = {
-            "overall_coverage_percentage": 0.0, # Will be -1.0 as coverage is not run
+            "overall_coverage_percentage": 0.0,  # Will be -1.0 as coverage is not run
             "coverage_details": "Failed to run pytest.",
         }
         try:
@@ -806,15 +806,21 @@ class FocusedMetricsCollector:
                 sys.executable,
                 "-m",
                 "pytest",
-                "-q", # Use quiet mode for faster execution
+                "-q",  # Use quiet mode for faster execution
                 "tests/",
             ]
             # MODIFIED: Reduced timeout to 60s as a full coverage report is no longer generated.
-            return_code, stdout, stderr = execute_command_safely(command, timeout=60, check=False)
+            return_code, stdout, stderr = execute_command_safely(
+                command, timeout=60, check=False
+            )
 
             if return_code == 0:
-                coverage_data["coverage_details"] = "Pytest execution successful (tests passed)."
-                coverage_data["overall_coverage_percentage"] = -1.0 # Indicate coverage was not run
+                coverage_data["coverage_details"] = (
+                    "Pytest execution successful (tests passed)."
+                )
+                coverage_data[
+                    "overall_coverage_percentage"
+                ] = -1.0  # Indicate coverage was not run
             else:
                 logger.warning(
                     f"Pytest execution failed with return code {return_code}. Stderr: {stderr}"
@@ -1172,30 +1178,43 @@ class FocusedMetricsCollector:
         Collects code quality and security metrics by running tools once on the entire codebase.
         """
         # This is a much more efficient approach than running analysis on each temporary file.
-        logger.info("Collecting code quality and security metrics for the entire codebase...")
-        
+        logger.info(
+            "Collecting code quality and security metrics for the entire codebase..."
+        )
+
         all_ruff_issues = []
         all_bandit_issues = []
         all_ast_issues = []
         all_complexity_metrics = []
-        
+
         for file_path_str, content in self.raw_file_contents.items():
             if file_path_str.endswith(".py"):
                 all_ruff_issues.extend(_run_ruff(content, file_path_str))
                 all_bandit_issues.extend(_run_bandit(content, file_path_str))
                 all_ast_issues.extend(_run_ast_security_checks(content, file_path_str))
-                all_complexity_metrics.extend(self._analyze_python_file_ast(content, content.splitlines(), file_path_str))
+                all_complexity_metrics.extend(
+                    self._analyze_python_file_ast(
+                        content, content.splitlines(), file_path_str
+                    )
+                )
 
         detailed_issues = all_ruff_issues + all_bandit_issues + all_ast_issues
-        
+
         self.collected_metrics["code_quality"] = {
             "ruff_issues_count": len(all_ruff_issues),
             "bandit_issues_count": len(all_bandit_issues),
             "ast_security_issues_count": len(all_ast_issues),
             "complexity_metrics": all_complexity_metrics,
-            "code_smells_count": sum(m.get("code_smells", 0) for m in all_complexity_metrics),
+            "code_smells_count": sum(
+                m.get("code_smells", 0) for m in all_complexity_metrics
+            ),
             "detailed_issues": detailed_issues,
-            "ruff_violations": [issue for issue in all_ruff_issues if issue["type"] == "Ruff Linting Issue" or issue["type"] == "Ruff Formatting Issue"],
+            "ruff_violations": [
+                issue
+                for issue in all_ruff_issues
+                if issue["type"] == "Ruff Linting Issue"
+                or issue["type"] == "Ruff Formatting Issue"
+            ],
         }
         self.collected_metrics["security"] = {
             "bandit_issues_count": len(all_bandit_issues),
@@ -1306,7 +1325,9 @@ This document outlines the refined methodology for identifying and implementing 
 
         self._collect_code_quality_and_security_metrics()
 
-        self._identify_critical_metric(self.collected_metrics) # Pass collected_metrics to the method
+        self._identify_critical_metric(
+            self.collected_metrics
+        )  # Pass collected_metrics to the method
 
         logger.info("Finished collecting all pre-synthesis metrics.")
         return self.collected_metrics

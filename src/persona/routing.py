@@ -37,6 +37,7 @@ def calculate_persona_performance(turn):
 
     return score
 
+
 def select_personas_by_weight(weights):
     """Select personas based on their current weights"""
     total_weight = sum(weights.values())
@@ -45,12 +46,12 @@ def select_personas_by_weight(weights):
     # For now, I'll provide a basic implementation that selects based on weights.
     # This function is referenced in core.py's diff, so it needs to exist.
     if total_weight == 0:
-        return [] # No personas to select if total weight is zero
+        return []  # No personas to select if total weight is zero
 
     # Example: Select top N personas or sample based on weights
     # For a simple selection, let's just return all personas sorted by weight
     # or a fixed number of top personas.
-    
+
     # A simple weighted random selection could be:
     # persona_names = list(weights.keys())
     # persona_probs = [w / total_weight for w in weights.values()]
@@ -414,7 +415,7 @@ class PersonaRouter:
 
         return adjusted_sequence
 
-    def _insert_persona_before_arbitrator(self    , sequence: List[str], persona: str):
+    def _insert_persona_before_arbitrator(self, sequence: List[str], persona: str):
         """Insert persona before the Impartial_Arbitrator in the sequence if not already present."""
         if persona in sequence:
             return
@@ -422,8 +423,10 @@ class PersonaRouter:
         arbitrator_index = len(sequence)
         if "Impartial_Arbitrator" in sequence:
             arbitrator_index = sequence.index("Impartial_Arbitrator")
-        elif "Self_Improvement_Analyst" in sequence: # Corrected to snake_case
-            arbitrator_index = sequence.index("Self_Improvement_Analyst") # Corrected to snake_case
+        elif "Self_Improvement_Analyst" in sequence:  # Corrected to snake_case
+            arbitrator_index = sequence.index(
+                "Self_Improvement_Analyst"
+            )  # Corrected to snake_case
         elif "General_Synthesizer" in sequence:
             arbitrator_index = sequence.index("General_Synthesizer")
 
@@ -519,11 +522,13 @@ class PersonaRouter:
 
             if "SelfImprovementAnalyst" in base_sequence:
                 base_sequence.remove("SelfImprovementAnalyst")
-            base_sequence.append("Self_Improvement_Analyst") # Corrected to snake_case
+            base_sequence.append("Self_Improvement_Analyst")  # Corrected to snake_case
 
             if "Impartial_Arbitrator" in base_sequence:
                 base_sequence.remove("Impartial_Arbitrator")
-                analyst_idx = base_sequence.index("Self_Improvement_Analyst") # Corrected to snake_case
+                analyst_idx = base_sequence.index(
+                    "Self_Improvement_Analyst"
+                )  # Corrected to snake_case
                 base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
 
             if "Devils_Advocate" in base_sequence:
@@ -532,9 +537,9 @@ class PersonaRouter:
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
-            elif "Self_Improvement_Analyst" in base_sequence: # Corrected to snake_case
+            elif "Self_Improvement_Analyst" in base_sequence:  # Corrected to snake_case
                 insert_pos_for_advocate = base_sequence.index(
-                    "Self_Improvement_Analyst" # Corrected to snake_case
+                    "Self_Improvement_Analyst"  # Corrected to snake_case
                 )
 
             if (
