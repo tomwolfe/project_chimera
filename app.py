@@ -392,7 +392,7 @@ def handle_debate_errors(error: Exception):
         """)
         logger.error(f"Schema Validation Error: {error_str}", exc_info=True)
     elif isinstance(error, TypeError) and "unexpected keyword argument" in error_str:
-        st.error(f"""
+        st.error("""
         🐛 **Internal Configuration Error: Type Mismatch**
 
         An internal component received an unexpected argument. This usually indicates a mismatch in component configuration or an outdated interface.
@@ -1779,18 +1779,6 @@ def _run_socratic_debate_process():
                 )
             finally:
                 # Explicitly clear large objects and trigger garbage collection
-                if st.session_state.context_analyzer:
-                    st.session_state.context_analyzer._last_raw_file_contents_hash = (
-                        None
-                    )
-                    st.session_state.context_analyzer.file_embeddings = {}
-                    st.session_state.context_analyzer.raw_file_contents = {}
-
-                st.session_state.raw_file_contents = {}
-                st.session_state.structured_codebase_context = {}
-
-                st.session_state.file_analysis_cache = None
-
                 if debate_instance:
                     # If SocraticDebate has a 'close' method, call it for explicit cleanup
                     if hasattr(debate_instance, 'close') and callable(debate_instance.close):
@@ -1798,9 +1786,7 @@ def _run_socratic_debate_process():
                         debate_instance.close()
                     del debate_instance # Explicitly delete the instance
                 gc.collect()
-                logger.info(
-                    "Explicit garbage collection triggered in app.py after debate process."
-                )
+                logger.info("Explicit garbage collection triggered in app.py after debate process.")
 
 
 if run_button_clicked:

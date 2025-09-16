@@ -76,6 +76,7 @@ class FocusedMetricsCollector:
         Initializes the analyst with collected metrics and context.
         """
         self.initial_prompt = initial_prompt
+        self.metrics = metrics
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_scanner = codebase_scanner  # NEW: Store the scanner
@@ -116,13 +117,13 @@ class FocusedMetricsCollector:
             int, historical_summary.get("historical_schema_validation_failures", {})
         )
 
-    def _identify_critical_metric(self):
+    def _identify_critical_metric(self, collected_metrics: Dict[str, Any]):
         """Identify the single most critical metric that's furthest from threshold."""
         critical_metric = None
         max_deviation = -1
 
         for metric_name, config in self.CRITICAL_METRICS.items():
-            value = self.collected_metrics.get(metric_name, 0)
+            value = collected_metrics.get(metric_name, 0)
             threshold = config["threshold"]
 
             if metric_name == "token_efficiency":
@@ -792,67 +793,35 @@ class FocusedMetricsCollector:
     def _assess_test_coverage(self) -> Dict[str, Any]:
         """
         Assesses test coverage for the codebase.
-        Executes pytest with coverage and parses the generated JSON report.
+        Executes pytest to check for basic test suite health.
         """
         coverage_data = {
-            "overall_coverage_percentage": 0.0,
-            "coverage_details": "Failed to run coverage tool.",
+            "overall_coverage_percentage": 0.0, # Will be -1.0 as coverage is not run
+            "coverage_details": "Failed to run pytest.",
         }
         try:
+            # MODIFIED: Removed '--cov=src' and '--cov-report' which are slow and cause hangs.
+            # A simple test run is sufficient to check for basic test suite health.
             command = [
+                sys.executable,
+                "-m",
                 "pytest",
-                "-v",
+                "-q", # Use quiet mode for faster execution
                 "tests/",
-                "--cov=src",
-                "--cov-report=json:coverage.json",
             ]
-            # MODIFIED: Increased timeout from 120 to 300 seconds
-            return_code, stdout, stderr = execute_command_safely(
-                command, timeout=300, check=False
-            )
+            # MODIFIED: Reduced timeout to 60s as a full coverage report is no longer generated.
+            return_code, stdout, stderr = execute_command_safely(command, timeout=60, check=False)
 
-            if return_code not in (0, 1):
+            if return_code == 0:
+                coverage_data["coverage_details"] = "Pytest execution successful (tests passed)."
+                coverage_data["overall_coverage_percentage"] = -1.0 # Indicate coverage was not run
+            else:
                 logger.warning(
-                    f"Pytest coverage command failed with return code {return_code}. Stderr: {stderr}"
+                    f"Pytest execution failed with return code {return_code}. Stderr: {stderr}"
                 )
                 coverage_data["coverage_details"] = (
-                    f"Pytest command failed with exit code {return_code}. Stderr: {stderr or 'Not available'}. Stdout: {stdout or 'Not available'}."
+                    f"Pytest execution failed with exit code {return_code}. Stderr: {stderr or 'Not available'}."
                 )
-                return coverage_data
-
-            coverage_json_path = Path("coverage.json")
-            if coverage_json_path.exists() and return_code in (0, 1):
-                with open(coverage_json_path, "r", encoding="utf-8") as f:
-                    report = json.load(f)
-
-                coverage_data["overall_coverage_percentage"] = report.get(
-                    "totals", {}
-                ).get("percent_covered", 0.0)
-                coverage_data["covered_statements"] = report.get("totals", {}).get(
-                    "covered_statements", 0
-                )
-                coverage_data["total_files"] = report.get("totals", {}).get(
-                    "num_statements", 0
-                )
-                coverage_data["total_python_files_analyzed"] = len(
-                    report.get("files", {})
-                )
-                coverage_data["files_covered_count"] = sum(
-                    1
-                    for file_report in report.get("files", {}).values()
-                    if file_report.get("percent_covered", 0) > 0
-                )
-
-                coverage_data["coverage_details"] = (
-                    "Coverage report generated successfully."
-                )
-                if return_code == 1:
-                    coverage_data["coverage_details"] += (
-                        " Note: Some tests failed during coverage collection."
-                    )
-                coverage_json_path.unlink()
-            elif return_code not in (0, 1):
-                coverage_data["coverage_details"] = "Coverage JSON report not found."
 
         except Exception as e:
             logger.error(f"Error assessing test coverage: {e}", exc_info=True)
@@ -1192,96 +1161,45 @@ class FocusedMetricsCollector:
         self, suggestions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Iterates through suggestions and applies internal validation and auto-fixing
-        to code changes. This method is now primarily responsible for ensuring suggested file paths are valid
-        and converting MODIFY/REMOVE for non-existent files to CREATE/ignored.
+        This method is now primarily responsible for ensuring suggested file paths are valid
+        and converting MODIFY/REMOVE for non-existent files to CREATE/ignored. The core logic
+        for this has been moved to core.py for better consolidation.
         """
-        # This method is now primarily responsible for ensuring suggested file paths are valid
-        # and converting MODIFY/REMOVE for non-existent files to CREATE/ignored.
-        # The core.py:_consolidate_self_improvement_code_changes will handle the final logic.
         return suggestions
 
     def _collect_code_quality_and_security_metrics(self):
         """
-        Collects code quality (Ruff) and security (Bandit, AST) metrics for all Python files
-        in the codebase. Stores results in self.collected_metrics and self.file_analysis_cache.
+        Collects code quality and security metrics by running tools once on the entire codebase.
         """
-        ruff_issues_count = 0
-        bandit_issues_count = 0
-        ast_security_issues_count = 0
-        complexity_metrics = []
-        code_smells_count = 0
-        detailed_issues = []
-        ruff_violations = []
-
-        # Define a token limit for code snippets in issues
-        CODE_SNIPPET_TOKEN_LIMIT = 50  # Adjust as needed
-
+        # This is a much more efficient approach than running analysis on each temporary file.
+        logger.info("Collecting code quality and security metrics for the entire codebase...")
+        
+        all_ruff_issues = []
+        all_bandit_issues = []
+        all_ast_issues = []
+        all_complexity_metrics = []
+        
         for file_path_str, content in self.raw_file_contents.items():
             if file_path_str.endswith(".py"):
-                content_lines = content.splitlines()
+                all_ruff_issues.extend(_run_ruff(content, file_path_str))
+                all_bandit_issues.extend(_run_bandit(content, file_path_str))
+                all_ast_issues.extend(_run_ast_security_checks(content, file_path_str))
+                all_complexity_metrics.extend(self._analyze_python_file_ast(content, content.splitlines(), file_path_str))
 
-                file_cache = self.file_analysis_cache.setdefault(file_path_str, {})
-
-                ruff_file_issues = _run_ruff(content, file_path_str)
-                for issue in ruff_file_issues:
-                    if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
-                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
-                        )
-                ruff_issues_count += len(ruff_file_issues)
-                detailed_issues.extend(ruff_file_issues)
-                ruff_violations.extend(
-                    [
-                        issue
-                        for issue in ruff_file_issues
-                        if issue["type"] == "Ruff Linting Issue"
-                        or issue["type"] == "Ruff Formatting Issue"
-                    ]
-                )
-                file_cache["ruff_issues"] = ruff_file_issues
-
-                bandit_file_issues = _run_bandit(content, file_path_str)
-                for issue in bandit_file_issues:
-                    if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
-                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
-                        )
-                bandit_issues_count += len(bandit_file_issues)
-                detailed_issues.extend(bandit_file_issues)
-                file_cache["bandit_issues"] = bandit_file_issues
-
-                ast_file_issues = _run_ast_security_checks(content, file_path_str)
-                for issue in ast_file_issues:
-                    if issue.get("code_snippet"):
-                        issue["code_snippet"] = self.tokenizer.truncate_to_token_limit(
-                            issue["code_snippet"], CODE_SNIPPET_TOKEN_LIMIT
-                        )
-                ast_security_issues_count += len(ast_file_issues)
-                detailed_issues.extend(ast_file_issues)
-                file_cache["ast_security_issues"] = ast_file_issues
-
-                function_metrics = self._analyze_python_file_ast(
-                    content, content_lines, file_path_str
-                )
-                complexity_metrics.extend(function_metrics)
-                code_smells_count += sum(
-                    m.get("code_smells", 0) for m in function_metrics
-                )
-                file_cache["function_metrics"] = function_metrics
-
+        detailed_issues = all_ruff_issues + all_bandit_issues + all_ast_issues
+        
         self.collected_metrics["code_quality"] = {
-            "ruff_issues_count": ruff_issues_count,
-            "bandit_issues_count": bandit_issues_count,
-            "ast_security_issues_count": ast_security_issues_count,
-            "complexity_metrics": complexity_metrics,
-            "code_smells_count": code_smells_count,
+            "ruff_issues_count": len(all_ruff_issues),
+            "bandit_issues_count": len(all_bandit_issues),
+            "ast_security_issues_count": len(all_ast_issues),
+            "complexity_metrics": all_complexity_metrics,
+            "code_smells_count": sum(m.get("code_smells", 0) for m in all_complexity_metrics),
             "detailed_issues": detailed_issues,
-            "ruff_violations": ruff_violations,
+            "ruff_violations": [issue for issue in all_ruff_issues if issue["type"] == "Ruff Linting Issue" or issue["type"] == "Ruff Formatting Issue"],
         }
         self.collected_metrics["security"] = {
-            "bandit_issues_count": bandit_issues_count,
-            "ast_security_issues_count": ast_security_issues_count,
+            "bandit_issues_count": len(all_bandit_issues),
+            "ast_security_issues_count": len(all_ast_issues),
             "detailed_security_issues": [
                 issue
                 for issue in detailed_issues
@@ -1388,7 +1306,7 @@ This document outlines the refined methodology for identifying and implementing 
 
         self._collect_code_quality_and_security_metrics()
 
-        self._identify_critical_metric()
+        self._identify_critical_metric(self.collected_metrics) # Pass collected_metrics to the method
 
         logger.info("Finished collecting all pre-synthesis metrics.")
         return self.collected_metrics

@@ -2505,7 +2505,7 @@ class SocraticDebate:
 
         # Handle REMOVE actions
         if remove_actions:
-            if not file_exists_in_codebase:
+            if not file_exists_in_codebase and not any(a.action == "ADD" for a in changes_for_file):
                 self._log_with_context("warning", f"REMOVE action suggested for non-existent file: {file_path}. Skipping.")
                 analysis_output.setdefault("malformed_blocks", []).append({
                     "type": "INVALID_REMOVE_ACTION",
@@ -2525,7 +2525,7 @@ class SocraticDebate:
 
         # Handle ADD actions
         if add_actions:
-            if file_exists_in_codebase:
+            if file_exists_in_codebase and not any(a.action == "REMOVE" for a in changes_for_file):
                 self._log_with_context("warning", f"ADD action suggested for existing file: {file_path}. Converting to MODIFY if content provided.")
                 # If ADD is suggested for an existing file, convert to MODIFY if full_content is present
                 if add_actions[0].full_content:
@@ -2547,7 +2547,7 @@ class SocraticDebate:
 
         # Handle MODIFY actions
         if modify_actions:
-            if not file_exists_in_codebase:
+            if not file_exists_in_codebase and not any(a.action == "ADD" for a in changes_for_file):
                 self._log_with_context("warning", f"MODIFY action suggested for non-existent file: {file_path}. Converting to CREATE if content provided.")
                 # If MODIFY is suggested for a non-existent file, convert to CREATE
                 if modify_actions[0].full_content:
