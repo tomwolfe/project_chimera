@@ -1829,6 +1829,30 @@ if run_button_clicked:
                 )
                 handle_debate_errors(e)
                 break
+        except LLMProviderError as e:
+            provider_error_code = e.details.get("provider_error_code")
+            # Check if it's a 5xx server error (transient)
+            if (
+                isinstance(provider_error_code, int)
+                and 500 <= provider_error_code < 600
+            ):
+                if attempt < MAX_DEBATE_RETRIES - 1:
+                    wait_time = DEBATE_RETRY_DELAY_SECONDS * (attempt + 1)
+                    st.info(
+                        f"LLM Server Error ({provider_error_code}) detected. Retrying Socratic Debate in {wait_time:.1f} seconds... (Attempt {attempt + 1}/{MAX_DEBATE_RETRIES})"
+                    )
+                    time.sleep(wait_time)
+                    update_activity_timestamp()
+                    continue  # Continue to the next attempt in the loop
+                else:
+                    st.error(
+                        f"Max retries ({MAX_DEBATE_RETRIES}) for Socratic Debate reached due to LLM server error ({provider_error_code}). Please try again later."
+                    )
+                    handle_debate_errors(e)
+                    break  # Break the loop after max retries
+            # For any other LLMProviderError (e.g., 4xx), handle and break
+            handle_debate_errors(e)
+            break
         except Exception as e:
             handle_debate_errors(e)
             break
