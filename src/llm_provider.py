@@ -12,7 +12,9 @@ from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
 from google.genai.errors import APIError, ServerError  # MODIFIED: Import ServerError
-import google.genai as genai_types  # MODIFIED: Use alias to avoid conflict
+from google.genai import (
+    types as genai_types,
+)  # CORRECTED: Import types submodule directly
 import hashlib
 import secrets
 import socket
