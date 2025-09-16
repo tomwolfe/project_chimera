@@ -608,7 +608,18 @@ class ContextRelevanceAnalyzer:
         current_summary_parts = [f"Codebase Context for prompt: '{prompt[:100]}...'\n\n"]
         current_tokens = self._count_tokens_robustly(current_summary_parts[0])
 
-        for file_path, _ in relevant_files:
+        for item in relevant_files:
+            # Defensive check: ensure item is a tuple/list and has at least one element
+            if not isinstance(item, (list, tuple)) or len(item) < 1:
+                self.logger.warning(f"Skipping malformed item in relevant_files: {item}")
+                continue
+            
+            file_path = item[0]
+            # Defensive check: ensure file_path is a string
+            if not isinstance(file_path, str):
+                self.logger.warning(f"Skipping item with non-string file path: {item}")
+                continue
+
             file_content = self.raw_file_contents.get(file_path, "")
             if not file_content:
                 continue
