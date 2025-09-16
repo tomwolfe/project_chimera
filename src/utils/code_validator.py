@@ -33,6 +33,98 @@ class CodeValidationError(Exception):
     pass
 
 
+# --- NEW HELPER FUNCTION FOR PATH RESOLUTION ---
+def _resolve_file_path_suggestion(
+    suggested_path: str, codebase_context: Dict[str, str]
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Attempts to resolve a suggested file path against the actual codebase context.
+    Returns (resolved_path, error_message) or (None, error_message) if not found.
+    """
+    # 1. Check if the path exists exactly as suggested
+    if suggested_path in codebase_context:
+        return suggested_path, None
+
+    # 2. Try adding "src/" prefix
+    src_prefixed_path = f"src/{suggested_path}"
+    if src_prefixed_path in codebase_context:
+        return src_prefixed_path, None
+
+    # 3. Try finding a file that ends with the suggested path (e.g., "reasoning_service.py" -> "src/services/reasoning_service.py")
+    # This is a more ambiguous match, so prioritize exact and src-prefixed matches first.
+    potential_matches = [
+        p for p in codebase_context.keys() if p.endswith(suggested_path)
+    ]
+    if len(potential_matches) == 1:
+        return potential_matches[0], None
+    elif len(potential_matches) > 1:
+        # If multiple matches, it's ambiguous, flag as an issue.
+        return (
+            None,
+            f"Ambiguous file path: '{suggested_path}' matches multiple files: {', '.join(potential_matches)}. Please be more specific.",
+        )
+
+    # 4. Special case: if suggested path is a common root-level file without 'src/'
+    # This is a heuristic and should be used carefully.
+    root_level_files = [
+        "app.py",
+        "core.py",
+        "personas.yaml",
+        "pyproject.toml",
+        "requirements.txt",
+        "Dockerfile",
+        "README.md",
+        "LICENSE",
+    ]
+    if suggested_path in root_level_files and suggested_path in codebase_context:
+        return suggested_path, None
+
+    return (
+        None,
+        f"File '{suggested_path}' does not exist in codebase. Did you mean 'src/{suggested_path}' or a path in 'tests/'?",
+    )
+
+
+def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
+    """Runs pycodestyle on the given content using its library API."""
+    issues = []
+    try:
+        style_guide = pycodestyle.StyleGuide(quiet=True, format="default")
+        checker = pycodestyle.Checker(
+            filename=filename, lines=content.splitlines(keepends=True)
+        )
+
+        errors = checker.check_all()
+
+        for line_num, col_num, code, message in errors:
+            issues.append(
+                {
+                    "line_number": line_num,
+                    "column_number": col_num,
+                    "code": code,
+                    "message": message.strip(),
+                    "source": "pycodestyle",
+                    "filename": filename,
+                    "type": "PEP8 Violation",
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"Error running pycodestyle on {filename}: {e}")
+        issues.append(
+            {
+                "line_number": None,
+                "column_number": None,
+                "code": "PYCODESTYLE_ERROR",
+                "message": f"Internal error during pycodestyle check: {e}",
+                "source": "pycodestyle",
+                "filename": filename,
+                "type": "Validation Tool Error",
+            }
+        )
+    return issues
+
+
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Ruff (linter and formatter check) on the given content via subprocess."""
     issues = []
@@ -655,6 +747,7 @@ def validate_code_output(
     parsed_change: Dict[str, Any],
     original_content: str = None,
     file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    file_exists_in_codebase: bool = False,  # NEW: Pass explicit flag
 ) -> Dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get("FILE_PATH")
@@ -673,18 +766,31 @@ def validate_code_output(
             ]
         }
 
-    file_path = Path(file_path_str)
-    is_python = file_path.suffix.lower() == ".py"
+    file_path_obj = Path(file_path_str)
+    is_python = file_path_obj.suffix.lower() == ".py"
 
-    if action == "ADD":
-        if file_path.exists():
+    # --- NEW: Action-specific file existence validation ---
+    if action == "ADD" or action == "CREATE" or action == "CREATE_DIRECTORY":
+        if file_exists_in_codebase:
             issues.append(
                 {
-                    "type": "File Exists Error",
+                    "type": "INVALID_ADD_ACTION",
                     "file": file_path_str,
-                    "message": f"Attempted to ADD file '{file_path_str}', but it already exists. Consider MODIFY or REMOVE/ADD.",
+                    "message": f"Action '{action}' suggested for existing file/directory '{file_path_str}'. Consider 'MODIFY' or 'REMOVE' then 'ADD'.",
                 }
             )
+    elif action == "MODIFY" or action == "REMOVE":
+        if not file_exists_in_codebase:
+            issues.append(
+                {
+                    "type": "INVALID_ACTION_ON_NON_EXISTENT_FILE",
+                    "file": file_path_str,
+                    "message": f"Action '{action}' suggested for non-existent file/directory '{file_path_str}'. Consider 'ADD' or 'CREATE'.",
+                }
+            )
+    # --- END NEW: Action-specific file existence validation ---
+
+    if action == "ADD" or action == "CREATE":
         content_to_check = parsed_change.get("FULL_CONTENT", "")
         checksum = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
         issues.append(
@@ -698,18 +804,13 @@ def validate_code_output(
             issues.extend(_run_ruff(content_to_check, file_path_str))
             issues.extend(_run_bandit(content_to_check, file_path_str))
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-
     elif action == "MODIFY":
-        if not file_path.exists():
-            issues.append(
-                {
-                    "type": "File Not Found Error",
-                    "file": file_path_str,
-                    "message": f"Attempted to MODIFY file '{file_path_str}', but it does not exist. Consider ADD or CREATE.",
-                }
-            )
         content_to_check = parsed_change.get("FULL_CONTENT", "")
-        checksum_new = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
+        # The file_exists_in_codebase check above should have caught if it's a non-existent file.
+        # Now, proceed with content validation if content is provided.
+        checksum_new = hashlib.sha256(
+            content_to_check.encode("utf-8")
+        ).hexdigest()  # Recalculate checksum for new content
         issues.append(
             {
                 "type": "Content Integrity",
@@ -730,7 +831,8 @@ def validate_code_output(
                         "message": "New content is identical to original.",
                     }
                 )
-
+            # If original_content is provided, it means the file existed.
+            # We can also add pre-computed issues from cache if available.
             if file_analysis_cache and file_path_str in file_analysis_cache:
                 cached_analysis = file_analysis_cache[file_path_str]
                 if "ruff_issues" in cached_analysis:
@@ -744,24 +846,16 @@ def validate_code_output(
                 )
 
             if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str))
+                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-        else:
+        else:  # If original_content is None, it means the file didn't exist or wasn't provided.
+            # The file_exists_in_codebase check above should have caught this.
             if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str))
+                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-
     elif action == "REMOVE":
-        if not file_path.exists():
-            issues.append(
-                {
-                    "type": "File Not Found Error",
-                    "file": file_path_str,
-                    "message": f"Attempted to REMOVE file '{file_path_str}', but it does not exist.",
-                }
-            )
         if original_content is not None:
             original_lines = original_content.splitlines()
             lines_to_remove = parsed_change.get("LINES", [])
@@ -771,7 +865,7 @@ def validate_code_output(
                 if line_content_to_remove not in original_lines_set:
                     issues.append(
                         {
-                            "type": "Potential Removal Mismatch",
+                            "type": "POTENTIAL_REMOVAL_MISMATCH",
                             "file": file_path_str,
                             "message": f"Line intended for removal not found exactly in original content: '{line_content_to_remove[:80]}'",
                         }
@@ -779,12 +873,22 @@ def validate_code_output(
         else:
             issues.append(
                 {
-                    "type": "Validation Warning",
+                    "type": "VALIDATION_WARNING",
                     "file": file_path_str,
                     "message": "Original content not provided for REMOVE action validation.",
                 }
             )
         return {"issues": issues}
+    elif action == "CREATE_DIRECTORY":  # No content to check for directory creation
+        pass
+    else:
+        issues.append(
+            {
+                "type": "UNKNOWN_ACTION",
+                "file": file_path_str,
+                "message": f"Unknown action type '{action}'.",
+            }
+        )
 
     return {"issues": issues}
 
@@ -853,43 +957,69 @@ def validate_code_output_batch(
             )
             continue
 
-        file_path = change_entry.get("FILE_PATH")
-        if file_path:
-            try:
-                original_content = original_contents.get(file_path)
-                # Pass the file_analysis_cache to validate_code_output
-                validation_result = validate_code_output(
-                    change_entry, original_content, file_analysis_cache
-                )
-
-                all_validation_results[file_path] = validation_result.get("issues", [])
-                logger.debug(
-                    f"Validation for {file_path} completed with {len(validation_result.get('issues', []))} issues."
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error during validation of change entry {i} for file {file_path}: {e}"
-                )
-                if file_path not in all_validation_results:
-                    all_validation_results[file_path] = []
-                all_validation_results[file_path].append(
-                    {
-                        "type": "Validation Tool Error",
-                        "file": file_path,
-                        "message": f"Failed to validate: {e}",
-                    }
-                )
-        else:
+        suggested_file_path = change_entry.get("FILE_PATH")
+        if not suggested_file_path:
             logger.warning(
                 f"Encountered a code change without a 'FILE_PATH' in output {i}. Skipping validation for this item."
             )
             all_validation_results.setdefault("N/A", []).append(
                 {
-                    "type": "Validation Error",
+                    "type": "VALIDATION_ERROR",
                     "file": "N/A",
                     "message": f"Change item at index {i} missing FILE_PATH.",
                 }
             )
+            continue
+
+        resolved_path, path_error = _resolve_file_path_suggestion(
+            suggested_file_path, original_contents
+        )
+        current_issues_for_file = []
+
+        if path_error:
+            current_issues_for_file.append(
+                {
+                    "type": "INVALID_FILE_PATH",
+                    "file": suggested_file_path,
+                    "message": path_error,
+                }
+            )
+            all_validation_results[suggested_file_path] = current_issues_for_file
+            continue
+        else:
+            change_entry["FILE_PATH"] = (
+                resolved_path  # Update the file_path in the change_entry
+            )
+            file_path_to_validate = (
+                resolved_path  # Use the resolved path for validation
+            )
+
+        try:
+            original_content = original_contents.get(file_path_to_validate)
+            file_exists_in_codebase = file_path_to_validate in original_contents
+            validation_result = validate_code_output(
+                change_entry,
+                original_content,
+                file_analysis_cache,
+                file_exists_in_codebase,
+            )
+            current_issues_for_file.extend(validation_result.get("issues", []))
+            all_validation_results[file_path_to_validate] = current_issues_for_file
+            logger.debug(
+                f"Validation for {file_path_to_validate} completed with {len(current_issues_for_file)} issues."
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during validation of change entry {i} for file {file_path_to_validate}: {e}"
+            )
+            current_issues_for_file.append(
+                {
+                    "type": "VALIDATION_TOOL_ERROR",
+                    "file": file_path_to_validate,
+                    "message": f"Failed to validate: {e}",
+                }
+            )
+            all_validation_results[file_path_to_validate] = current_issues_for_file
 
     # --- Unit Test Presence Check ---
     python_files_modified_or_added = {
