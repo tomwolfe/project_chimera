@@ -2,7 +2,8 @@
 import logging  # Used for logger
 import re  # Used for regex in sanitize_and_validate_file_path
 from pathlib import Path  # Used for Path objects
-from typing import Optional
+from typing import Optional, Dict, Any
+import os  # NEW: Import os
 
 logger = logging.getLogger(__name__)
 
@@ -114,3 +115,73 @@ def sanitize_and_validate_file_path(raw_path: str) -> str:
             f"Could not get relative path for '{resolved_path}' from '{PROJECT_ROOT}'. Returning absolute path."
         )
         return str(resolved_path)
+
+
+# NEW FUNCTION: _map_incorrect_file_path
+def _map_incorrect_file_path(suggested_path: str) -> str:
+    """Map common incorrect file paths to actual project structure paths."""
+    path_mapping = {
+        "core/agent.py": "core.py",
+        "services/llm_service.py": "src/llm/client.py",
+        "utils/validation.py": "src/utils/validation.py",
+        "core/llm_cache.py": "src/llm_cache.py",
+        "services/llm_cache.py": "src/llm_cache.py",
+        "core/config.py": "config.py",
+        "reasoning_engine.py": "core.py",  # Common LLM hallucination
+        "token_manager.py": "src/token_tracker.py",  # Common LLM hallucination
+        "routes.py": "app.py",  # Common LLM hallucination
+    }
+
+    # If the suggested path is in the mapping, return the correct path
+    if suggested_path in path_mapping:
+        return path_mapping[suggested_path]
+
+    # Handle "core/" prefix cases (core.py is at root, not in core/ directory)
+    if suggested_path.startswith("core/") and suggested_path != "core.py":
+        # Only replace if it's not literally "core/core.py" or similar, but a file that should be at root
+        if suggested_path.replace("core/", "", 1) in [
+            "core.py",
+            "config.py",
+        ]:  # Add other root files if needed
+            return suggested_path.replace("core/", "", 1)
+        # Otherwise, assume it's a file that should be in src/
+        return "src/" + suggested_path.replace("core/", "", 1)
+
+    # Handle "services/" prefix (no services directory exists, usually maps to src/)
+    if suggested_path.startswith("services/"):
+        return "src/" + suggested_path.replace("services/", "", 1)
+
+    # Handle "utils/" prefix (often maps to src/utils/)
+    if suggested_path.startswith("utils/") and not suggested_path.startswith(
+        "src/utils/"
+    ):
+        return "src/" + suggested_path
+
+    return suggested_path
+
+
+# NEW FUNCTION: can_create_file
+def can_create_file(file_path: str) -> bool:
+    """Check if a file can be created at the specified path."""
+    # Check if the directory structure exists or can be created
+    directory = os.path.dirname(file_path)
+    if not directory:  # Root level file
+        return True
+
+    # Check if the directory exists or can be created
+    if os.path.exists(directory):
+        return True
+
+    # Check if parent directories exist
+    parent_dirs = []
+    current = directory
+    while current and current != "." and not os.path.exists(current):
+        parent_dirs.append(current)
+        current = os.path.dirname(current)
+
+    # If all parent directories exist or can be created, it's okay
+    # This means the path is valid if all its parent directories exist
+    # or if it's a direct child of an existing directory.
+    # The `os.path.exists(d)` check is for the *parent* directories.
+    # If `parent_dirs` is empty, it means `directory` itself exists.
+    return len(parent_dirs) == 0 or all(os.path.exists(d) for d in parent_dirs)

@@ -19,7 +19,12 @@ from src.utils.code_utils import (
     _get_code_snippet,
     ComplexityVisitor,  # ADD ComplexityVisitor
 )
-from src.utils.code_validator import _run_ruff, _run_bandit, _run_ast_security_checks
+from src.utils.code_validator import (
+    _run_ruff,
+    _run_bandit,
+    _run_ast_security_checks,
+    validate_and_resolve_file_path_for_action,  # NEW: Import the new validation function
+)
 from src.models import (
     ConfigurationAnalysisOutput,
     CiWorkflowConfig,
@@ -1158,15 +1163,74 @@ class FocusedMetricsCollector:
 
         return code_change
 
+    # MODIFIED: _process_suggestions_for_quality to apply path correction and validation
     def _process_suggestions_for_quality(
         self, suggestions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        This method is now primarily responsible for ensuring suggested file paths are valid
-        and converting MODIFY/REMOVE for non-existent files to CREATE/ignored. The core logic
-        for this has been moved to core.py for better consolidation.
+        Processes and validates suggested code changes within each suggestion.
+        This includes path correction, action validation, and internal code quality checks.
         """
-        return suggestions
+        processed_suggestions = []
+        for suggestion in suggestions:
+            processed_code_changes = []
+            malformed_blocks_for_suggestion = []
+
+            for code_change_data in suggestion.get("CODE_CHANGES_SUGGESTED", []):
+                file_path = code_change_data.get("FILE_PATH")
+                action = code_change_data.get("ACTION")
+
+                if not file_path or not action:
+                    malformed_blocks_for_suggestion.append(
+                        {
+                            "type": "MALFORMED_CODE_CHANGE_ENTRY",
+                            "message": "Code change entry missing FILE_PATH or ACTION.",
+                            "raw_string_snippet": str(code_change_data)[:200],
+                        }
+                    )
+                    continue
+
+                # 1. Validate and resolve file path and action
+                is_valid, resolved_path, suggested_action, error_msg = (
+                    validate_and_resolve_file_path_for_action(
+                        file_path, action, self.raw_file_contents
+                    )
+                )
+
+                if not is_valid:
+                    malformed_blocks_for_suggestion.append(
+                        {
+                            "type": "INVALID_FILE_PATH_OR_ACTION",
+                            "message": f"Invalid file path or action for '{file_path}' with action '{action}': {error_msg}",
+                            "file_path": file_path,
+                            "action": action,
+                            "resolved_path": resolved_path,
+                        }
+                    )
+                    continue  # Skip this code change if path/action is fundamentally invalid
+
+                # Update the code change data with resolved path and potentially changed action
+                code_change_data["FILE_PATH"] = resolved_path
+                code_change_data["ACTION"] = suggested_action
+
+                # 2. Perform internal code quality checks (Ruff, Bandit, AST) if it's a Python file
+                if resolved_path.endswith(".py") and code_change_data.get(
+                    "FULL_CONTENT"
+                ):
+                    code_change_data = self._validate_and_fix_code_suggestion(
+                        code_change_data
+                    )
+
+                processed_code_changes.append(code_change_data)
+
+            suggestion["CODE_CHANGES_SUGGESTED"] = processed_code_changes
+            if malformed_blocks_for_suggestion:
+                suggestion.setdefault("malformed_blocks", []).extend(
+                    malformed_blocks_for_suggestion
+                )
+            processed_suggestions.append(suggestion)
+
+        return processed_suggestions
 
     def _collect_code_quality_and_security_metrics(self):
         """

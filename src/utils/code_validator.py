@@ -20,6 +20,8 @@ from src.utils.path_utils import (
     is_within_base_dir,
     sanitize_and_validate_file_path,
     PROJECT_ROOT,
+    _map_incorrect_file_path,  # NEW: Import _map_incorrect_file_path
+    can_create_file,  # NEW: Import can_create_file
 )
 from src.models import CodeChange
 from src.utils.code_utils import _get_code_snippet
@@ -33,56 +35,79 @@ class CodeValidationError(Exception):
     pass
 
 
-# --- NEW HELPER FUNCTION FOR PATH RESOLUTION ---
-def _resolve_file_path_suggestion(
-    suggested_path: str, codebase_context: Dict[str, str]
-) -> Tuple[Optional[str], Optional[str]]:
+# MODIFIED: Renamed and updated _resolve_file_path_suggestion
+def validate_and_resolve_file_path_for_action(
+    suggested_path: str, action: str, codebase_raw_file_contents: Dict[str, str]
+) -> Tuple[bool, str, str, Optional[str]]:
     """
-    Attempts to resolve a suggested file path against the actual codebase context.
-    Returns (resolved_path, error_message) or (None, error_message) if not found.
+    Validates a suggested file path and action against the actual codebase context.
+    Attempts to map incorrect paths to correct ones.
+    Returns: (is_valid, resolved_path, suggested_action_if_changed, error_message)
     """
-    # 1. Check if the path exists exactly as suggested
-    if suggested_path in codebase_context:
-        return suggested_path, None
+    # 1. Map common incorrect paths to canonical ones
+    mapped_path = _map_incorrect_file_path(suggested_path)
 
-    # 2. Try adding "src/" prefix
-    src_prefixed_path = f"src/{suggested_path}"
-    if src_prefixed_path in codebase_context:
-        return src_prefixed_path, None
+    # 2. Sanitize and validate the path against project root
+    try:
+        # Use sanitize_and_validate_file_path to ensure it's within project boundaries
+        resolved_path = sanitize_and_validate_file_path(mapped_path)
+    except ValueError as e:
+        return False, mapped_path, action, f"Path security validation failed: {e}"
 
-    # 3. Try finding a file that ends with the suggested path (e.g., "reasoning_service.py" -> "src/services/reasoning_service.py")
-    # This is a more ambiguous match, so prioritize exact and src-prefixed matches first.
-    potential_matches = [
-        p for p in codebase_context.keys() if p.endswith(suggested_path)
-    ]
-    if len(potential_matches) == 1:
-        return potential_matches[0], None
-    elif len(potential_matches) > 1:
-        # If multiple matches, it's ambiguous, flag as an issue.
-        return (
-            None,
-            f"Ambiguous file path: '{suggested_path}' matches multiple files: {', '.join(potential_matches)}. Please be more specific.",
-        )
+    # 3. Check if the resolved path exists in the current codebase context
+    file_exists_in_codebase = resolved_path in codebase_raw_file_contents
 
-    # 4. Special case: if suggested path is a common root-level file without 'src/'
-    # This is a heuristic and should be used carefully.
-    root_level_files = [
-        "app.py",
-        "core.py",
-        "personas.yaml",
-        "pyproject.toml",
-        "requirements.txt",
-        "Dockerfile",
-        "README.md",
-        "LICENSE",
-    ]
-    if suggested_path in root_level_files and suggested_path in codebase_context:
-        return suggested_path, None
+    # 4. Validate action against file existence and creation feasibility
+    error_message = None
+    suggested_action_if_changed = action  # Default to original action
 
-    return (
-        None,
-        f"File '{suggested_path}' does not exist in codebase. Did you mean 'src/{suggested_path}' or a path in 'tests/'?",
-    )
+    if action in ["ADD", "CREATE"]:
+        if file_exists_in_codebase:
+            error_message = f"Action '{action}' suggested for existing file '{resolved_path}'. Consider 'MODIFY'."
+            suggested_action_if_changed = "MODIFY"  # Suggest changing action
+            # If it's an ADD/CREATE on an existing file, it's technically invalid for ADD, but can be converted to MODIFY
+            # We'll mark it as valid but with a suggested action change.
+            return True, resolved_path, suggested_action_if_changed, error_message
+        if not can_create_file(resolved_path):
+            error_message = f"Cannot create file at '{resolved_path}': Parent directory does not exist or is inaccessible."
+            return False, resolved_path, action, error_message
+        # If it's ADD/CREATE and file doesn't exist and can be created, it's valid.
+        return True, resolved_path, action, None
+
+    elif action == "CREATE_DIRECTORY":
+        # For directory creation, we just need to ensure the parent path is valid and can be created
+        if Path(resolved_path).exists():
+            error_message = f"Directory '{resolved_path}' already exists. Skipping CREATE_DIRECTORY."
+            return True, resolved_path, action, error_message  # Valid, but no-op
+        if not can_create_file(
+            resolved_path
+        ):  # can_create_file works for directories too
+            error_message = f"Cannot create directory at '{resolved_path}': Parent directory does not exist or is inaccessible."
+            return False, resolved_path, action, error_message
+        return True, resolved_path, action, None
+
+    elif action == "MODIFY":
+        if not file_exists_in_codebase:
+            error_message = f"Action 'MODIFY' suggested for non-existent file '{resolved_path}'. Converting to 'CREATE'."
+            suggested_action_if_changed = "CREATE"  # Suggest changing action
+            # If MODIFY on non-existent, convert to CREATE, and it's valid if can_create_file is true
+            if not can_create_file(resolved_path):
+                error_message = f"Cannot create file at '{resolved_path}': Parent directory does not exist or is inaccessible."
+                return False, resolved_path, action, error_message
+            return True, resolved_path, suggested_action_if_changed, error_message
+        # If MODIFY on existing file, it's valid.
+        return True, resolved_path, action, None
+
+    elif action == "REMOVE":
+        if not file_exists_in_codebase:
+            error_message = f"Action 'REMOVE' suggested for non-existent file '{resolved_path}'. Suggestion ignored."
+            return False, resolved_path, action, error_message
+        # If REMOVE on existing file, it's valid.
+        return True, resolved_path, action, None
+
+    else:
+        error_message = f"Unknown action type '{action}'."
+        return False, resolved_path, action, error_message
 
 
 def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -769,26 +794,9 @@ def validate_code_output(
     file_path_obj = Path(file_path_str)
     is_python = file_path_obj.suffix.lower() == ".py"
 
-    # --- NEW: Action-specific file existence validation ---
-    if action == "ADD" or action == "CREATE" or action == "CREATE_DIRECTORY":
-        if file_exists_in_codebase:
-            issues.append(
-                {
-                    "type": "INVALID_ADD_ACTION",
-                    "file": file_path_str,
-                    "message": f"Action '{action}' suggested for existing file/directory '{file_path_str}'. Consider 'MODIFY' or 'REMOVE' then 'ADD'.",
-                }
-            )
-    elif action == "MODIFY" or action == "REMOVE":
-        if not file_exists_in_codebase:
-            issues.append(
-                {
-                    "type": "INVALID_ACTION_ON_NON_EXISTENT_FILE",
-                    "file": file_path_str,
-                    "message": f"Action '{action}' suggested for non-existent file/directory '{file_path_str}'. Consider 'ADD' or 'CREATE'.",
-                }
-            )
-    # --- END NEW: Action-specific file existence validation ---
+    # Removed redundant file existence checks here.
+    # These checks are now handled by `validate_and_resolve_file_path_for_action`
+    # before this function is called. The `file_exists_in_codebase` flag is passed in.
 
     if action == "ADD" or action == "CREATE":
         content_to_check = parsed_change.get("FULL_CONTENT", "")
@@ -944,6 +952,8 @@ def validate_code_output_batch(
             "malformed_blocks": parsed_data.get("malformed_blocks", []),
         }
 
+    # NEW: Process code changes to validate/resolve paths and actions upfront
+    processed_code_changes_for_validation = []
     for i, change_entry in enumerate(code_changes_list):
         if not isinstance(change_entry, dict):
             issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
@@ -958,75 +968,79 @@ def validate_code_output_batch(
             continue
 
         suggested_file_path = change_entry.get("FILE_PATH")
-        if not suggested_file_path:
+        action = change_entry.get("ACTION")
+
+        if not suggested_file_path or not action:
             logger.warning(
-                f"Encountered a code change without a 'FILE_PATH' in output {i}. Skipping validation for this item."
+                f"Encountered a code change without a 'FILE_PATH' or 'ACTION' in output {i}. Skipping validation for this item."
             )
             all_validation_results.setdefault("N/A", []).append(
                 {
                     "type": "VALIDATION_ERROR",
                     "file": "N/A",
-                    "message": f"Change item at index {i} missing FILE_PATH.",
+                    "message": f"Change item at index {i} missing FILE_PATH or ACTION.",
                 }
             )
             continue
 
-        resolved_path, path_error = _resolve_file_path_suggestion(
-            suggested_file_path, original_contents
+        is_valid, resolved_path, suggested_action, error_msg = (
+            validate_and_resolve_file_path_for_action(
+                suggested_file_path, action, original_contents
+            )
         )
-        current_issues_for_file = []
 
-        if path_error:
-            current_issues_for_file.append(
+        if not is_valid:
+            all_validation_results.setdefault(suggested_file_path, []).append(
                 {
                     "type": "INVALID_FILE_PATH",
                     "file": suggested_file_path,
-                    "message": path_error,
+                    "message": error_msg,
                 }
             )
-            all_validation_results[suggested_file_path] = current_issues_for_file
-            continue
-        else:
-            change_entry["FILE_PATH"] = (
-                resolved_path  # Update the file_path in the change_entry
-            )
-            file_path_to_validate = (
-                resolved_path  # Use the resolved path for validation
-            )
+            continue  # Skip further validation for this invalid entry
 
+        # Update the change_entry with resolved path and potentially changed action
+        change_entry["FILE_PATH"] = resolved_path
+        change_entry["ACTION"] = suggested_action
+
+        # Now, perform content validation for the (potentially modified) change_entry
         try:
-            original_content = original_contents.get(file_path_to_validate)
-            file_exists_in_codebase = file_path_to_validate in original_contents
+            original_content_for_file = original_contents.get(resolved_path)
+            file_exists_in_codebase = (
+                resolved_path in original_contents
+            )  # Check existence based on resolved path
+
             validation_result = validate_code_output(
                 change_entry,
-                original_content,
+                original_content_for_file,
                 file_analysis_cache,
                 file_exists_in_codebase,
             )
-            current_issues_for_file.extend(validation_result.get("issues", []))
-            all_validation_results[file_path_to_validate] = current_issues_for_file
+            all_validation_results.setdefault(resolved_path, []).extend(
+                validation_result.get("issues", [])
+            )
             logger.debug(
-                f"Validation for {file_path_to_validate} completed with {len(current_issues_for_file)} issues."
+                f"Validation for {resolved_path} completed with {len(validation_result.get('issues', []))} issues."
             )
         except Exception as e:
             logger.error(
-                f"Error during validation of change entry {i} for file {file_path_to_validate}: {e}"
+                f"Error during content validation of change entry {i} for file {resolved_path}: {e}"
             )
-            current_issues_for_file.append(
+            all_validation_results.setdefault(resolved_path, []).append(
                 {
                     "type": "VALIDATION_TOOL_ERROR",
-                    "file": file_path_to_validate,
-                    "message": f"Failed to validate: {e}",
+                    "file": resolved_path,
+                    "message": f"Failed to validate content: {e}",
                 }
             )
-            all_validation_results[file_path_to_validate] = current_issues_for_file
 
     # --- Unit Test Presence Check ---
     python_files_modified_or_added = {
         change["FILE_PATH"]
         for change in code_changes_list
         if change.get("FILE_PATH", "").endswith(".py")
-        and change.get("ACTION") in ["ADD", "MODIFY"]
+        and change.get("ACTION")
+        in ["ADD", "MODIFY", "CREATE"]  # Include CREATE as it's an ADD
     }
     test_files_added = {
         change["FILE_PATH"]
