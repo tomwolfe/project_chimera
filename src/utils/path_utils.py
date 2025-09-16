@@ -130,6 +130,11 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "reasoning_engine.py": "core.py",  # Common LLM hallucination
         "token_manager.py": "src/token_tracker.py",  # Common LLM hallucination
         "routes.py": "app.py",  # Common LLM hallucination
+        # --- NEW MAPPINGS ---
+        "src/prompt_manager.py": "src/utils/prompt_optimizer.py",
+        "src/main.py": "app.py",
+        "src/llm_interface.py": "src/llm_provider.py",
+        # --- END NEW MAPPINGS ---
     }
 
     # If the suggested path is in the mapping, return the correct path
@@ -181,7 +186,7 @@ def can_create_file(file_path: str) -> bool:
 
     # If all parent directories exist or can be created, it's okay
     # This means the path is valid if all its parent directories exist
-    # or if it's a direct child of an existing directory.
+    # or if it's a direct child of an an existing directory.
     # The `os.path.exists(d)` check is for the *parent* directories.
     # If `parent_dirs` is empty, it means `directory` itself exists.
     return len(parent_dirs) == 0 or all(os.path.exists(d) for d in parent_dirs)

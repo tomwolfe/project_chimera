@@ -1,121 +1,145 @@
-import unittest
+# tests/test_prompt_optimizer.py
+import pytest
+from unittest.mock import MagicMock
+
 from src.utils.prompt_optimizer import PromptOptimizer
-import tiktoken
+from src.llm_tokenizers.base import Tokenizer
+from src.config.settings import ChimeraSettings
 
 
-class TestPromptOptimizer(unittest.TestCase):
-    def setUp(self):
-        # Initialize PromptOptimizer with a known model for tiktoken
-        # If "gemini-2.5-flash-lite" is not directly supported, map it to a generic one
-        try:
-            self.optimizer = PromptOptimizer(model_name="gemini-2.5-flash-lite")
-        except KeyError:
-            self.optimizer = PromptOptimizer(model_name="cl100k_base")  # Fallback
-            print(
-                "Warning: Using 'cl100k_base' for tokenizer in tests due to KeyError."
-            )
+@pytest.fixture
+def mock_tokenizer():
+    """Provides a mock Tokenizer instance."""
+    tokenizer = MagicMock(spec=Tokenizer)
+    tokenizer.count_tokens.side_effect = lambda text: len(text) // 4
+    tokenizer.truncate_to_token_limit.side_effect = (
+        lambda text, max_tokens, truncation_indicator="": text[: max_tokens * 4]
+        + (truncation_indicator if len(text) > max_tokens * 4 else "")
+    )
+    return tokenizer
 
-    def test_token_counting_accuracy(self):
-        # Test with known token count for cl100k_base (or similar)
-        # "Hello world" is 2 tokens in cl100k_base
-        prompt = "Hello world"
-        tokens = self.optimizer.tokenizer.encode(prompt)
-        self.assertEqual(len(tokens), 2)
 
-        prompt_long = "This is a test sentence with more words."
-        tokens_long = self.optimizer.tokenizer.encode(prompt_long)
-        # Expected tokens for cl100k_base: "This" (1), " is" (1), " a" (1), " test" (1), " sentence" (1), " with" (1), " more" (1), " words" (1), "." (1) = 9 tokens
-        self.assertEqual(len(tokens_long), 9)
+@pytest.fixture
+def mock_settings():
+    """Provides a mock ChimeraSettings instance."""
+    settings = MagicMock(spec=ChimeraSettings)
+    settings.default_max_input_tokens_per_persona = 4000
+    settings.max_tokens_per_persona = {
+        "TestPersona": 1024,
+        "Self_Improvement_Analyst": 16000,
+    }
+    return settings
 
-    def test_truncation_preserves_meaning(self):
-        long_prompt = (
-            "This is a very long prompt that needs to be truncated. It contains multiple sentences. The truncation should happen at a sentence boundary. This is the final sentence."
-            * 10
-        )
 
-        # Target 50 tokens. The truncation should try to end at a period.
-        truncated = self.optimizer.optimize(long_prompt, max_tokens=50)
+@pytest.fixture
+def mock_summarizer_pipeline():
+    """Provides a mock Hugging Face summarization pipeline."""
+    summarizer = MagicMock()
+    summarizer.return_value = [{"summary_text": "Mock summary."}]
+    summarizer.tokenizer.model_max_length = 1024  # Simulate distilbart's max input
+    return summarizer
 
-        # Should be truncated to approximately 50 tokens
-        self.assertLessEqual(len(self.optimizer.tokenizer.encode(truncated)), 50)
 
-        # Should end with a sentence boundary (period) or the truncation indicator
-        self.assertTrue(
-            truncated.endswith(".") or truncated.endswith("... (truncated)")
-        )
+@pytest.fixture
+def prompt_optimizer_instance(mock_tokenizer, mock_settings, mock_summarizer_pipeline):
+    """Provides a PromptOptimizer instance with mocked dependencies."""
+    return PromptOptimizer(
+        tokenizer=mock_tokenizer,
+        settings=mock_settings,
+        summarizer_pipeline=mock_summarizer_pipeline,
+    )
 
-        # Ensure the content is still meaningful (not cut mid-word/sentence)
-        self.assertIn(
-            "This is a very long prompt that needs to be truncated.", truncated
-        )
-        self.assertNotIn(
-            "This is the final sentence.", truncated
-        )  # Should be truncated before this
 
-    def test_cache_mechanism(self):
-        prompt = "Test prompt for caching"
-        result1 = self.optimizer.optimize(prompt)
-        result2 = self.optimizer.optimize(prompt)
-        self.assertIs(result1, result2)  # Should return the same object from cache
+def test_prompt_optimizer_initialization(
+    prompt_optimizer_instance, mock_tokenizer, mock_settings, mock_summarizer_pipeline
+):
+    """Tests that PromptOptimizer initializes correctly."""
+    assert prompt_optimizer_instance.tokenizer == mock_tokenizer
+    assert prompt_optimizer_instance.settings == mock_settings
+    assert prompt_optimizer_instance.summarizer_pipeline == mock_summarizer_pipeline
 
-        # Test with different max_tokens, should not hit cache
-        result3 = self.optimizer.optimize(prompt, max_tokens=100)
-        self.assertIsNot(result1, result3)
 
-    def test_different_models(self):
-        # Test with different model tokenizers
-        # Note: tiktoken might not have all models, use common ones
-        try:
-            gpt_optimizer = PromptOptimizer(model_name="gpt-3.5-turbo")
-        except KeyError:
-            gpt_optimizer = PromptOptimizer(model_name="cl100k_base")
-            print(
-                "Warning: Using 'cl100k_base' for gpt_optimizer in tests due to KeyError."
-            )
+def test_optimize_prompt_no_truncation_needed(prompt_optimizer_instance):
+    """Tests optimize_prompt when the prompt is within limits."""
+    user_prompt = "This is a short prompt."
+    persona_name = "TestPersona"
+    max_output_tokens = 500
+    system_message = "You are a helpful assistant."
 
-        try:
-            # Assuming "gemini-2.5-flash-lite" maps to "cl100k_base" or similar
-            gemini_optimizer = PromptOptimizer(model_name="cl100k_base")
-        except KeyError:
-            gemini_optimizer = PromptOptimizer(model_name="cl100k_base")
-            print(
-                "Warning: Using 'cl100k_base' for gemini_optimizer in tests due to KeyError."
-            )
+    optimized_prompt = prompt_optimizer_instance.optimize_prompt(
+        user_prompt, persona_name, max_output_tokens, system_message
+    )
 
-        prompt = "Hello world"
-        # For cl100k_base, "Hello world" is 2 tokens. If both use the same fallback, they will be equal.
-        # The original intent was to show different token counts for different models.
-        # If they fall back to the same tokenizer, this assertion might fail.
-        # Adjusting to check if they are *not* the same instance, and if token counts are consistent.
-        self.assertIsNot(
-            gpt_optimizer, gemini_optimizer
-        )  # Should be different instances
-        self.assertEqual(
-            len(gpt_optimizer.tokenizer.encode(prompt)),
-            len(gemini_optimizer.tokenizer.encode(prompt)),
-        )  # If both fall back to cl100k_base, they should be equal.
+    assert optimized_prompt == user_prompt
+    prompt_optimizer_instance.tokenizer.count_tokens.assert_called()
+    prompt_optimizer_instance.tokenizer.truncate_to_token_limit.assert_not_called()
 
-    def test_edge_cases(self):
-        # Test with empty prompt
-        self.assertEqual(self.optimizer.optimize(""), "")
 
-        # Test with very short prompt
-        self.assertEqual(self.optimizer.optimize("Hi"), "Hi")
+def test_optimize_prompt_with_truncation(prompt_optimizer_instance, mock_tokenizer):
+    """Tests optimize_prompt when truncation is required."""
+    user_prompt = (
+        "This is a very long prompt that definitely needs to be truncated because it exceeds the persona's input token limit. We need to make sure the optimization logic correctly reduces its size."
+        * 5
+    )
+    persona_name = (
+        "TestPersona"  # Max input tokens for TestPersona is 1024 (from mock_settings)
+    )
+    max_output_tokens = 500
+    system_message = "You are a helpful assistant."
 
-        # Test with special characters
-        prompt = "Hello world! @#$%^&*()_+{}|:<>?~`[]\\;'\",./"
-        self.assertEqual(self.optimizer.optimize(prompt), prompt)
+    # Mock tokenizer to report a high token count for the long prompt
+    mock_tokenizer.count_tokens.side_effect = [
+        len(system_message) // 4,  # System message tokens
+        (len(system_message) + len(user_prompt)) // 4,  # Full input tokens
+        (len(system_message) + len(user_prompt))
+        // 4,  # Full input tokens (again for truncation check)
+        (len(system_message) + len(user_prompt)) // 4,  # User prompt tokens
+        (len(system_message) + 100) // 4,  # Truncated user prompt tokens
+    ]
 
-        # Test with prompt exactly at max_tokens
-        short_prompt = "a " * 10  # 10 words, approx 10 tokens
-        self.optimizer.max_tokens = 10
-        self.assertEqual(self.optimizer.optimize(short_prompt), short_prompt)
+    optimized_prompt = prompt_optimizer_instance.optimize_prompt(
+        user_prompt, persona_name, max_output_tokens, system_message
+    )
 
-        # Test with prompt slightly above max_tokens
-        slightly_long_prompt = "a " * 11  # 11 words, approx 11 tokens
-        self.optimizer.max_tokens = 10
-        truncated_slightly = self.optimizer.optimize(slightly_long_prompt)
-        self.assertLessEqual(
-            len(self.optimizer.tokenizer.encode(truncated_slightly)), 10
-        )
-        self.assertTrue(truncated_slightly.endswith("... (truncated)"))
+    assert optimized_prompt != user_prompt
+    mock_tokenizer.truncate_to_token_limit.assert_called_once()
+    assert "... (user prompt truncated)" in optimized_prompt
+
+
+def test_optimize_debate_history_no_truncation(prompt_optimizer_instance):
+    """Tests optimize_debate_history when no truncation is needed."""
+    debate_history_str = '{"turn1": "output1", "turn2": "output2"}'
+    max_tokens = 100
+
+    optimized_history = prompt_optimizer_instance.optimize_debate_history(
+        debate_history_str, max_tokens
+    )
+
+    assert optimized_history == debate_history_str
+    prompt_optimizer_instance.tokenizer.count_tokens.assert_called()
+    prompt_optimizer_instance.summarizer_pipeline.assert_not_called()
+
+
+def test_optimize_debate_history_with_summarization(
+    prompt_optimizer_instance, mock_tokenizer, mock_summarizer_pipeline
+):
+    """Tests optimize_debate_history when summarization is needed."""
+    long_debate_history_str = (
+        '{"turn1": "very long output...", "turn2": "another very long output..."}' * 10
+    )
+    max_tokens = 50
+
+    # Mock tokenizer to report a high token count for the long history
+    mock_tokenizer.count_tokens.side_effect = [
+        (len(long_debate_history_str) + 100) // 4,  # Initial count
+        (len(long_debate_history_str) + 100) // 4,  # For summarizer pre-truncation
+        (len("Mock summary.") + 100) // 4,  # For final truncation check
+    ]
+
+    optimized_history = prompt_optimizer_instance.optimize_debate_history(
+        long_debate_history_str, max_tokens
+    )
+
+    mock_summarizer_pipeline.assert_called_once()
+    assert optimized_history == "Mock summary."
+    assert prompt_optimizer_instance.tokenizer.truncate_to_token_limit.call_count >= 1
