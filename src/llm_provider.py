@@ -11,10 +11,8 @@ import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional, Type, Tuple
 import google.genai as genai
-from google.genai.errors import APIError, ServerError  # MODIFIED: Import ServerError
-from google.genai import (
-    types as genai_types,
-)  # CORRECTED: Import types submodule directly
+from google.genai.errors import APIError, ServerError
+from google.genai import types as genai_types
 import hashlib
 import secrets
 import socket

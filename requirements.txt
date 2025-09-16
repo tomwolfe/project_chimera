@@ -18,3 +18,4 @@ bandit
 # Development, linting, formatting, and testing tools
 ruff
 pytest
+jinja2 # ADDED: For template support in prompt_optimizer
