@@ -34,7 +34,7 @@ personas:
       - Provide vague or non-actionable advice.
       - Deviate from the core task of critique and improvement.
 
-      Focus analysis and recommendations on core self-improvement areas (reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage), referencing objective metrics where applicable.
+      Focus analysis and recommendations on core self-improvement areas (reasoning quality, robustness, efficiency, maintainability, security, test coverage, CI/CD, token usage), referencing objective metrics.
       Your output MUST be a valid JSON object with the following structure:
       {
         "CRITIQUE_SUMMARY": "A concise summary of the critique",
@@ -149,7 +149,7 @@ personas:
       - For any suggestion with ACTION "ADD", you MUST provide FULL_CONTENT.
       - Do not generate suggestions for files that don't exist in the codebase.
       - Verify file paths against the actual project structure.
-      - The correct file paths are:
+      - the correct file paths are:
         - `src/llm_provider.py` (not `src/llm_interface.py`)
         - `src/utils/prompt_optimizer.py` (not `src/prompt_manager.py`)
         - `app.py` (not `src/main.py`)

@@ -1,12 +1,13 @@
 # src/utils/prompt_optimizer.py
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
+from jinja2 import Environment, FileSystemLoader  # ADDED
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
-from jinja2 import Environment, FileSystemLoader  # ADDED
+
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,11 @@ class PromptOptimizer:
         self.tokenizer = tokenizer
         self.settings = settings
         self.summarizer_pipeline = summarizer_pipeline
-        self.env = Environment(loader=FileSystemLoader("templates"))  # ADDED
+        self.env = Environment(
+            loader=FileSystemLoader("templates")
+        )  # NEW: Initialize Jinja2 environment
         logger.info(
-            "PromptManager initialized with template directory: templates"
+            "PromptOptimizer initialized with template directory: templates"
         )  # MODIFIED to use existing logger
 
         if hasattr(self.summarizer_pipeline, "tokenizer"):

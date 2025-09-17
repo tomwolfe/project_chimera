@@ -808,9 +808,9 @@ class FocusedMetricsCollector:
             # --- START FIX ---
             # MODIFIED: Corrected path from 'tests/unit/' to 'tests/' to match project structure.
             command = [sys.executable, "-m", "pytest", "-q", "tests/"]
-            # --- END FIX --- # MODIFIED: Increased timeout to 120 seconds to prevent timeout error.
+            # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
-                command, timeout=120, check=False
+                command, timeout=60, check=False
             )
 
             if return_code == 0:
