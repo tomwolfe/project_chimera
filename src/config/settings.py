@@ -75,7 +75,7 @@ class ChimeraSettings(BaseModel):
     total_budget: int = Field(
         default=1000000,
         ge=1000,
-        le=2000000,  # MODIFIED: Increased le value to 2,000,000
+        le=2000000,
         description="Maximum total tokens allowed for a single Socratic debate run.",
     )
 
@@ -84,15 +84,15 @@ class ChimeraSettings(BaseModel):
     default_max_input_tokens_per_persona: int = Field(
         default=4000,
         ge=500,
-        le=64000,
+        le=64000,  # Kept at 64000 as it's a general default, specific personas can override
         description="Default maximum input tokens for a persona's prompt if not specified.",
     )
     max_tokens_per_persona: Dict[str, int] = Field(
         default_factory=lambda: {  # Adjusted based on observed high token usage
-            "Self_Improvement_Analyst": 16000,  # Increased
-            "Security_Auditor": 12000,  # Increased
-            "Code_Architect": 10000,  # Increased
-            "Test_Engineer": 10000,  # Increased
+            "Self_Improvement_Analyst": 65536,  # Increased to reflect 65k output capability
+            "Security_Auditor": 12000,
+            "Code_Architect": 12000,
+            "Test_Engineer": 10000,
             "DevOps_Engineer": 4000,
             "Devils_Advocate": 4000,
             "Generalist_Assistant": 3000,

@@ -20,8 +20,8 @@ class ModelRegistry:
         self.register_model(
             ModelSpecification(
                 name="gemini-2.5-flash-lite",
-                max_input_tokens=1048576,
-                max_output_tokens=8192,  # Adjusted to match common usage, was 65538 in tokenizer
+                max_input_tokens=2097152,  # Increased to reflect 2M context window
+                max_output_tokens=65536,  # Updated to 65k output tokens
                 cost_per_1k_input=0.075,
                 cost_per_1k_output=0.30,
                 capabilities=["reasoning", "coding"],
@@ -31,8 +31,8 @@ class ModelRegistry:
         self.register_model(
             ModelSpecification(
                 name="gemini-2.5-pro",
-                max_input_tokens=1048576,
-                max_output_tokens=8192,  # Adjusted to match common usage, was 65536 in tokenizer
+                max_input_tokens=2097152,  # Increased to reflect 2M context window
+                max_output_tokens=65536,  # Updated to 65k output tokens
                 cost_per_1k_input=0.25,
                 cost_per_1k_output=1.00,
                 capabilities=["reasoning", "coding", "complex_analysis"],

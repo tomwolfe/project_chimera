@@ -35,7 +35,7 @@ class GeminiTokenizer(Tokenizer):
 
         self.genai_client = genai_client
         self.model_name = model_name
-        self._max_output_tokens: int = 8192  # Default, will be updated by LLMProvider
+        self._max_output_tokens: int = 65536  # Default, updated to 65k output tokens
 
     @property
     def max_output_tokens(self) -> int:
