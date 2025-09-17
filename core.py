@@ -18,8 +18,8 @@ import copy
 from src.context.context_analyzer import ContextRelevanceAnalyzer
 from src.persona.routing import (
     PersonaRouter,
-    calculate_persona_performance,
-    select_personas_by_weight,
+    calculate_persona_performance,  # Retained for potential future use or if other parts of the codebase use it
+    select_personas_by_weight,  # Retained for potential future use or if other parts of the codebase use it
 )
 from src.utils.output_parser import LLMOutputParser
 from src.models import (
@@ -41,6 +41,8 @@ from src.exceptions import (
     SchemaValidationError,
     TokenBudgetExceededError,
     LLMProviderError,
+    LLMProviderRequestError,  # NEW: Import for granular error handling
+    LLMProviderResponseError,  # NEW: Import for granular error handling
     CircuitBreakerError,
 )
 from src.logging_config import setup_structured_logging
@@ -640,46 +642,77 @@ class SocraticDebate:
 
         return min(max(0.0, current_progress), 1.0)
 
-    def _prepare_llm_call_config(
+    def _prepare_llm_prompt_and_config(
         self,
-        persona_config: PersonaConfig,
+        persona_name: str,
+        prompt_for_llm: str,
         max_output_tokens_for_turn: int,
         requested_model_name: Optional[str],
-    ) -> Tuple[str, int]:
-        """Prepares the model name and effective max output tokens for an LLM call."""
-        final_model_to_use = (
-            requested_model_name if requested_model_name else self.model_name
-        )
-        safety_margin_factor = 0.98
-        effective_max_output_tokens = int(
-            min(
-                max_output_tokens_for_turn,
-                self.llm_provider.tokenizer.max_output_tokens,
+    ) -> Tuple[PersonaConfig, Type[BaseModel], str, str, str, int]:
+        """
+        Prepares persona configuration, output schema, and the final system/user prompts
+        for an LLM call.
+        """
+        persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
+        if not persona_config:
+            self._log_with_context(
+                "error",
+                f"Persona configuration not found for {persona_name}. Cannot execute turn.",
+                persona=persona_name,
             )
-            * safety_margin_factor
-        )
-        effective_max_output_tokens = max(128, effective_max_output_tokens)
-        self._log_with_context(
-            "debug",
-            f"Adjusting max_output_tokens for {persona_config.name}. Requested: {max_output_tokens_for_turn}, Model Max: {self.llm_provider.tokenizer.max_output_tokens}, Effective: {effective_max_output_tokens}",
-        )
-        return final_model_to_use, effective_max_output_tokens
+            raise ChimeraError(f"Persona configuration not found for {persona_name}.")
 
-    def _make_llm_api_call(
+        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
+            persona_name, GeneralOutput
+        )
+        self.logger.debug(
+            f"Using schema {output_schema_class.__name__} for {persona_name}."
+        )
+
+        full_system_prompt_parts = [persona_config.system_prompt]
+        full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
+        full_system_prompt_parts.append(
+            f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"
+        )
+        final_system_prompt = "\n\n".join(full_system_prompt_parts)
+
+        # Optimize the user prompt before sending
+        optimized_user_prompt = self.prompt_optimizer.optimize_prompt(
+            user_prompt_text=prompt_for_llm,
+            persona_name=persona_name,
+            max_output_tokens_for_turn=max_output_tokens_for_turn,
+            system_message_for_token_count=final_system_prompt,
+        )
+
+        final_model_to_use, effective_max_output_tokens = self._prepare_llm_call_config(
+            persona_config, max_output_tokens_for_turn, requested_model_name
+        )
+        return (
+            persona_config,
+            output_schema_class,
+            final_system_prompt,
+            optimized_user_prompt,
+            final_model_to_use,
+            effective_max_output_tokens,
+        )
+
+    def _call_llm_and_track_tokens(
         self,
         persona_config: PersonaConfig,
-        current_prompt: str,
+        optimized_user_prompt: str,
         effective_max_output_tokens: int,
         final_model_to_use: str,
-        system_prompt_for_llm: str,
-        output_schema: Type[BaseModel],
+        final_system_prompt: str,
+        output_schema_class: Type[BaseModel],
     ) -> Tuple[str, int, int, bool]:
-        """Executes the actual LLM API call and tracks tokens."""
+        """
+        Executes the actual LLM API call and tracks tokens.
+        """
         raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = (
             self.llm_provider.generate(
-                prompt=current_prompt,
-                system_prompt=system_prompt_for_llm,
-                output_schema=output_schema,
+                prompt=optimized_user_prompt,
+                system_prompt=final_system_prompt,
+                output_schema=output_schema_class,
                 temperature=persona_config.temperature,
                 max_tokens=effective_max_output_tokens,
                 persona_config=persona_config,
@@ -702,93 +735,23 @@ class SocraticDebate:
             )
         return (raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm)
 
-    def _parse_and_track_llm_output(
-        self, persona_name: str, raw_llm_output: str, output_schema: Type[BaseModel]
-    ) -> Tuple[Dict[str, Any], bool]:
-        """Parses LLM output and records malformed blocks."""
-        parser = LLMOutputParser()
-        parsed_output = parser.parse_and_validate(raw_llm_output, output_schema)
-        has_schema_error = bool(parsed_output.get("malformed_blocks"))
-        if has_schema_error:
-            self.intermediate_steps.setdefault("malformed_blocks", []).extend(
-                parsed_output["malformed_blocks"]
-            )
-            self._log_with_context(
-                "warning",
-                f"Parser reported malformed blocks for {persona_name}.",
-                persona=persona_name,
-                malformed_blocks=parsed_output["malformed_blocks"],
-            )
-        return parsed_output, has_schema_error
-
-    def _generate_retry_feedback(
-        self, e: SchemaValidationError, prompt_for_llm: str
-    ) -> str:
-        """Generates feedback for the LLM to correct schema validation failures."""
-        error_details = (
-            e.details if hasattr(e, "details") and isinstance(e.details, dict) else {}
-        )
-        error_type = error_details.get("error_type", "Unknown validation error")
-        field_path = error_details.get("field_path", "N/A")
-        invalid_value_snippet = str(error_details.get("invalid_value", "N/A"))[:200]
-
-        full_validation_message = str(e)
-
-        retry_feedback = f"PREVIOUS OUTPUT INVALID: {error_type} at '{field_path}'. Problematic value snippet: '{invalid_value_snippet}'.\n"
-        retry_feedback += f"CRITICAL ERROR FEEDBACK: {full_validation_message}\n"
-        retry_feedback += (
-            "CRITICAL: Your output failed schema validation. You MUST correct this. "
-        )
-        retry_feedback += "Ensure the JSON is perfectly formed, with correct types and no extra text or markdown fences. "
-        retry_feedback += (
-            "STRICTLY ADHERE TO THE SCHEMA. Focus on fixing the reported error.\n\n"
-        )
-        return f"{retry_feedback}Original prompt: {prompt_for_llm}"
-
-    def _handle_content_alignment_check(
+    def _process_llm_response(
         self,
         persona_name: str,
-        parsed_output: Dict[str, Any],
+        raw_llm_output: str,
+        output_schema_class: Type[BaseModel],
         has_schema_error: bool,
         is_truncated: bool,
-    ):
-        """Performs content alignment validation and records performance."""
-        is_aligned, validation_message, nuanced_feedback = (
-            self.content_validator.validate(persona_name, parsed_output)
+    ) -> Dict[str, Any]:
+        """
+        Parses LLM output, tracks malformed blocks, and performs content alignment checks.
+        """
+        parsed_output, has_schema_error = self._parse_and_track_llm_output(
+            persona_name, raw_llm_output, output_schema_class
         )
-        self.persona_manager.record_persona_performance(
-            persona_name,
-            1,
-            parsed_output,
-            is_aligned and not has_schema_error,
-            validation_message,
-            is_truncated=is_truncated,
-            schema_validation_failed=has_schema_error,
-            token_budget_exceeded=False,
+        parsed_output = self._handle_content_alignment_check(
+            persona_name, parsed_output, has_schema_error, is_truncated
         )
-
-        if not is_aligned:
-            self._log_with_context(
-                "warning",
-                f"Content misalignment detected for {persona_name}: {validation_message}",
-                persona=persona_name,
-                validation_message=validation_message,
-            )
-            self.intermediate_steps.setdefault("malformed_blocks", []).extend(
-                [
-                    {
-                        "type": "CONTENT_MISALIGNMENT",
-                        "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
-                        "persona": persona_name,
-                        "raw_string_snippet": str(parsed_output)[:500],
-                    }
-                ]
-                + nuanced_feedback.get("malformed_blocks", [])
-            )
-            if isinstance(parsed_output, dict):
-                parsed_output["content_misalignment_warning"] = validation_message
-            else:
-                parsed_output = f"WARNING: Content misalignment detected: {validation_message}\n\n{parsed_output}"
         return parsed_output
 
     def _execute_llm_turn(
@@ -811,35 +774,11 @@ class SocraticDebate:
             phase=phase,
         )
 
-        persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
-        if not persona_config:
-            self._log_with_context(
-                "error",
-                f"Persona configuration not found for {persona_name}. Cannot execute turn.",
-                persona=persona_name,
-            )
-            raise ChimeraError(f"Persona configuration not found for {persona_name}.")
-
-        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
-            persona_name, GeneralOutput
-        )
-        self.logger.debug(
-            f"Using schema {output_schema_class.__name__} for {persona_name}."
-        )
-
-        full_system_prompt_parts = [persona_config.system_prompt]
-
-        # Ensure all personas get the shared JSON instructions if they are expected to produce structured output.
-        # This is a more robust fix than modifying every single persona in personas.yaml
-        full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
-
-        full_system_prompt_parts.append(
-            f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"
-        )
-        final_system_prompt = "\n\n".join(full_system_prompt_parts)
-
         raw_llm_output = ""
         is_truncated = False
+        current_prompt_for_retry = (
+            prompt_for_llm  # This prompt will be modified with feedback on retries
+        )
 
         for attempt in range(max_retries + 1):
             try:
@@ -853,39 +792,129 @@ class SocraticDebate:
                         current_persona_name=persona_name,
                     )
 
-                # MODIFIED: Call prompt_optimizer with the user prompt and the full system prompt for token counting
-                optimized_user_prompt = self.prompt_optimizer.optimize_prompt(
-                    user_prompt_text=prompt_for_llm,  # Pass the user's prompt string
-                    persona_name=persona_name,
-                    max_output_tokens_for_turn=max_output_tokens_for_turn,
-                    system_message_for_token_count=final_system_prompt,  # Pass the full system prompt here for accurate token counting
+                (
+                    persona_config,
+                    output_schema_class,
+                    final_system_prompt,
+                    optimized_user_prompt,
+                    final_model_to_use,
+                    effective_max_output_tokens,
+                ) = self._prepare_llm_prompt_and_config(
+                    persona_name,
+                    current_prompt_for_retry,  # Use the potentially modified prompt for retry
+                    max_output_tokens_for_turn,
+                    requested_model_name,
                 )
 
-                final_model_to_use, effective_max_output_tokens = (
-                    self._prepare_llm_call_config(
-                        persona_config, max_output_tokens_for_turn, requested_model_name
-                    )
-                )
                 raw_llm_output, input_tokens, output_tokens, is_truncated = (
-                    self._make_llm_api_call(
+                    self._call_llm_and_track_tokens(
                         persona_config,
-                        optimized_user_prompt,  # MODIFIED: Pass the optimized user prompt
+                        optimized_user_prompt,
                         effective_max_output_tokens,
                         final_model_to_use,
                         final_system_prompt,
                         output_schema_class,
                     )
                 )
-                parsed_output, has_schema_error = self._parse_and_track_llm_output(
-                    persona_name, raw_llm_output, output_schema_class
-                )
-                parsed_output = self._handle_content_alignment_check(
-                    persona_name, parsed_output, has_schema_error, is_truncated
+
+                parsed_output = self._process_llm_response(
+                    persona_name,
+                    raw_llm_output,
+                    output_schema_class,
+                    False,  # has_schema_error is checked internally by _process_llm_response
+                    is_truncated,
                 )
 
-                break
+                # If _process_llm_response found schema errors, it would have added malformed_blocks
+                # and potentially modified parsed_output. We check for that here.
+                has_schema_error_after_processing = bool(
+                    parsed_output.get("malformed_blocks")
+                )
 
-            except (LLMProviderError, CircuitBreakerError, ChimeraError) as e:
+                if not has_schema_error_after_processing:
+                    break  # Success, exit retry loop
+
+                # If there are schema errors, and we can retry
+                if attempt < max_retries:
+                    self._log_with_context(
+                        "warning",
+                        f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Output had malformed blocks.",
+                        persona=persona_name,
+                        phase=phase,
+                        malformed_blocks=parsed_output.get("malformed_blocks"),
+                    )
+                    # Generate feedback for the next retry attempt
+                    # We need to simulate a SchemaValidationError to generate the feedback string
+                    simulated_error = SchemaValidationError(
+                        error_type="LLM_OUTPUT_MALFORMED",
+                        field_path="LLM_OUTPUT",
+                        invalid_value=raw_llm_output[:500],
+                        details={
+                            "malformed_blocks": parsed_output.get("malformed_blocks")
+                        },
+                    )
+                    current_prompt_for_retry = self._generate_retry_feedback(
+                        simulated_error, current_prompt_for_retry
+                    )
+                    self.intermediate_steps.setdefault("malformed_blocks", []).append(
+                        {
+                            "type": "RETRYABLE_VALIDATION_ERROR",
+                            "message": "LLM output had malformed blocks, retrying.",
+                            "attempt": attempt + 1,
+                            "persona": persona_name,
+                            "original_malformed_blocks": parsed_output.get(
+                                "malformed_blocks"
+                            ),
+                        }
+                    )
+                    if self.persona_manager:
+                        self.persona_manager.record_persona_performance(
+                            persona_name,
+                            attempt + 1,
+                            raw_llm_output,
+                            False,
+                            "Schema validation failed (malformed blocks)",
+                            is_truncated=is_truncated,
+                            schema_validation_failed=True,
+                            token_budget_exceeded=False,
+                        )
+                    continue  # Continue to the next retry attempt
+                else:
+                    self._log_with_context(
+                        "error",
+                        f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.",
+                        persona=persona_name,
+                    )
+                    if self.persona_manager:
+                        self.persona_manager.record_persona_performance(
+                            persona_name,
+                            attempt + 1,
+                            raw_llm_output,
+                            False,
+                            "Schema validation failed after multiple attempts",
+                            is_truncated=is_truncated,
+                            schema_validation_failed=True,
+                            token_budget_exceeded=False,
+                        )
+                    return self.output_parser._create_fallback_output(
+                        output_schema_class,
+                        malformed_blocks=[
+                            {
+                                "type": "MAX_RETRIES_REACHED",
+                                "message": f"Schema validation failed after {max_retries} retries.",
+                            }
+                        ],
+                        raw_output_snippet=raw_llm_output,
+                        partial_data=None,
+                        extracted_json_str=None,
+                    )
+
+            except (
+                LLMProviderRequestError,
+                LLMProviderResponseError,
+                CircuitBreakerError,
+                ChimeraError,
+            ) as e:
                 self._log_with_context(
                     "error",
                     f"Non-retryable error during LLM turn for {persona_name}: {e}",
@@ -928,79 +957,6 @@ class SocraticDebate:
                         token_budget_exceeded=True,
                     )
                 raise e
-
-            except SchemaValidationError as e:
-                if attempt < max_retries:
-                    self._log_with_context(
-                        "warning",
-                        f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Error: {e}",
-                        persona=persona_name,
-                        phase=phase,
-                        exc_info=True,
-                        original_exception=e,
-                    )
-                    # The retry feedback should be applied to the original prompt_for_llm
-                    prompt_for_llm = self._generate_retry_feedback(
-                        e, prompt_for_llm
-                    )  # MODIFIED: Update prompt_for_llm
-                    # Re-optimize the prompt for the next retry
-                    optimized_user_prompt = (
-                        self.prompt_optimizer.optimize_prompt(  # NEW: Re-optimize
-                            user_prompt_text=prompt_for_llm,
-                            persona_name=persona_name,
-                            max_output_tokens_for_turn=max_output_tokens_for_turn,
-                            system_message_for_token_count=final_system_prompt,
-                        )
-                    )
-                    self.intermediate_steps.setdefault("malformed_blocks", []).append(
-                        {
-                            "type": "RETRYABLE_VALIDATION_ERROR",
-                            "message": str(e),
-                            "attempt": attempt + 1,
-                            "persona": persona_name,
-                        }
-                    )
-                    if self.persona_manager:
-                        self.persona_manager.record_persona_performance(
-                            persona_name,
-                            attempt + 1,
-                            raw_llm_output,
-                            False,
-                            f"Schema validation failed: {str(e)}",
-                            is_truncated=is_truncated,
-                            schema_validation_failed=True,
-                            token_budget_exceeded=False,
-                        )
-                    continue
-                else:
-                    self._log_with_context(
-                        "error",
-                        f"Max retries ({max_retries}) reached for {persona_name}. Returning fallback JSON.",
-                        persona=persona_name,
-                    )
-                    if self.persona_manager:
-                        self.persona_manager.record_persona_performance(
-                            persona_name,
-                            attempt + 1,
-                            raw_llm_output,
-                            False,
-                            "Schema validation failed after multiple attempts",
-                            is_truncated=is_truncated,
-                            schema_validation_failed=True,
-                            token_budget_exceeded=False,
-                        )
-                    return self.output_parser._create_fallback_output(
-                        output_schema_class,
-                        malformed_blocks=[
-                            {
-                                "type": "MAX_RETRIES_REACHED",
-                                "message": f"Schema validation failed after {max_retries} retries.",
-                            }
-                        ],
-                        raw_output_snippet=raw_llm_output,
-                        partial_data=None,
-                        extracted_json_str=None,
-                    )
 
             except Exception as e:
                 self._log_with_context(
@@ -1655,7 +1611,11 @@ class SocraticDebate:
 
             # --- START FIX ---
             # Differentiate between content errors (SchemaValidationError) and provider/unrecoverable errors.
-            except (LLMProviderError, CircuitBreakerError) as e:
+            except (
+                LLMProviderRequestError,
+                LLMProviderResponseError,
+                CircuitBreakerError,
+            ) as e:
                 # This is a non-retryable provider error. Log it and move on.
                 # Do NOT trigger conflict resolution for this.
                 error_output = {

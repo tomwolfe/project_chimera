@@ -538,7 +538,7 @@ class PersonaManager:
                         self.all_personas[p_name] = PersonaConfig(**p_data)
                     except ValidationError as e:
                         logger.error(
-                            f"Validation error for persona '{p_name}' in imported framework '{framework_name}': {e}"
+                            f"Validation error for persona '{p_name}' in imported framework '{framework_name}' : {e}"
                         )
                         continue
                 self.persona_sets.update(loaded_config_data.get("persona_sets", {}))

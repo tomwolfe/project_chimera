@@ -89,6 +89,19 @@ class LLMProviderError(ChimeraError):
         )
 
 
+# NEW: Specific exceptions for LLM API request and response errors
+class LLMProviderRequestError(LLMProviderError):
+    """Exception for LLM API request errors (e.g., 4xx, 5xx HTTP errors)."""
+
+    pass
+
+
+class LLMProviderResponseError(LLMProviderError):
+    """Exception for LLM API response parsing errors (e.g., JSONDecodeError)."""
+
+    pass
+
+
 class GeminiAPIError(LLMProviderError):
     """Specific exception for Gemini API errors."""
 

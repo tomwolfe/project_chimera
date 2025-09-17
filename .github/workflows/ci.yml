@@ -16,8 +16,7 @@ jobs:
       shell: bash
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt # Install production dependencies
-        pip install ruff pytest pytest-cov bandit # Install dev/test tools
+        pip install -r requirements.txt # Install all dependencies including dev/test tools
 
     - name: Run Ruff (Linter Check)
       shell: bash
@@ -36,6 +35,12 @@ jobs:
         # The --severity-level HIGH and --confidence-level HIGH are good defaults for CI.
         # --exit-on-error ensures the job fails if Bandit itself encounters an error.
         bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level HIGH --exit-on-error
+    
+    - name: Check dependencies for vulnerabilities with Safety # NEW: Safety scan step
+      shell: bash
+      run: |
+        safety check --full-report || true # Allow Safety to fail without failing the build immediately, report is still generated
+
     - name: Run Unit and Integration Tests with Coverage Check
       shell: bash
       id: run_tests # Added ID to reference outcome

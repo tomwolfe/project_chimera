@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 # --- Tokenizer Interface and Implementation ---
+import tiktoken  # NEW: Import tiktoken
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 
@@ -29,9 +30,11 @@ from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.exceptions import (
     ChimeraError,
     LLMProviderError,
+    LLMProviderRequestError,  # NEW: Import from src/exceptions.py
+    LLMProviderResponseError,  # NEW: Import from src/exceptions.py
     GeminiAPIError,
     LLMUnexpectedError,
-    TokenBudgetExceededError,
+    TokenBudgetExceededError,  # Renamed from TokenLimitExceededError in suggestions to match existing
     CircuitBreakerError,
     SchemaValidationError,
 )
@@ -79,6 +82,19 @@ TOKEN_COSTS_PER_1K_TOKENS = {
 
 logger = logging.getLogger(__name__)
 
+# Initialize tiktoken encoder globally or as a class attribute for efficiency
+# Fallback to a common encoder if the specific model's encoder is not found.
+try:
+    _TIKTOKEN_ENCODING = tiktoken.encoding_for_model(
+        "gpt-4"
+    )  # Using gpt-4 as a common default
+except KeyError:
+    logger.warning("Could not find tiktoken encoding for 'gpt-4'. Using 'cl100k_base'.")
+    _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+
+# Define a generic max tokens per prompt if not specified by model or settings
+GENERIC_MAX_TOKENS_PER_PROMPT = 4096
+
 
 class GeminiProvider:
     def __init__(
@@ -106,6 +122,9 @@ class GeminiProvider:
         self.summarizer_pipeline_instance = summarizer_pipeline_instance
         self.prompt_optimizer = (
             prompt_optimizer_instance  # NEW: Store the passed instance
+        )
+        self._tiktoken_encoding = (
+            _TIKTOKEN_ENCODING  # Use the globally initialized tiktoken encoder
         )
 
         try:
@@ -249,7 +268,6 @@ class GeminiProvider:
         output_cost = (output_tokens / 1000) * costs["output"]
         return input_cost + output_cost
 
-    # Add these methods to the GeminiProvider class
     def _adjust_prompt_for_schema_validation(
         self, prompt: str, output_schema: Type[BaseModel]
     ) -> str:
@@ -269,22 +287,61 @@ class GeminiProvider:
         schema = output_schema.model_json_schema()
         return json.dumps(schema, indent=2)
 
-    def _count_tokens_robustly(self, text: str) -> int:
-        """Robustly counts tokens using available tokenizer methods."""
-        if hasattr(self.tokenizer, "count_tokens"):
-            return self.tokenizer.count_tokens(text)
-        elif hasattr(self.tokenizer, "encode"):
-            return len(self.tokenizer.encode(text))
-        else:
-            # Fallback for unknown tokenizer types
+    def _count_tokens_tiktoken(self, text: str, model: str = None) -> int:
+        """Counts tokens in the given text using tiktoken, with fallback for unknown models."""
+        if not text:
+            return 0
+        try:
+            # Use the model name if provided, otherwise fallback to self.model_name
+            effective_model = model if model else self.model_name
+            # Attempt to get the encoder for the specific model
+            encoding = tiktoken.encoding_for_model(effective_model)
+        except KeyError:
+            # Fallback to a common encoder if the specific model's encoder is not found.
             logger.warning(
-                f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate."
+                f"Could not find tiktoken encoding for model '{effective_model}'. Using 'cl100k_base'."
             )
-            return len(text) // 4  # Rough estimate
+            encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text))
+
+    def _truncate_prompt_tiktoken(
+        self, prompt: str, max_tokens: int, model: str = None
+    ) -> str:
+        """Truncates a prompt to a maximum number of tokens using tiktoken."""
+        if not prompt:
+            return ""
+        try:
+            effective_model = model if model else self.model_name
+            encoding = tiktoken.encoding_for_model(effective_model)
+        except KeyError:
+            logger.warning(
+                f"Could not find tiktoken encoding for model '{effective_model}'. Using 'cl100k_base'."
+            )
+            encoding = tiktoken.get_encoding("cl100k_base")
+
+        tokens = encoding.encode(prompt)
+        if len(tokens) > max_tokens:
+            truncated_tokens = tokens[:max_tokens]
+            return encoding.decode(truncated_tokens)
+        return prompt
+
+    def _get_max_tokens_for_model(self, model: str = None) -> int:
+        """Returns the maximum token limit for a given model, with a default from settings."""
+        effective_model = model if model else self.model_name
+        model_spec = self.get_model_specification(effective_model)
+        if model_spec:
+            return (
+                model_spec.max_input_tokens
+            )  # Use max_input_tokens from model registry
+
+        # Fallback to a generic limit from settings if model_spec not found
+        return self.settings.max_tokens_per_persona.get(
+            effective_model, GENERIC_MAX_TOKENS_PER_PROMPT
+        )
 
     @handle_errors(log_level="ERROR")
     @CircuitBreaker(
-        failure_threshold=5,  # Changed from 3 to 5
+        failure_threshold=5,
         recovery_timeout=60,
         expected_exception=(
             APIError,
@@ -293,6 +350,8 @@ class GeminiProvider:
             GeminiAPIError,
             RetryError,
             RateLimitExceededError,
+            LLMProviderRequestError,  # NEW: Add custom exceptions to retry conditions
+            LLMProviderResponseError,  # NEW: Add custom exceptions to retry conditions
         ),
     )
     @retry(
@@ -300,13 +359,20 @@ class GeminiProvider:
         stop=stop_after_attempt(5),
         reraise=True,
         retry=(
-            retry_if_exception_type(APIError) | retry_if_exception_type(socket.gaierror)
+            retry_if_exception_type(APIError)
+            | retry_if_exception_type(socket.gaierror)
+            | retry_if_exception_type(
+                LLMProviderRequestError
+            )  # NEW: Add custom exceptions to retry conditions
+            | retry_if_exception_type(
+                LLMProviderResponseError
+            )  # NEW: Add custom exceptions to retry conditions
             # SchemaValidationError is now handled by the internal retry loop
         ),
     )
     def generate(
         self,
-        prompt: str,  # This prompt is now assumed to be already optimized by core.py
+        prompt: str,
         system_prompt: str = "",
         output_schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
@@ -368,12 +434,40 @@ class GeminiProvider:
         )
 
         max_schema_retries = 3
-        current_prompt_for_llm = prompt  # This is the already optimized user prompt
+        current_prompt_for_llm = prompt
+
+        # NEW: Token counting and enforcement before API call
+        full_prompt_text_for_token_check = (
+            f"{system_prompt}\n\n{current_prompt_for_llm}"
+            if system_prompt
+            else current_prompt_for_llm
+        )
+        prompt_tokens_for_check = self._count_tokens_tiktoken(
+            full_prompt_text_for_token_check, current_model_name
+        )
+        max_input_tokens_for_model = self._get_max_tokens_for_model(current_model_name)
+
+        if prompt_tokens_for_check > max_input_tokens_for_model:
+            self._log_with_context(
+                "error",
+                f"Prompt exceeds maximum input token limit for model '{current_model_name}': {prompt_tokens_for_check}/{max_input_tokens_for_model}",
+            )
+            raise TokenBudgetExceededError(
+                current_tokens=prompt_tokens_for_check,
+                budget=max_input_tokens_for_model,
+                details={
+                    "phase": "LLM_Call",
+                    "step_name": "Prompt_Preparation",
+                    "tokens_needed": prompt_tokens_for_check,
+                },
+            )
+        self._log_with_context(
+            "info",
+            f"Prompt token count for model '{current_model_name}': {prompt_tokens_for_check}/{max_input_tokens_for_model}",
+        )
 
         for i in range(max_schema_retries):
             try:
-                # The 'prompt' argument is now assumed to be already optimized by core.py.
-                # We use it directly here.
                 optimized_prompt = current_prompt_for_llm
 
                 prompt_with_system = (
@@ -381,9 +475,8 @@ class GeminiProvider:
                     if system_prompt
                     else optimized_prompt
                 )
-                input_tokens = self._count_tokens_robustly(
-                    prompt_with_system
-                )  # MODIFIED
+                # Use native Gemini tokenizer for actual input token count for cost tracking
+                input_tokens = self.tokenizer.count_tokens(prompt_with_system)
 
                 self._log_with_context(
                     "debug",
@@ -444,7 +537,8 @@ class GeminiProvider:
                             original_exception=ve,
                         )
 
-                output_tokens = self._count_tokens_robustly(generated_text)  # MODIFIED
+                # Use native Gemini tokenizer for actual output token count for cost tracking
+                output_tokens = self.tokenizer.count_tokens(generated_text)
                 is_truncated = output_tokens >= config.max_output_tokens * 0.95
                 self._log_with_context(
                     "debug",
@@ -470,8 +564,6 @@ class GeminiProvider:
 
                 final_output_to_return = generated_text
                 if output_schema:
-                    # If schema validation was performed and passed, cleaned_generated_text holds the valid JSON string.
-                    # We ensure this cleaned string is returned.
                     final_output_to_return = self.output_parser._clean_llm_output(
                         generated_text
                     )
@@ -485,20 +577,19 @@ class GeminiProvider:
                     continue
                 else:
                     raise e
-            except ServerError as e:  # Catch 5xx errors first
+            except ServerError as e:
                 error_msg = str(e)
                 self._log_with_context(
                     "error",
                     f"Gemini ServerError encountered: {error_msg}",
                     exc_info=True,
                 )
-                # Re-raise as a custom LLMProviderError for tenacity to retry
-                raise LLMProviderError(
+                raise LLMProviderRequestError(  # Raise specific request error for 5xx
                     message=f"Gemini ServerError: {error_msg}",
                     provider_error_code=e.code if hasattr(e, "code") else 500,
                     original_exception=e,
                 ) from e
-            except APIError as e:  # Catch other API errors (4xx)
+            except APIError as e:
                 error_msg = str(e)
                 error_msg_lower = error_msg.lower()
                 response_json = (
@@ -552,8 +643,7 @@ class GeminiProvider:
                         or "invalid response format" in error_msg_lower
                     )
                 ):
-                    # Treat as SchemaValidationError to trigger tenacity retry
-                    raise SchemaValidationError(
+                    raise LLMProviderResponseError(  # Raise specific response error for JSON issues
                         error_type="API_INVALID_JSON",
                         field_path="LLM_OUTPUT",
                         invalid_value=error_msg[:500],
