@@ -766,18 +766,70 @@ class SocraticDebate:
         persona_name: str,
         raw_llm_output: str,
         output_schema_class: Type[BaseModel],
-        has_schema_error: bool,
         is_truncated: bool,
     ) -> Dict[str, Any]:
         """
         Parses LLM output, tracks malformed blocks, and performs content alignment checks.
         """
-        parsed_output, has_schema_error = self._parse_and_track_llm_output(
-            persona_name, raw_llm_output, output_schema_class
+        # Use the injected output_parser instance
+        parsed_output = self.output_parser.parse_and_validate(
+            raw_llm_output, output_schema_class
         )
-        parsed_output = self._handle_content_alignment_check(
-            persona_name, parsed_output, has_schema_error, is_truncated
+        has_schema_error = bool(parsed_output.get("malformed_blocks"))
+
+        if has_schema_error:
+            self.intermediate_steps.setdefault("malformed_blocks", []).extend(
+                parsed_output["malformed_blocks"]
+            )
+            self._log_with_context(
+                "warning",
+                f"Parser reported malformed blocks for {persona_name}.",
+                persona=persona_name,
+                malformed_blocks=parsed_output["malformed_blocks"],
+            )
+
+        # Use the injected content_validator instance
+        is_aligned, validation_message, nuanced_feedback = (
+            self.content_validator.validate(persona_name, parsed_output)
         )
+        self.persona_manager.record_persona_performance(
+            persona_name,
+            1,  # Assuming this is the first attempt for performance recording within this turn
+            parsed_output,
+            is_aligned and not has_schema_error,
+            validation_message,
+            is_truncated=is_truncated,
+            schema_validation_failed=has_schema_error,
+            token_budget_exceeded=False,
+        )
+
+        if not is_aligned:
+            self._log_with_context(
+                "warning",
+                f"Content misalignment detected for {persona_name}: {validation_message}",
+                persona=persona_name,
+                validation_message=validation_message,
+            )
+            self.intermediate_steps.setdefault("malformed_blocks", []).extend(
+                [
+                    {
+                        "type": "CONTENT_MISALIGNMENT",
+                        "message": f"Output from {persona_name} drifted from the core topic: {validation_message}",
+                        "persona": persona_name,
+                        "raw_string_snippet": str(parsed_output)[:500],
+                    }
+                ]
+                + nuanced_feedback.get("malformed_blocks", [])
+            )
+            if isinstance(parsed_output, dict):
+                parsed_output["content_misalignment_warning"] = validation_message
+            else:
+                # This case is less likely with structured output, but as a fallback
+                # Ensure it returns a dict as expected by the signature
+                parsed_output = {
+                    "general_output": f"WARNING: Content misalignment detected: {validation_message}\n\n{parsed_output}",
+                    "malformed_blocks": parsed_output.get("malformed_blocks", []),
+                }
         return parsed_output
 
     def _execute_llm_turn(
@@ -844,11 +896,7 @@ class SocraticDebate:
                 )
 
                 parsed_output = self._process_llm_response(
-                    persona_name,
-                    raw_llm_output,
-                    output_schema_class,
-                    False,  # has_schema_error is checked internally by _process_llm_response
-                    is_truncated,
+                    persona_name, raw_llm_output, output_schema_class, is_truncated
                 )
 
                 # If _process_llm_response found schema errors, it would have added malformed_blocks
@@ -1653,7 +1701,7 @@ class SocraticDebate:
                 debate_history.append({"persona": persona_name, "output": error_output})
                 self._log_with_context(
                     "error",
-                    f"Non-retryable provider error during {persona_name} turn: {e}. Skipping conflict resolution for this turn.",
+                    f"Non-retryable provider error during {persona_name} turn: {e}. Skipping conflict resolution for this turn. (Raw LLM Output: {raw_llm_output[:200]})",
                     exc_info=True,
                     original_exception=e,
                 )
