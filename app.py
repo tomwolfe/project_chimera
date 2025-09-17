@@ -1523,8 +1523,9 @@ def _run_socratic_debate_process():
             }
         ],
     }
-    final_total_tokens = 0
-    final_total_cost = 0.0
+    # Removed unused local variable initializations
+    # final_total_tokens = 0
+    # final_total_cost = 0.0
 
     with st.status("Socratic Debate in Progress", expanded=True) as status:
         main_progress_message = st.empty()
@@ -1738,12 +1739,13 @@ def _run_socratic_debate_process():
                 status.update(
                     label="Socratic Debate Complete!", state="complete", expanded=False
                 )
-                final_total_tokens = st.session_state.intermediate_steps_output.get(
-                    "Total_Tokens_Used", 0
-                )
-                final_total_cost = st.session_state.intermediate_steps_output.get(
-                    "Total_Estimated_Cost_USD", 0.0
-                )
+                # Removed unused local variable assignments
+                # final_total_tokens = st.session_state.intermediate_steps_output.get(
+                #     "Total_Tokens_Used", 0
+                # )
+                # final_total_cost = st.session_state.intermediate_steps_output.get(
+                #     "Total_Estimated_Cost_USD", 0.0
+                # )
 
             except (
                 TokenBudgetExceededError,
@@ -1764,14 +1766,13 @@ def _run_socratic_debate_process():
                     st.session_state.intermediate_steps_output = (
                         debate_instance.intermediate_steps
                     )
-                final_total_tokens = st.session_state.intermediate_steps_output.get(
-                    "Total_Tokens_Used", 0
-                )
-                final_total_cost = st.session_state.intermediate_steps_output.get(
-                    "Total_Estimated_Cost_USD", 0.0
-                )
-                if isinstance(e, RateLimitExceededError):
-                    raise e
+                # Removed unused local variable assignments
+                # final_total_tokens = st.session_state.intermediate_steps_output.get(
+                #     "Total_Tokens_Used", 0
+                # )
+                # final_total_cost = st.session_state.intermediate_steps_output.get(
+                #     "Total_Estimated_Cost_USD", 0.0
+                # )
             except Exception as e:
                 handle_debate_errors(e)
                 status.update(
@@ -1784,12 +1785,13 @@ def _run_socratic_debate_process():
                     st.session_state.intermediate_steps_output = (
                         debate_instance.intermediate_steps
                     )
-                final_total_tokens = st.session_state.intermediate_steps_output.get(
-                    "Total_Tokens_Used", 0
-                )
-                final_total_cost = st.session_state.intermediate_steps_output.get(
-                    "Total_Estimated_Cost_USD", 0.0
-                )
+                # Removed unused local variable assignments
+                # final_total_tokens = st.session_state.intermediate_steps_output.get(
+                #     "Total_Tokens_Used", 0
+                # )
+                # final_total_cost = st.session_state.intermediate_steps_output.get(
+                #     "Total_Estimated_Cost_USD", 0.0
+                # )
             finally:
                 # Explicitly clear large objects and trigger garbage collection
                 if debate_instance:

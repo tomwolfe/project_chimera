@@ -15,10 +15,7 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import (
-    _get_code_snippet,
-    ComplexityVisitor,  # ADD ComplexityVisitor
-)
+from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
 from src.utils.code_validator import (
     _run_ruff,
     _run_bandit,
@@ -70,7 +67,6 @@ class FocusedMetricsCollector:
         initial_prompt: str,
         debate_history: List[Dict],
         intermediate_steps: Dict[str, Any],
-        # REMOVED: codebase_raw_file_contents: Dict[str, str], # REMOVED THIS PARAMETER
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
@@ -805,11 +801,7 @@ class FocusedMetricsCollector:
             "coverage_details": "Failed to run pytest.",
         }
         try:
-            # --- START FIX ---
-            # MODIFIED: Corrected path from 'tests/unit/' to 'tests/' to match project structure.
-            # ADDED: --collect-only to quickly check for test existence and a shorter timeout.
             command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests/"]
-            # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
                 command, timeout=30, check=False
             )
@@ -818,10 +810,7 @@ class FocusedMetricsCollector:
                 coverage_data["coverage_details"] = (
                     "Pytest execution successful (tests passed)."
                 )
-                # --- START FIX ---
-                # Since coverage is no longer run, report -1.0 to indicate this.
                 coverage_data["overall_coverage_percentage"] = -1.0
-                # --- END FIX ---
             else:
                 logger.warning(
                     f"Pytest execution failed with return code {return_code}. Stderr: {stderr}"
@@ -1164,7 +1153,6 @@ class FocusedMetricsCollector:
 
         return code_change
 
-    # MODIFIED: _process_suggestions_for_quality to apply path correction and validation
     def _process_suggestions_for_quality(
         self, suggestions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -1189,7 +1177,7 @@ class FocusedMetricsCollector:
                             "raw_string_snippet": str(code_change_data)[:200],
                         }
                     )
-                    continue
+                    continue  # Skip this code change if path/action is fundamentally invalid
 
                 # 1. Validate and resolve file path and action
                 is_valid, resolved_path, suggested_action, error_msg = (

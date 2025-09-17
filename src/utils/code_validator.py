@@ -20,8 +20,8 @@ from src.utils.path_utils import (
     is_within_base_dir,
     sanitize_and_validate_file_path,
     PROJECT_ROOT,
-    _map_incorrect_file_path,  # NEW: Import _map_incorrect_file_path
-    can_create_file,  # NEW: Import can_create_file
+    _map_incorrect_file_path,
+    can_create_file,
 )
 from src.models import CodeChange
 from src.utils.code_utils import _get_code_snippet
@@ -35,7 +35,6 @@ class CodeValidationError(Exception):
     pass
 
 
-# MODIFIED: Renamed and updated _resolve_file_path_suggestion
 def validate_and_resolve_file_path_for_action(
     suggested_path: str, action: str, codebase_raw_file_contents: Dict[str, str]
 ) -> Tuple[bool, str, str, Optional[str]]:
