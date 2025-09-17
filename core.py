@@ -1654,8 +1654,8 @@ class SocraticDebate:
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
 
             # --- START FIX ---
-            # Differentiate between content errors (SchemaValidationError) and provider errors.
-            except (LLMProviderError, CircuitBreakerError, ChimeraError) as e:
+            # Differentiate between content errors (SchemaValidationError) and provider/unrecoverable errors.
+            except (LLMProviderError, CircuitBreakerError) as e:
                 # This is a non-retryable provider error. Log it and move on.
                 # Do NOT trigger conflict resolution for this.
                 error_output = {
@@ -2111,6 +2111,16 @@ class SocraticDebate:
 
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
+        # NEW: Inject the actual file structure into the prompt to prevent hallucination
+        if self.raw_file_contents:
+            file_list = list(self.raw_file_contents.keys())
+            file_structure_prompt = (
+                "CRITICAL: Adhere to the following file list for all code change suggestions. "
+                "Do not suggest changes for files not in this list unless you are creating a new file.\n"
+                f"File List: {json.dumps(file_list, indent=2)}\n\n"
+            )
+            synthesis_prompt_parts.append(file_structure_prompt)
+
         # --- START FIX 1: Codebase Access Handling ---
         if (
             self.is_self_analysis
@@ -2163,18 +2173,6 @@ class SocraticDebate:
         synthesis_prompt_parts.append(
             f"Debate History:\n{summarized_debate_history}\n\n"
         )
-
-        # NEW: Inject the actual file structure into the prompt to prevent hallucination
-        if self.intermediate_steps.get("Context_Analysis_Output"):
-            context_output = self.intermediate_steps["Context_Analysis_Output"]
-            if context_output and context_output.get("relevant_files"):
-                file_list = [f[0] for f in context_output["relevant_files"]]
-                file_structure_prompt = (
-                    "CRITICAL: Adhere to the following file structure for all code change suggestions. "
-                    "Do not suggest changes for files not in this list unless you are creating a new file.\n"
-                    f"File List: {json.dumps(file_list, indent=2)}\n\n"
-                )
-                synthesis_prompt_parts.append(file_structure_prompt)
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
             synthesis_prompt_parts.append(

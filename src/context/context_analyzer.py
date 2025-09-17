@@ -504,7 +504,23 @@ class ContextRelevanceAnalyzer:
             self.logger.info(f"Computing embeddings for {len(file_paths)} files...")
             if not file_contents:
                 self.logger.warning("No file contents to encode for embeddings.")
-            file_embeddings_list = self.model.encode(file_contents)
+
+            # --- START FIX: Chunk large documents before embedding ---
+            processed_contents = []
+            # Heuristic: A token is roughly 4 chars. The model max sequence length is ~256-512 tokens.
+            # We'll use a character limit of 1000 as a safe chunk size.
+            CHUNK_SIZE = 1000
+            for content in file_contents:
+                if len(content) > CHUNK_SIZE:
+                    # For large files, we take the beginning and end chunks to capture imports and key logic.
+                    processed_contents.append(
+                        content[:CHUNK_SIZE] + "\n...\n" + content[-CHUNK_SIZE:]
+                    )
+                else:
+                    processed_contents.append(content)
+            # --- END FIX ---
+
+            file_embeddings_list = self.model.encode(processed_contents)
 
             embeddings = dict(zip(file_paths, file_embeddings_list))
             self.logger.info(f"Computed embeddings for {len(embeddings)} files.")

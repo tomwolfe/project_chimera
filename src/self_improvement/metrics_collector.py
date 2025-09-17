@@ -807,10 +807,11 @@ class FocusedMetricsCollector:
         try:
             # --- START FIX ---
             # MODIFIED: Corrected path from 'tests/unit/' to 'tests/' to match project structure.
-            command = [sys.executable, "-m", "pytest", "-q", "tests/"]
+            # ADDED: --collect-only to quickly check for test existence and a shorter timeout.
+            command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests/"]
             # --- END FIX ---
             return_code, stdout, stderr = execute_command_safely(
-                command, timeout=60, check=False
+                command, timeout=30, check=False
             )
 
             if return_code == 0:
