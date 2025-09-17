@@ -33,27 +33,11 @@ from src.utils.prompt_optimizer import (
 from transformers import pipeline  # NEW: Import pipeline for summarization
 
 
-# Fixture to provide a real LLM client for integration tests.
-# Requires TEST_LLM_API_KEY environment variable to be set.
-@pytest.fixture
-def real_llm_client():
-    api_key = os.environ.get("TEST_LLM_API_KEY")
-    if not api_key:
-        pytest.skip(
-            "TEST_LLM_API_KEY environment variable not set. Skipping real LLM integration tests."
-        )
-
-    try:
-        return GeminiProvider(api_key=api_key, model_name="gemini-2.5-flash-lite")
-    except Exception as e:
-        pytest.fail(f"Failed to initialize real LLM client: {e}")
-
-
 @pytest.mark.integration
-def test_reasoning_engine_integration(real_llm_client):
+def test_reasoning_engine_integration():
     """
     Performs an end-to-end integration test of the SocraticDebate engine
-    using a real LLM client.
+    using a mocked LLM client to ensure speed and reliability.
     """
     api_key = os.environ.get("TEST_LLM_API_KEY")
     if not api_key:
@@ -114,18 +98,20 @@ def test_reasoning_engine_integration(real_llm_client):
     mock_summarizer_pipeline.tokenizer.model_max_length = 1024
 
     try:
-        # Patch the PromptOptimizer during SocraticDebate initialization
-        with patch("core.PromptOptimizer") as MockPromptOptimizer:
-            MockPromptOptimizer.return_value = MagicMock(spec=PromptOptimizer)
-            MockPromptOptimizer.return_value.optimize_prompt.side_effect = (
-                lambda p, pn, mot: p
+        # Patch the GeminiProvider to avoid real network calls
+        with patch("core.GeminiProvider") as MockGeminiProvider:
+            mock_llm_instance = MagicMock(spec=GeminiProvider)
+            mock_llm_instance.tokenizer = MagicMock()
+            mock_llm_instance.tokenizer.count_tokens.side_effect = (
+                lambda text: len(text) // 4
             )
-            MockPromptOptimizer.return_value.optimize_debate_history.side_effect = (
-                lambda h, mt: h
+            mock_llm_instance.generate.return_value = (
+                '{"general_output": "Paris"}',
+                10,
+                5,
+                False,
             )
-            MockPromptOptimizer.return_value.tokenizer = (
-                real_llm_client.tokenizer
-            )  # Ensure tokenizer is set
+            MockGeminiProvider.return_value = mock_llm_instance
 
             engine = SocraticDebate(
                 initial_prompt=user_input,
