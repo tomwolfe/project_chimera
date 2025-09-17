@@ -23,7 +23,6 @@ from src.utils.path_utils import (
     _map_incorrect_file_path,
     can_create_file,
 )
-from src.models import CodeChange
 from src.utils.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
