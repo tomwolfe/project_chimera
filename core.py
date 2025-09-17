@@ -642,6 +642,32 @@ class SocraticDebate:
 
         return min(max(0.0, current_progress), 1.0)
 
+    # RE-ADDED: This method was mistakenly removed during refactoring.
+    def _prepare_llm_call_config(
+        self,
+        persona_config: PersonaConfig,
+        max_output_tokens_for_turn: int,
+        requested_model_name: Optional[str],
+    ) -> Tuple[str, int]:
+        """Prepares the model name and effective max output tokens for an LLM call."""
+        final_model_to_use = (
+            requested_model_name if requested_model_name else self.model_name
+        )
+        safety_margin_factor = 0.98
+        effective_max_output_tokens = int(
+            min(
+                max_output_tokens_for_turn,
+                self.llm_provider.tokenizer.max_output_tokens,
+            )
+            * safety_margin_factor
+        )
+        effective_max_output_tokens = max(128, effective_max_output_tokens)
+        self._log_with_context(
+            "debug",
+            f"Adjusting max_output_tokens for {persona_config.name}. Requested: {max_output_tokens_for_turn}, Model Max: {self.llm_provider.tokenizer.max_output_tokens}, Effective: {effective_max_output_tokens}",
+        )
+        return final_model_to_use, effective_max_output_tokens
+
     def _prepare_llm_prompt_and_config(
         self,
         persona_name: str,
