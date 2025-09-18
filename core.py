@@ -2714,7 +2714,7 @@ class SocraticDebate:
         if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
             return analysis_output
 
-        consolidated_suggestions = []
+        processed_suggestions = []
         for suggestion in analysis_output["IMPACTFUL_SUGGESTIONS"]:
             if (
                 "CODE_CHANGES_SUGGESTED" not in suggestion
@@ -2761,5 +2761,5 @@ class SocraticDebate:
                 )
             processed_suggestions.append(suggestion)
 
-        analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
+        analysis_output["IMPACTFUL_SUGGESTIONS"] = processed_suggestions
         return analysis_output
