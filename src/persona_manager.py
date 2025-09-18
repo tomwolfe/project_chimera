@@ -541,6 +541,9 @@ class PersonaManager:
                 description="Fallback persona.",
             )
 
+        # Initialize rendered_prompt to a default value to ensure it's always bound
+        rendered_prompt: str = ""
+
         adjusted_config = copy.deepcopy(base_config)
         metrics = self.persona_performance_metrics.get(base_persona_name)
 
@@ -562,10 +565,16 @@ class PersonaManager:
                 adjusted_config._rendered_system_prompt = (
                     "Error: Could not render system prompt."
                 )
-        else:
-            adjusted_config._rendered_system_prompt = (
-                "Error: Prompt optimizer or template missing."
-            )
+                rendered_prompt = (
+                    adjusted_config._rendered_system_prompt
+                )  # Ensure rendered_prompt is also updated in case of error
+            else:
+                adjusted_config._rendered_system_prompt = (
+                    "Error: Prompt optimizer or template missing."
+                )
+                rendered_prompt = (
+                    adjusted_config._rendered_system_prompt
+                )  # Ensure rendered_prompt is also updated
 
         # Apply truncation if the persona name indicates it
         if "_TRUNCATED" in persona_name:

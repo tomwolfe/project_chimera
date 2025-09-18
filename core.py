@@ -1629,8 +1629,13 @@ class SocraticDebate:
 
             turn_output = None
             try:
-                turn_output = self._execute_llm_turn(
-                    persona_name, current_prompt, "debate", max_output_tokens_for_turn
+                turn_output = (
+                    self._execute_llm_turn(  # MODIFIED: Call the new extracted method
+                        persona_name,
+                        current_prompt,
+                        "debate",
+                        max_output_tokens_for_turn,
+                    )
                 )
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
@@ -2599,7 +2604,7 @@ class SocraticDebate:
                     analysis_output.setdefault("malformed_blocks", []).append(
                         {
                             "type": "INVALID_ADD_ACTION",
-                            "message": f"ADD action suggested for existing file '{file_path}' without FULL_CONTENT. Suggestion ignored.",
+                            "message": f"ADD action suggested for existing file '{file_path}'. Suggestion ignored.",
                             "file_path": file_path,
                             "suggestion_area": suggestion.get("AREA"),
                         }
@@ -2625,7 +2630,7 @@ class SocraticDebate:
                     analysis_output.setdefault("malformed_blocks", []).append(
                         {
                             "type": "INVALID_MODIFY_ACTION",
-                            "message": f"MODIFY action suggested for non-existent file '{file_path}' without FULL_CONTENT. Suggestion ignored.",
+                            "message": f"MODIFY action suggested for non-existent file '{file_path}'. Suggestion ignored.",
                             "file_path": file_path,
                             "suggestion_area": suggestion.get("AREA"),
                         }
@@ -2685,6 +2690,8 @@ class SocraticDebate:
                 self._log_with_context(
                     "info",
                     f"Consolidated MODIFY for {file_path} resulted in no effective change. Removing from suggestions.",
+                    file_path=file_path,
+                    suggestion_area=suggestion.get("AREA"),
                 )
                 analysis_output.setdefault("malformed_blocks", []).append(
                     {

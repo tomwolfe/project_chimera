@@ -2,19 +2,19 @@
 personas:
   # Core personas used across multiple domains
   - name: "Visionary_Generator"
-    system_prompt_template: "visionary_generator_template" # MODIFIED
+    system_prompt_template: "visionary_generator"
     temperature: 0.7
     max_tokens: 1024
     description: "Generates innovative solutions and forward-looking approaches."
 
   - name: "Skeptical_Generator"
-    system_prompt_template: "skeptical_generator_template" # MODIFIED
+    system_prompt_template: "skeptical_generator"
     temperature: 0.3
     max_tokens: 1024
     description: "Identifies flaws, risks, and limitations in proposed solutions."
 
   - name: "Constructive_Critic"
-    system_prompt_template: "constructive_critic_template" # MODIFIED
+    system_prompt_template: "constructive_critic"
     temperature: 0.15
     max_tokens: 8192
     description: "Provides constructive criticism and suggestions for improvement."
@@ -22,106 +22,106 @@ personas:
 
   - name: "Conflict_Resolution_Manager"
     description: "Manages and resolves conflicts between personas."
-    system_prompt_template: "conflict_resolution_manager_template" # MODIFIED
+    system_prompt_template: "conflict_resolution_manager"
     example_prompt: "The personas are disagreeing on the best approach. How should we proceed?"
     temperature: 0.1
     max_tokens: 4096
 
   - name: "Impartial_Arbitrator"
-    system_prompt_template: "impartial_arbitrator_template" # MODIFIED
+    system_prompt_template: "impartial_arbitrator"
     temperature: 0.1
     max_tokens: 4096
     description: "Synthesizes debate outcomes into a final structured solution, strictly adhering to JSON format."
 
   - name: "Devils_Advocate"
-    system_prompt_template: "devils_advocate_template" # MODIFIED
+    system_prompt_template: "devils_advocate"
     temperature: 0.1 # Lower temperature for stricter adherence
     max_tokens: 4096
     description: "Challenges assumptions and arguments to ensure thorough consideration."
     example_prompt: "What are the potential downsides of this proposal?"
 
   - name: "Generalist_Assistant"
-    system_prompt_template: "generalist_assistant_template" # MODIFIED
+    system_prompt_template: "generalist_assistant"
     temperature: 0.5
     max_tokens: 1024
     description: "Provides context-specific analysis and explanations."
 
   - name: "General_Synthesizer"
-    system_prompt_template: "general_synthesizer_template" # MODIFIED
+    system_prompt_template: "general_synthesizer"
     temperature: 0.2
     max_tokens: 2048
     description: "Synthesizes information from previous turns into a coherent and comprehensive response."
 
   - name: "Self_Improvement_Analyst"
-    system_prompt_template: "self_improvement_analyst_template" # MODIFIED
+    system_prompt_template: "self_improvement_analyst"
     temperature: 0.15 # Slightly increased temperature for more creative suggestions
     max_tokens: 65536 # Increased to reflect actual model output capability (65k tokens)
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
 
   # Domain-specific personas
   - name: "Scientific_Visionary"
-    system_prompt_template: "scientific_visionary_template" # MODIFIED
+    system_prompt_template: "scientific_visionary"
     temperature: 0.8
     max_tokens: 2048
     description: "A research scientist providing innovative, evidence-based scientific solutions."
 
   - name: "Scientific_Analyst"
-    system_prompt_template: "scientific_analyst_template" # MODIFIED
+    system_prompt_template: "scientific_analyst"
     temperature: 0.8
     max_tokens: 2048
     description: "A rigorous scientific analyst focusing on empirical evidence and methodology."
 
   - name: "Business_Innovator"
-    system_prompt_template: "business_innovator_template" # MODIFIED
+    system_prompt_template: "business_innovator"
     temperature: 0.8
     max_tokens: 2048
     description: "A business consultant proposing bold, market-disrupting business solutions."
 
   - name: "Business_Strategist"
-    system_prompt_template: "business_strategist_template" # MODIFIED
+    system_prompt_template: "business_strategist"
     temperature: 0.3
     max_tokens: 1500
     description: "A business strategist evaluating proposals for market viability and ROI."
 
   - name: "Creative_Visionary"
-    system_prompt_template: "creative_visionary_template" # MODIFIED
+    system_prompt_template: "creative_visionary"
     temperature: 0.9
     max_tokens: 2048
     description: "An artist exploring uncharted creative possibilities with bold, imaginative solutions."
 
   - name: "Creative_Thinker"
-    system_prompt_template: "creative_thinker_template" # MODIFIED
+    system_prompt_template: "creative_thinker"
     temperature: 0.8
     max_tokens: 1500
     description: "An imaginative creative focusing on originality, aesthetic appeal, and emotional impact."
 
   # --- Software Engineering Personas ---
   - name: "Code_Architect"
-    system_prompt_template: "code_architect_template" # MODIFIED
+    system_prompt_template: "code_architect"
     temperature: 0.4
     max_tokens: 12288 # Increased from 8192 to provide more room for detailed architectural suggestions
     description: "Analyzes the system design, focusing on scalability, maintainability, and architectural best practices."
 
   - name: "Security_Auditor"
-    system_prompt_template: "security_auditor_template" # MODIFIED
+    system_prompt_template: "security_auditor"
     temperature: 0.2
     max_tokens: 12288
     description: "Identifies security vulnerabilities, attack vectors, and compliance issues through threat modeling."
 
   - name: "DevOps_Engineer"
-    system_prompt_template: "devops_engineer_template" # MODIFIED
+    system_prompt_template: "devops_engineer"
     temperature: 0.3
     max_tokens: 12288 # Increased from 8192 to prevent JSON truncation for complex operational analysis
     description: "Focuses on CI/CD, infrastructure, monitoring, operational efficiency, and reliability."
 
   - name: "Test_Engineer"
-    system_prompt_template: "test_engineer_template" # MODIFIED
+    system_prompt_template: "test_engineer"
     temperature: 0.3
     max_tokens: 12288 # Increased from 8192 to allow for comprehensive test case suggestions
     description: "Ensures code quality by critiquing test coverage and suggesting comprehensive test strategies."
 
   - name: "Context_Aware_Assistant"
-    system_prompt_template: "context_aware_assistant_template" # MODIFIED
+    system_prompt_template: "context_aware_assistant"
     temperature: 0.1
     max_tokens: 3072
     description: "Provides structured analysis of codebase architecture and organization, including quality metrics and persona-specific summaries."

@@ -98,49 +98,49 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
     pm.all_personas = {
         "Visionary_Generator": PersonaConfig(
             name="Visionary_Generator",
-            system_prompt="Visionary",
+            system_prompt_template="Visionary",  # Changed to template
             temperature=0.7,
             max_tokens=1024,
             description="Visionary persona",  # Added description
         ),
         "Skeptical_Generator": PersonaConfig(
             name="Skeptical_Generator",
-            system_prompt="Skeptical",
+            system_prompt_template="Skeptical",  # Changed to template
             temperature=0.3,
             max_tokens=1024,
             description="Skeptical persona",  # Added description
         ),
         "Constructive_Critic": PersonaConfig(
             name="Constructive_Critic",
-            system_prompt="Critic",
+            system_prompt_template="Critic",  # Changed to template
             temperature=0.15,
             max_tokens=8192,
             description="Constructive Critic persona",  # Added description
         ),
         "Impartial_Arbitrator": PersonaConfig(
             name="Impartial_Arbitrator",
-            system_prompt="Arbitrator",
+            system_prompt_template="Arbitrator",  # Changed to template
             temperature=0.1,
             max_tokens=4096,
             description="Impartial Arbitrator persona",  # Added description
         ),
         "Devils_Advocate": PersonaConfig(
             name="Devils_Advocate",
-            system_prompt="Devils Advocate",
+            system_prompt_template="Devils Advocate",  # Changed to template
             temperature=0.1,
             max_tokens=4096,
             description="Devils Advocate persona",  # Added description
         ),
         "Self_Improvement_Analyst": PersonaConfig(
             name="Self_Improvement_Analyst",
-            system_prompt="Self-Improvement Analyst",
+            system_prompt_template="Self-Improvement Analyst",  # Changed to template
             temperature=0.1,
             max_tokens=8192,
             description="Self-Improvement Analyst persona",  # Added description
         ),
         "Context_Aware_Assistant": PersonaConfig(
             name="Context_Aware_Assistant",
-            system_prompt="Context Assistant",
+            system_prompt_template="Context Assistant",  # Changed to template
             temperature=0.1,
             max_tokens=3072,
             description="Context Aware Assistant persona",  # Added description
@@ -168,7 +168,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         MagicMock(
             spec=PersonaConfig,
             name=name,  # Ensure mock PersonaConfig has a name attribute
-            system_prompt="Fallback",
+            system_prompt_template="Fallback",  # Changed to template
             temperature=0.5,
             max_tokens=1024,
             description="Fallback persona",  # Added description
@@ -338,7 +338,11 @@ def socratic_debate_instance(  # noqa: F811
             MagicMock()
         )  # MODIFIED: Use MockPromptOptimizer
         MockPromptOptimizer.return_value.optimize_prompt.side_effect = (
-            lambda p, pn, mot: p
+            lambda user_prompt_text,
+            persona_config,
+            max_output_tokens_for_turn,
+            system_message_for_token_count,
+            is_self_analysis_prompt: user_prompt_text
         )  # Default to no-op
         MockPromptOptimizer.return_value.optimize_debate_history.side_effect = (
             lambda h, mt: h
@@ -346,6 +350,9 @@ def socratic_debate_instance(  # noqa: F811
         MockPromptOptimizer.return_value.tokenizer = (
             mock_gemini_provider.tokenizer
         )  # Ensure tokenizer is set
+        MockPromptOptimizer.return_value.generate_prompt.side_effect = (
+            lambda template_name, context: template_name
+        )  # Mock generate_prompt
 
         debate = SocraticDebate(
             initial_prompt="Test prompt",
