@@ -836,6 +836,28 @@ class SocraticDebate:
                 }
         return parsed_output
 
+    def _generate_retry_feedback(
+        self, error: SchemaValidationError, original_prompt: str
+    ) -> str:
+        """
+        Generates a new prompt for retrying an LLM turn, including feedback about the validation error.
+        """
+        error_details_str = json.dumps(error.to_dict().get("details", {}), indent=2)
+        feedback_message = (
+            f"Your previous response failed schema validation. "
+            f"The error was: {error.message}\n"
+            f"Details: {error_details_str}\n\n"
+            f"Please correct your response to strictly adhere to the required JSON schema. "
+            f"Do not include any conversational text or markdown fences outside the JSON object. "
+            f"Original request: {original_prompt}"
+        )
+        self._log_with_context(
+            "debug",
+            f"Generated retry feedback for {error.error_code}.",
+            feedback_message_snippet=feedback_message[:200],
+        )
+        return feedback_message
+
     def _execute_llm_turn(
         self,
         persona_name: str,
