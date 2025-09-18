@@ -20,13 +20,8 @@ from core import SocraticDebate
 
 from src.models import (
     PersonaConfig,
-    ReasoningFrameworkConfig,
     LLMOutput,
     CodeChange,
-    ContextAnalysisOutput,
-    CritiqueOutput,
-    GeneralOutput,
-    SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
@@ -1277,7 +1272,7 @@ with st.expander(
             if persona and original_persona_config:
                 if (
                     persona.system_prompt_template
-                    != original_persona_config.system_prompt_template  # MODIFIED
+                    != original_persona_config.system_prompt_template
                     or persona.temperature != original_persona_config.temperature
                     or persona.max_tokens != original_persona_config.max_tokens
                 ):

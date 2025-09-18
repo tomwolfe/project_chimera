@@ -318,7 +318,7 @@ class FocusedMetricsCollector:
                             )
                     else:
                         logger.warning(
-                            f"Jobs section in CI workflow is malformed (not a dictionary). Skipping jobs processing."
+                            "Jobs section in CI workflow is malformed (not a dictionary). Skipping jobs processing."
                         )
                         malformed_blocks.append(
                             {

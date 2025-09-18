@@ -806,9 +806,19 @@ class LLMOutputParser:
                     self.logger.warning(
                         "LLM returned a list of dicts for CritiqueOutput. Assuming they are critique points."
                     )
+                    # Convert the list of critique points to the expected structure
+                    critique_points = []
+                    for item in parsed_data:
+                        critique_points.append(
+                            {
+                                "point_summary": item.get("point_summary", ""),
+                                "details": item.get("details", ""),
+                                "recommendation": item.get("recommendation", ""),
+                            }
+                        )
                     data_to_validate = {
-                        "CRITIQUE_SUMMARY": "LLM returned a list of dicts as critique points.",
-                        "CRITIQUE_POINTS": [],
+                        "CRITIQUE_SUMMARY": "LLM returned a list of critique points.",
+                        "CRITIQUE_POINTS": critique_points,
                         "SUGGESTIONS": [],
                         "malformed_blocks": malformed_blocks_list,
                     }

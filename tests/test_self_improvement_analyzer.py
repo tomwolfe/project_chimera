@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch  # NEW: Import patch
+import json
 
 try:
     from src.personas.self_improvement_analyst import (
