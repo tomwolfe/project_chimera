@@ -15,3 +15,14 @@ self_analysis:
   self_analysis_context_ratio: 0.45 # MODIFIED: Changed from 0.40 to 0.45
   self_analysis_debate_ratio: 0.30 # MODIFIED: Changed from 0.30 to 0.30 (no change from original suggestion, but reflects reallocation)
   self_analysis_synthesis_ratio: 0.25 # MODIFIED: Changed from 0.15 to 0.25
+
+max_tokens_per_persona:
+  Self_Improvement_Analyst: 65536
+  Security_Auditor: 12000
+  Code_Architect: 12000
+  Test_Engineer: 10000
+  DevOps_Engineer: 4000
+  Devils_Advocate: 4000
+  Generalist_Assistant: 3000
+  Constructive_Critic: 3500
+  Impartial_Arbitrator: 4000

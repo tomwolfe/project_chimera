@@ -2724,7 +2724,8 @@ class SocraticDebate:
                 continue
 
             file_changes_map = defaultdict(list)
-            for change_data in suggestion["CODE_CHANGES_SUGGESTED"]:
+            malformed_blocks_for_suggestion = []  # Initialize here
+            for change_data in suggestion.get("CODE_CHANGES_SUGGESTED", []):
                 try:
                     code_change = CodeChange.model_validate(change_data)
                     file_changes_map[code_change.file_path].append(code_change)
@@ -2754,7 +2755,11 @@ class SocraticDebate:
                     )
 
             suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
-            consolidated_suggestions.append(suggestion)
+            if malformed_blocks_for_suggestion:
+                suggestion.setdefault("malformed_blocks", []).extend(
+                    malformed_blocks_for_suggestion
+                )
+            processed_suggestions.append(suggestion)
 
         analysis_output["IMPACTFUL_SUGGESTIONS"] = consolidated_suggestions
         return analysis_output
