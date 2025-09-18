@@ -63,13 +63,10 @@ def validate_and_resolve_file_path_for_action(
         if file_exists_in_codebase:
             error_message = f"Action '{action}' suggested for existing file '{resolved_path}'. Consider 'MODIFY'."
             suggested_action_if_changed = "MODIFY"  # Suggest changing action
-            # If it's an ADD/CREATE on an existing file, it's technically invalid for ADD, but can be converted to MODIFY
-            # We'll mark it as valid but with a suggested action change.
             return True, resolved_path, suggested_action_if_changed, error_message
         if not can_create_file(resolved_path):
             error_message = f"Cannot create file at '{resolved_path}': Parent directory does not exist or is inaccessible."
             return False, resolved_path, action, error_message
-        # If it's ADD/CREATE and file doesn't exist and can be created, it's valid.
         return True, resolved_path, action, None
 
     elif action == "CREATE_DIRECTORY":
@@ -88,19 +85,16 @@ def validate_and_resolve_file_path_for_action(
         if not file_exists_in_codebase:
             error_message = f"Action 'MODIFY' suggested for non-existent file '{resolved_path}'. Converting to 'CREATE'."
             suggested_action_if_changed = "CREATE"  # Suggest changing action
-            # If MODIFY on non-existent, convert to CREATE, and it's valid if can_create_file is true
             if not can_create_file(resolved_path):
                 error_message = f"Cannot create file at '{resolved_path}': Parent directory does not exist or is inaccessible."
                 return False, resolved_path, action, error_message
             return True, resolved_path, suggested_action_if_changed, error_message
-        # If MODIFY on existing file, it's valid.
         return True, resolved_path, action, None
 
     elif action == "REMOVE":
         if not file_exists_in_codebase:
             error_message = f"Action 'REMOVE' suggested for non-existent file '{resolved_path}'. Suggestion ignored."
             return False, resolved_path, action, error_message
-        # If REMOVE on existing file, it's valid.
         return True, resolved_path, action, None
 
     else:

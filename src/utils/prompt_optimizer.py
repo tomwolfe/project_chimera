@@ -117,15 +117,8 @@ class PromptOptimizer:
         try:
             pre_truncated_text = text
             if self.summarizer_tokenizer:
-                MAX_CHARS_FOR_SUMMARIZER_INPUT = (
-                    self.summarizer_model_max_input_tokens * 4
-                )
-                if len(text) > MAX_CHARS_FOR_SUMMARIZER_INPUT:
-                    logger.warning(
-                        f"Input text for summarizer is extremely long ({len(text)} chars). Pre-truncating to {MAX_CHARS_FOR_SUMMARIZER_INPUT} chars."
-                    )
-                    pre_truncated_text = text[:MAX_CHARS_FOR_SUMMARIZER_INPUT]
-
+                # The previous manual character-based pre-truncation is removed.
+                # We now rely on the summarizer's tokenizer for truncation.
                 tokenized_input = self.summarizer_tokenizer(
                     pre_truncated_text,
                     truncation=True,
@@ -135,7 +128,6 @@ class PromptOptimizer:
                 pre_truncated_text = self.summarizer_tokenizer.decode(
                     tokenized_input["input_ids"][0], skip_special_tokens=True
                 )
-
                 if (
                     self._count_tokens_robustly(text)
                     > self.summarizer_model_max_input_tokens
