@@ -174,9 +174,30 @@ class LLMOutputParser:
         self.logger.debug("No first outermost valid JSON block found.")
         return None
 
+    def _extract_from_xml_tags(self, text: str, tag: str) -> Optional[str]:
+        """
+        Extracts content from within specific XML-like tags.
+        E.g., for tag "json_output", extracts content from <json_output>...</json_output>.
+        """
+        start_tag = f"<{tag}>"
+        end_tag = f"</{tag}>"
+        start_match = text.find(start_tag)
+        if start_match == -1:
+            return None
+
+        end_match = text.find(end_tag, start_match + len(start_tag))
+        if end_match == -1:
+            # If end tag is missing, try to extract up to the end of the string
+            self.logger.warning(
+                f"Start tag <{tag}> found, but end tag </{tag}> is missing. Extracting until end of string."
+            )
+            return text[start_match + len(start_tag) :].strip()
+
+        return text[start_match + len(start_tag) : end_match].strip()
+
     def _extract_json_from_markdown(self, text: str) -> Optional[str]:
         """
-        Extracts content from markdown code blocks and then uses robust JSON extraction
+        Extracts content from markdown code blocks and then uses robust json extraction
         on that content.
         """
         self.logger.debug("Attempting to extract JSON from markdown code blocks...")
@@ -551,6 +572,12 @@ class LLMOutputParser:
     def _clean_llm_output(self, raw_output: str) -> str:
         """Clean common LLM output artifacts like markdown fences and conversational filler."""
         cleaned = raw_output
+
+        # NEW: First attempt to extract from specific XML-like tags if present
+        json_from_xml_tags = self._extract_from_xml_tags(cleaned, "json_output")
+        if json_from_xml_tags:
+            self.logger.debug("Extracted JSON from <json_output> tags.")
+            return json_from_xml_tags
 
         cleaned = re.sub(
             r"^\s*```(?:json|python|text|yaml|yml)?\s*\n(.*?)\n\s*```\s*$",
@@ -1027,7 +1054,7 @@ class LLMOutputParser:
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
                     if extracted_json_str is not None
-                    else raw_output[:500]
+                    else raw_output_snippet
                 )
                 if (
                     detected_suggestion
