@@ -1530,6 +1530,59 @@ class SocraticDebate:
             )
             return {"error": f"Error processing Devils_Advocate output: {e}"}
 
+    def _prepare_prompt_for_turn(
+        self,
+        persona_name: str,
+        previous_output: Any,
+        context_results: Optional[Dict[str, Any]],
+    ) -> str:
+        """Prepares the full prompt for a single persona turn."""
+        persona_specific_context = self._build_persona_context_string(
+            persona_name, context_results
+        )
+        is_problematic = isinstance(previous_output, dict) and (
+            previous_output.get("malformed_blocks")
+            or previous_output.get("content_misalignment_warning")
+            or (
+                "conflict_found" in previous_output
+                and previous_output["conflict_found"] is True
+            )
+        )
+        previous_output_summary = self._summarize_previous_output(
+            previous_output, is_problematic
+        )
+
+        prompt_parts = [f"Initial Problem: {self.initial_prompt}\n"]
+        if persona_specific_context:
+            prompt_parts.append(f"Relevant Code Context:\n{persona_specific_context}\n")
+        prompt_parts.append(previous_output_summary)
+        return "\n".join(prompt_parts)
+
+    def _handle_problematic_output(
+        self, turn_output: Dict[str, Any], debate_history: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Handles conflict resolution for a problematic turn output."""
+        resolved_output_from_manager = self.conflict_manager.resolve_conflict(
+            debate_history
+        )
+        if resolved_output_from_manager and resolved_output_from_manager.get(
+            "resolved_output"
+        ):
+            debate_history.append(
+                {
+                    "persona": "Conflict_Resolution_Manager",
+                    "output": resolved_output_from_manager,
+                }
+            )
+            self.intermediate_steps["Conflict_Resolution_Attempt"] = {
+                "conflict_resolved": True,
+                **resolved_output_from_manager,
+            }
+            return resolved_output_from_manager["resolved_output"]
+        else:
+            self.intermediate_steps["Unresolved_Conflict"] = turn_output
+            return turn_output
+
     def _execute_debate_persona_turns(
         self,
         persona_sequence: List[str],
@@ -1589,28 +1642,10 @@ class SocraticDebate:
                 current_persona_name=persona_name,
             )
 
-            persona_specific_context_str = self._build_persona_context_string(
-                persona_name, context_persona_turn_results
+            # Refactored prompt preparation
+            current_prompt = self._prepare_prompt_for_turn(
+                persona_name, previous_output_for_llm, context_persona_turn_results
             )
-            previous_output_summary_str = self._summarize_previous_output(
-                previous_output_for_llm,
-                isinstance(previous_output_for_llm, dict)
-                and (
-                    previous_output_for_llm.get("malformed_blocks")
-                    or previous_output_for_llm.get("content_misalignment_warning")
-                    or (
-                        "conflict_found" in previous_output_for_llm
-                        and previous_output_for_llm["conflict_found"] is True
-                    )
-                ),
-            )
-
-            current_prompt = f"Initial Problem: {self.initial_prompt}\n\n"
-            if persona_specific_context_str:
-                current_prompt += (
-                    f"Relevant Code Context:\n{persona_specific_context_str}\n\n"
-                )
-            current_prompt += previous_output_summary_str
 
             base_persona_config = self.persona_manager.all_personas.get(
                 persona_name.replace("_TRUNCATED", "")
@@ -1660,42 +1695,10 @@ class SocraticDebate:
                 debate_history.append({"persona": persona_name, "output": turn_output})
 
                 if self._is_problematic_output(turn_output):
-                    self._log_with_context(
-                        "warning",
-                        f"Problematic output detected from {persona_name}. Attempting conflict resolution.",
-                        persona=persona_name,
-                        output_snippet=str(turn_output)[:200],
+                    # Refactored error handling
+                    previous_output_for_llm = self._handle_problematic_output(
+                        turn_output, debate_history
                     )
-                    resolved_output_from_manager = (
-                        self.conflict_manager.resolve_conflict(debate_history)
-                    )
-                    if (
-                        resolved_output_from_manager
-                        and resolved_output_from_manager.get("resolved_output")
-                    ):
-                        debate_history.append(
-                            {
-                                "persona": "Conflict_Resolution_Manager",
-                                "output": resolved_output_from_manager,
-                            }
-                        )
-                        previous_output_for_llm = resolved_output_from_manager[
-                            "resolved_output"
-                        ]
-                        self.intermediate_steps["Conflict_Resolution_Attempt"] = {
-                            "conflict_resolved": True,
-                            "resolution_summary": resolved_output_from_manager[
-                                "resolution_summary"
-                            ],
-                            "resolved_output": resolved_output_from_manager[
-                                "resolved_output"
-                            ],
-                        }
-                        self.intermediate_steps["Unresolved_Conflict"] = None
-                    else:
-                        previous_output_for_llm = turn_output
-                        self.intermediate_steps["Unresolved_Conflict"] = turn_output
-                        self.intermediate_steps["Conflict_Resolution_Attempt"] = None
                 else:
                     previous_output_for_llm = turn_output
                     self.intermediate_steps["Unresolved_Conflict"] = None
@@ -2720,7 +2723,9 @@ class SocraticDebate:
                 "CODE_CHANGES_SUGGESTED" not in suggestion
                 or not suggestion["CODE_CHANGES_SUGGESTED"]
             ):
-                consolidated_suggestions.append(suggestion)
+                processed_suggestions.append(
+                    suggestion
+                )  # Changed from consolidated_suggestions.append(suggestion)
                 continue
 
             file_changes_map = defaultdict(list)

@@ -550,9 +550,11 @@ class PersonaManager:
         # Render the system prompt from template first
         if self.prompt_optimizer and adjusted_config.system_prompt_template:
             try:
-                # Pass a minimal context for rendering, actual context is in core.py
+                # BUG FIX: Pass the persona's base name (converted to snake_case) as the template key.
+                # The system_prompt_template field in PersonaConfig now holds the template content,
+                # but the prompt_optimizer expects the template's file name (key) to retrieve it.
                 rendered_prompt = self.prompt_optimizer.generate_prompt(
-                    adjusted_config.system_prompt_template,
+                    base_persona_name.lower(),  # Use the persona name (snake_case) as the template key
                     context={"persona_name": base_persona_name},
                 )
                 # Temporarily store the rendered prompt in a new attribute for optimization
