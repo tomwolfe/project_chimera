@@ -34,6 +34,32 @@ class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
+    def _repair_diff_content_headers(self, diff_content: str) -> str:
+        """
+        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing.
+        Specifically targets lines starting with '--- ' or '+++ ' followed by a path
+        that doesn't already have 'a/' or 'b/' after the initial '--- ' or '+++ '.
+        """
+        repaired_diff = diff_content
+
+        # Regex to find '--- /path' and replace with '--- a/path'
+        repaired_diff = re.sub(
+            r"^(--- )([^a/].*)$", r"--- a/\2", repaired_diff, flags=re.MULTILINE
+        )
+        # Regex to find '+++ /path' and replace with '+++ b/path'
+        repaired_diff = re.sub(
+            r"^(+++ )([^b/].*)$", r"+++ b/\2", repaired_diff, flags=re.MULTILINE
+        )
+
+        # Ensure we don't double-prefix if the LLM already added it (e.g., "--- a/a/path")
+        repaired_diff = re.sub(
+            r"^(--- a/)(a/.*)$", r"--- a/\2", repaired_diff, flags=re.MULTILINE
+        )
+        repaired_diff = re.sub(
+            r"^(+++ b/)(b/.*)$", r"+++ b/\2", repaired_diff, flags=re.MULTILINE
+        )
+        return repaired_diff
+
     def _extract_json_with_markers(
         self,
         text: str,
@@ -297,6 +323,56 @@ class LLMOutputParser:
                 }
             )
             json_str = temp_str
+
+        # Heuristic 10: Repair DIFF_CONTENT headers within CODE_CHANGES_SUGGESTED or CODE_CHANGES
+        # This needs to be done on the parsed data structure, then re-serialized.
+        try:
+            temp_parsed_data = json.loads(json_str)
+            # Check for SelfImprovementAnalysisOutputV1 structure
+            if (
+                isinstance(temp_parsed_data, dict)
+                and "IMPACTFUL_SUGGESTIONS" in temp_parsed_data
+            ):
+                for suggestion in temp_parsed_data["IMPACTFUL_SUGGESTIONS"]:
+                    if "CODE_CHANGES_SUGGESTED" in suggestion:
+                        for change in suggestion["CODE_CHANGES_SUGGESTED"]:
+                            if change.get("ACTION") == "MODIFY" and change.get(
+                                "DIFF_CONTENT"
+                            ):
+                                original_diff = change["DIFF_CONTENT"]
+                                repaired_diff = self._repair_diff_content_headers(
+                                    original_diff
+                                )
+                                if repaired_diff != original_diff:
+                                    change["DIFF_CONTENT"] = repaired_diff
+                                    repair_log.append(
+                                        {
+                                            "action": "initial_repair",
+                                            "details": f"Repaired DIFF_CONTENT headers for {change.get('FILE_PATH', 'unknown_file')}.",
+                                        }
+                                    )
+            # Check for LLMOutput structure (e.g., from Impartial_Arbitrator)
+            elif (
+                isinstance(temp_parsed_data, dict)
+                and "CODE_CHANGES" in temp_parsed_data
+            ):
+                for change in temp_parsed_data["CODE_CHANGES"]:
+                    if change.get("ACTION") == "MODIFY" and change.get("DIFF_CONTENT"):
+                        original_diff = change["DIFF_CONTENT"]
+                        repaired_diff = self._repair_diff_content_headers(original_diff)
+                        if repaired_diff != original_diff:
+                            change["DIFF_CONTENT"] = repaired_diff
+                            repair_log.append(
+                                {
+                                    "action": "initial_repair",
+                                    "details": f"Repaired DIFF_CONTENT headers for {change.get('FILE_PATH', 'unknown_file')}.",
+                                }
+                            )
+            json_str = json.dumps(
+                temp_parsed_data, indent=2
+            )  # Re-serialize after modification
+        except json.JSONDecodeError:
+            pass  # Cannot repair diffs if the JSON structure itself is too broken to parse
 
         if original_str != json_str:
             self.logger.info(
