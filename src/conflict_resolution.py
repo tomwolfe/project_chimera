@@ -2,7 +2,6 @@ import json
 import logging
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
-# NEW: Import necessary classes for self-correction
 from src.llm_provider import GeminiProvider
 from src.models import (
     PersonaConfig,
@@ -10,20 +9,21 @@ from src.models import (
     LLMOutput,
     CritiqueOutput,
     ConflictReport,
-    SelfImprovementAnalysisOutputV1,  # Keep this import for the new error handling
+    SelfImprovementAnalysisOutputV1,
     ContextAnalysisOutput,
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
-    SuggestionItem,  # NEW: Import SuggestionItem for conflict detection
+    SuggestionItem,
 )
 from src.utils.output_parser import LLMOutputParser
-from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.llm_tokenizers.gemini_tokenizer import (
+    GeminiTokenizer,
+)  # Not directly used here, but kept for context
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError
-from pydantic import ValidationError  # Import ValidationError for model_validate
+from pydantic import ValidationError
 
-# Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
 
@@ -48,12 +48,10 @@ class ConflictResolutionManager:
         self.settings = ChimeraSettings()
         self.output_parser = LLMOutputParser()
 
-    # NEW METHOD: _detect_conflict_type
     def _detect_conflict_type(self, debate_history: List[Dict]) -> str:
         """Detect the type of conflict between personas."""
         logger.info("Attempting to detect conflict type.")
 
-        # Look for fundamental disagreements in key areas
         security_auditor_output = next(
             (t["output"] for t in debate_history if t["persona"] == "Security_Auditor"),
             None,
@@ -67,9 +65,7 @@ class ConflictResolutionManager:
             None,
         )
 
-        # Check for SECURITY_VS_ARCHITECTURE conflict
         if security_auditor_output and code_architect_output:
-            # Assuming CritiqueOutput structure for Security_Auditor and Code_Architect
             security_suggestions = security_auditor_output.get("SUGGESTIONS", [])
             architect_suggestions = code_architect_output.get("SUGGESTIONS", [])
 
@@ -85,14 +81,12 @@ class ConflictResolutionManager:
                 or s.get("AREA", "").lower() == "maintainability"
             ]
 
-            # If security issues are identified but not adequately addressed by architect's solutions
             if any(p for p in security_problems_identified) and not any(
                 "security" in sol for sol in architect_solutions_proposed
             ):
                 logger.info("Detected conflict type: SECURITY_VS_ARCHITECTURE")
                 return "SECURITY_VS_ARCHITECTURE"
 
-        # Check for FUNDAMENTAL_FLAW_DETECTION by Devils_Advocate
         if devils_advocate_output and isinstance(devils_advocate_output, dict):
             if devils_advocate_output.get("conflict_found", False):
                 logger.info("Detected conflict type: FUNDAMENTAL_FLAW_DETECTION")
@@ -106,16 +100,6 @@ class ConflictResolutionManager:
     ) -> Optional[Dict[str, Any]]:
         """
         Analyzes debate history and attempts to resolve conflicts or malformed outputs.
-        This method is designed to be invoked when a persona's output is deemed problematic.
-
-        Args:
-            debate_history: A list of dictionaries, where each dictionary represents a turn
-                            in the debate, containing "persona" and "output".
-
-        Returns:
-            An optional dictionary representing a resolved output, or None if no resolution
-            could be found through automated means. The resolved output will include a
-            "resolution_strategy" field.
         """
         logger.warning("ConflictResolutionManager: Attempting to resolve conflict...")
 
@@ -129,7 +113,6 @@ class ConflictResolutionManager:
         latest_output = latest_turn.get("output")
         latest_persona_name = latest_turn.get("persona", "Unknown")
 
-        # Check if the latest output is problematic (malformed_blocks or conflict_found)
         is_problematic = False
         if isinstance(latest_output, dict):
             if latest_output.get("malformed_blocks") or (
@@ -170,7 +153,6 @@ class ConflictResolutionManager:
                     f"ConflictResolutionManager: Self-correction failed for {latest_persona_name}. Falling back to synthesis/manual intervention."
                 )
 
-        # Strategy 1: Attempt to parse if the latest output is a string that looks like JSON
         if isinstance(latest_output, str):
             try:
                 parsed_latest_output = json.loads(latest_output)
@@ -193,11 +175,9 @@ class ConflictResolutionManager:
                     f"ConflictResolutionManager: Latest output from {latest_persona_name} is a malformed string, cannot parse directly."
                 )
 
-        # NEW: Conflict resolution strategy based on type
         conflict_type = self._detect_conflict_type(debate_history)
         logger.info(f"Detected conflict type: {conflict_type}")
 
-        # Extract the latest ConflictReport if available, especially from Devils_Advocate
         latest_conflict_report = None
         for turn in reversed(debate_history):
             if turn["persona"] == "Devils_Advocate" and isinstance(
@@ -211,7 +191,6 @@ class ConflictResolutionManager:
                 except ValidationError:
                     continue
 
-        # --- START NEW LOGIC FOR MISSING CODEBASE CONTEXT ---
         if latest_conflict_report and (
             "lack of information" in latest_conflict_report.summary.lower()
             or "no codebase context" in latest_conflict_report.summary.lower()
@@ -219,7 +198,6 @@ class ConflictResolutionManager:
             logger.warning(
                 "ConflictResolutionManager: Detected conflict due to missing codebase context."
             )
-            # Construct a SelfImprovementAnalysisOutputV1 compliant response
             resolved_output_data = SelfImprovementAnalysisOutputV1(
                 ANALYSIS_SUMMARY="Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
                 IMPACTFUL_SUGGESTIONS=[
@@ -243,7 +221,7 @@ class ConflictResolutionManager:
                         "message": "Analysis requires codebase access.",
                     }
                 ],
-            ).model_dump(by_alias=True)  # Ensure it's a dict
+            ).model_dump(by_alias=True)
 
             return {
                 "resolution_strategy": "missing_codebase_context",
@@ -256,16 +234,12 @@ class ConflictResolutionManager:
                     }
                 ],
             }
-        # --- END NEW LOGIC FOR MISSING CODEBASE CONTEXT ---
 
         if conflict_type == "SECURITY_VS_ARCHITECTURE":
             logger.info(
                 "Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict."
             )
-            # Example logic: Prioritize security concerns, ask for architectural solutions that address them
             resolution_summary = "Security concerns were identified by Security_Auditor but not adequately addressed by Code_Architect. Prioritizing security in the resolution."
-            # This would typically involve another LLM call to synthesize a solution that balances both.
-            # For now, we'll synthesize from history, but with a specific summary.
             synthesized_output = self._synthesize_from_history(
                 latest_output, debate_history[:-1], resolution_summary
             )
@@ -290,9 +264,7 @@ class ConflictResolutionManager:
             logger.info(
                 "Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict."
             )
-            # Example logic: If Devils_Advocate found a fundamental flaw, it needs to be addressed directly.
             resolution_summary = "Devils_Advocate identified a fundamental flaw. The resolution focuses on addressing this core issue."
-            # This might involve re-prompting a persona to fix the flaw, or a synthesis that explicitly incorporates the flaw.
             synthesized_output = self._synthesize_from_history(
                 latest_output, debate_history[:-1], resolution_summary
             )
@@ -314,7 +286,6 @@ class ConflictResolutionManager:
                 )
         else:
             logger.info("Applying general conflict resolution strategy.")
-            # Strategy 2: Synthesize from previous valid turns (General Disagreement)
             valid_turns = [
                 turn
                 for turn in debate_history[:-1]
@@ -339,7 +310,7 @@ class ConflictResolutionManager:
                         "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
                         "malformed_blocks": [
                             {
-                                "type": "SYNTHESIS_FROM_HISTORY",
+                                "type": "SYNTHESIS_ATTEMPT",
                                 "message": "Automated synthesis from history due to problematic output.",
                             }
                         ],
@@ -349,7 +320,6 @@ class ConflictResolutionManager:
                         "ConflictResolutionManager: Synthesis from history failed."
                     )
 
-        # Strategy 3: Fallback to a generic placeholder or flag for manual intervention
         logger.warning(
             "ConflictResolutionManager: Automated resolution strategies exhausted."
         )
@@ -497,7 +467,19 @@ class ConflictResolutionManager:
             persona_name.replace("_TRUNCATED", ""), GeneralOutput
         )
 
-        full_system_prompt_parts = [persona_config.system_prompt]
+        # MODIFIED: Use _rendered_system_prompt or system_prompt_template
+        final_system_prompt_base = getattr(
+            persona_config,
+            "_rendered_system_prompt",
+            persona_config.system_prompt_template,
+        )
+        if not final_system_prompt_base:
+            logger.error(
+                f"Rendered system prompt is empty for {persona_name} during retry. Using fallback."
+            )
+            final_system_prompt_base = "You are a helpful AI assistant."  # Fallback
+
+        full_system_prompt_parts = [final_system_prompt_base]
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
         full_system_prompt_parts.append(
             f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"

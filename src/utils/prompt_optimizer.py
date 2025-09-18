@@ -1,12 +1,30 @@
 # src/utils/prompt_optimizer.py
 import logging
-from typing import Dict, Any, List, Optional, Tuple, Union
-from jinja2 import Environment, FileSystemLoader  # ADDED
+from typing import (
+    Dict,
+    Any,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)  # ADDED TYPE_CHECKING
+from jinja2 import Environment, FileSystemLoader, Template
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 import re
 import json
+from collections import defaultdict
+from pathlib import Path
+
+# NEW IMPORTS: For internal optimization decisions
+from src.models import PersonaConfig
+
+# Use TYPE_CHECKING to avoid circular import at runtime for PersonaManager
+if TYPE_CHECKING:
+    from src.persona_manager import PersonaManager
+    from src.token_tracker import TokenUsageTracker
 
 
 logger = logging.getLogger(__name__)
@@ -16,18 +34,23 @@ class PromptOptimizer:
     """Optimizes prompts for various personas based on context and token limits."""
 
     def __init__(
-        self, tokenizer: Tokenizer, settings: ChimeraSettings, summarizer_pipeline: Any
+        self,
+        tokenizer: Tokenizer,
+        settings: ChimeraSettings,
+        summarizer_pipeline: Any,
+        persona_manager: Optional[
+            "PersonaManager"
+        ] = None,  # MODIFIED: Type hint with quotes
+        token_tracker: Optional[
+            "TokenTracker"
+        ] = None,  # MODIFIED: Type hint with quotes
     ):
         """Initializes the PromptOptimizer."""
         self.tokenizer = tokenizer
         self.settings = settings
         self.summarizer_pipeline = summarizer_pipeline
-        self.env = Environment(
-            loader=FileSystemLoader("templates")
-        )  # NEW: Initialize Jinja2 environment
-        logger.info(
-            "PromptOptimizer initialized with template directory: templates"
-        )  # MODIFIED to use existing logger
+        self.env = Environment(loader=FileSystemLoader("prompts"))
+        logger.info("PromptOptimizer initialized with template directory: prompts")
 
         if hasattr(self.summarizer_pipeline, "tokenizer"):
             self.summarizer_tokenizer = self.summarizer_pipeline.tokenizer
@@ -44,6 +67,29 @@ class PromptOptimizer:
             self.summarizer_tokenizer = None
             self.summarizer_model_max_input_tokens = 1024
 
+        self.token_cache = defaultdict(dict)
+        self.prompt_templates = {}
+        self._load_prompt_templates()
+
+        self.persona_manager = persona_manager
+        self.token_tracker = token_tracker
+
+    def _load_prompt_templates(self, template_dir: str = "prompts"):
+        """Loads all Jinja2 templates from the specified directory."""
+        template_path = Path(template_dir)
+        if not template_path.exists():
+            logger.warning(
+                f"Prompt templates directory '{template_dir}' not found. No templates loaded."
+            )
+            return
+
+        for template_file in template_path.glob("*.j2"):
+            with open(template_file, "r", encoding="utf-8") as f:
+                self.prompt_templates[template_file.stem] = f.read()
+        logger.info(
+            f"Loaded {len(self.prompt_templates)} prompt templates from '{template_dir}'."
+        )
+
     def _count_tokens_robustly(self, text: str) -> int:
         """Robustly counts tokens using available tokenizer methods."""
         if hasattr(self.tokenizer, "count_tokens"):
@@ -51,11 +97,10 @@ class PromptOptimizer:
         elif hasattr(self.tokenizer, "encode"):
             return len(self.tokenizer.encode(text))
         else:
-            # Fallback for unknown tokenizer types
             logger.warning(
                 f"Unknown tokenizer type for {type(self.tokenizer).__name__}. Falling back to character count / 4 estimate."
             )
-            return len(text) // 4  # Rough estimate
+            return len(text) // 4
 
     def _summarize_text(
         self, text: str, target_tokens: int, truncation_indicator: str = ""
@@ -151,32 +196,86 @@ class PromptOptimizer:
                 text, target_tokens, truncation_indicator
             )
 
-    def get_prompt(self, template_name: str, context: dict) -> str:  # ADDED
-        """Get a formatted prompt from a template."""
+    def generate_prompt(
+        self, template_name: str, context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Generates a formatted prompt from a template, rendering it with Jinja2.
+        """
+        if template_name not in self.prompt_templates:
+            raise ValueError(f"No template found for {template_name}")
+
         try:
-            template = self.env.get_template(f"{template_name}.j2")
-            return template.render(context)
+            template = Template(self.prompt_templates[template_name])
+            return template.render(context=context or {})
         except Exception as e:
-            logger.error(f"Error loading template {template_name}: {str(e)}")
+            logger.error(f"Error rendering template {template_name}: {str(e)}")
             raise
 
     def optimize_prompt(
         self,
         user_prompt_text: str,
-        persona_name: str,
+        persona_config: PersonaConfig,
         max_output_tokens_for_turn: int,
         system_message_for_token_count: str = "",
+        is_self_analysis_prompt: bool = False,
     ) -> str:
         """
         Optimizes a user prompt string for a specific persona based on context and token limits.
-        This method aims to reduce the input prompt size if it, combined with the expected output,
-        exceeds a reasonable threshold for the persona, or if the overall token budget is constrained.
-        It returns an optimized user prompt string.
         """
+        persona_name = persona_config.name
+
+        # Check cache first
+        if (
+            persona_name in self.token_cache
+            and user_prompt_text in self.token_cache[persona_name]
+        ):
+            return self.token_cache[persona_name][user_prompt_text]
+
+        optimized_prompt_text = user_prompt_text
+
+        # 1. Redundant phrase removal (as per report)
+        optimized_prompt_text = re.sub(r"\s+", " ", optimized_prompt_text.strip())
+        optimized_prompt_text = re.sub(
+            r"\b(a|an|the)\b", "", optimized_prompt_text, flags=re.IGNORECASE
+        )
+
+        # 2. Ensure critical instructions are preserved/added (as per report, for self-analysis)
+        if (
+            is_self_analysis_prompt
+            and "80/20" not in optimized_prompt_text
+            and "pareto" not in optimized_prompt_text.lower()
+        ):
+            optimized_prompt_text += " Prioritize changes using the 80/20 principle."
+
+        # Determine if aggressive optimization is needed internally
+        aggressive_optimization_flag = False
+        if (
+            self.token_tracker and self.persona_manager
+        ):  # Ensure dependencies are available
+            persona_efficiency_score = (
+                persona_config.token_efficiency_score
+                if isinstance(persona_config.token_efficiency_score, (int, float))
+                else 0.0
+            )
+            if (
+                self.token_tracker.get_consumption_rate()
+                > self.settings.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD
+            ):
+                if persona_efficiency_score < getattr(
+                    self.settings, "TOKEN_EFFICIENCY_SCORE_THRESHOLD", 0.7
+                ):
+                    aggressive_optimization_flag = True
+                    logger.info(
+                        f"PromptOptimizer: Aggressive token optimization triggered for {persona_name} due to high global consumption and low persona efficiency.",
+                        persona=persona_name,
+                        global_consumption_rate=self.token_tracker.get_consumption_rate(),
+                        persona_efficiency_score=persona_efficiency_score,
+                    )
+
         # Calculate current prompt tokens (including system message for accurate total)
-        # This is the total input tokens that will be sent to the LLM
         full_input_tokens = self._count_tokens_robustly(
-            system_message_for_token_count + user_prompt_text
+            system_message_for_token_count + optimized_prompt_text
         )
 
         # Get persona-specific token limits from settings
@@ -184,11 +283,10 @@ class PromptOptimizer:
             persona_name, self.settings.default_max_input_tokens_per_persona
         )
 
-        # The effective input limit is the persona's limit, but also consider the model's overall max input tokens
-        # and the expected output tokens.
-        # The `max_output_tokens_for_turn` is already a budget for the output.
-        # So, the `effective_input_limit` is the maximum tokens allowed for the *input* part of the prompt.
         effective_input_limit = persona_input_token_limit
+        if aggressive_optimization_flag:
+            # Further reduce the effective input limit if aggressive optimization is on
+            effective_input_limit = max(50, int(effective_input_limit * 0.75))
 
         MIN_EFFECTIVE_INPUT_LIMIT = 50
         effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
@@ -199,33 +297,30 @@ class PromptOptimizer:
                 f"{persona_name} prompt (total input tokens: {full_input_tokens}) exceeds effective input token limit ({effective_input_limit}). Optimizing..."
             )
 
-            # Calculate how many tokens are available for the user_prompt_text
-            # after accounting for the system_message.
             system_message_tokens = self._count_tokens_robustly(
                 system_message_for_token_count
             )
             available_for_user_prompt = effective_input_limit - system_message_tokens
 
             if available_for_user_prompt <= MIN_EFFECTIVE_INPUT_LIMIT:
-                # If very little space, return a very short summary or indicator for the user prompt
-                return self.tokenizer.truncate_to_token_limit(
-                    user_prompt_text,
+                optimized_prompt_text = self.tokenizer.truncate_to_token_limit(
+                    optimized_prompt_text,
                     MIN_EFFECTIVE_INPUT_LIMIT,
                     truncation_indicator="... (user prompt too long)",
                 )
-
-            # Truncate the user_prompt_text itself
-            optimized_user_prompt_text = self.tokenizer.truncate_to_token_limit(
-                user_prompt_text,
-                available_for_user_prompt,
-                truncation_indicator="\n... (user prompt truncated)",
-            )
+            else:
+                optimized_prompt_text = self.tokenizer.truncate_to_token_limit(
+                    optimized_prompt_text,
+                    available_for_user_prompt,
+                    truncation_indicator="\n... (user prompt truncated)",
+                )
             logger.info(
-                f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_user_prompt_text)} tokens."
+                f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_prompt_text)} tokens."
             )
-            return optimized_user_prompt_text
 
-        return user_prompt_text  # No optimization needed
+        # Cache result
+        self.token_cache[persona_name][user_prompt_text] = optimized_prompt_text
+        return optimized_prompt_text
 
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int
@@ -254,15 +349,14 @@ class PromptOptimizer:
         and adding specific token optimization directives for high-token personas.
         """
         persona_name = persona_config_data.get("name")
-        if persona_name in [
+
+        if "system_prompt" in persona_config_data and persona_name in [
             "Security_Auditor",
             "Self_Improvement_Analyst",
             "Code_Architect",
         ]:
             system_prompt = persona_config_data["system_prompt"]
 
-            # Remove generic instructions that aren't specific to the persona
-            # These are examples, adjust based on actual common redundancies
             system_prompt = re.sub(
                 r"You are a highly analytical AI assistant\.", "", system_prompt
             )
@@ -270,7 +364,6 @@ class PromptOptimizer:
                 r"Provide clear and concise responses\.", "", system_prompt
             )
 
-            # Add specific token optimization instructions
             token_optimization_directives = """
             **Token Optimization Instructions:**
             - Be concise but thorough
@@ -279,7 +372,6 @@ class PromptOptimizer:
             - Prioritize the most critical information first
             - Limit your response to the most essential points
             """
-            # Only add if not already present to avoid duplication on retries
             if token_optimization_directives.strip() not in system_prompt:
                 system_prompt += token_optimization_directives
 

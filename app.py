@@ -2,8 +2,8 @@
 
 import streamlit as st
 import os
-import sys  # NEW: Import sys for graceful exit
-from src.utils.api_key_validator import fetch_api_key  # ADD THIS LINE
+import sys
+from src.utils.api_key_validator import fetch_api_key
 
 
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
@@ -50,10 +50,7 @@ from src.utils.code_validator import validate_code_output_batch
 import json
 import uuid
 from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import (
-    RateLimiter,
-    RateLimitExceededError,
-)  # NEW: Import RateLimitExceededError
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path
 
@@ -77,7 +74,7 @@ from src.utils.ui_helpers import (
     display_key_status,
     test_api_key,
     shutdown_streamlit,
-)  # NEW: Import shutdown_streamlit
+)
 
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
@@ -1279,7 +1276,8 @@ with st.expander(
 
             if persona and original_persona_config:
                 if (
-                    persona.system_prompt != original_persona_config.system_prompt
+                    persona.system_prompt_template
+                    != original_persona_config.system_prompt_template  # MODIFIED
                     or persona.temperature != original_persona_config.temperature
                     or persona.max_tokens != original_persona_config.max_tokens
                 ):
@@ -1319,18 +1317,25 @@ with st.expander(
         with st.expander(f"**{persona.name.replace('_', ' ')}**", expanded=False):
             st.markdown(f"**Description:** {persona.description}")
 
+            # MODIFIED: Use system_prompt_template for value
             new_system_prompt = st.text_area(
                 "System Prompt",
-                value=persona.system_prompt,
+                value=persona.system_prompt_template,
                 height=200,
                 key=f"system_prompt_{p_name}",
                 help="The core instructions for this persona.",
             )
-            if new_system_prompt != persona.system_prompt:
+            # MODIFIED: Compare against system_prompt_template
+            if new_system_prompt != persona.system_prompt_template:
+                # MODIFIED: Log change for system_prompt_template
                 _log_persona_change(
-                    p_name, "system_prompt", persona.system_prompt, new_system_prompt
+                    p_name,
+                    "system_prompt_template",
+                    persona.system_prompt_template,
+                    new_system_prompt,
                 )
-                persona.system_prompt = new_system_prompt
+                # MODIFIED: Assign to system_prompt_template
+                persona.system_prompt_template = new_system_prompt
 
             new_temperature = st.slider(
                 "Temperature",
@@ -1485,10 +1490,10 @@ def _run_socratic_debate_process():
 
     try:
         st.session_state.session_rate_limiter_instance(lambda: None)()
-    except RateLimitExceededError as e:  # Catch specific RateLimitExceededError
+    except RateLimitExceededError as e:
         handle_debate_errors(e)
         return
-    except Exception as e:  # Catch any other unexpected errors from rate limiter
+    except Exception as e:
         handle_debate_errors(e)
         return
 
@@ -1523,9 +1528,6 @@ def _run_socratic_debate_process():
             }
         ],
     }
-    # Removed unused local variable initializations
-    # final_total_tokens = 0
-    # final_total_cost = 0.0
 
     with st.status("Socratic Debate in Progress", expanded=True) as status:
         main_progress_message = st.empty()
@@ -1739,13 +1741,6 @@ def _run_socratic_debate_process():
                 status.update(
                     label="Socratic Debate Complete!", state="complete", expanded=False
                 )
-                # Removed unused local variable assignments
-                # final_total_tokens = st.session_state.intermediate_steps_output.get(
-                #     "Total_Tokens_Used", 0
-                # )
-                # final_total_cost = st.session_state.intermediate_steps_output.get(
-                #     "Total_Estimated_Cost_USD", 0.0
-                # )
 
             except (
                 TokenBudgetExceededError,
@@ -1766,13 +1761,6 @@ def _run_socratic_debate_process():
                     st.session_state.intermediate_steps_output = (
                         debate_instance.intermediate_steps
                     )
-                # Removed unused local variable assignments
-                # final_total_tokens = st.session_state.intermediate_steps_output.get(
-                #     "Total_Tokens_Used", 0
-                # )
-                # final_total_cost = st.session_state.intermediate_steps_output.get(
-                #     "Total_Estimated_Cost_USD", 0.0
-                # )
             except Exception as e:
                 handle_debate_errors(e)
                 status.update(
@@ -1785,17 +1773,8 @@ def _run_socratic_debate_process():
                     st.session_state.intermediate_steps_output = (
                         debate_instance.intermediate_steps
                     )
-                # Removed unused local variable assignments
-                # final_total_tokens = st.session_state.intermediate_steps_output.get(
-                #     "Total_Tokens_Used", 0
-                # )
-                # final_total_cost = st.session_state.intermediate_steps_output.get(
-                #     "Total_Estimated_Cost_USD", 0.0
-                # )
             finally:
-                # Explicitly clear large objects and trigger garbage collection
                 if debate_instance:
-                    # If SocraticDebate has a 'close' method, call it for explicit cleanup
                     if hasattr(debate_instance, "close") and callable(
                         debate_instance.close
                     ):
@@ -1803,7 +1782,7 @@ def _run_socratic_debate_process():
                             f"Calling close() on SocraticDebate instance {id(debate_instance)}."
                         )
                         debate_instance.close()
-                    del debate_instance  # Explicitly delete the instance
+                    del debate_instance
                 gc.collect()
                 logger.info(
                     "Explicit garbage collection triggered in app.py after debate process."
@@ -1833,7 +1812,6 @@ if run_button_clicked:
                 break
         except LLMProviderError as e:
             provider_error_code = e.details.get("provider_error_code")
-            # Check if it's a 5xx server error (transient)
             if (
                 isinstance(provider_error_code, int)
                 and 500 <= provider_error_code < 600
@@ -1845,14 +1823,13 @@ if run_button_clicked:
                     )
                     time.sleep(wait_time)
                     update_activity_timestamp()
-                    continue  # Continue to the next attempt in the loop
+                    continue
                 else:
                     st.error(
                         f"Max retries ({MAX_DEBATE_RETRIES}) for Socratic Debate reached due to LLM server error ({provider_error_code}). Please try again later."
                     )
                     handle_debate_errors(e)
-                    break  # Break the loop after max retries
-            # For any other LLMProviderError (e.g., 4xx), handle and break
+                    break
             handle_debate_errors(e)
             break
         except Exception as e:

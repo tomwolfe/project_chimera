@@ -84,12 +84,12 @@ class ChimeraSettings(BaseModel):
     default_max_input_tokens_per_persona: int = Field(
         default=4000,
         ge=500,
-        le=64000,  # Kept at 64000 as it's a general default, specific personas can override
+        le=64000,
         description="Default maximum input tokens for a persona's prompt if not specified.",
     )
     max_tokens_per_persona: Dict[str, int] = Field(
-        default_factory=lambda: {  # Adjusted based on observed high token usage
-            "Self_Improvement_Analyst": 65536,  # Increased to reflect 65k output capability
+        default_factory=lambda: {
+            "Self_Improvement_Analyst": 65536,
             "Security_Auditor": 12000,
             "Code_Architect": 12000,
             "Test_Engineer": 10000,
@@ -112,6 +112,20 @@ class ChimeraSettings(BaseModel):
     sentence_transformer_cache_dir: str = Field(
         default=str(Path.home() / ".cache" / "huggingface" / "transformers"),
         description="Directory for caching SentenceTransformer models.",
+    )
+
+    # ADDED: Global token consumption and efficiency thresholds for aggressive optimization
+    GLOBAL_TOKEN_CONSUMPTION_THRESHOLD: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for global token consumption rate to trigger aggressive persona optimization.",
+    )
+    TOKEN_EFFICIENCY_SCORE_THRESHOLD: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for a persona's token efficiency score to trigger aggressive optimization.",
     )
 
     @model_validator(mode="after")

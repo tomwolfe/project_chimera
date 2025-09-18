@@ -18,9 +18,12 @@ from typing import Self
 class PersonaConfig(BaseModel):
     name: str
     description: Optional[str] = None
-    system_prompt: str
+    system_prompt_template: (
+        str  # MODIFIED: Replaced system_prompt with system_prompt_template
+    )
     temperature: float = Field(..., ge=0.0, le=1.0)
     max_tokens: int = Field(..., gt=0)
+    token_efficiency_score: Optional[float] = Field(None, ge=0.0, le=1.0)  # ADDED
 
 
 class ReasoningFrameworkConfig(BaseModel):
@@ -562,6 +565,10 @@ class SelfImprovementAnalysisOutput(BaseModel):
             except ValidationError as e:
                 raise ValueError(
                     f"Data does not match schema version {self.version}: {str(e)}"
+                )
+            except Exception as e:  # Catch other potential errors during validation
+                raise ValueError(
+                    f"An unexpected error occurred during V1 data validation: {str(e)}"
                 )
         else:
             raise ValueError(f"Unsupported schema version: {self.version}")
