@@ -1,11 +1,9 @@
 # src/utils/path_utils.py
-import logging  # Used for logger
-import re  # Used for regex in sanitize_and_validate_file_path
-from pathlib import Path  # Used for Path objects
+import logging
+import re
+from pathlib import Path
 from typing import Optional, Dict, Any
-import os  # NEW: Import os
-
-logger = logging.getLogger(__name__)
+import os
 
 PROJECT_ROOT_MARKERS = [
     ".git",
@@ -21,7 +19,7 @@ PROJECT_ROOT_MARKERS = [
 ]
 
 
-def _find_project_root_internal(start_path: Path) -> Optional[Path]:
+def _find_project_root_internal_temp(start_path: Path) -> Optional[Path]:
     """Internal helper to find the project root without raising an error."""
     current_dir = start_path
     for _ in range(15):
@@ -37,16 +35,23 @@ def _find_project_root_internal(start_path: Path) -> Optional[Path]:
     return None
 
 
-_initial_start_path = Path(__file__).resolve().parent
-_found_root = _find_project_root_internal(_initial_start_path)
+# Determine PROJECT_ROOT first, without using the logger object
+_initial_start_path_temp = Path(__file__).resolve().parent
+_found_root_temp = _find_project_root_internal_temp(_initial_start_path_temp)
 
-if _found_root:
-    PROJECT_ROOT = _found_root
-    logger.info(f"Project root identified at: {PROJECT_ROOT}")
+if _found_root_temp:
+    PROJECT_ROOT = _found_root_temp
 else:
     PROJECT_ROOT = Path.cwd()
+
+# Now initialize the logger, after PROJECT_ROOT is guaranteed to be set
+logger = logging.getLogger(__name__)
+
+# Log the final PROJECT_ROOT using the initialized logger
+logger.info(f"Project root identified at: {PROJECT_ROOT}")
+if not _found_root_temp:
     logger.warning(
-        f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
+        f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path_temp}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
     )
 
 
