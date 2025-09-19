@@ -4,7 +4,7 @@ import yaml
 from src.persona_manager import PersonaManager
 from src.models import PersonaConfig
 from src.token_tracker import TokenUsageTracker
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 from src.config.persistence import ConfigPersistence
 from src.config.settings import ChimeraSettings
 import time

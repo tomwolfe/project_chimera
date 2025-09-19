@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import numbers
 import logging
-from src.utils.json_utils import (
+from src.utils.core_helpers.json_utils import (
     convert_to_json_friendly,
 )  # NEW: Import the shared utility
 

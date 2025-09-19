@@ -4,14 +4,14 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 # Assuming src/utils/code_validator.py contains functions like validate_code_output
-from src.utils.code_validator import (
+from src.utils.validation.code_validator import (
     validate_code_output,
     _run_ruff,
     _run_bandit,
     _run_ast_security_checks,
 )
-from src.utils.command_executor import execute_command_safely
-from src.utils.code_utils import _get_code_snippet
+from src.utils.core_helpers.command_executor import execute_command_safely
+from src.utils.core_helpers.code_utils import _get_code_snippet
 
 
 # Mock execute_command_safely for _run_ruff and _run_bandit

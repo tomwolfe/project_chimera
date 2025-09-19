@@ -14,7 +14,7 @@ import pycodestyle
 import ast
 import json  # Added for Bandit output parsing
 
-from src.utils.path_utils import (
+from src.utils.core_helpers.path_utils import (
     find_project_root,
     is_within_base_dir,
     sanitize_and_validate_file_path,

@@ -1,17 +1,20 @@
-# src/utils/session_manager.py
+# src/utils/session/session_manager.py
 import streamlit as st
 import time
 import os
 import uuid
 import logging
-from typing import Dict, Any, Optional, Callable  # Added Callable for type hint
+from typing import Dict, Any, Optional, Callable
 
 from src.persona_manager import PersonaManager
-from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
+
+# REMOVED: from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner # This caused a circular import
 from src.token_tracker import TokenUsageTracker
 from src.config.settings import ChimeraSettings
 from src.middleware.rate_limiter import RateLimiter
-from src.utils.api_key_validator import validate_gemini_api_key_format
+from src.utils.validation.api_key_validator import (
+    validate_gemini_api_key_format,
+)  # Updated import
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +31,10 @@ def _initialize_session_state(
     example_prompts: Dict[str, Any],
     # NEW: Add these two parameters to the function signature
     get_context_relevance_analyzer_instance: Callable[
-        [ChimeraSettings], ContextRelevanceAnalyzer
+        [ChimeraSettings],
+        Any,  # Changed to Any as the class itself is not imported here
     ],
-    get_codebase_scanner_instance: Callable[[], CodebaseScanner],
+    get_codebase_scanner_instance: Callable[[], Any],  # Changed to Any
     get_summarizer_pipeline_instance: Callable[
         [], Any
     ],  # NEW: Add summarizer pipeline instance callable

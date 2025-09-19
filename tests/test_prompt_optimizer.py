@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer
 from src.llm_tokenizers.base import Tokenizer
 from src.config.settings import ChimeraSettings
 from src.models import PersonaConfig  # NEW: Import PersonaConfig

@@ -58,24 +58,24 @@ from src.resilience.circuit_breaker import CircuitBreaker
 # --- END NEW IMPORT ---
 
 # --- NEW IMPORT FOR ERROR HANDLER ---
-from src.utils.error_handler import handle_errors
+from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 # --- END NEW IMPORT ---
 
 # FIX: Import ModelSpecification explicitly
 from src.config.model_registry import ModelRegistry, ModelSpecification
 from src.config.settings import ChimeraSettings
 
-# NEW IMPORTS: From src/utils/api_key_validator.py
-from src.utils.api_key_validator import (
+# NEW IMPORTS: From src/utils/validation/api_key_validator.py # Updated import
+from src.utils.validation.api_key_validator import (  # Updated import
     validate_gemini_api_key_format,
     test_gemini_api_key_functional,
     fetch_api_key,
 )
 import os
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 
 # NEW IMPORT: For PromptOptimizer
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {

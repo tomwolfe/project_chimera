@@ -6,10 +6,10 @@ from src.persona_manager import PersonaManager
 from src.token_tracker import TokenUsageTracker
 from src.config.settings import ChimeraSettings
 from src.context.context_analyzer import ContextRelevanceAnalyzer
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser
 from src.conflict_resolution import ConflictResolutionManager
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer
 from src.self_improvement.content_validator import ContentAlignmentValidator
 
 

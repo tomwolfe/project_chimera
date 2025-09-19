@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 # Assuming src/utils/command_executor.py contains the execute_command_safely function
-from src.utils.command_executor import execute_command_safely
+from src.utils.core_helpers.command_executor import execute_command_safely
 
 
 class TestCommandExecutor(unittest.TestCase):

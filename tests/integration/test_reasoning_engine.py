@@ -18,7 +18,7 @@ from src.context.context_analyzer import (
     ContextRelevanceAnalyzer,
     CodebaseScanner,
 )  # NEW: Import for SocraticDebate init
-from src.utils.output_parser import (
+from src.utils.reporting.output_parser import (
     LLMOutputParser,
 )  # NEW: Import for SocraticDebate init
 from src.conflict_resolution import (
@@ -27,7 +27,7 @@ from src.conflict_resolution import (
 from src.self_improvement.metrics_collector import (
     FocusedMetricsCollector,
 )  # NEW: Import for SocraticDebate init
-from src.utils.prompt_optimizer import (
+from src.utils.prompting.prompt_optimizer import (
     PromptOptimizer,
 )  # NEW: Import for SocraticDebate init
 from transformers import pipeline  # NEW: Import pipeline for summarization

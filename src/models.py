@@ -186,7 +186,9 @@ class ContextAnalysisOutput(BaseModel):
         """Validates file paths within key_modules for security."""
         # Import sanitize_and_validate_file_path locally here
         try:
-            from src.utils.path_utils import sanitize_and_validate_file_path
+            from src.utils.core_helpers.path_utils import (
+                sanitize_and_validate_file_path,
+            )
         except ImportError as e:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
@@ -230,7 +232,9 @@ class CodeChange(BaseModel):
     def validate_file_path(cls, v):
         """Validates and sanitizes the file path."""
         try:
-            from src.utils.path_utils import sanitize_and_validate_file_path
+            from src.utils.core_helpers.path_utils import (
+                sanitize_and_validate_file_path,
+            )
         except ImportError as e:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation."
@@ -433,7 +437,9 @@ class GeneralOutput(BaseModel):
     def validate_paths_in_general_output(self) -> "GeneralOutput":
         """Validates potential file paths within general output for security."""
         try:
-            from src.utils.path_utils import sanitize_and_validate_file_path
+            from src.utils.core_helpers.path_utils import (
+                sanitize_and_validate_file_path,
+            )
         except ImportError as e:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation."

@@ -1,5 +1,5 @@
 import pytest
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser
 from src.models import (
     LLMOutput,
     CritiqueOutput,

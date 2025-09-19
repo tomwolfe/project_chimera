@@ -5,7 +5,7 @@ from src.persona.routing import PersonaRouter
 from src.persona_manager import (
     PersonaManager,
 )  # Assuming PersonaManager is needed for PersonaRouter init
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 from src.models import PersonaConfig
 
 

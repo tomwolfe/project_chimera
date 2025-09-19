@@ -10,7 +10,7 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError

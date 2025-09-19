@@ -1,6 +1,6 @@
 import subprocess
 import sys
-from src.utils.path_utils import PROJECT_ROOT
+from src.utils.core_helpers.path_utils import PROJECT_ROOT
 
 
 def test_ruff_linting_passes():

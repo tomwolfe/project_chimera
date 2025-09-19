@@ -23,11 +23,11 @@ from src.models import (
     DeploymentAnalysisOutput,
 )
 from src.config.persistence import ConfigPersistence
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
 from src.token_tracker import TokenUsageTracker
 from src.exceptions import SchemaValidationError
 from src.config.settings import ChimeraSettings
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 
 logger = logging.getLogger(__name__)
 
@@ -534,7 +534,7 @@ class PersonaManager:
             logger.warning(f"Persona '{base_persona_name}' not found for adjustment.")
             return PersonaConfig(
                 name=base_persona_name,
-                system_prompt_template="Error",  # MODIFIED
+                system_prompt_template="You are a helpful AI assistant.",  # MODIFIED: Provide a more generic fallback
                 temperature=0.7,
                 max_tokens=1024,
                 description="Fallback persona.",

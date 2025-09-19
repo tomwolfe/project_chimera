@@ -5,11 +5,11 @@ import os  # NEW: Import os
 import signal  # NEW: Import signal
 import sys  # NEW: Import sys
 
-from src.utils.api_key_validator import (
+from src.utils.validation.api_key_validator import (
     validate_gemini_api_key_format,
     test_gemini_api_key_functional,
 )
-from src.utils.session_manager import update_activity_timestamp
+from src.utils.session.session_manager import update_activity_timestamp
 
 logger = logging.getLogger(__name__)
 

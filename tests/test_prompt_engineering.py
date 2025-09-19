@@ -1,7 +1,7 @@
 # tests/test_prompt_engineering.py
 
 import pytest
-from src.utils.prompt_engineering import format_prompt
+from src.utils.prompting.prompt_engineering import format_prompt
 from src.persona_manager import PersonaManager  # Needed for mocking in session_manager
 
 

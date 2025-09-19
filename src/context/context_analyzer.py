@@ -14,18 +14,17 @@ import hashlib  # NEW: Import hashlib for hashing codebase content
 
 logger = logging.getLogger(__name__)
 
-# --- Import PROJECT_ROOT and related utilities from src.utils.path_utils ---
-# This ensures a single source of truth for project root detection.
-from src.utils.path_utils import (
+# --- Import PROJECT_ROOT and related utilities from src.utils.core_helpers.path_utils --- # Updated import
+from src.utils.core_helpers.path_utils import (  # Updated import
     PROJECT_ROOT,
     is_within_base_dir,
     sanitize_and_validate_file_path,
 )
 
 # REMOVED: Duplicated PROJECT_ROOT_MARKERS, _find_project_root_internal,
-# and dynamic PROJECT_ROOT definition as they are now imported from src.utils.path_utils.
+# and dynamic PROJECT_ROOT definition as they are now imported from src.utils.core_helpers.path_utils.
 # REMOVED: Duplicated is_within_base_dir and sanitize_and_validate_file_path
-# as they are now imported from src.utils.path_utils.
+# as they are now imported from src.utils.core_helpers.path_utils.
 
 
 # --- CodebaseScanner Class ---
@@ -632,7 +631,7 @@ class ContextRelevanceAnalyzer:
             # Additional defensive checks for type
             if not isinstance(file_path, str):
                 self.logger.warning(
-                    f"Skipping item with non-string file path at index {i}: {item}"
+                    f"Skipping item with non-string file path at index {i} : {item}"
                 )
                 continue
 

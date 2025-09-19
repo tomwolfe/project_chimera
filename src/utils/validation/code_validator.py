@@ -14,15 +14,15 @@ import ast
 import json
 from collections import defaultdict
 
-from src.utils.command_executor import execute_command_safely
-from src.utils.path_utils import (
+from src.utils.core_helpers.command_executor import execute_command_safely
+from src.utils.core_helpers.path_utils import (
     is_within_base_dir,
     sanitize_and_validate_file_path,
     PROJECT_ROOT,
     _map_incorrect_file_path,
     can_create_file,
 )
-from src.utils.code_utils import _get_code_snippet
+from src.utils.core_helpers.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
 

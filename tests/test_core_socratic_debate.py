@@ -15,7 +15,7 @@ from src.context.context_analyzer import (
     ContextRelevanceAnalyzer,
 )  # Import ContextRelevanceAnalyzer
 from src.models import PersonaConfig  # Import PersonaConfig
-from src.utils.output_parser import LLMOutputParser  # Import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser  # Import LLMOutputParser
 from src.self_improvement.metrics_collector import (
     FocusedMetricsCollector,
 )  # Import FocusedMetricsCollector

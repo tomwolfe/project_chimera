@@ -13,7 +13,7 @@ from functools import lru_cache
 
 from src.models import PersonaConfig
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
 

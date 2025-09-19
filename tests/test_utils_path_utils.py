@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from src.utils.path_utils import (
+from src.utils.core_helpers.path_utils import (
     sanitize_and_validate_file_path,
     _map_incorrect_file_path,
     PROJECT_ROOT,

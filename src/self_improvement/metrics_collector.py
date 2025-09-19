@@ -15,8 +15,8 @@ import sys
 import difflib
 import tempfile
 
-from src.utils.code_utils import _get_code_snippet, ComplexityVisitor
-from src.utils.code_validator import (
+from src.utils.core_helpers.code_utils import _get_code_snippet, ComplexityVisitor
+from src.utils.validation.code_validator import (
     _run_ruff,
     _run_bandit,
     _run_ast_security_checks,
@@ -34,8 +34,8 @@ from src.models import (
     PydanticSettingsConfig,
     DeploymentAnalysisOutput,
 )
-from src.utils.command_executor import execute_command_safely
-from src.utils.path_utils import PROJECT_ROOT
+from src.utils.core_helpers.command_executor import execute_command_safely
+from src.utils.core_helpers.path_utils import PROJECT_ROOT
 from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 
 logger = logging.getLogger(__name__)

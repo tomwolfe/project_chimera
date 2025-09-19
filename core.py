@@ -21,7 +21,7 @@ from src.persona.routing import (
     calculate_persona_performance,
     select_personas_by_weight,
 )
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 from src.models import (
     PersonaConfig,
     ReasoningFrameworkConfig,
@@ -34,9 +34,7 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
 )
-from src.config.settings import (
-    ChimeraSettings,
-)  # MODIFIED: Import ChimeraSettings from src/config/settings.py
+from src.config.settings import ChimeraSettings
 from src.exceptions import (
     ChimeraError,
     LLMResponseValidationError,
@@ -49,26 +47,27 @@ from src.exceptions import (
     CodebaseAccessError,
 )
 from src.logging_config import setup_structured_logging
-from src.utils.error_handler import handle_errors
+from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 from src.persona_manager import PersonaManager
 
 # NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
 
-# NEW IMPORT FOR CODEBASE SCANNING - MODIFIED TO USE src/context/context_analyzer.py
+# NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
-from src.utils.path_utils import PROJECT_ROOT
+from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 from src.llm_provider import GeminiProvider
 from src.conflict_resolution import ConflictResolutionManager
 from src.config.model_registry import ModelRegistry
-from src.utils.json_utils import convert_to_json_friendly
+from src.utils.core_helpers.json_utils import convert_to_json_friendly  # Updated import
+from src.rag_system import RagOrchestrator, KnowledgeRetriever  # New Import for RAG
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,7 @@ class SocraticDebate:
         """
         Initializes the Socratic debate session.
         """
-        setup_structured_logging(log_level=logging.INFO)
+        # setup_structured_logging(log_level=logging.INFO) # Removed: Logging setup is now handled globally in app.py
         self.logger = logging.getLogger(__name__)
 
         self.settings = settings or ChimeraSettings()
@@ -150,6 +149,19 @@ class SocraticDebate:
             budget=self.max_total_tokens_budget
         )
 
+        # New: Initialize RAG system if codebase is present
+        self.knowledge_retriever: Optional[KnowledgeRetriever] = None
+        self.rag_orchestrator: Optional[RagOrchestrator] = None
+        if self.raw_file_contents:
+            self.knowledge_retriever = KnowledgeRetriever(
+                raw_file_contents=self.raw_file_contents
+            )
+            # PersonaManager is needed for RagOrchestrator, but PersonaManager itself needs PromptOptimizer.
+            # This creates a circular dependency if PersonaManager is not yet fully initialized.
+            # We'll pass persona_manager to RagOrchestrator later if it's not available now.
+            # For now, initialize with None and set later.
+            self.rag_orchestrator = RagOrchestrator(self.knowledge_retriever, None)
+
         # Initialize PromptOptimizer first, as it's a dependency for GeminiProvider and PersonaManager
         self.prompt_optimizer = PromptOptimizer(
             tokenizer=None,  # Will be set after GeminiProvider init
@@ -161,7 +173,7 @@ class SocraticDebate:
 
         try:
             self.llm_provider = GeminiProvider(
-                api_key=api_key,  # MODIFIED: Use passed api_key
+                api_key=api_key,
                 model_name=self.model_name,
                 rich_console=self.rich_console,
                 request_id=self.request_id,
@@ -210,6 +222,10 @@ class SocraticDebate:
         self.persona_manager.token_tracker = self.token_tracker
         self.persona_manager.settings = self.settings
         self.persona_manager.prompt_optimizer = self.prompt_optimizer
+
+        # If RAG Orchestrator was initialized without persona_manager, set it now
+        if self.rag_orchestrator and self.rag_orchestrator.persona_manager is None:
+            self.rag_orchestrator.persona_manager = self.persona_manager
 
         self.all_personas = self.persona_manager.all_personas
         self.persona_sets = self.persona_manager.persona_sets
@@ -1560,8 +1576,15 @@ class SocraticDebate:
         persona_name: str,
         previous_output: Any,
         context_results: Optional[Dict[str, Any]],
+        user_query: str,  # Add user_query to pass to RAG
     ) -> str:
-        """Prepares the full prompt for a single persona turn."""
+        """Prepares the full prompt for a single persona turn, incorporating RAG context."""
+        rag_context = ""
+        if hasattr(self, "rag_orchestrator") and self.rag_orchestrator:
+            rag_context = self.rag_orchestrator.generate_rag_context(
+                user_query, persona_name
+            )
+
         persona_specific_context = self._build_persona_context_string(
             persona_name, context_results
         )
@@ -1580,6 +1603,8 @@ class SocraticDebate:
         prompt_parts = [f"Initial Problem: {self.initial_prompt}\n"]
         if persona_specific_context:
             prompt_parts.append(f"Relevant Code Context:\n{persona_specific_context}\n")
+        if rag_context:
+            prompt_parts.append(rag_context)  # Add RAG context here
         prompt_parts.append(previous_output_summary)
         return "\n".join(prompt_parts)
 
@@ -1669,7 +1694,10 @@ class SocraticDebate:
 
             # Refactored prompt preparation
             current_prompt = self._prepare_prompt_for_turn(
-                persona_name, previous_output_for_llm, context_persona_turn_results
+                persona_name,
+                previous_output_for_llm,
+                context_persona_turn_results,
+                self.initial_prompt,  # Pass initial_prompt for RAG
             )
 
             base_persona_config = self.persona_manager.all_personas.get(

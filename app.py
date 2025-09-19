@@ -12,7 +12,7 @@ import re
 import datetime
 import time
 from typing import Dict, Any, List, Optional, Callable
-import logging
+import logging  # Keep this import
 from rich.console import Console
 from core import SocraticDebate
 
@@ -23,7 +23,7 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import path
 from src.persona_manager import PersonaManager
 from src.exceptions import (
     ChimeraError,
@@ -37,34 +37,39 @@ from collections import defaultdict
 from pydantic import ValidationError  # Keep this import
 import html
 import difflib
-from src.utils.command_executor import execute_command_safely
-from src.utils.code_validator import validate_code_output_batch
+from src.utils.core_helpers.command_executor import (
+    execute_command_safely,
+)  # Updated import path
+from src.utils.validation.code_validator import (
+    validate_code_output_batch,
+)  # Updated import path
 import json
 import uuid
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
-from src.config.settings import (
-    ChimeraSettings,
-)  # MODIFIED: Import ChimeraSettings from src/config/settings.py
+from src.config.settings import ChimeraSettings
 from pathlib import Path
 
-from src.utils.prompt_analyzer import PromptAnalyzer
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import path
 from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
 from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
 import gc
 
-from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
-from src.utils.path_utils import PROJECT_ROOT
-from src.utils.session_manager import (
+from src.utils.reporting.report_generator import (
+    generate_markdown_report,
+    strip_ansi_codes,
+)  # Updated import path
+from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import path
+from src.utils.session.session_manager import (  # Updated import path
     _initialize_session_state,
     update_activity_timestamp,
     reset_app_state,
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
 )
-from src.utils.ui_helpers import (
+from src.utils.session.ui_helpers import (  # Updated import path
     on_api_key_change,
     display_key_status,
     test_api_key,
@@ -72,7 +77,7 @@ from src.utils.ui_helpers import (
 )
 
 # NEW IMPORT for PromptOptimizer
-from src.utils.prompt_optimizer import PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import path
 
 # NEW IMPORT: For the summarization pipeline
 from transformers import pipeline
@@ -94,28 +99,10 @@ except Exception as e:
 @st.cache_resource
 def get_app_logger():
     """Initializes and returns the structured logger, cached by Streamlit."""
-    try:
-        configured_logger = setup_structured_logging()
-        if configured_logger is None:
-            logging.basicConfig(
-                level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-            )
-            fallback_logger = logging.getLogger(__name__)
-            fallback_logger.warning(
-                "setup_structured_logging returned None. Using basic fallback logger."
-            )
-            return fallback_logger
-        return configured_logger
-    except Exception as e:
-        st.error(f"❌ Error setting up structured logging: {e}")
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-        fallback_logger = logging.getLogger(__name__)
-        fallback_logger.exception(
-            "Failed to set up structured logging. Using basic fallback logger."
-        )
-        return fallback_logger
+    # Ensure logging is set up only once
+    if not logging.getLogger().handlers:
+        setup_structured_logging()
+    return logging.getLogger(__name__)
 
 
 logger = get_app_logger()

@@ -8,7 +8,7 @@ from src.models import (
     CritiqueOutput,
     GeneralOutput,
 )  # NEW: Import GeneralOutput for schema mocking
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser
 
 
 @pytest.fixture
