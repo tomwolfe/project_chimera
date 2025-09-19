@@ -9,6 +9,8 @@ from sentence_transformers import SentenceTransformer
 import re
 import json
 import numpy as np
+import pickle  # NEW: Import pickle for caching
+import hashlib  # NEW: Import hashlib for hashing codebase content
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +286,9 @@ class ContextRelevanceAnalyzer:
         self.max_file_content_size = max_file_content_size
         self.codebase_scanner = codebase_scanner
         self.model_name = model_name  # Store model name
+        self.cache_path = (
+            Path(cache_dir) / "embeddings_cache.pkl"
+        )  # NEW: Define cache path
 
         if raw_file_contents is not None:
             self.raw_file_contents = {
@@ -301,15 +306,51 @@ class ContextRelevanceAnalyzer:
         self.logger = logger
         self.persona_router = None
         self.file_embeddings: Dict[str, Any] = {}
-        self._last_raw_file_contents_hash: Optional[int] = None
+        self._last_raw_file_contents_hash: Optional[str] = (
+            None  # Changed to str for hashlib output
+        )
 
         self._load_model()  # Call the method to load/get the singleton model
 
         if self.raw_file_contents:
+            # If raw_file_contents are provided, compute and save, then try to load from cache
             self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
-            self._last_raw_file_contents_hash = hash(
-                frozenset(self.raw_file_contents.items())
+            self._last_raw_file_contents_hash = self._hash_codebase(
+                self.raw_file_contents
             )
+        else:
+            # If no raw_file_contents are provided initially, try to load from cache
+            self._load_embeddings_from_cache()
+
+    def _load_embeddings_from_cache(self):
+        """NEW: Loads embeddings from a cache file if it exists and is valid."""
+        if self.cache_path.exists():
+            try:
+                with open(self.cache_path, "rb") as f:
+                    cached_data = pickle.load(f)
+
+                # Verify the hash of the current codebase against the cached hash
+                current_codebase_hash = self._hash_codebase(self.raw_file_contents)
+                if cached_data.get("hash") == current_codebase_hash:
+                    self.file_embeddings = cached_data.get("embeddings", {})
+                    self._last_raw_file_contents_hash = current_codebase_hash
+                    self.logger.info(
+                        f"Loaded {len(self.file_embeddings)} embeddings from cache."
+                    )
+                    return
+                else:
+                    self.logger.info(
+                        "Cached embeddings are outdated (codebase changed). Re-computing."
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Error loading embeddings from cache: {e}. Re-computing."
+                )
+        self.logger.info(
+            "No valid cache found or cache is outdated. Computing embeddings."
+        )
+        # If cache is invalid or not found, compute new embeddings
+        self.file_embeddings = self._compute_file_embeddings(self.raw_file_contents)
 
     def _load_model(self):
         """Loads the SentenceTransformer model using the singleton pattern."""
@@ -347,6 +388,14 @@ class ContextRelevanceAnalyzer:
             )
         return cls._model_instance
 
+    def _hash_codebase(self, context: Dict[str, str]) -> str:
+        """NEW: Creates a hash of the codebase content to check for changes."""
+        hasher = hashlib.sha256()
+        for file_path in sorted(context.keys()):
+            hasher.update(file_path.encode("utf-8"))
+            hasher.update(context[file_path].encode("utf-8"))
+        return hasher.hexdigest()
+
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
         """
         Public method to compute embeddings for files in the codebase context.
@@ -361,7 +410,7 @@ class ContextRelevanceAnalyzer:
             return {}
 
         # Calculate hash of current context to check for changes
-        current_context_hash = hash(frozenset(context.items()))
+        current_context_hash = self._hash_codebase(context)  # NEW: Use _hash_codebase
 
         # If the context hasn't changed, return existing embeddings
         if (
@@ -433,6 +482,16 @@ class ContextRelevanceAnalyzer:
 
         self.file_embeddings = embeddings
         self._last_raw_file_contents_hash = current_context_hash
+        # NEW: Save to cache
+        try:
+            with open(self.cache_path, "wb") as f:
+                pickle.dump({"hash": current_context_hash, "embeddings": embeddings}, f)
+            self.logger.info(
+                f"Saved {len(embeddings)} embeddings to cache at {self.cache_path}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Failed to save embeddings to cache: {e}")
+
         return self.file_embeddings
 
     def set_persona_router(self, persona_router: Any):
@@ -631,7 +690,9 @@ class ContextRelevanceAnalyzer:
         raw_contents = full_codebase_analysis.get("raw_file_contents", {})
 
         if raw_contents:
-            current_files_hash = hash(frozenset(raw_contents.items()))
+            current_files_hash = self._hash_codebase(
+                raw_contents
+            )  # NEW: Use _hash_codebase
             if (
                 not hasattr(self, "_last_raw_file_contents_hash")
                 or self._last_raw_file_contents_hash != current_files_hash

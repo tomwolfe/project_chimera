@@ -34,7 +34,9 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     ConfigurationAnalysisOutput,
 )
-from src.config.settings import ChimeraSettings
+from src.config.settings import (
+    ChimeraSettings,
+)  # MODIFIED: Import ChimeraSettings from src/config/settings.py
 from src.exceptions import (
     ChimeraError,
     LLMResponseValidationError,
@@ -159,7 +161,7 @@ class SocraticDebate:
 
         try:
             self.llm_provider = GeminiProvider(
-                api_key=api_key,
+                api_key=api_key,  # MODIFIED: Use passed api_key
                 model_name=self.model_name,
                 rich_console=self.rich_console,
                 request_id=self.request_id,
@@ -849,8 +851,8 @@ class SocraticDebate:
             f"The error was: {error.message}\n"
             f"Details: {error_details_str}\n\n"
             f"Please correct your response to strictly adhere to the required JSON schema. "
-            f"Do not include any conversational text or markdown fences outside the JSON object. "
-            f"Original request: {original_prompt}"
+            f"DO NOT include any conversational text or markdown fences outside the JSON object. "
+            f"Focus solely on providing a correct, valid JSON response. Original request: {original_prompt}"
         )
         self._log_with_context(
             "debug",
@@ -2268,6 +2270,14 @@ class SocraticDebate:
             self.intermediate_steps["Self_Improvement_Metrics"] = summarized_metrics
             synthesis_prompt_parts.append(
                 f"Objective Metrics and Analysis:\n{json.dumps(summarized_metrics, indent=2, default=convert_to_json_friendly)}\n\n"
+            )
+
+            # MODIFIED: Add instruction to consolidate suggestions from debate history
+            synthesis_prompt_parts.append(
+                "CRITICAL INSTRUCTION: Your primary task is to review the entire debate history provided. "
+                "Select the most specific, actionable, and impactful suggestions from the other personas. "
+                "Consolidate these suggestions into a final, coherent list. Do not invent new suggestions unless absolutely necessary. "
+                "Prioritize suggestions that include concrete code diffs."
             )
 
             self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (

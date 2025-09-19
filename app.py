@@ -3,8 +3,6 @@
 import streamlit as st
 import os
 import sys
-from src.utils.api_key_validator import fetch_api_key
-
 
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -29,14 +27,14 @@ from src.utils.output_parser import LLMOutputParser
 from src.persona_manager import PersonaManager
 from src.exceptions import (
     ChimeraError,
-    LLMResponseValidationError,
+    LLMResponseValidationError,  # Keep this import
     SchemaValidationError,
     TokenBudgetExceededError,
     LLMProviderError,
     CircuitBreakerError,
 )
 from collections import defaultdict
-from pydantic import ValidationError
+from pydantic import ValidationError  # Keep this import
 import html
 import difflib
 from src.utils.command_executor import execute_command_safely
@@ -45,7 +43,9 @@ import json
 import uuid
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
-from src.config.settings import ChimeraSettings
+from src.config.settings import (
+    ChimeraSettings,
+)  # MODIFIED: Import ChimeraSettings from src/config/settings.py
 from pathlib import Path
 
 from src.utils.prompt_analyzer import PromptAnalyzer
@@ -73,7 +73,6 @@ from src.utils.ui_helpers import (
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompt_optimizer import PromptOptimizer
 
-
 # NEW IMPORT: For the summarization pipeline
 from transformers import pipeline
 
@@ -83,6 +82,7 @@ DEBATE_RETRY_DELAY_SECONDS = 5
 
 # --- Configuration Loading ---
 try:
+    # MODIFIED: Load settings from config.yaml, which will also load from .env and environment variables
     settings_instance = ChimeraSettings.from_yaml("config.yaml")
 except Exception as e:
     st.error(f"❌ Application configuration error: {e}")
@@ -216,7 +216,10 @@ if "initialized" not in st.session_state:
         get_codebase_scanner_instance=get_codebase_scanner_instance,
         get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,
     )
-    st.session_state.api_key_input = fetch_api_key() or ""
+    # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
+    st.session_state.api_key_input = (
+        st.session_state.api_key_input or settings_instance.GEMINI_API_KEY
+    )
 # --- END Session State Initialization Call ---
 
 # --- NEW: Session Expiration Check ---
@@ -513,7 +516,8 @@ with st.sidebar:
             "Enter your Gemini API Key",
             type="password",
             key="api_key_input",
-            value=st.session_state.api_key_input,
+            # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
+            value=st.session_state.api_key_input or settings_instance.GEMINI_API_KEY,
             on_change=on_api_key_change,
             help="Your API key will not be stored.",
         )
@@ -523,7 +527,7 @@ with st.sidebar:
             if st.session_state.api_key_input:
                 if st.session_state.api_key_valid_format:
                     st.success("✅ API key format is valid.")
-                else:
+                else:  # MODIFIED: Check for empty API key from settings
                     st.error(f"❌ {st.session_state.api_key_format_message}")
             else:
                 if (
@@ -533,7 +537,7 @@ with st.sidebar:
                     st.warning(
                         "⚠️ API key is sourced from environment variable. Consider using a secrets manager for production."
                     )
-                elif (
+                elif (  # MODIFIED: Check for empty API key from settings
                     os.getenv("ENVIRONMENT") == "production"
                     and not st.session_state.api_key_input
                 ):
@@ -543,7 +547,7 @@ with st.sidebar:
 
                 st.info("Please enter your Gemini API Key.")
 
-        with api_key_col2:
+        with api_key_col2:  # MODIFIED: Test key functionality
             st.button("Test Key", on_click=test_api_key, key="test_api_key_btn")
 
         with api_key_col3:
@@ -557,7 +561,10 @@ with st.sidebar:
         model_options = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
         current_model_index = (
             model_options.index(st.session_state.selected_model_selectbox)
+            # MODIFIED: Use settings_instance.model_name as default
             if st.session_state.selected_model_selectbox in model_options
+            else model_options.index(settings_instance.model_name)
+            if settings_instance.model_name in model_options
             else 0
         )
         st.selectbox(
@@ -586,7 +593,9 @@ with st.sidebar:
             max_value=MAX_TOKENS_LIMIT,
             step=1000,
             key="max_tokens_budget_input",
-            value=st.session_state.max_tokens_budget_input,
+            # MODIFIED: Use settings as default
+            value=st.session_state.max_tokens_budget_input
+            or settings_instance.total_budget,
             on_change=on_max_tokens_budget_change,
         )
         st.checkbox(
@@ -1521,9 +1530,8 @@ def _run_socratic_debate_process():
 
     st.session_state.debate_ran = False
     final_answer = {
-        "COMMIT_MESSAGE": "Debate Failed - Unhandled Error",
-        "RATIONALE": "An unexpected error occurred before a final answer could be synthesized.",
-        "CODE_CHANGES": [],
+        "ANALYSIS_SUMMARY": "Debate Failed - Unhandled Error",  # MODIFIED: Use ANALYSIS_SUMMARY for self-improvement domain
+        "IMPACTFUL_SUGGESTIONS": [],  # MODIFIED: Use IMPACTFUL_SUGGESTIONS
         "malformed_blocks": [
             {
                 "type": "UNHANDLED_ERROR_INIT",
@@ -1685,7 +1693,9 @@ def _run_socratic_debate_process():
 
                 debate_instance = SocraticDebate(
                     initial_prompt=current_user_prompt_for_debate,
-                    api_key=st.session_state.api_key_input,
+                    # MODIFIED: Use settings_instance.GEMINI_API_KEY as fallback
+                    api_key=st.session_state.api_key_input
+                    or settings_instance.GEMINI_API_KEY,
                     model_name=st.session_state.selected_model_selectbox,
                     all_personas=st.session_state.all_personas,
                     persona_sets=st.session_state.persona_sets,

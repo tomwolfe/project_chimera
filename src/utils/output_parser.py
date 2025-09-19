@@ -1,3 +1,5 @@
+# src/utils/output_parser.py
+
 import json
 import logging
 import re
@@ -24,7 +26,7 @@ from src.models import (
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
     SuggestionItem,
-    ConflictReport,  # ADDED
+    ConflictReport,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,44 +39,42 @@ class LLMOutputParser:
     @staticmethod
     def _repair_diff_content_headers(diff_content: str) -> str:
         """
-        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing
-        or if paths start with a leading slash.
+        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing,
+        or if paths start with a leading slash. This version processes line by line
+        to avoid complex regex issues.
         """
 
-        def _replace_prefix(match, prefix_char):
-            prefix_str = match.group(1)  # e.g., "--- " or "+++ "
-            path = match.group(
-                2
-            )  # e.g., "/src/file.py" or "src/file.py" or "a/src/file.py"
+        def _fix_line(line: str, prefix_char: str) -> str:
+            # Check if the line already has the correct 'a/' or 'b/' prefix
+            if line.startswith(f"--- {prefix_char}/") or line.startswith(
+                f"+++ {prefix_char}/"
+            ):
+                return line
 
-            # Remove any leading '/' from the path part
-            cleaned_path = path.lstrip("/")
+            # If it starts with '--- /' or '+++ /', fix it
+            if line.startswith("--- /"):
+                return f"--- {prefix_char}/{line[len('--- /') :]}"
+            if line.startswith("+++ /"):
+                return f"+++ {prefix_char}/{line[len('+++ /') :]}"
 
-            # If the cleaned path already starts with the correct prefix_char + '/', return original
-            # This check is important to avoid adding 'a/' to 'a/src/file.py' resulting in 'a/a/src/file.py'
-            if cleaned_path.startswith(f"{prefix_char}/"):
-                return match.group(0)  # No change needed, return original match
+            # If it starts with '--- ' or '+++ ' but no '/', add 'a/' or 'b/'
+            if line.startswith("--- "):
+                return f"--- {prefix_char}/{line[len('--- ') :]}"
+            if line.startswith("+++ "):
+                return f"+++ {prefix_char}/{line[len('+++ ') :]}"
 
-            # Otherwise, prepend the correct prefix_char + '/'
-            return f"{prefix_str}{prefix_char}/{cleaned_path}"
+            return line  # No change if no matching pattern
 
-        repaired_diff = diff_content
+        repaired_lines = []
+        for line in diff_content.splitlines(keepends=True):
+            if line.startswith("--- "):
+                repaired_lines.append(_fix_line(line, "a"))
+            elif line.startswith("+++ "):
+                repaired_lines.append(_fix_line(line, "b"))
+            else:
+                repaired_lines.append(line)
 
-        # Apply the replacement for '--- ' lines
-        repaired_diff = re.sub(
-            r"^(--- )(.*)$",
-            lambda m: _replace_prefix(m, "a"),
-            repaired_diff,
-            flags=re.MULTILINE,
-        )
-        # Apply the replacement for '+++ ' lines
-        repaired_diff = re.sub(
-            r"^(+++ )(.*)$",
-            lambda m: _replace_prefix(m, "b"),
-            repaired_diff,
-            flags=re.MULTILINE,
-        )
-        return repaired_diff
+        return "".join(repaired_lines)
 
     def _extract_json_with_markers(
         self,
@@ -351,7 +351,6 @@ class LLMOutputParser:
             json_str = temp_str
 
         # Heuristic 9: Replace null values for fields that should be arrays with empty arrays
-        # MODIFIED: Refined regex to target known array fields more specifically.
         array_fields_regex = r'("CODE_CHANGES_SUGGESTED"|"CODE_CHANGES"|"IMPACTFUL_SUGGESTIONS"|"CRITIQUE_POINTS"|"SUGGESTIONS"|"key_modules"|"security_concerns"|"architectural_patterns"|"performance_bottlenecks"|"pre_commit_hooks"|"dockerfile_exposed_ports"|"unpinned_prod_dependencies"|"involved_personas"|"proposed_resolution_paths"):\s*null([,\}\]])'
         temp_str = re.sub(array_fields_regex, r"\1: []\2", json_str)
 
@@ -671,7 +670,7 @@ class LLMOutputParser:
 
     def _attempt_schema_correction(
         self, output: Dict[str, Any], error: ValidationError
-    ) -> Optional[Dict[str, Any]]:  # ADDED
+    ) -> Optional[Dict[str, Any]]:
         """
         Attempts automatic correction of common schema validation failures by adding default values.
         """
@@ -1132,7 +1131,7 @@ class LLMOutputParser:
             )
             corrected_data = self._attempt_schema_correction(
                 data_to_validate, validation_e
-            )  # ADDED
+            )
 
             if corrected_data:
                 try:
@@ -1170,7 +1169,7 @@ class LLMOutputParser:
                         schema_model,
                         malformed_blocks_list,
                         raw_output,
-                        corrected_data,  # Pass corrected data for fallback
+                        corrected_data,
                         extracted_json_str=extracted_json_str,
                     )
             else:
@@ -1385,7 +1384,9 @@ class LLMOutputParser:
                                 "PROBLEM": "Malformed suggestion",
                                 "PROPOSED_SOLUTION": str(item)[:100],
                                 "EXPECTED_IMPACT": "N/A",
-                                "CODE_CHANGES_SUGGESTED": [],
+                                "CODE_CHANGES_SUGGESTED": [
+                                    {"FILE_PATH": "N/A", "ACTION": "NONE"}
+                                ],  # Ensure code_changes_suggested is a list of dicts
                             }
                         )
                 else:
@@ -1395,7 +1396,9 @@ class LLMOutputParser:
                             "PROBLEM": "Malformed suggestion",
                             "PROPOSED_SOLUTION": str(item)[:100],
                             "EXPECTED_IMPACT": "N/A",
-                            "CODE_CHANGES_SUGGESTED": [],
+                            "CODE_CHANGES_SUGGESTED": [
+                                {"FILE_PATH": "N/A", "ACTION": "NONE"}
+                            ],  # Ensure code_changes_suggested is a list of dicts
                         }
                     )
 

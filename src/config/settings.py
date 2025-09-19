@@ -3,8 +3,13 @@
 Configuration settings for Project Chimera, including token budgeting and retry parameters.
 """
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Self, Dict, Any, List
+import os
+from pydantic import Field, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)  # NEW: Import BaseSettings and SettingsConfigDict
+from typing import Self, Dict, Any, List, Optional  # NEW: Import Optional
 import yaml
 from pathlib import Path
 import logging
@@ -12,10 +17,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ChimeraSettings(BaseModel):
+class ChimeraSettings(BaseSettings):  # MODIFIED: Inherit from BaseSettings
     """
     Configuration settings for Project Chimera, including token budgeting and retry parameters.
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # Ignore extra fields in .env or config.yaml not defined in the model
+    )
+
+    # NEW: API Key setting, loaded from env_file or environment variables
+    GEMINI_API_KEY: str = Field(..., description="Google Gemini API Key")
 
     max_retries: int = Field(
         default=5,
@@ -165,12 +179,16 @@ class ChimeraSettings(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, file_path: str) -> "ChimeraSettings":
+    def from_yaml(
+        cls, file_path: str
+    ) -> "ChimeraSettings":  # MODIFIED: Keep from_yaml for config.yaml loading
         """Loads settings from a YAML file."""
         try:
             config_path = Path(file_path)
             with open(config_path, "r") as f:
                 config_data = yaml.safe_load(f)
+            # BaseSettings will automatically load from env_file and env vars,
+            # then merge with provided config_data.
             return cls(**config_data)
         except (FileNotFoundError, TypeError, yaml.YAMLError) as e:
             logger.error(

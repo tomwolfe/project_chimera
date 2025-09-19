@@ -22,7 +22,7 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 # --- Tokenizer Interface and Implementation ---
-import tiktoken  # NEW: Import tiktoken
+import tiktoken
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 
@@ -30,11 +30,11 @@ from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.exceptions import (
     ChimeraError,
     LLMProviderError,
-    LLMProviderRequestError,  # NEW: Import from src/exceptions.py
-    LLMProviderResponseError,  # NEW: Import from src/exceptions.py
+    LLMProviderRequestError,
+    LLMProviderResponseError,
     GeminiAPIError,
     LLMUnexpectedError,
-    TokenBudgetExceededError,  # Renamed from TokenLimitExceededError in suggestions to match existing
+    TokenBudgetExceededError,
     CircuitBreakerError,
     SchemaValidationError,
 )
@@ -109,11 +109,11 @@ class GeminiProvider:
         tokenizer: Tokenizer = None,
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
-        settings: Optional[Any] = None,
+        settings: Optional[
+            ChimeraSettings
+        ] = None,  # MODIFIED: Type hint to ChimeraSettings
         summarizer_pipeline_instance: Any = None,
-        prompt_optimizer_instance: Optional[
-            PromptOptimizer
-        ] = None,  # NEW: Accept PromptOptimizer instance
+        prompt_optimizer_instance: Optional[PromptOptimizer] = None,
     ):
         self.model_name = model_name
         self.model_registry = ModelRegistry()
@@ -121,20 +121,17 @@ class GeminiProvider:
         self.request_id = request_id
         self._log_extra = {"request_id": self.request_id or "N/A"}
         self.output_parser = LLMOutputParser()
-        self.settings = settings or ChimeraSettings()
+        self.settings = settings or ChimeraSettings()  # Ensure settings is initialized
         self.summarizer_pipeline_instance = summarizer_pipeline_instance
-        self.prompt_optimizer = (
-            prompt_optimizer_instance  # NEW: Store the passed instance
-        )
-        self._tiktoken_encoding = (
-            _TIKTOKEN_ENCODING  # Use the globally initialized tiktoken encoder
-        )
+        self.prompt_optimizer = prompt_optimizer_instance
+        self._tiktoken_encoding = _TIKTOKEN_ENCODING
 
         try:
-            resolved_api_key = api_key or fetch_api_key()
+            # MODIFIED: Prioritize passed api_key, then settings.GEMINI_API_KEY
+            resolved_api_key = api_key or self.settings.GEMINI_API_KEY
             if not resolved_api_key:
                 logger.critical(
-                    "GEMINI_API_KEY environment variable is not set. LLMProvider will not function.",
+                    "GEMINI_API_KEY is not set. LLMProvider will not function.",
                     extra={"event": "startup_failure"},
                 )
                 raise ValueError("LLM API Key is not configured.")
@@ -197,16 +194,14 @@ class GeminiProvider:
                 f"Failed to initialize Gemini tokenizer: {e}", original_exception=e
             ) from e
 
-        # Removed PromptOptimizer initialization from here. It's now passed in.
         if not self.prompt_optimizer:
             logger.warning(
                 "PromptOptimizer instance not provided to GeminiProvider. Prompt optimization will be limited."
             )
-            # Fallback to a basic PromptOptimizer if not provided
             self.prompt_optimizer = PromptOptimizer(
                 tokenizer=self.tokenizer,
                 settings=self.settings,
-                summarizer_pipeline=self.summarizer_pipeline_instance,  # Pass the summarizer if available
+                summarizer_pipeline=self.summarizer_pipeline_instance,
             )
 
     def __hash__(self):
@@ -224,7 +219,7 @@ class GeminiProvider:
             return NotImplemented
         return (
             self.model_name == other.model_name
-            and self._api_key == other.api_key
+            and self._api_key == other._api_key  # MODIFIED: Use _api_key
             and type(self.tokenizer) == type(other.tokenizer)
         )
 
@@ -333,11 +328,8 @@ class GeminiProvider:
         effective_model = model if model else self.model_name
         model_spec = self.get_model_specification(effective_model)
         if model_spec:
-            return (
-                model_spec.max_input_tokens
-            )  # Use max_input_tokens from model registry
+            return model_spec.max_input_tokens
 
-        # Fallback to a generic limit from settings if model_spec not found
         return self.settings.max_tokens_per_persona.get(
             effective_model, GENERIC_MAX_TOKENS_PER_PROMPT
         )
@@ -353,8 +345,8 @@ class GeminiProvider:
             GeminiAPIError,
             RetryError,
             RateLimitExceededError,
-            LLMProviderRequestError,  # NEW: Add custom exceptions to retry conditions
-            LLMProviderResponseError,  # NEW: Add custom exceptions to retry conditions
+            LLMProviderRequestError,
+            LLMProviderResponseError,
         ),
     )
     @retry(
@@ -364,13 +356,8 @@ class GeminiProvider:
         retry=(
             retry_if_exception_type(APIError)
             | retry_if_exception_type(socket.gaierror)
-            | retry_if_exception_type(
-                LLMProviderRequestError
-            )  # NEW: Add custom exceptions to retry conditions
-            | retry_if_exception_type(
-                LLMProviderResponseError
-            )  # NEW: Add custom exceptions to retry conditions
-            # SchemaValidationError is now handled by the internal retry loop
+            | retry_if_exception_type(LLMProviderRequestError)
+            | retry_if_exception_type(LLMProviderResponseError)
         ),
     )
     def generate(
@@ -565,8 +552,6 @@ class GeminiProvider:
                                                 )
                                         cleaned_generated_text = json.dumps(temp_parsed)
                             except json.JSONDecodeError:
-                                # If it's not valid JSON yet, the incremental repair will handle it later.
-                                # This proactive step is for cases where the JSON is mostly valid but diff headers are off.
                                 pass
                             except Exception as e:
                                 self._log_with_context(
@@ -638,7 +623,7 @@ class GeminiProvider:
                     f"Gemini ServerError encountered: {error_msg}",
                     exc_info=True,
                 )
-                raise LLMProviderRequestError(  # Raise specific request error for 5xx
+                raise LLMProviderRequestError(
                     message=f"Gemini ServerError: {error_msg}",
                     provider_error_code=e.code if hasattr(e, "code") else 500,
                     original_exception=e,
@@ -697,7 +682,7 @@ class GeminiProvider:
                         or "invalid response format" in error_msg_lower
                     )
                 ):
-                    raise LLMProviderResponseError(  # Raise specific response error for JSON issues
+                    raise LLMProviderResponseError(
                         error_type="API_INVALID_JSON",
                         field_path="LLM_OUTPUT",
                         invalid_value=error_msg[:500],
@@ -733,8 +718,6 @@ class GeminiProvider:
         """
         if hasattr(self, "client") and self.client:
             logger.info("Closing GeminiProvider: Releasing LLM client resources.")
-            # There's no explicit .close() method for google.genai.Client
-            # Setting to None helps with garbage collection.
             self.client = None
         else:
             logger.debug("GeminiProvider: No active client to close.")
