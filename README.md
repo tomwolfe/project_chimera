@@ -1,155 +1,138 @@
-# Project Chimera: The Self-Improving AI Reasoning Engine
+# Project Chimera
 
 Project Chimera is an innovative AI system that leverages a Socratic self-debate methodology to solve complex problems, generate code, and continuously improve its own capabilities. It features a dynamic multi-persona architecture, context-aware reasoning, and a Streamlit-based interactive interface.
 
-## ✨ Key Features
+## ✨ Features
 
-*   **🚀 Socratic Debate Core:** Orchestrates a debate among specialized AI personas to explore problems from multiple angles, fostering robust and nuanced solutions.
-*   **🧠 Self-Improvement Loop:** An experimental, automated feature allowing the AI to analyze its own codebase and debate process, identify areas for improvement (reasoning quality, robustness, efficiency, maintainability), and suggest actionable code changes.
-*   **🌐 Context-Aware Reasoning:** Utilizes semantic search and codebase scanning to provide relevant contextual information to AI personas, significantly enhancing performance for code-related tasks.
-*   **🛠️ Dynamic Persona Management:** Configurable AI personas with distinct roles, system prompts, temperatures, and token limits, supporting domain-specific reasoning frameworks (e.g., Software Engineering, Business, Science, Creative, Self-Improvement).
-*   **💻 Code Generation & Validation:** Generates code snippets and modifications, with integrated validation for syntax, style (Ruff), and security (Bandit, AST checks).
-*   **🛡️ Robust LLM Interaction:** Implements circuit breakers, rate limiting, and retry mechanisms for resilient and cost-effective interaction with Google Gemini models.
-*   **💡 Token Optimization:** Dynamically adjusts prompts and summarizes content using a Hugging Face summarization pipeline to manage token consumption and optimize API costs.
-*   **🤝 Conflict Resolution:** Automatically detects and attempts to resolve disagreements or malformed outputs between debating personas, ensuring a coherent final answer.
-*   **📊 Comprehensive CI/CD:** GitHub Actions workflows for linting (Ruff), formatting (Ruff), security scanning (Bandit, Safety), and unit/integration testing with coverage checks.
-*   **✨ Interactive Streamlit UI:** A user-friendly web interface for defining prompts, configuring settings, uploading codebase context, and visualizing the debate process and results.
+*   **Socratic Debate Engine**: A central orchestrator (`core.py`) that manages a multi-turn debate among specialized AI personas to arrive at robust solutions.
+*   **Dynamic Multi-Persona Architecture**: Utilizes a `PersonaManager` to dynamically select and configure AI personas based on the problem domain, prompt complexity, and historical performance.
+*   **Context-Aware Reasoning (RAG)**: Integrates a Retrieval-Augmented Generation (RAG) system with a `CodebaseScanner` and `ContextRelevanceAnalyzer` to provide relevant code and documentation context to personas, enhancing their problem-solving capabilities.
+*   **Self-Improvement Capabilities**: Features a dedicated `Self_Improvement_Analyst` persona and a suite of tools (`FocusedMetricsCollector`, `CritiqueEngine`, `ImprovementApplicator`) that allow the AI to analyze its own codebase, debate process, and performance metrics to suggest and apply improvements.
+*   **Robust LLM Interaction**: Employs `GeminiProvider` with built-in retry mechanisms (`tenacity`), rate limiting, and a circuit breaker pattern to ensure resilient and fault-tolerant communication with the Google Gemini API.
+*   **Structured Output & Validation**: Leverages Pydantic models (`src/models.py`) and JSON schemas (`schemas/`) to enforce strict output formats for LLM responses, ensuring consistency and reliability.
+*   **Interactive Streamlit UI**: Provides a user-friendly web interface (`app.py`) for configuring debate parameters, inputting prompts, viewing real-time progress, and reviewing structured results.
+*   **Prompt Optimization**: Includes a `PromptOptimizer` to dynamically adjust and truncate prompts based on token limits, persona performance, and overall token budget, improving efficiency and reducing costs.
+*   **Conflict Resolution**: A `ConflictResolutionManager` mediates disagreements or malformed outputs from personas, attempting automated self-correction or synthesizing coherent responses.
+*   **Code Quality & Security Checks**: Integrates `Ruff` (linting, formatting), `Bandit` (security scanning), and AST-based checks (`src/utils/validation/code_validator.py`) to validate generated code and analyze the project's own codebase.
+*   **Containerization**: A `Dockerfile` is provided for easy deployment and consistent environments.
+*   **Continuous Integration**: GitHub Actions workflows (`.github/workflows/ci.yml`, `analysis.yml`) automate testing, code quality checks, and trigger self-improvement analysis.
 
 ## 🚀 Getting Started
 
-These instructions will guide you through setting up Project Chimera on your local machine.
+Follow these steps to get Project Chimera up and running on your local machine.
 
 ### Prerequisites
 
-*   **Python:** Version 3.11+
-*   **Google Gemini API Key:** Obtain one from [Google AI Studio](https://aistudio.google.com/apikey).
+*   Python 3.11+
+*   Git
+*   A Google Gemini API Key (obtainable from [Google AI Studio](https://aistudio.google.com/apikey))
 
 ### Installation
 
-1.  **Clone the repository:**
+1.  **Clone the repository**:
     ```bash
     git clone https://github.com/tomwolfe/project_chimera.git
     cd project_chimera
     ```
-2.  **Create and activate a virtual environment:**
+
+2.  **Create and activate a virtual environment**:
     ```bash
     python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    source venv/bin/activate # On Windows: .\venv\Scripts\activate
     ```
-3.  **Install dependencies:**
+
+3.  **Install dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
-    *(Note: `requirements-prod.txt` is used for production deployments and includes fewer development-specific tools.)*
+
+4.  **Install pre-commit hooks**:
+    ```bash
+    pre-commit install
+    ```
+    This will ensure code quality and formatting checks run automatically before each commit.
 
 ### Configuration
 
-1.  **Set your Google Gemini API Key:**
-    Provide your Gemini API Key in one of the following ways (prioritized in this order):
-    *   **Environment Variable (Recommended):**
-        ```bash
-        export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-        ```
-    *   **Streamlit Sidebar:** Enter it directly into the "Enter your Gemini API Key" text input in the application's sidebar.
-    *   **Streamlit Secrets (for deployment):** If deploying to Streamlit Cloud, use `st.secrets["GEMINI_API_KEY"]`.
+1.  **Set your Gemini API Key**:
+    Create a `.env` file in the root of the project and add your API key:
+    ```
+    GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+    ```
+    Alternatively, you can enter your API key directly in the Streamlit sidebar when the application is running.
 
-2.  **Review `config.yaml`:**
-    This file contains global application settings such as `max_tokens_limit` (total token budget for a debate) and `context_token_budget_ratio`. Adjust these as needed.
+2.  **Adjust advanced settings (Optional)**:
+    Modify `config.yaml` for advanced configurations such as token budgets, persona-specific settings, or domain keywords.
 
 ### Running the Application
 
-Once installed and configured, launch the Streamlit application:
+To start the interactive Streamlit application:
 
 ```bash
 streamlit run app.py
 ```
 
-The application will typically open in your default web browser at `http://localhost:8080`.
+Open your web browser and navigate to `http://localhost:8080` (or the address displayed in your terminal).
+
+### Running Self-Analysis (CLI)
+
+You can manually trigger a self-analysis of the Project Chimera codebase via a script:
+
+```bash
+python scripts/run_analysis.py > analysis_output.json
+```
+
+This script will output a structured JSON analysis to `analysis_output.json`. This process is also automated via GitHub Actions.
 
 ## 📂 Project Structure
 
+The project is organized into the following main directories:
+
 ```
 .
-├── .github/                       # GitHub Actions workflows (CI/CD, self-analysis)
-├── config/                        # Application settings, model registry, persona persistence
-│   ├── custom_frameworks/         # User-saved custom persona frameworks
-│   ├── model_registry.py          # LLM model specifications
-│   ├── persistence.py             # Configuration loading/saving logic
-│   └── settings.py                # Pydantic-based application settings
-├── docs/                          # Project documentation and guidelines
-│   ├── persona_alignment_guidelines.md
-│   ├── project_chimera_context.md # Contextual information for AI self-analysis
-│   ├── prompt_optimizations.md
-│   ├── system_improvement_strategy.md
-│   └── token_optimization_strategy.md
-├── prompts/                       # Jinja2 templates for dynamic persona prompts
-├── schemas/                       # JSON schemas for validating LLM outputs
-│   └── analysis_schema.json       # Schema for self-improvement analysis
-├── scripts/                       # Utility scripts
-│   ├── fix_ruff.sh                # Script to auto-fix Ruff issues
-│   └── run_analysis.py            # Script to trigger self-improvement analysis
-├── src/                           # Main application source code
-│   ├── config/                    # Configuration-related modules
-│   ├── context/                   # Codebase scanning and context relevance analysis
-│   ├── database/                  # Database operations (e.g., SQLite for user data)
-│   ├── exceptions.py              # Custom exception classes
-│   ├── llm_provider.py            # Interface for Google Gemini API
-│   ├── llm_tokenizers/            # Tokenizer implementations
-│   ├── models.py                  # Pydantic data models for structured data
-│   ├── persona/                   # Persona definitions, routing logic
-│   ├── persona_manager.py         # Manages persona configurations and performance
-│   ├── resilience/                # Circuit breaker and rate limiter implementations
-│   ├── self_improvement/          # Modules for metrics collection, content validation
-│   ├── token_tracker.py           # Tracks token usage and costs
-│   └── utils/                     # General utilities (parsers, validators, loggers, UI helpers, etc.)
-├── app.py                         # The main Streamlit web application UI
-├── core.py                        # The central Socratic Debate orchestration engine
-├── Dockerfile                     # Docker container definition for deployment
-├── LICENSE                        # MIT License
-├── personas.yaml                  # Default configurations for all AI personas and frameworks
-├── pyproject.toml                 # Project configuration for development tools (Ruff, Bandit, Pytest)
-├── README.md                      # Project overview (this file)
-├── requirements.txt               # Python dependencies for development
-└── requirements-prod.txt          # Python dependencies for production deployments
+├── .github/                      # GitHub Actions workflows (CI, self-analysis)
+├── config/                       # Application settings, model registry, persistence
+├── docs/                         # Project documentation and guidelines
+├── prompts/                      # Jinja2 templates for dynamic persona prompts
+├── schemas/                      # JSON schemas for validating LLM outputs
+├── scripts/                      # Utility scripts (e.g., run_analysis.py, run_quality_checks.sh)
+├── src/                          # Main application source code
+│   ├── config/                   # Configuration-related modules
+│   ├── constants.py              # Global constants
+│   ├── context/                  # Codebase scanning, context relevance analysis (RAG)
+│   ├── database/                 # Database operations
+│   ├── exceptions.py             # Custom exception classes
+│   ├── llm_provider.py           # Interface for Google Gemini API
+│   ├── llm_tokenizers/           # Tokenizer implementations
+│   ├── models.py                 # Pydantic data models for structured data
+│   ├── persona/                  # Persona definitions, routing logic
+│   ├── persona_manager.py        # Manages persona configurations and performance
+│   ├── resilience/               # Circuit breaker and rate limiter implementations
+│   ├── self_improvement/         # Modules for metrics collection, critique, improvement application
+│   ├── services/                 # General service functions
+│   ├── token_tracker.py          # Tracks token usage and costs
+│   └── utils/                    # General utility functions (parsers, validators, loggers, UI helpers, etc.)
+├── tests/                        # Unit and integration tests
+├── app.py                        # Main Streamlit web application UI
+├── core.py                       # The central Socratic Debate orchestration engine
+├── personas.yaml                 # Centralized definitions and configurations for all AI personas
+├── pyproject.toml                # Project configuration for tools like Ruff, Bandit, and pytest
+├── requirements.txt              # Development Python dependencies
+├── requirements-prod.txt         # Production Python dependencies
+├── Dockerfile                    # Docker container definition for deployment
+├── README.md                     # Project overview (this file)
+└── LICENSE                       # Project's license file
 ```
 
-## 💡 Usage
-
-1.  **Enter API Key:** Provide your Google Gemini API Key in the sidebar. The system will validate its format and functionality.
-2.  **Select Prompt:** Choose from example prompts categorized by domain (e.g., "Coding & Implementation", "Analysis & Problem Solving") or enter your own custom prompt.
-3.  **Select Reasoning Framework:** Choose a domain-specific framework (e.g., "Software Engineering", "Self-Improvement") that best suits your task. You can also manage and save custom frameworks.
-4.  **Provide Codebase Context (Optional):** For code-related tasks, you can upload relevant files. For "Self-Improvement" prompts, the system will automatically load its own codebase for analysis.
-5.  **Run Socratic Debate:** Click the "🚀 Run Socratic Debate" button. The UI will display real-time progress and token usage.
-6.  **Review Results:** After the debate, the "Results" section displays the final synthesized answer, proposed code changes (if applicable), and detailed intermediate reasoning steps. You can also download a comprehensive Markdown report.
-
-## 🤖 Self-Improvement & CI/CD
-
-Project Chimera is designed for continuous self-improvement and maintains high code quality through robust CI/CD pipelines.
-
-*   **Automated Self-Analysis:** The `.github/workflows/analysis.yml` workflow can be manually triggered from GitHub or run on push/pull request. It executes `scripts/run_analysis.py` to perform a self-analysis of the Project Chimera codebase using the `Self_Improvement_Analyst` persona. The output is validated against `schemas/analysis_schema.json` and uploaded as an artifact.
-*   **Continuous Integration:** The `.github/workflows/ci.yml` pipeline ensures code quality and security for every push and pull request by running:
-    *   **Ruff:** Linting and formatting checks to enforce Python style guidelines.
-    *   **Bandit:** Security vulnerability scanning to identify common security issues.
-    *   **Safety:** Dependency vulnerability checks to ensure installed packages are secure.
-    *   **Pytest:** Unit and integration tests with an 80% code coverage enforcement.
-*   **Pre-commit Hooks:** The `.pre-commit-config.yaml` enforces code quality standards locally before commits, running tools like `ruff` and `bandit` to catch issues early.
+For a more detailed overview of the codebase, refer to `docs/project_chimera_context.md`.
 
 ## 🤝 Contributing
 
-We welcome contributions to Project Chimera! To contribute:
+Contributions are welcome! Please see `docs/CONTRIBUTING.md` for guidelines on how to contribute, including code standards, branching strategy, and pull request process.
 
-1.  Fork the repository.
-2.  Create a new branch for your feature or bug fix (`git checkout -b feature/your-feature-name`).
-3.  Make your changes, ensuring they adhere to the project's coding standards.
-4.  Run tests (`pytest`) and ensure code coverage remains above 80%.
-5.  Install and run pre-commit hooks (`pre-commit install && pre-commit run --all-files`) to check for linting, formatting, and basic security issues.
-6.  Commit your changes (`git commit -m 'feat: Add new feature'`).
-7.  Push to your branch (`git push origin feature/your-feature-name`).
-8.  Open a Pull Request, describing your changes and their impact.
+## 📄 License
 
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the `LICENSE` file for details.
 
 ## 🌐 Connect With Us
 
