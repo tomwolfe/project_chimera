@@ -423,10 +423,10 @@ class PersonaRouter:
         arbitrator_index = len(sequence)
         if "Impartial_Arbitrator" in sequence:
             arbitrator_index = sequence.index("Impartial_Arbitrator")
-        elif "Self_Improvement_Analyst" in sequence:  # Corrected to snake_case
+        elif "Self_Improvement_Analyst" in sequence:  # Standardized to snake_case
             arbitrator_index = sequence.index(
                 "Self_Improvement_Analyst"
-            )  # Corrected to snake_case
+            )  # Standardized to snake_case
         elif "General_Synthesizer" in sequence:
             arbitrator_index = sequence.index("General_Synthesizer")
 
@@ -520,16 +520,22 @@ class PersonaRouter:
                     "Self-analysis prompt is maintainability/structure-focused. Prioritized Code_Architect."
                 )
 
+            # Standardize persona name to snake_case
             if "SelfImprovementAnalyst" in base_sequence:
                 base_sequence.remove("SelfImprovementAnalyst")
-            base_sequence.append("Self_Improvement_Analyst")  # Corrected to snake_case
+            if "Self_Improvement_Analyst" not in base_sequence:
+                base_sequence.append("Self_Improvement_Analyst")
 
             if "Impartial_Arbitrator" in base_sequence:
                 base_sequence.remove("Impartial_Arbitrator")
-                analyst_idx = base_sequence.index(
-                    "Self_Improvement_Analyst"
-                )  # Corrected to snake_case
-                base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
+                # Insert before Self_Improvement_Analyst if it's present
+                try:
+                    analyst_idx = base_sequence.index("Self_Improvement_Analyst")
+                    base_sequence.insert(analyst_idx, "Impartial_Arbitrator")
+                except ValueError:
+                    # If Self_Improvement_Analyst is not in base_sequence (shouldn't happen with logic above),
+                    # append Arbitrator at the end.
+                    base_sequence.append("Impartial_Arbitrator")
 
             if "Devils_Advocate" in base_sequence:
                 base_sequence.remove("Devils_Advocate")
@@ -537,9 +543,11 @@ class PersonaRouter:
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
-            elif "Self_Improvement_Analyst" in base_sequence:  # Corrected to snake_case
+            elif (
+                "Self_Improvement_Analyst" in base_sequence
+            ):  # Standardized to snake_case
                 insert_pos_for_advocate = base_sequence.index(
-                    "Self_Improvement_Analyst"  # Corrected to snake_case
+                    "Self_Improvement_Analyst"  # Standardized to snake_case
                 )
 
             if (

@@ -10,7 +10,6 @@ import re
 import contextlib
 import logging
 from pathlib import Path
-import pycodestyle
 import ast
 import json
 from collections import defaultdict
@@ -102,44 +101,7 @@ def validate_and_resolve_file_path_for_action(
         return False, resolved_path, action, error_message
 
 
-def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
-    """Runs pycodestyle on the given content using its library API."""
-    issues = []
-    try:
-        style_guide = pycodestyle.StyleGuide(quiet=True, format="default")
-        checker = pycodestyle.Checker(
-            filename=filename, lines=content.splitlines(keepends=True)
-        )
-
-        errors = checker.check_all()
-
-        for line_num, col_num, code, message in errors:
-            issues.append(
-                {
-                    "line_number": line_num,
-                    "column_number": col_num,
-                    "code": code,
-                    "message": message.strip(),
-                    "source": "pycodestyle",
-                    "filename": filename,
-                    "type": "PEP8 Violation",
-                }
-            )
-
-    except Exception as e:
-        logger.error(f"Error running pycodestyle on {filename}: {e}")
-        issues.append(
-            {
-                "line_number": None,
-                "column_number": None,
-                "code": "PYCODESTYLE_ERROR",
-                "message": f"Internal error during pycodestyle check: {e}",
-                "source": "pycodestyle",
-                "filename": filename,
-                "type": "Validation Tool Error",
-            }
-        )
-    return issues
+# REMOVED: _run_pycodestyle function as it's redundant with Ruff.
 
 
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
@@ -846,13 +808,13 @@ def validate_code_output(
                 )
 
             if is_python:
-                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+                issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
         else:  # If original_content is None, it means the file didn't exist or wasn't provided.
             # The file_exists_in_codebase check above should have caught this.
             if is_python:
-                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+                issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
     elif action == "REMOVE":

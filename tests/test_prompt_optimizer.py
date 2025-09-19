@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from src.utils.prompt_optimizer import PromptOptimizer
 from src.llm_tokenizers.base import Tokenizer
 from src.config.settings import ChimeraSettings
+from src.models import PersonaConfig  # NEW: Import PersonaConfig
 
 
 @pytest.fixture
@@ -28,6 +29,9 @@ def mock_settings():
         "TestPersona": 1024,
         "Self_Improvement_Analyst": 16000,
     }
+    # Mock global consumption and efficiency thresholds for aggressive optimization tests
+    settings.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = 0.7
+    settings.TOKEN_EFFICIENCY_SCORE_THRESHOLD = 0.7
     return settings
 
 
@@ -62,12 +66,15 @@ def test_prompt_optimizer_initialization(
 def test_optimize_prompt_no_truncation_needed(prompt_optimizer_instance):
     """Tests optimize_prompt when the prompt is within limits."""
     user_prompt = "This is a short prompt."
-    persona_name = "TestPersona"
+    # NEW: Pass a mock PersonaConfig object
+    persona_config = MagicMock(
+        spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
+    )
     max_output_tokens = 500
     system_message = "You are a helpful assistant."
 
     optimized_prompt = prompt_optimizer_instance.optimize_prompt(
-        user_prompt, persona_name, max_output_tokens, system_message
+        user_prompt, persona_config, max_output_tokens, system_message
     )
 
     assert optimized_prompt == user_prompt
@@ -81,8 +88,9 @@ def test_optimize_prompt_with_truncation(prompt_optimizer_instance, mock_tokeniz
         "This is a very long prompt that definitely needs to be truncated because it exceeds the persona's input token limit. We need to make sure the optimization logic correctly reduces its size."
         * 5
     )
-    persona_name = (
-        "TestPersona"  # Max input tokens for TestPersona is 1024 (from mock_settings)
+    # NEW: Pass a mock PersonaConfig object
+    persona_config = MagicMock(
+        spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
     )
     max_output_tokens = 500
     system_message = "You are a helpful assistant."
@@ -93,12 +101,11 @@ def test_optimize_prompt_with_truncation(prompt_optimizer_instance, mock_tokeniz
         (len(system_message) + len(user_prompt)) // 4,  # Full input tokens
         (len(system_message) + len(user_prompt))
         // 4,  # Full input tokens (again for truncation check)
-        (len(system_message) + len(user_prompt)) // 4,  # User prompt tokens
         (len(system_message) + 100) // 4,  # Truncated user prompt tokens
     ]
 
     optimized_prompt = prompt_optimizer_instance.optimize_prompt(
-        user_prompt, persona_name, max_output_tokens, system_message
+        user_prompt, persona_config, max_output_tokens, system_message
     )
 
     assert optimized_prompt != user_prompt

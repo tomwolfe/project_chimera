@@ -166,26 +166,32 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
 
 # NEW FUNCTION: can_create_file
 def can_create_file(file_path: str) -> bool:
-    """Check if a file can be created at the specified path."""
+    """Check if a file can be created at the specified path, including write permissions."""
     # Check if the directory structure exists or can be created
     directory = os.path.dirname(file_path)
     if not directory:  # Root level file
-        return True
+        # Check if the project root itself is writable
+        return os.access(PROJECT_ROOT, os.W_OK)
 
     # Check if the directory exists or can be created
     if os.path.exists(directory):
-        return True
+        # If directory exists, check if it's writable
+        return os.access(directory, os.W_OK)
 
-    # Check if parent directories exist
+    # Check if parent directories exist and are writable up to the point of creation
     parent_dirs = []
     current = directory
     while current and current != "." and not os.path.exists(current):
         parent_dirs.append(current)
         current = os.path.dirname(current)
 
-    # If all parent directories exist or can be created, it's okay
-    # This means the path is valid if all its parent directories exist
-    # or if it's a direct child of an an existing directory.
-    # The `os.path.exists(d)` check is for the *parent* directories.
-    # If `parent_dirs` is empty, it means `directory` itself exists.
-    return len(parent_dirs) == 0 or all(os.path.exists(d) for d in parent_dirs)
+    # All parent directories must exist and be writable, or the immediate parent must be writable
+    # The innermost non-existent directory's parent must be writable.
+    if not os.path.exists(current) or not os.access(current, os.W_OK):
+        logger.debug(
+            f"Cannot create file: Parent directory '{current}' is not writable or does not exist."
+        )
+        return False
+
+    # If we reached here, it means the path is valid and the necessary parent directory is writable.
+    return True

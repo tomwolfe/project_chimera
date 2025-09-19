@@ -31,7 +31,7 @@ NEGATION_PATTERNS: List[Tuple[str, float]] = [
     (
         r"(?i)(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b",
         0.7,
-    ),  # FIX: Removed "DIRECTIVE_PROBING" string
+    ),
     (r"(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous", 0.9),
 ]
 
@@ -74,9 +74,9 @@ SHARED_JSON_INSTRUCTIONS: str = """
 +++ b/src/example.py
 @@ -1,3 +1,4 @@
  def old_func():
--    print("old")
-+    print("new")
-+    print("added")
+ -    print("old")
+ +    print("new")
+ +    print("added")
 ```
 **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 """

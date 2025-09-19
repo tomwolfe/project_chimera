@@ -351,7 +351,10 @@ class LLMOutputParser:
             json_str = temp_str
 
         # Heuristic 9: Replace null values for fields that should be arrays with empty arrays
-        temp_str = re.sub(r'":\s*null([,\}\]])', r'": []\1', json_str)
+        # MODIFIED: Refined regex to target known array fields more specifically.
+        array_fields_regex = r'("CODE_CHANGES_SUGGESTED"|"CODE_CHANGES"|"IMPACTFUL_SUGGESTIONS"|"CRITIQUE_POINTS"|"SUGGESTIONS"|"key_modules"|"security_concerns"|"architectural_patterns"|"performance_bottlenecks"|"pre_commit_hooks"|"dockerfile_exposed_ports"|"unpinned_prod_dependencies"|"involved_personas"|"proposed_resolution_paths"):\s*null([,\}\]])'
+        temp_str = re.sub(array_fields_regex, r"\1: []\2", json_str)
+
         if temp_str != json_str:
             repair_log.append(
                 {

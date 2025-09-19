@@ -25,8 +25,8 @@ def mock_persona_manager():
             temperature=0.5,
             max_tokens=1024,
         ),
-        "SelfImprovementAnalyst": PersonaConfig(
-            name="SelfImprovementAnalyst",
+        "Self_Improvement_Analyst": PersonaConfig(  # Standardized to snake_case
+            name="Self_Improvement_Analyst",  # Standardized to snake_case
             system_prompt="You are a self-improvement analyst.",
             temperature=0.5,
             max_tokens=1024,
@@ -63,7 +63,11 @@ def mock_persona_manager():
         ),  # Added Impartial_Arbitrator
     }
     pm.persona_sets = {
-        "General": ["Analyst", "Critic", "SelfImprovementAnalyst"],
+        "General": [
+            "Analyst",
+            "Critic",
+            "Self_Improvement_Analyst",
+        ],  # Standardized to snake_case
         "Software Engineering": [
             "Analyst",
             "Critic",
@@ -72,7 +76,7 @@ def mock_persona_manager():
             "Impartial_Arbitrator",
         ],
         "Self-Improvement": [
-            "SelfImprovementAnalyst",
+            "Self_Improvement_Analyst",  # Standardized to snake_case
             "Code_Architect",
             "Security_Auditor",
             "Devils_Advocate",
@@ -104,7 +108,7 @@ def test_determine_persona_sequence_basic(persona_router_instance):
     assert len(sequence) > 0
     assert "Analyst" in sequence
     assert "Critic" in sequence
-    assert "SelfImprovementAnalyst" in sequence
+    assert "Self_Improvement_Analyst" in sequence  # Standardized to snake_case
 
 
 def test_determine_persona_sequence_self_analysis(
@@ -113,7 +117,7 @@ def test_determine_persona_sequence_self_analysis(
     """Test self-analysis prompt routing."""
     mock_persona_manager.prompt_analyzer.is_self_analysis_prompt.return_value = True
     mock_persona_manager.persona_sets["Self-Improvement"] = [
-        "SelfImprovementAnalyst",
+        "Self_Improvement_Analyst",  # Standardized to snake_case
         "Code_Architect",
         "Security_Auditor",
         "Devils_Advocate",
@@ -123,13 +127,17 @@ def test_determine_persona_sequence_self_analysis(
     prompt = "Critically analyze the Project Chimera codebase."
     domain = "Self-Improvement"
     sequence = persona_router_instance.determine_persona_sequence(prompt, domain)
-    assert "SelfImprovementAnalyst" in sequence  # Should be present
+    assert (
+        "Self_Improvement_Analyst" in sequence
+    )  # Should be present # Standardized to snake_case
     assert "Devils_Advocate" in sequence  # Should be present
     assert "Code_Architect" in sequence  # Should be present
     assert "Security_Auditor" in sequence  # Should be present
     assert "Impartial_Arbitrator" in sequence  # Should be present
     # Ensure the order is generally correct for self-improvement
-    assert sequence.index("SelfImprovementAnalyst") < sequence.index(
+    assert sequence.index(
+        "Self_Improvement_Analyst"
+    ) < sequence.index(  # Standardized to snake_case
         "Impartial_Arbitrator"
     )
     assert sequence.index("Devils_Advocate") < sequence.index("Impartial_Arbitrator")
