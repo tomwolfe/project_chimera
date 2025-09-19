@@ -5,7 +5,8 @@ Utility functions related to code manipulation and analysis.
 
 import logging
 import ast
-from pathlib import Path
+
+# REMOVED: from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any, Union
 
 logger = logging.getLogger(__name__)

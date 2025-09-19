@@ -485,12 +485,10 @@ class ContentAlignmentValidator:
         nuanced_feedback["is_aligned"] = True
         return True, "Content aligned with focus areas.", nuanced_feedback
 
-    def validate_schema_compliance(
-        self, response: dict, schema: dict
-    ) -> tuple[bool, str]:
-        """Validates response against JSON schema with detailed error reporting"""
-        try:
-            # REMOVED: validate(instance=response, schema=schema) # F401: unused import
-            return True, "Schema validation passed"
-        except Exception as e:
-            return False, f"Schema validation failed: {str(e)}"
+    # DELETED: def validate_schema_compliance(self, response: dict, schema: dict) -> tuple[bool, str]:
+    # DELETED:     """Validates response against JSON schema with detailed error reporting"""
+    # DELETED:     try:
+    # DELETED:         # REMOVED: validate(instance=response, schema=schema) # F401: unused import
+    # DELETED:         return True, "Schema validation passed"
+    # DELETED:     except Exception as e:
+    # DELETED:         return False, f"Schema validation failed: {str(e)}"

@@ -125,7 +125,7 @@ class CodebaseScanner:
             "*.sqlite3",
             "*.db",
             "*.DS_Store",
-            "data/",  # Exclude data directory contents by default
+            # REMOVED: "data/",  # Exclude data directory contents by default
             # "docs/", # Exclude docs directory contents by default, unless explicitly needed (now included)
             "repo_contents.txt",
             "repo_to_single_file.sh",  # Specific files
@@ -210,8 +210,8 @@ class CodebaseScanner:
                     "venv",
                     ".venv",
                     "node_modules",
-                    "data",
-                    "docs",
+                    # REMOVED: "data",
+                    # REMOVED: "docs",
                 ]:
                     if excluded_dir in dirs:
                         dirs.remove(excluded_dir)

@@ -44,7 +44,7 @@ from src.exceptions import (
     LLMProviderRequestError,
     LLMProviderResponseError,
     CircuitBreakerError,
-    CodebaseAccessError,  # ADDED: Import CodebaseAccessError
+    CodebaseAccessError,
 )
 from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
@@ -56,7 +56,7 @@ from src.self_improvement.content_validator import ContentAlignmentValidator
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompt_analyzer import PromptAnalyzer
 
-# NEW IMPORT FOR CODEBASE SCANNING
+# NEW IMPORT FOR CODEBASE SCANNING - MODIFIED TO USE src/context/context_analyzer.py
 from src.context.context_analyzer import CodebaseScanner
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
 from src.utils.path_utils import PROJECT_ROOT
@@ -127,9 +127,7 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context (fallback scan in SocraticDebate init)..."
             )
-            full_codebase_analysis = (
-                self.codebase_scanner.load_own_codebase_context()
-            )  # Changed to load_own_codebase_context
+            full_codebase_analysis = self.codebase_scanner.load_own_codebase_context()
             self.structured_codebase_context = full_codebase_analysis.get(
                 "file_structure", {}
             )
@@ -155,8 +153,8 @@ class SocraticDebate:
             tokenizer=None,  # Will be set after GeminiProvider init
             settings=self.settings,
             summarizer_pipeline=summarizer_pipeline_instance,
-            persona_manager=persona_manager,  # ADDED
-            token_tracker=self.token_tracker,  # ADDED
+            persona_manager=persona_manager,
+            token_tracker=self.token_tracker,
         )
 
         try:
@@ -671,7 +669,7 @@ class SocraticDebate:
         # Removed aggressive_optimization: bool = False as it's now internal to PromptOptimizer
     ) -> Tuple[PersonaConfig, Type[BaseModel], str, str, str, int]:
         """
-        Prepares persona configuration, output schema, and the final system/user prompts
+        Prepar es persona configuration, output schema, and the final system/user prompts
         for an LLM call.
         """
         persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
@@ -712,7 +710,7 @@ class SocraticDebate:
         # MODIFIED: Pass persona_config directly to optimize_prompt
         optimized_user_prompt = self.prompt_optimizer.optimize_prompt(
             user_prompt_text=prompt_for_llm,
-            persona_config=persona_config,  # MODIFIED
+            persona_config=persona_config,
             max_output_tokens_for_turn=max_output_tokens_for_turn,
             system_message_for_token_count=final_system_prompt,
             is_self_analysis_prompt=self.is_self_analysis,
@@ -884,7 +882,7 @@ class SocraticDebate:
         raw_llm_output = ""
         is_truncated = False
         current_prompt_for_retry = prompt_for_llm
-        tokens_used_in_turn = 0  # ADDED: Initialize to 0
+        tokens_used_in_turn = 0
 
         # Aggressive token optimization logic is now handled internally by PromptOptimizer
         # No need for aggressive_optimization_flag here.
@@ -1689,13 +1687,8 @@ class SocraticDebate:
 
             turn_output = None
             try:
-                turn_output = (
-                    self._execute_llm_turn(  # MODIFIED: Call the new extracted method
-                        persona_name,
-                        current_prompt,
-                        "debate",
-                        max_output_tokens_for_turn,
-                    )
+                turn_output = self._execute_llm_turn(
+                    persona_name, current_prompt, "debate", max_output_tokens_for_turn
                 )
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
@@ -2786,13 +2779,11 @@ class SocraticDebate:
                 "CODE_CHANGES_SUGGESTED" not in suggestion
                 or not suggestion["CODE_CHANGES_SUGGESTED"]
             ):
-                processed_suggestions.append(
-                    suggestion
-                )  # Changed from consolidated_suggestions.append(suggestion)
+                processed_suggestions.append(suggestion)
                 continue
 
             file_changes_map = defaultdict(list)
-            malformed_blocks_for_suggestion = []  # Initialize here
+            malformed_blocks_for_suggestion = []
             for change_data in suggestion.get("CODE_CHANGES_SUGGESTED", []):
                 try:
                     code_change = CodeChange.model_validate(change_data)
