@@ -50,9 +50,16 @@ from src.logging_config import setup_structured_logging
 from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 from src.persona_manager import PersonaManager
 
+from src.utils.validation.json_validator import validate_llm_output  # NEW
+
 # NEW IMPORTS FOR SELF-IMPROVEMENT
-from src.self_improvement.metrics_collector import FocusedMetricsCollector
-from src.self_improvement.content_validator import ContentAlignmentValidator
+from src.self_improvement import (
+    FocusedMetricsCollector,
+    ContentAlignmentValidator,
+    StrategyManager,
+    CritiqueEngine,
+    ImprovementApplicator,
+)  # NEW: Import from modularized self_improvement package
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
 
@@ -217,6 +224,10 @@ class SocraticDebate:
             self.logger.warning(
                 "PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI."
             )
+            # NEW: Initialize StrategyManager, CritiqueEngine, ImprovementApplicator
+            self.strategy_manager = StrategyManager()
+            self.critique_engine = CritiqueEngine()
+            self.improvement_applicator = ImprovementApplicator()
             self.persona_manager = PersonaManager(
                 self.settings.domain_keywords,
                 token_tracker=self.token_tracker,
@@ -306,6 +317,11 @@ class SocraticDebate:
             self.content_validator = ContentAlignmentValidator(
                 original_prompt=self.initial_prompt, debate_domain=self.domain
             )
+
+        # NEW: Initialize StrategyManager, CritiqueEngine, ImprovementApplicator if not already passed
+        self.strategy_manager = StrategyManager()
+        self.critique_engine = CritiqueEngine()
+        self.improvement_applicator = ImprovementApplicator()
 
         self._calculate_token_budgets()
         self.conflict_manager = ConflictResolutionManager(
@@ -960,6 +976,17 @@ class SocraticDebate:
                 )
 
                 tokens_used_in_turn = input_tokens + output_tokens
+
+                # NEW: Centralized validation right after the LLM call
+                validated_data = validate_llm_output(
+                    raw_llm_output, output_schema_class
+                )
+                if not validated_data:
+                    raise SchemaValidationError(
+                        error_type="POST_CALL_VALIDATION_FAILED",
+                        field_path="LLM_OUTPUT",
+                        invalid_value=raw_llm_output[:500],
+                    )
 
                 parsed_output = self._process_llm_response(
                     persona_name,

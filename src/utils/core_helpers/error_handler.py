@@ -1,10 +1,57 @@
 # src/utils/error_handler.py
 import logging
-from typing import Callable, Any, Dict, Optional
+import sys  # NEW: Import sys for sys.excepthook
+import traceback  # NEW: Import traceback for handle_exception
+from typing import (
+    Callable,
+    Any,
+    Dict,
+    Optional,
+    Type,
+)  # NEW: Added Type for handle_exception signature
 from functools import wraps
 from src.exceptions import ChimeraError  # Import the enhanced ChimeraError
 
 logger = logging.getLogger(__name__)
+
+
+# NEW: Add log_event function
+def log_event(message: str, level: str = "info", data: Optional[Dict[str, Any]] = None):
+    """
+    Logs a structured event using the module's logger.
+    Args:
+        message: The main log message.
+        level: The logging level (e.g., 'info', 'warning', 'error', 'critical').
+        data: Optional dictionary of additional structured data to log.
+    """
+    log_method = getattr(logger, level.lower(), logger.info)
+    log_method(message, extra=data)
+
+
+# NEW: Add handle_exception function for sys.excepthook
+def handle_exception(
+    exc_type: Type[BaseException], exc_value: BaseException, exc_traceback: Any
+):
+    """
+    Global exception handler for sys.excepthook.
+    Logs unhandled exceptions with full traceback.
+    """
+    if issubclass(exc_type, KeyboardInterrupt):
+        # Don't log KeyboardInterrupt, just let it terminate
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
+    log_event(
+        "Unhandled exception caught by sys.excepthook",
+        level="critical",
+        data={
+            "exception_type": exc_type.__name__,
+            "exception_message": str(exc_value),
+            "stack_trace": "".join(
+                traceback.format_exception(exc_type, exc_value, exc_traceback)
+            ),
+        },
+    )
 
 
 def handle_errors(default_return: Any = None, log_level: str = "ERROR"):

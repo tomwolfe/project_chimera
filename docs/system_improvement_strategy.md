@@ -2,7 +2,26 @@
 
 ## Guiding Principles
 
-Project Chimera is a complex adaptive system. Self-improvement efforts must balance targeted enhancements with a deep understanding of emergent behaviors and interdependencies. Direct code modifications should be preceded by rigorous analysis and validation.
+Project Chimera is a complex adaptive system. Self-improvement efforts must balance targeted enhancements with a deep understanding of its current state and desired future capabilities.
+
+## Self-Improvement Framework
+
+The AI should employ a structured framework for self-improvement, encompassing the following stages:
+
+1.  **Self-Assessment:** Regularly evaluate current performance against defined metrics and identify areas for improvement. This includes analyzing reasoning processes, output quality, and efficiency.
+2.  **Hypothesis Generation:** Formulate specific, testable hypotheses about potential improvements. For example, 'Modifying prompt structure X will improve accuracy on task Y by Z%'.
+3.  **Experimentation & Implementation:** Design and execute experiments to test hypotheses. This may involve modifying prompts, adjusting internal parameters, or refining algorithms. Implement changes cautiously, prioritizing stability.
+4.  **Evaluation:** Measure the impact of implemented changes against the original hypotheses and baseline performance. Utilize both quantitative metrics and qualitative analysis.
+5.  **Iteration:** Based on evaluation results, decide whether to retain, refine, or discard the changes. Feed learnings back into the self-assessment phase.
+
+## Prioritization Criteria
+
+When multiple improvement opportunities exist, prioritize based on:
+
+*   **Impact:** Potential to significantly enhance reasoning quality, robustness, or efficiency.
+*   **Feasibility:** Ease and safety of implementation.
+*   **Urgency:** Criticality of the issue being addressed.
+*   **Alignment:** Contribution to overall project goals.
 
 ## Phased Improvement Approach
 

@@ -13,6 +13,11 @@ from pydantic import ValidationError
 from datetime import datetime
 import sys
 import difflib
+
+# NEW: Import modularized self-improvement components
+from src.self_improvement.strategy_manager import StrategyManager
+from src.self_improvement.critique_engine import CritiqueEngine
+from src.self_improvement.improvement_applicator import ImprovementApplicator
 import tempfile
 
 from src.utils.core_helpers.code_utils import _get_code_snippet, ComplexityVisitor
@@ -90,6 +95,11 @@ class FocusedMetricsCollector:
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
         self.content_validator = content_validator
+        self.strategy_manager = StrategyManager()  # NEW: Initialize StrategyManager
+        self.critique_engine = CritiqueEngine()  # NEW: Initialize CritiqueEngine
+        self.improvement_applicator = (
+            ImprovementApplicator()
+        )  # NEW: Initialize ImprovementApplicator
         self.codebase_path = PROJECT_ROOT
         self.collected_metrics: Dict[str, Any] = {}
         self.reasoning_quality_metrics: Dict[str, Any] = {}
