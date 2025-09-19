@@ -12,116 +12,18 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# --- Constants for Project Root Markers ---
-# These markers help in identifying the project's root directory.
-PROJECT_ROOT_MARKERS = [
-    ".git",
-    "config.yaml",
-    "pyproject.toml",
-    "Dockerfile",
-    "README.md",
-    "src/",
-    ".github/",
-    "app.py",  # ADDED
-    "core.py",  # ADDED
-]
+# --- Import PROJECT_ROOT and related utilities from src.utils.path_utils ---
+# This ensures a single source of truth for project root detection.
+from src.utils.path_utils import (
+    PROJECT_ROOT,
+    is_within_base_dir,
+    sanitize_and_validate_file_path,
+)
 
-
-def _find_project_root_internal(start_path: Path) -> Optional[Path]:
-    """Internal helper to find the project root without raising an error."""
-    current_dir = start_path
-    # Limit search depth to prevent infinite loops in unusual file structures
-    for _ in range(15):
-        if any(
-            current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS
-        ):
-            return current_dir
-
-        parent_path = current_dir.parent
-        if parent_path == current_dir:  # Reached the filesystem root
-            break
-        current_dir = parent_path
-    return None  # Return None if not found
-
-
-# --- Define PROJECT_ROOT dynamically ---
-# This ensures that the project root is correctly identified regardless of where the script is run from.
-_initial_start_path = Path(__file__).resolve().parent
-_found_root = _find_project_root_internal(_initial_start_path)
-
-if _found_root:
-    PROJECT_ROOT = _found_root
-    logger.info(f"Project root identified at: {PROJECT_ROOT}")
-else:
-    PROJECT_ROOT = Path.cwd()  # Fallback to current working directory
-    logger.warning(
-        f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
-    )
-
-
-def is_within_base_dir(file_path: Path) -> bool:
-    """Checks if a file path is safely within the project base directory."""
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(
-            PROJECT_ROOT
-        )  # This will raise ValueError if not a subpath
-        return True
-    except ValueError:
-        logger.debug(
-            f"Path '{file_path}' (resolved: '{resolved_path}') is outside the project base directory '{PROJECT_ROOT}'."
-        )
-        return False
-    except FileNotFoundError:
-        logger.debug(
-            f"Path '{file_path}' (resolved: '{resolved_path}') does not exist."
-        )
-        return False
-    except Exception as e:
-        logger.error(
-            f"Error validating path '{file_path}' against base directory '{PROJECT_ROOT}': {e}"
-        )
-        return False
-
-
-def sanitize_and_validate_file_path(raw_path: str) -> str:
-    """Sanitizes and validates a file path for safety against traversal and invalid characters.
-    Ensures the path is within the project's base directory and returns it relative to PROJECT_ROOT.
-    """
-    if not raw_path:
-        raise ValueError("File path cannot be empty.")
-
-    # MODIFIED: Allow forward slashes in sanitized_path_str as they are valid path separators
-    sanitized_path_str = re.sub(
-        r'[<>:"\\|?*\x00-\x1f\x7f]', "", raw_path
-    )  # Removed '/' from invalid chars
-    sanitized_path_str = re.sub(r"\.\./", "", sanitized_path_str)
-    sanitized_path_str = re.sub(r"//+", "/", sanitized_path_str)
-
-    path_obj = Path(sanitized_path_str)
-
-    # Resolve the path to get its absolute, canonical form
-    try:
-        resolved_path = path_obj.resolve()
-    except Exception as e:
-        raise ValueError(f"Failed to resolve path '{sanitized_path_str}': {e}") from e
-
-    # Check if the resolved path is within the project root
-    if not is_within_base_dir(resolved_path):
-        raise ValueError(
-            f"File path '{raw_path}' (sanitized: '{sanitized_path_str}') resolves to a location outside the allowed project directory."
-        )
-
-    # Return path relative to PROJECT_ROOT
-    try:
-        return str(resolved_path.relative_to(PROJECT_ROOT))
-    except ValueError:
-        # This should ideally not happen if is_within_base_dir returned True,
-        # but as a safeguard, return the absolute path if relative_to fails.
-        logger.warning(
-            f"Could not get relative path for '{resolved_path}' from '{PROJECT_ROOT}'. Returning absolute path."
-        )
-        return str(resolved_path)
+# REMOVED: Duplicated PROJECT_ROOT_MARKERS, _find_project_root_internal,
+# and dynamic PROJECT_ROOT definition as they are now imported from src.utils.path_utils.
+# REMOVED: Duplicated is_within_base_dir and sanitize_and_validate_file_path
+# as they are now imported from src.utils.path_utils.
 
 
 # --- CodebaseScanner Class ---

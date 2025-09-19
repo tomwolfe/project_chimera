@@ -4,7 +4,6 @@ Utility functions related to code manipulation and analysis.
 """
 
 import logging
-import re
 import ast
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any, Union

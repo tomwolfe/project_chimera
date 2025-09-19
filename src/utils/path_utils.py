@@ -125,7 +125,6 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "services/llm_service.py": "src/llm/client.py",
         "utils/validation.py": "src/utils/validation.py",
         "core/llm_cache.py": "src/llm_cache.py",
-        "services/llm_cache.py": "src/llm_cache.py",
         "core/config.py": "config.py",
         "reasoning_engine.py": "core.py",  # Common LLM hallucination
         "token_manager.py": "src/token_tracker.py",  # Common LLM hallucination
