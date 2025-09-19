@@ -84,8 +84,13 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "src/main.py": "app.py",
         "src/llm_service.py": "src/llm_provider.py",
         "src/api_client.py": "src/llm_provider.py",
-        "src/prompt_manager.py": "src/prompt_manager.py",
-        "src/prompt_engineering/prompt_manager.py": "src/prompt_manager.py",
+        "src/prompt_manager.py": "src/utils/prompting/prompt_optimizer.py",
+        "src/prompt_engineering/prompt_manager.py": "src/utils/prompting/prompt_optimizer.py",
+        "src/llm_interface.py": "src/llm_provider.py",
+        "src/analyzers/self_improvement_analyst.py": "src/self_improvement/metrics_collector.py",  # Or link to persona file
+        "src/core/reasoning_engine.py": "core.py",  # Common hallucination
+        "project_chimera/utils/json_utils.py": "src/utils/core_helpers/json_utils.py",  # Common hallucination
+        "project_chimera/utils/prompt_generator.py": "src/utils/prompting/prompt_engineering.py",  # Common hallucination
         # --- END NEW MAPPINGS ---
     }
 

@@ -191,14 +191,20 @@ class PromptOptimizer:
     def generate_prompt(
         self, template_name: str, context: Optional[Dict[str, Any]] = None
     ) -> str:
-        """
-        Generates a formatted prompt from a template, rendering it with Jinja2.
-        """
-        if template_name not in self.prompt_templates:
-            raise ValueError(f"No template found for {template_name}")
-
+        """Generates a formatted prompt from a template, rendering it with Jinja2."""
+        # FIX: The template name should be the key, not the content.
+        # The system_prompt_template field in PersonaConfig now holds the template *name*.
+        template_content = self.prompt_templates.get(template_name)
+        if not template_content:
+            logger.error(
+                f"Prompt template '{template_name}' not found in loaded templates."
+            )
+            # Return a clear error message instead of raising an unhandled exception
+            return f"Error: Prompt template '{template_name}' could not be loaded."
         try:
-            template = Template(self.prompt_templates[template_name])
+            template = self.env.get_template(
+                f"{template_name}.j2"
+            )  # Use Jinja environment to get template
             return template.render(context=context or {})
         except Exception as e:
             logger.error(f"Error rendering template {template_name}: {str(e)}")

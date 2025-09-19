@@ -39,6 +39,8 @@ from .core_helpers import (
     ComplexityVisitor,
     recommend_domain_from_keywords,
     handle_errors,
+    safe_json_loads,  # NEW
+    safe_json_dumps,  # NEW
 )
 
 __all__ = [
@@ -67,6 +69,8 @@ __all__ = [
     "test_api_key",
     "shutdown_streamlit",
     "convert_to_json_friendly",
+    "safe_json_loads",  # NEW
+    "safe_json_dumps",  # NEW
     "sanitize_and_validate_file_path",
     "PROJECT_ROOT",
     "_map_incorrect_file_path",

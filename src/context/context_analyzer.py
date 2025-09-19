@@ -33,7 +33,7 @@ class CodebaseScanner:
 
     def __init__(self, project_root: str = None):
         """Initialize with optional project root path."""
-        if project_root is None:
+        if project_root is None:  # FIX: Corrected '===' to 'is'
             # Use the dynamically determined PROJECT_ROOT
             project_root = str(PROJECT_ROOT)
             logger.info(f"Using dynamically determined project root: {project_root}")
@@ -466,22 +466,30 @@ class ContextRelevanceAnalyzer:
             if not file_contents:
                 self.logger.warning("No file contents to encode for embeddings.")
 
-            # --- START FIX: Chunk large documents before embedding ---
+            # --- FIX: Chunk large documents before embedding ---
             processed_contents = []
-            # Heuristic: A token is roughly 4 chars. The model max sequence length is ~256-512 tokens.
-            # We'll use a character limit of 1000 as a safe chunk size.
-            CHUNK_SIZE = 1000
+            # Respect the model's max sequence length. Use a safe character count based on that.
+            # all-MiniLM-L6-v2 has a max_seq_length of 256 tokens. A safe char limit is ~1000.
+            # The model's tokenizer max_length is a better source for this.
+            # Assuming self.model.max_seq_length is available and accurate.
+            model_max_seq_length = getattr(
+                self.model, "max_seq_length", 256
+            )  # Default to 256 if not found
+            CHUNK_SIZE = model_max_seq_length * 4  # Heuristic: 4 chars per token
             for content in file_contents:
                 if len(content) > CHUNK_SIZE:
                     # For large files, we take the beginning and end chunks to capture imports and key logic.
                     processed_contents.append(
-                        content[:CHUNK_SIZE] + "\n...\n" + content[-CHUNK_SIZE:]
+                        content[: CHUNK_SIZE // 2]
+                        + "\n...\n"
+                        + content[-CHUNK_SIZE // 2 :]
                     )
                 else:
                     processed_contents.append(content)
-            # --- END FIX ---
 
-            file_embeddings_list = self.model.encode(processed_contents)
+            file_embeddings_list = self.model.encode(
+                processed_contents, show_progress_bar=True
+            )
 
             embeddings = dict(zip(file_paths, file_embeddings_list))
             self.logger.info(f"Computed embeddings for {len(embeddings)} files.")

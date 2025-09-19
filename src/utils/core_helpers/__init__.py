@@ -1,4 +1,8 @@
-from .json_utils import convert_to_json_friendly
+from .json_utils import (
+    convert_to_json_friendly,
+    safe_json_loads,
+    safe_json_dumps,
+)  # MODIFIED: Added safe_json_loads, safe_json_dumps
 from .path_utils import (
     sanitize_and_validate_file_path,
     PROJECT_ROOT,
@@ -12,6 +16,8 @@ from .error_handler import handle_errors
 
 __all__ = [
     "convert_to_json_friendly",
+    "safe_json_loads",  # NEW
+    "safe_json_dumps",  # NEW
     "sanitize_and_validate_file_path",
     "PROJECT_ROOT",
     "_map_incorrect_file_path",
