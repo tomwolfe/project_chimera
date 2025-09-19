@@ -699,10 +699,13 @@ class SocraticDebate:
             )
             raise ChimeraError(f"Persona configuration not found for {persona_name}.")
 
-        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
-            persona_name, GeneralOutput
+        # Retrieve the schema name from the persona_config
+        schema_name = persona_config.output_schema
+        # Use the output_parser to get the actual Pydantic schema class
+        output_schema_class = self.output_parser._get_schema_class_from_name(
+            schema_name
         )
-        self.logger.debug(
+        self._log_with_context(
             f"Using schema {output_schema_class.__name__} for {persona_name}."
         )
 
@@ -2308,22 +2311,17 @@ class SocraticDebate:
                 "Prioritize suggestions that include concrete code diffs."
             )
 
-            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Self_Improvement_Analyst"] = (
-                SelfImprovementAnalysisOutputV1
-            )
+            # The output schema for Self_Improvement_Analyst is already defined in personas.yaml
+            # and retrieved dynamically via persona_config.output_schema.
+            # No need to set it here.
 
         else:
             synthesis_prompt_parts.append(
-                "Based on the initial problem and the debate history, synthesize a final, comprehensive answer. "
-                "Address all aspects of the initial problem and integrate insights from all personas. "
-                "Your output MUST strictly adhere to the LLMOutput JSON schema."
+                "Based on the initial problem and the debate history, synthesize a final, comprehensive answer. Address all aspects of the initial problem and integrate insights from all personas. Your output MUST strictly adhere to the JSON schema provided in your system prompt."
             )
-            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["Impartial_Arbitrator"] = (
-                LLMOutput
-            )
-            self.persona_manager.PERSONA_OUTPUT_SCHEMAS["General_Synthesizer"] = (
-                GeneralOutput
-            )
+            # The output schemas for Impartial_Arbitrator and General_Synthesizer are already defined in personas.yaml
+            # and retrieved dynamically via persona_config.output_schema.
+            # No need to set them here.
 
         final_synthesis_prompt_raw = "\n".join(synthesis_prompt_parts)
 
