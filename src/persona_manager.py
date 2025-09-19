@@ -38,27 +38,8 @@ class PersonaManager:
     TRUNCATION_FAILURE_RATE_THRESHOLD = 0.2
     GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = 0.7
 
-    PERSONA_OUTPUT_SCHEMAS: Dict[str, Type[BaseModel]] = {
-        "Impartial_Arbitrator": LLMOutput,
-        "Context_Aware_Assistant": ContextAnalysisOutput,
-        "Constructive_Critic": CritiqueOutput,
-        "General_Synthesizer": GeneralOutput,
-        "Devils_Advocate": ConflictReport,
-        "Self_Improvement_Analyst": SelfImprovementAnalysisOutputV1,
-        "Code_Architect": CritiqueOutput,
-        "Security_Auditor": CritiqueOutput,
-        "DevOps_Engineer": CritiqueOutput,
-        "Test_Engineer": CritiqueOutput,
-        "Code_Architect_TRUNCATED": CritiqueOutput,
-        "Security_Auditor_TRUNCATED": CritiqueOutput,
-        "DevOps_Engineer_TRUNCATED": CritiqueOutput,
-        "Test_Engineer_TRUNCATED": CritiqueOutput,
-        "Constructive_Critic_TRUNCATED": CritiqueOutput,
-        "Impartial_Arbitrator_TRUNCATED": LLMOutput,
-        "Devils_Advocate_TRUNCATED": ConflictReport,
-        "General_Synthesizer_TRUNCATED": GeneralOutput,
-        "Self_Improvement_Analyst_TRUNCATED": SelfImprovementAnalysisOutputV1,
-    }
+    # REMOVED: The hardcoded PERSONA_OUTPUT_SCHEMAS dictionary.
+    # Schemas will now be dynamically retrieved from PersonaConfig.output_schema.
 
     def __init__(
         self,
@@ -118,6 +99,7 @@ class PersonaManager:
             for p_data in data.get("personas", []):
                 if "system_prompt" in p_data:  # Handle old format if it exists
                     p_data["system_prompt_template"] = p_data.pop("system_prompt")
+                # PersonaConfig(**p_data) will now automatically read the 'output_schema' field
                 all_personas_list.append(PersonaConfig(**p_data))
 
             self.all_personas = {p.name: p for p in all_personas_list}
@@ -149,21 +131,24 @@ class PersonaManager:
             self.all_personas = {
                 "Visionary_Generator": PersonaConfig(
                     name="Visionary_Generator",
-                    system_prompt_template="You are a visionary.",  # MODIFIED
+                    system_prompt_template="You are a visionary.",
+                    output_schema="GeneralOutput",  # Added fallback schema
                     temperature=0.7,
                     max_tokens=1024,
                     description="Generates innovative solutions.",
                 ),
                 "Skeptical_Generator": PersonaConfig(
                     name="Skeptical_Generator",
-                    system_prompt_template="You are a skeptic.",  # MODIFIED
+                    system_prompt_template="You are a skeptic.",
+                    output_schema="GeneralOutput",  # Added fallback schema
                     temperature=0.3,
                     max_tokens=1024,
                     description="Identifies flaws.",
                 ),
                 "Impartial_Arbitrator": PersonaConfig(
                     name="Impartial_Arbitrator",
-                    system_prompt_template="You are an arbitrator.",  # MODIFIED
+                    system_prompt_template="You are an arbitrator.",
+                    output_schema="LLMOutput",  # Added fallback schema
                     temperature=0.2,
                     max_tokens=1024,
                     description="Synthesizes outcomes.",
@@ -197,6 +182,7 @@ class PersonaManager:
                             p_data["system_prompt_template"] = p_data.pop(
                                 "system_prompt"
                             )
+                        # PersonaConfig(**p_data) will now automatically read the 'output_schema' field
                         self.all_personas[p_name] = PersonaConfig(**p_data)
                     except ValidationError as e:
                         logger.error(
@@ -225,6 +211,7 @@ class PersonaManager:
             for p_data in data.get("personas", []):
                 if "system_prompt" in p_data:  # Handle old format if it exists
                     p_data["system_prompt_template"] = p_data.pop("system_prompt")
+                # PersonaConfig(**p_data) will now automatically read the 'output_schema' field
                 original_personas_list.append(PersonaConfig(**p_data))
 
             self._original_personas = {p.name: p for p in original_personas_list}
@@ -319,6 +306,7 @@ class PersonaManager:
                 try:
                     if "system_prompt" in data:  # Handle old format if it exists
                         data["system_prompt_template"] = data.pop("system_prompt")
+                    # PersonaConfig(**data) will now automatically read the 'output_schema' field
                     self.all_personas[name] = PersonaConfig(**data)
                 except ValidationError as e:
                     logger.error(
@@ -430,6 +418,9 @@ class PersonaManager:
         current_persona.token_efficiency_score = (
             original_config.token_efficiency_score
         )  # ADDED
+        current_persona.output_schema = (
+            original_config.output_schema
+        )  # ADDED: Reset output_schema
 
         logger.info(f"Persona '{persona_name}' reset to default configuration.")
 
@@ -508,6 +499,7 @@ class PersonaManager:
                             p_data["system_prompt_template"] = p_data.pop(
                                 "system_prompt"
                             )
+                        # PersonaConfig(**p_data) will now automatically read the 'output_schema' field
                         self.all_personas[p_name] = PersonaConfig(**p_data)
                     except ValidationError as e:
                         logger.error(
@@ -534,7 +526,8 @@ class PersonaManager:
             logger.warning(f"Persona '{base_persona_name}' not found for adjustment.")
             return PersonaConfig(
                 name=base_persona_name,
-                system_prompt_template="You are a helpful AI assistant.",  # MODIFIED: Provide a more generic fallback
+                system_prompt_template="You are a helpful AI assistant.",
+                output_schema="GeneralOutput",  # Added fallback schema
                 temperature=0.7,
                 max_tokens=1024,
                 description="Fallback persona.",
@@ -762,45 +755,4 @@ class PersonaManager:
         """Analyze prompt complexity with domain-specific weighting."""
         return self.prompt_analyzer.analyze_complexity(prompt)
 
-    def parse_raw_llm_output(
-        self,
-        raw_llm_output: str,
-        persona_name: str,
-        schema: Optional[Dict[str, Any]] = None,  # schema parameter is unused
-    ) -> Dict[str, Any]:
-        """
-        Parses raw LLM output, attempts JSON decoding, and validates against a schema.
-        This method is intended for internal use by the SocraticDebate class.
-        """
-        try:
-            # Attempt to parse as JSON first
-            raw_output = json.loads(raw_llm_output)
-
-            # Use Pydantic for validation where appropriate
-            if persona_name == "Self_Improvement_Analyst":
-                try:
-                    from src.models import SelfImprovementAnalysisOutput
-
-                    validated = SelfImprovementAnalysisOutput(**raw_output)
-                    return validated.model_dump(by_alias=True)
-                except ValidationError as ve:
-                    logger.error(f"Pydantic validation failed for {persona_name}: {ve}")
-                    error_details = [
-                        {"field": err["loc"][0], "error": err["msg"]}
-                        for err in ve.errors()
-                    ]
-                    raise SchemaValidationError(
-                        f"Validation failed: {str(ve)}", error_details
-                    ) from None
-
-            return raw_output
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decoding failed for {persona_name}: {e}")
-            raise SchemaValidationError(f"Invalid JSON: {str(e)}") from None
-        except Exception as e:
-            logger.error(
-                f"An unexpected error occurred during parsing/validation for {persona_name}: {e}"
-            )
-            raise SchemaValidationError(
-                f"Parsing/validation failed: {str(e)}"
-            ) from None
+    # REMOVED: The parse_raw_llm_output method as it is unused and redundant with LLMOutputParser.

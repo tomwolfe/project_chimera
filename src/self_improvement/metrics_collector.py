@@ -834,7 +834,9 @@ class FocusedMetricsCollector:
         number of functions, code smells, and potential bottlenecks.
         """
         try:
-            from src.utils.code_utils import ComplexityVisitor  # Local import
+            from src.utils.core_helpers.code_utils import (
+                ComplexityVisitor,
+            )  # Local import
 
             tree = ast.parse(content)
             visitor = ComplexityVisitor(content_lines)
@@ -1234,16 +1236,16 @@ class FocusedMetricsCollector:
             "app.py",
             "src/persona_manager.py",
             "src/conflict_resolution.py",
-            "src/utils/prompt_optimizer.py",
-            "src/utils/output_parser.py",
+            "src/utils/prompting/prompt_optimizer.py",
+            "src/utils/reporting/output_parser.py",
             "src/self_improvement/metrics_collector.py",
-            "src/utils/code_utils.py",
-            "src/utils/report_generator.py",
+            "src/utils/core_helpers/code_utils.py",
+            "src/utils/reporting/report_generator.py",
             "src/exceptions.py",
             "src/constants.py",
             "src/config/settings.py",
             "src/context/context_analyzer.py",
-            "src/codebase_scanner.py",  # Include the new scanner file
+            "src/context/codebase_scanner.py",  # Include the new scanner file
         ]
 
         files_to_analyze = {

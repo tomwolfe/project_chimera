@@ -21,6 +21,10 @@ class PersonaConfig(BaseModel):
     system_prompt_template: (
         str  # MODIFIED: Replaced system_prompt with system_prompt_template
     )
+    output_schema: str = Field(
+        "GeneralOutput",
+        description="The Pydantic model name for the persona's output schema.",
+    )
     temperature: float = Field(..., ge=0.0, le=1.0)
     max_tokens: int = Field(..., gt=0)
     token_efficiency_score: Optional[float] = Field(None, ge=0.0, le=1.0)  # ADDED

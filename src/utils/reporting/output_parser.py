@@ -36,6 +36,25 @@ class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
+    # NEW: Centralized mapping of schema names to Pydantic models
+    _SCHEMA_MODEL_MAP: Dict[str, Type[BaseModel]] = {
+        "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
+        "ContextAnalysisOutput": ContextAnalysisOutput,
+        "CritiqueOutput": CritiqueOutput,
+        "GeneralOutput": GeneralOutput,
+        "ConflictReport": ConflictReport,
+        "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
+        "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
+        "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput,
+        "LLMOutput": LLMOutput,
+    }
+
+    # NEW: Helper method to get schema class from its name
+    def _get_schema_class_from_name(self, schema_name: str) -> Type[BaseModel]:
+        return self._SCHEMA_MODEL_MAP.get(
+            schema_name, GeneralOutput
+        )  # Fallback to GeneralOutput
+
     @staticmethod
     def _repair_diff_content_headers(diff_content: str) -> str:
         """
@@ -768,23 +787,9 @@ class LLMOutputParser:
         parsed_data = None
         transformation_needed = False
 
+        # Resolve schema_model if it's a string name (this is now handled by the caller, but good to keep defensive)
         if isinstance(schema_model, str):
-            model_map = {
-                "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
-                "ContextAnalysisOutput": ContextAnalysisOutput,
-                "CritiqueOutput": CritiqueOutput,
-                "GeneralOutput": GeneralOutput,
-                "ConflictReport": ConflictReport,
-                "ConfigurationAnalysisOutput": ConfigurationAnalysisOutput,
-                "DeploymentAnalysisOutput": DeploymentAnalysisOutput,
-                "SelfImprovementAnalysisOutput": SelfImprovementAnalysisOutput,
-                "LLMOutput": LLMOutput,
-            }
-
-            if schema_model in model_map:
-                schema_model = model_map[schema_model]
-            else:
-                raise ValueError(f"Unknown schema model: {schema_model}")
+            schema_model = self._get_schema_class_from_name(schema_model)
 
         cleaned_raw_output = self._clean_llm_output(raw_output)
         self.logger.debug(
@@ -1218,27 +1223,27 @@ class LLMOutputParser:
 
         current_malformed_blocks = malformed_blocks.copy()
 
-        error_message_from_partial = "Failed to generate valid structured output."
+        error_message_from_partial = "Failed to generate valid structured output. "
 
         partial_data_as_dict: Dict[str, Any]
         if partial_data is None:
             partial_data_as_dict = {}
-            error_message_from_partial = (
+            error_message_from_partial += (
                 "No valid JSON data could be extracted or parsed."
             )
         elif isinstance(partial_data, str):
             partial_data_as_dict = {}
-            error_message_from_partial = (
+            error_message_from_partial += (
                 f"LLM returned raw string: '{partial_data[:100]}...'"
                 if len(partial_data) > 100
                 else f"LLM returned raw string: '{partial_data}'"
             )
         elif not isinstance(partial_data, dict):
             partial_data_as_dict = {}
-            error_message_from_partial = f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
+            error_message_from_partial += f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
         else:
             partial_data_as_dict = partial_data
-            error_message_from_partial = "Failed to generate valid structured output."
+            error_message_from_partial += "Failed to generate valid structured output."
 
         if not any(
             block.get("type") == "LLM_OUTPUT_MALFORMED"

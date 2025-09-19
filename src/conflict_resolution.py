@@ -455,11 +455,12 @@ class ConflictResolutionManager:
         DO NOT include any conversational text or markdown fences outside the JSON. Focus solely on providing a correct, valid response.
         """
 
-        output_schema_class = self.persona_manager.PERSONA_OUTPUT_SCHEMAS.get(
-            persona_name.replace("_TRUNCATED", ""), GeneralOutput
+        # MODIFIED: Get schema name from persona_config and resolve to class
+        schema_name = persona_config.output_schema
+        output_schema_class = self.output_parser._get_schema_class_from_name(
+            schema_name
         )
 
-        # MODIFIED: Use _rendered_system_prompt or system_prompt_template
         final_system_prompt_base = getattr(
             persona_config,
             "_rendered_system_prompt",
