@@ -5,54 +5,13 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import os
 
-PROJECT_ROOT_MARKERS = [
-    ".git",
-    "config.yaml",
-    "pyproject.toml",
-    "Dockerfile",
-    "app.py",
-    "core.py",
-    "src/",
-    "tests/",
-    "docs/",
-    "personas.yaml",
-]
+# Determine PROJECT_ROOT deterministically based on the location of this file.
+# This is more robust than searching for marker files.
+# This file is in src/utils/core_helpers, so the root is 3 levels up.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-
-def _find_project_root_internal_temp(start_path: Path) -> Optional[Path]:
-    """Internal helper to find the project root without raising an error."""
-    current_dir = start_path
-    for _ in range(15):
-        if any(
-            current_dir.joinpath(marker).exists() for marker in PROJECT_ROOT_MARKERS
-        ):
-            return current_dir
-
-        parent_path = current_dir.parent
-        if parent_path == current_dir:
-            break
-        current_dir = parent_path
-    return None
-
-
-# Determine PROJECT_ROOT first, without using the logger object
-_initial_start_path_temp = Path(__file__).resolve().parent
-_found_root_temp = _find_project_root_internal_temp(_initial_start_path_temp)
-
-if _found_root_temp:
-    PROJECT_ROOT = _found_root_temp
-else:
-    PROJECT_ROOT = Path.cwd()
-
-# Now initialize the logger, after PROJECT_ROOT is guaranteed to be set
 logger = logging.getLogger(__name__)
-
-# Log the final PROJECT_ROOT using the initialized logger
-logger.info(f"Project root identified at: {PROJECT_ROOT}")
-if not _found_root_temp:
-    logger.warning(
-        f"Project root markers ({PROJECT_ROOT_MARKERS}) not found after searching up to 15 levels from {_initial_start_path_temp}. Falling back to CWD: {PROJECT_ROOT}. Path validation might be less effective."
-    )
+logger.info(f"Project root deterministically set to: {PROJECT_ROOT}")
 
 
 def is_within_base_dir(file_path: Path) -> bool:

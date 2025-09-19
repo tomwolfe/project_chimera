@@ -51,15 +51,10 @@ Project Chimera is an advanced reasoning engine designed for complex problem-sol
 
 - **`src/`:** Main application source code.
   - `__init__.py`: Python package initializer.
-  - `app.py`: (Moved to root)
   - `config/`: Configuration-related modules.
-    - `model_registry.py`: (Moved to config/)
-    - `persistence.py`: (Moved to config/)
-    - `settings.py`: (Moved to config/)
   - `constants.py`: Global constants.
   - `context/`: Codebase scanning and context relevance analysis.
     - `context_analyzer.py`: Core logic for context analysis and codebase scanning.
-  - `core.py`: (Moved to root)
   - `database/`: Database operations (e.g., SQLite for user data).
     - `db_operations.py`: Database interaction logic.
   - `exceptions.py`: Custom exception classes.
