@@ -56,6 +56,7 @@ from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScann
 import gc
 
 from src.utils.report_generator import generate_markdown_report, strip_ansi_codes
+from src.utils.path_utils import PROJECT_ROOT
 from src.utils.session_manager import (
     _initialize_session_state,
     update_activity_timestamp,
@@ -142,7 +143,7 @@ MAX_TOKENS_LIMIT = settings_instance.total_budget
 def get_codebase_scanner_instance():
     """Initializes and returns the CodebaseScanner, cached by Streamlit."""
     logger.info("Initializing CodebaseScanner via st.cache_resource.")
-    return CodebaseScanner()
+    return CodebaseScanner(project_root=PROJECT_ROOT)
 
 
 # NEW: Instantiate ContextRelevanceAnalyzer once and cache it
