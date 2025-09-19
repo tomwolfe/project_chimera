@@ -120,7 +120,8 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "src/main.py": "app.py",
         "src/llm_service.py": "src/llm_provider.py",
         "src/api_client.py": "src/llm_provider.py",
-        "src/prompt_manager.py": "src/utils/prompt_optimizer.py",
+        "src/prompt_manager.py": "src/prompt_manager.py",
+        "src/prompt_engineering/prompt_manager.py": "src/prompt_manager.py",
         # --- END NEW MAPPINGS ---
     }
 
