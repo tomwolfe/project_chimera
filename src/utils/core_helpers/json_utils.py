@@ -1,16 +1,10 @@
 # src/utils/json_utils.py
 import json
 import numpy as np
-from typing import (
-    Any,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-)  # MODIFIED: Added Optional, Tuple for new functions
-import logging  # NEW: Import logging
+from typing import Any, Dict, List, Optional, Tuple, Callable
+import logging
 
-logger = logging.getLogger(__name__)  # NEW: Initialize logger
+logger = logging.getLogger(__name__)
 
 
 def convert_to_json_friendly(obj: Any) -> Any:
@@ -37,7 +31,6 @@ def convert_to_json_friendly(obj: Any) -> Any:
     return obj
 
 
-# NEW FUNCTIONS: safe_json_loads and safe_json_dumps
 def safe_json_loads(
     json_string: str, default_value: Optional[Any] = None
 ) -> Optional[Any]:
@@ -65,30 +58,30 @@ def safe_json_loads(
 
 
 def safe_json_dumps(
-    data: Any, default_value: str = "{}", indent: Optional[int] = None
+    data: Any,
+    indent: Optional[int] = None,
+    default: Optional[
+        Callable[[Any], Any]
+    ] = None,  # This is the 'default' callable for json.dumps
+    on_error_return_str: str = "{}",  # This is the string to return if serialization fails completely
 ) -> str:
     """
-    Safely dumps data to a JSON string, returning a default value if dumping fails.
-    Handles non-serializable types by converting them to strings.
+    Safely dumps data to a JSON string.
+    Uses a provided 'default' callable for non-serializable types, or falls back to 'str'.
+    If serialization fails completely, returns 'on_error_return_str'.
     Logs errors for debugging.
     """
     try:
-        # Attempt to dump with default handler for non-serializable types
-        return json.dumps(data, default=str, indent=indent)
+        # Attempt to dump with the provided default handler, or fall back to str
+        return json.dumps(data, indent=indent, default=default or str)
     except TypeError as e:
         logger.error(
             f"Error encoding JSON: {e}. Attempting to serialize non-serializable types."
         )
-        try:
-            # Fallback to a more aggressive default handler if needed, or just return default_value
-            return json.dumps(data, default=lambda o: str(o), indent=indent)
-        except Exception as final_e:
-            logger.error(
-                f"Failed to serialize object to JSON even with aggressive default handler: {final_e}. Data: {str(data)[:200]}..."
-            )
-            return default_value
+        logger.warning("Fallback to returning on_error_return_str due to TypeError.")
+        return on_error_return_str
     except Exception as e:
         logger.error(
             f"An unexpected error occurred during JSON encoding: {e}. Data: {str(data)[:200]}..."
         )
-        return default_value
+        return on_error_return_str
