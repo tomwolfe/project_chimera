@@ -31,11 +31,11 @@ def _initialize_session_state(
     example_prompts: Dict[str, Any],
     # NEW: Add these two parameters to the function signature
     get_context_relevance_analyzer_instance: Callable[
-        [ChimeraSettings],
+        [ChimeraSettings, Any],  # MODIFIED: Added Any for summarizer_pipeline_instance
         Any,  # Changed to Any as the class itself is not imported here
     ],
     get_codebase_scanner_instance: Callable[[], Any],  # Changed to Any
-    get_summarizer_pipeline_instance: Callable[
+    _get_summarizer_pipeline_instance: Callable[  # MODIFIED: Added underscore to _get_summarizer_pipeline_instance
         [], Any
     ],  # NEW: Add summarizer pipeline instance callable
 ):
@@ -122,7 +122,8 @@ def _initialize_session_state(
 
     if "context_analyzer" not in st.session_state:
         analyzer = get_context_relevance_analyzer_instance(
-            _settings=app_config
+            _settings=app_config,
+            _summarizer_pipeline_instance=_get_summarizer_pipeline_instance(),  # MODIFIED: Pass the _summarizer_pipeline_instance
         )  # Use passed function
         analyzer.raw_file_contents = (
             st.session_state.raw_file_contents
@@ -134,6 +135,14 @@ def _initialize_session_state(
         st.session_state.context_analyzer.raw_file_contents = (
             st.session_state.raw_file_contents
         )
+        # Also ensure the summarizer_pipeline is set on the existing instance if it wasn't before
+        if (
+            not hasattr(st.session_state.context_analyzer, "summarizer_pipeline")
+            or st.session_state.context_analyzer.summarizer_pipeline is None
+        ):
+            st.session_state.context_analyzer.summarizer_pipeline = (
+                _get_summarizer_pipeline_instance()
+            )
 
     if "codebase_scanner" not in st.session_state:
         st.session_state.codebase_scanner = (
@@ -171,7 +180,7 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
         example_prompts=example_prompts,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # NEW: Pass the summarizer pipeline instance
+        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Pass the _summarizer_pipeline_instance
     )
     st.rerun()
 
@@ -201,6 +210,6 @@ def check_session_expiration(
                 example_prompts=example_prompts,
                 get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
                 get_codebase_scanner_instance=get_codebase_scanner_instance,
-                get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # NEW: Pass the summarizer pipeline instance
+                _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Pass the _summarizer_pipeline_instance
             )
             st.rerun()

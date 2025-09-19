@@ -277,6 +277,7 @@ class ContextRelevanceAnalyzer:
         max_file_content_size: int = 500000,
         codebase_scanner: Optional[CodebaseScanner] = None,
         model_name: str = "all-MiniLM-L6-v2",  # NEW: Make model_name configurable
+        summarizer_pipeline: Any = None,  # ADDED: summarizer_pipeline
     ):
         """
         Initializes the analyzer.
@@ -288,6 +289,9 @@ class ContextRelevanceAnalyzer:
         self.cache_path = (
             Path(cache_dir) / "embeddings_cache.json"
         )  # MODIFIED: Change cache extension to .json
+        self.summarizer_pipeline = (
+            summarizer_pipeline  # ADDED: Store summarizer_pipeline
+        )
 
         if raw_file_contents is not None:
             self.raw_file_contents = {
@@ -649,15 +653,34 @@ class ContextRelevanceAnalyzer:
                 )
                 break
 
-            # --- START FIX ---
-            # Replace the incorrect truncate_to_token_limit with the correct transformers library pattern.
-            token_ids = self.model.tokenizer.encode(
-                file_content, max_length=remaining_tokens_for_content, truncation=True
-            )
-            truncated_content = self.model.tokenizer.decode(
-                token_ids, skip_special_tokens=True
-            )
-            if len(token_ids) >= remaining_tokens_for_content:
+            # --- FIX for summarizer input truncation ---
+            # The summarizer pipeline has its own tokenizer and max length. Truncate content for it specifically.
+            if self.summarizer_pipeline and hasattr(
+                self.summarizer_pipeline, "tokenizer"
+            ):
+                summarizer_tokenizer = self.summarizer_pipeline.tokenizer
+                summarizer_max_len = summarizer_tokenizer.model_max_length
+                token_ids = summarizer_tokenizer.encode(
+                    file_content,
+                    max_length=min(remaining_tokens_for_content, summarizer_max_len),
+                    truncation=True,
+                )
+                truncated_content = summarizer_tokenizer.decode(
+                    token_ids, skip_special_tokens=True
+                )
+            else:
+                # Fallback to generic tokenizer if summarizer_pipeline or its tokenizer is not available
+                self.logger.warning(
+                    "Summarizer pipeline or its tokenizer not available for context summary truncation. Falling back to generic truncation."
+                )
+                truncated_content = self.model.tokenizer.truncate_to_token_limit(
+                    file_content, remaining_tokens_for_content
+                )
+
+            if (
+                self._count_tokens_robustly(truncated_content)
+                >= remaining_tokens_for_content
+            ):
                 truncated_content += "\n... (truncated)"
             # --- END FIX ---
 

@@ -18,28 +18,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt # Install all dependencies including dev/test tools
 
-    - name: Run Ruff (Linter Check)
+    - name: Run Code Quality & Security Checks
       shell: bash
       run: |
-        # Use --exit-non-zero-on-fix to fail if formatting is needed but not applied
-        ruff check . --output-format=github --exit-non-zero-on-fix
-    - name: Run Ruff (Formatter Validation)
-      shell: bash
-      run: |
-        # Use --check to validate formatting and --exit-non-zero-on-fix to fail if unformatted
-        ruff format --check --diff --exit-non-zero-on-fix
-    - name: Run Bandit Security Scan
-      shell: bash
-      run: |
-        # Use stricter levels for CI, overriding pyproject.toml if needed, or ensuring pyproject.toml is strict
-        # The --severity-level HIGH and --confidence-level HIGH are good defaults for CI.
-        # --exit-on-error ensures the job fails if Bandit itself encounters an error.
-        bandit -r . --config pyproject.toml --severity-level HIGH --confidence-level HIGH --exit-on-error
-    
-    - name: Check dependencies for vulnerabilities with Safety # NEW: Safety scan step
-      shell: bash
-      run: |
-        safety check --full-report || true # Allow Safety to fail without failing the build immediately, report is still generated
+        chmod +x scripts/run_quality_checks.sh
+        ./scripts/run_quality_checks.sh
 
     - name: Run Unit and Integration Tests with Coverage Check
       shell: bash

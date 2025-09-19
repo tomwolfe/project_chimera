@@ -135,11 +135,15 @@ def get_codebase_scanner_instance():
 
 # NEW: Instantiate ContextRelevanceAnalyzer once and cache it
 @st.cache_resource
-def get_context_relevance_analyzer_instance(_settings: ChimeraSettings):
+def get_context_relevance_analyzer_instance(
+    _settings: ChimeraSettings, _summarizer_pipeline_instance: Any
+):  # MODIFIED: Added underscore to _summarizer_pipeline_instance
     """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
     logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
     return ContextRelevanceAnalyzer(
-        cache_dir=_settings.sentence_transformer_cache_dir, raw_file_contents={}
+        cache_dir=_settings.sentence_transformer_cache_dir,
+        raw_file_contents={},
+        summarizer_pipeline=_summarizer_pipeline_instance,  # Pass it here
     )
 
 
@@ -202,7 +206,7 @@ if "initialized" not in st.session_state:
         example_prompts=EXAMPLE_PROMPTS,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,
+        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
     )
     # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
     st.session_state.api_key_input = (
@@ -1289,7 +1293,7 @@ with st.expander(
             if st.session_state.persona_manager.reset_all_personas_for_current_framework(
                 st.session_state.selected_persona_set
             ):
-                st.toast("All personas for the current framework reset to default.")
+                st.toast(f"Persona '{p_name.replace('_', ' ')}' reset to default.")
                 st.session_state.persona_changes_detected = False
                 st.rerun()
             else:
@@ -2034,7 +2038,9 @@ if st.session_state.debate_ran:
                         for issue in file_issues:
                             issues_by_type[issue.get("type", "Unknown")].append(issue)
 
-                        for issue_type, type_issues in sorted(issues_by_type.items()):
+                        for issue_type, type_issues in sorted(issues_by_type.items())[
+                            :5
+                        ]:  # Limit to top 5 issue types
                             with st.expander(
                                 f"**{issue_type}** ({len(type_issues)} issues)",
                                 expanded=False,
@@ -2047,6 +2053,12 @@ if st.session_state.debate_ran:
                                     )
                                     st.markdown(
                                         f"- **{issue.get('code', '')}**: {issue['message']}{line_info}"
+                                    )
+                                if (
+                                    len(type_issues) > 5
+                                ):  # If more than 5 issues of a type, add a summary
+                                    st.info(
+                                        f"And {len(type_issues) - 5} more issues of type '{issue_type}'."
                                     )
 
         st.subheader("Proposed Code Changes")

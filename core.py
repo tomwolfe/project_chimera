@@ -249,10 +249,19 @@ class SocraticDebate:
             self.context_analyzer = ContextRelevanceAnalyzer(
                 cache_dir=self.settings.sentence_transformer_cache_dir,
                 raw_file_contents=self.raw_file_contents,
+                summarizer_pipeline=summarizer_pipeline_instance,  # ADDED
             )
             if self.persona_router:
                 self.context_analyzer.set_persona_router(self.persona_router)
         else:
+            # Ensure the existing context_analyzer is updated with the summarizer_pipeline_instance
+            # if it was not passed during its own initialization.
+            # This is a defensive measure. Ideally, it should be passed consistently.
+            if (
+                not hasattr(self.context_analyzer, "summarizer_pipeline")
+                or self.context_analyzer.summarizer_pipeline is None
+            ):
+                self.context_analyzer.summarizer_pipeline = summarizer_pipeline_instance
             self.context_analyzer.raw_file_contents = self.raw_file_contents
             current_files_hash = hash(frozenset(self.raw_file_contents.items()))
             if (
@@ -1791,7 +1800,7 @@ class SocraticDebate:
                 debate_history.append({"persona": persona_name, "output": error_output})
                 self._log_with_context(
                     "error",
-                    f"Error during {persona_name} turn: {e}. Attempting conflict resolution.",
+                    f"Error during {persona_name} turn: {e}. Attempting conflict resolution. ",
                     exc_info=True,
                     original_exception=e,
                 )
@@ -2875,7 +2884,7 @@ class SocraticDebate:
                         consolidated_change.model_dump(by_alias=True)
                     )
 
-            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
+            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_for_suggestion
             if malformed_blocks_for_suggestion:
                 suggestion.setdefault("malformed_blocks", []).extend(
                     malformed_blocks_for_suggestion
