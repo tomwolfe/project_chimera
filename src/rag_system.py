@@ -5,6 +5,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
