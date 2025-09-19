@@ -7,9 +7,9 @@ import fnmatch
 from typing import Dict, Any, List, Tuple, Optional
 from sentence_transformers import SentenceTransformer
 import re
-import json
+import json  # NEW: Import json for caching
 import numpy as np
-import pickle  # NEW: Import pickle for caching
+import pickle  # Keep for potential fallback or other uses, but not for embeddings cache
 import hashlib  # NEW: Import hashlib for hashing codebase content
 
 logger = logging.getLogger(__name__)
@@ -287,8 +287,8 @@ class ContextRelevanceAnalyzer:
         self.codebase_scanner = codebase_scanner
         self.model_name = model_name  # Store model name
         self.cache_path = (
-            Path(cache_dir) / "embeddings_cache.pkl"
-        )  # NEW: Define cache path
+            Path(cache_dir) / "embeddings_cache.json"
+        )  # MODIFIED: Change cache extension to .json
 
         if raw_file_contents is not None:
             self.raw_file_contents = {
@@ -326,13 +326,20 @@ class ContextRelevanceAnalyzer:
         """NEW: Loads embeddings from a cache file if it exists and is valid."""
         if self.cache_path.exists():
             try:
-                with open(self.cache_path, "rb") as f:
-                    cached_data = pickle.load(f)
+                with open(
+                    self.cache_path, "r", encoding="utf-8"
+                ) as f:  # MODIFIED: Read as text for JSON
+                    cached_data = json.load(f)  # MODIFIED: Use json.load
 
                 # Verify the hash of the current codebase against the cached hash
                 current_codebase_hash = self._hash_codebase(self.raw_file_contents)
                 if cached_data.get("hash") == current_codebase_hash:
-                    self.file_embeddings = cached_data.get("embeddings", {})
+                    # Convert list embeddings back to numpy arrays
+                    loaded_embeddings = {
+                        k: np.array(v)
+                        for k, v in cached_data.get("embeddings", {}).items()
+                    }
+                    self.file_embeddings = loaded_embeddings
                     self._last_raw_file_contents_hash = current_codebase_hash
                     self.logger.info(
                         f"Loaded {len(self.file_embeddings)} embeddings from cache."
@@ -484,8 +491,21 @@ class ContextRelevanceAnalyzer:
         self._last_raw_file_contents_hash = current_context_hash
         # NEW: Save to cache
         try:
-            with open(self.cache_path, "wb") as f:
-                pickle.dump({"hash": current_context_hash, "embeddings": embeddings}, f)
+            with open(
+                self.cache_path, "w", encoding="utf-8"
+            ) as f:  # MODIFIED: Write as text for JSON
+                # Convert numpy arrays to lists for JSON serialization
+                json_serializable_embeddings = {
+                    k: v.tolist() for k, v in embeddings.items()
+                }
+                json.dump(
+                    {
+                        "hash": current_context_hash,
+                        "embeddings": json_serializable_embeddings,
+                    },
+                    f,
+                    indent=2,
+                )  # MODIFIED: Use json.dump
             self.logger.info(
                 f"Saved {len(embeddings)} embeddings to cache at {self.cache_path}"
             )

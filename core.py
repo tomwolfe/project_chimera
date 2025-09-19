@@ -947,7 +947,7 @@ class SocraticDebate:
                 if attempt < max_retries:
                     self._log_with_context(
                         "warning",
-                        f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Output had malformed blocks.",
+                        f"Validation error for {persona_name} (Attempt {attempt + 1}/{max_retries + 1}). Retrying. Output had malformed blocks. ",
                         persona=persona_name,
                         phase=phase,
                         malformed_blocks=parsed_output.get("malformed_blocks"),
@@ -2782,6 +2782,23 @@ class SocraticDebate:
         """
         if "IMPACTFUL_SUGGESTIONS" not in analysis_output:
             return analysis_output
+
+        # Add a check for malformed blocks from path validation and log them
+        if analysis_output.get("malformed_blocks"):
+            for block in analysis_output["malformed_blocks"]:
+                if block.get("type") in [
+                    "INVALID_MODIFY_ACTION",
+                    "INVALID_ADD_ACTION",
+                    "INVALID_REMOVE_ACTION",
+                    "INVALID_FILE_PATH_OR_ACTION",
+                ]:
+                    self._log_with_context(
+                        "warning",
+                        f"Invalid file action detected during consolidation: {block.get('message')}",
+                        file_path=block.get("file_path"),
+                        action=block.get("action"),
+                        suggestion_area=block.get("suggestion_area"),
+                    )
 
         processed_suggestions = []
         for suggestion in analysis_output["IMPACTFUL_SUGGESTIONS"]:

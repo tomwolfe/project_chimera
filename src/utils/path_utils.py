@@ -117,9 +117,10 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "token_manager.py": "src/token_tracker.py",
         "routes.py": "app.py",
         # --- NEW MAPPINGS ---
-        # "src/prompt_manager.py": "src/utils/prompt_optimizer.py", # REMOVED: This is a real file, should not be remapped
-        # "src/main.py": "app.py", # REMOVED: This is a real file, should not be remapped
-        # "src/llm_interface.py": "src/llm_provider.py", # REMOVED: This is a real file, should not be remapped
+        "src/main.py": "app.py",
+        "src/llm_service.py": "src/llm_provider.py",
+        "src/api_client.py": "src/llm_provider.py",
+        "src/prompt_manager.py": "src/utils/prompt_optimizer.py",
         # --- END NEW MAPPINGS ---
     }
 

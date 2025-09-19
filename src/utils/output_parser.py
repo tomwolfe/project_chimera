@@ -1072,7 +1072,7 @@ class LLMOutputParser:
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
                     if extracted_json_str is not None
-                    else raw_output_snippet
+                    else raw_output_snippet  # Fallback to raw output if JSON extraction fails
                 )
                 if (
                     detected_suggestion
@@ -1279,7 +1279,7 @@ class LLMOutputParser:
             detected_suggestion = self._detect_potential_suggestion_item(
                 extracted_json_str
                 if extracted_json_str is not None
-                else raw_output_snippet
+                else raw_output_snippet  # Fallback to raw output if JSON extraction fails
             )
             if (
                 detected_suggestion
