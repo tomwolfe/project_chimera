@@ -5,14 +5,6 @@ import re
 from pathlib import Path
 import sys
 
-try:
-    from src.utils.path_utils import PROJECT_ROOT
-except ImportError:
-    PROJECT_ROOT = Path.cwd()
-    logging.warning(
-        f"Could not import PROJECT_ROOT from path_utils. Using CWD: {PROJECT_ROOT}"
-    )
-
 
 class RequestIDFilter(logging.Filter):
     def filter(self, record):

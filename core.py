@@ -1752,6 +1752,12 @@ class SocraticDebate:
                     )
                 else:
                     previous_output_for_llm = turn_output
+                    # If content misalignment was detected, add a corrective note for the next persona
+                    if isinstance(turn_output, dict) and turn_output.get(
+                        "content_misalignment_warning"
+                    ):
+                        if isinstance(previous_output_for_llm, str):
+                            previous_output_for_llm += "\n\nCRITICAL FEEDBACK: The previous turn was misaligned with the core topic. Ensure your response is strictly focused on the initial prompt and debate objectives."
                     self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
 
