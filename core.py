@@ -2469,11 +2469,14 @@ class SocraticDebate:
             self._initialize_debate_state()
 
             # Check for codebase access before proceeding with self-analysis
-            if self.is_self_analysis and not self.raw_file_contents:
+            if self.is_self_analysis and (
+                not self.raw_file_contents
+                or all(not content for content in self.raw_file_contents.values())
+            ):
                 raise CodebaseAccessError(
-                    f"Codebase access required for self-analysis but no files were loaded. "
+                    f"No codebase content available for self-analysis. "
                     f"Attempted project root: {self.codebase_scanner.project_root if self.codebase_scanner else 'N/A'}. "
-                    "Ensure the application is running from the Project Chimera root directory and the scanner is functioning correctly."
+                    "Ensure relevant files are present, not empty, and the scanner is configured correctly (e.g., include/exclude patterns)."
                 )
 
             initial_persona_sequence = self._get_final_persona_sequence(

@@ -1450,11 +1450,13 @@ def _run_socratic_debate_process():
             logger.info(
                 "Successfully loaded Project Chimera's codebase context for self-analysis into cached instances."
             )
-            if not st.session_state.raw_file_contents:
+            if not st.session_state.raw_file_contents or all(
+                not content for content in st.session_state.raw_file_contents.values()
+            ):
                 st.warning(
-                    "⚠️ Self-analysis: Codebase context loaded successfully, but no files were found. "
-                    "This might indicate an issue with the scanner's include/exclude patterns or an empty project directory. "
-                    "Self-analysis will proceed but may be limited."
+                    "⚠️ Self-analysis: No codebase content available for analysis. "
+                    "This might indicate an issue with the scanner's include/exclude patterns, "
+                    "empty files, or an empty project directory. Self-analysis will proceed but may be limited."
                 )
                 logger.warning(
                     "Self-analysis: Codebase context is empty after loading."
