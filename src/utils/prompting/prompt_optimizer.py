@@ -1,4 +1,4 @@
-# src/utils/prompt_optimizer.py
+# src/utils/prompting/prompt_optimizer.py
 import logging
 from typing import (
     Dict,
@@ -119,10 +119,12 @@ class PromptOptimizer:
             if self.summarizer_tokenizer:
                 # The previous manual character-based pre-truncation is removed.
                 # We now rely on the summarizer's tokenizer for truncation.
+                # The tokenizer needs to know the model's max length to truncate properly.
+                max_len = self.summarizer_model_max_input_tokens
                 tokenized_input = self.summarizer_tokenizer(
                     pre_truncated_text,
                     truncation=True,
-                    max_length=self.summarizer_model_max_input_tokens,
+                    max_length=max_len,
                     return_tensors="pt",
                 )
                 pre_truncated_text = self.summarizer_tokenizer.decode(

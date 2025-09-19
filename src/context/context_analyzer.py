@@ -145,7 +145,6 @@ class CodebaseScanner:
             ".dockerignore",
             ".gitignore",
             ".pre-commit-config.yaml",
-            "Dockerfile",
             ".github/workflows/*.yml",  # Include GitHub Actions workflows
             "requirements.txt",
             "requirements-prod.txt",
@@ -349,14 +348,14 @@ class ContextRelevanceAnalyzer:
                     )
                     return
                 else:
-                    self.logger.info(
+                    self.logger.warning(  # Changed to warning as it indicates re-computation
                         "Cached embeddings are outdated (codebase changed). Re-computing."
                     )
             except Exception as e:
                 self.logger.warning(
                     f"Error loading embeddings from cache: {e}. Re-computing."
                 )
-        self.logger.info(
+        self.logger.info(  # This log is fine if it's the final decision to compute
             "No valid cache found or cache is outdated. Computing embeddings."
         )
         # If cache is invalid or not found, compute new embeddings

@@ -93,6 +93,7 @@ def _map_incorrect_file_path(suggested_path: str) -> str:
         "project_chimera/utils/prompt_generator.py": "src/utils/prompting/prompt_engineering.py",  # Common hallucination
         # --- END NEW MAPPINGS ---
     }
+    path_mapping["src/app.py"] = "app.py"  # Add specific mapping for this common error
 
     if suggested_path in path_mapping:
         return path_mapping[suggested_path]
