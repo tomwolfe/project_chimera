@@ -80,7 +80,7 @@ Project Chimera is an advanced reasoning engine designed for complex problem-sol
     - `command_executor.py`: Safe command execution.
     - `domain_recommender.py`: Recommends domains from keywords.
     - `error_handler.py`: Standardized error handling.
-    - `file_operations.py`: File backup and change application.
+    - `file_io/`: File I/O utilities.
     - `json_utils.py`: JSON utility functions.
     - `output_formatter.py`: Formats analysis results.
     - `output_parser.py`: Parses and validates LLM outputs.
@@ -89,8 +89,8 @@ Project Chimera is an advanced reasoning engine designed for complex problem-sol
     - `prompt_engineering.py`: Prompt formatting utilities.
     - `prompt_optimizer.py`: Optimizes prompts.
     - `report_generator.py`: Generates Markdown reports.
-    - `session_manager.py`: Streamlit session state management.
-    - `ui_helpers.py`: Streamlit UI helper functions.
+    - `session/`: Streamlit session management.
+    - `validation/`: Validation utilities.
 
 - **`tests/`:** Unit and integration tests.
   - `integration/`: Integration tests.

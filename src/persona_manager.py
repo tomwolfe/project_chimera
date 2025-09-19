@@ -561,13 +561,6 @@ class PersonaManager:
                 )
                 rendered_prompt = (
                     adjusted_config._rendered_system_prompt
-                )  # Ensure rendered_prompt is also updated in case of error
-            else:
-                adjusted_config._rendered_system_prompt = (
-                    "Error: Prompt optimizer or template missing."
-                )
-                rendered_prompt = (
-                    adjusted_config._rendered_system_prompt
                 )  # Ensure rendered_prompt is also updated
 
         # Apply truncation if the persona name indicates it
@@ -723,7 +716,7 @@ class PersonaManager:
         if self.token_tracker:
             global_token_consumption_high = (
                 self.token_tracker.get_consumption_rate()
-                > self.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD
+                > self.settings.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD
             )
 
         for p_name in persona_sequence:

@@ -1217,7 +1217,7 @@ class SocraticDebate:
                 except Exception as e:
                     self._log_with_context(
                         "error",
-                        f"Error during context analysis: {e}",
+                        f"Error during context analysis: {e}[/red]",
                         exc_info=True,
                         original_exception=e,
                     )
@@ -1649,6 +1649,24 @@ class SocraticDebate:
         if rag_context:
             prompt_parts.append(rag_context)  # Add RAG context here
         prompt_parts.append(previous_output_summary)
+
+        # Inject the valid file list into the prompt for code-generating personas
+        # This list is derived from the actual scanned codebase.
+        if persona_name in [
+            "Code_Architect",
+            "Security_Auditor",
+            "DevOps_Engineer",
+            "Test_Engineer",
+            "Self_Improvement_Analyst",
+        ]:
+            valid_files_list = list(self.raw_file_contents.keys())
+            file_list_context = (
+                "CRITICAL INSTRUCTION: You MUST only reference file paths from the following list of valid files in the codebase. "
+                f"Do not invent or assume paths.\nVALID FILES: {json.dumps(valid_files_list, indent=2)}\n\n"
+            )
+            prompt_parts.insert(
+                0, file_list_context
+            )  # Prepend this critical instruction
         return "\n".join(prompt_parts)
 
     def _handle_problematic_output(
@@ -1798,6 +1816,11 @@ class SocraticDebate:
                     ):
                         if isinstance(previous_output_for_llm, str):
                             previous_output_for_llm += "\n\nCRITICAL FEEDBACK: The previous turn was misaligned with the core topic. Ensure your response is strictly focused on the initial prompt and debate objectives."
+                        elif isinstance(previous_output_for_llm, dict):
+                            # If it's a dict, add a specific key for critical feedback
+                            previous_output_for_llm["CRITICAL_FEEDBACK"] = (
+                                "The previous turn was misaligned with the core topic. Ensure your response is strictly focused on the initial prompt and debate objectives."
+                            )
                     self.intermediate_steps["Unresolved_Conflict"] = None
                     self.intermediate_steps["Conflict_Resolution_Attempt"] = None
 
@@ -2292,20 +2315,33 @@ class SocraticDebate:
             )
             return error_output, None
 
+        # Summarize the debate history instead of passing the full verbose JSON
+        debate_summary_for_synthesis = []
+        for turn in debate_persona_results:
+            persona = turn.get("persona")
+            output = turn.get("output", {})
+            if isinstance(output, dict):
+                summary = (
+                    output.get("CRITIQUE_SUMMARY")
+                    or output.get("ANALYSIS_SUMMARY")
+                    or output.get("summary")
+                )
+                if summary:
+                    debate_summary_for_synthesis.append(f"- {persona}: {summary}")
+                if "SUGGESTIONS" in output and isinstance(output["SUGGESTIONS"], list):
+                    for sug in output["SUGGESTIONS"][
+                        :2
+                    ]:  # Limit to top 2 suggestions per persona to keep it concise
+                        debate_summary_for_synthesis.append(
+                            f"  - Suggestion: {sug.get('PROBLEM', 'N/A')}"
+                        )
+
+        summarized_debate_history = "\n".join(debate_summary_for_synthesis)
+
         debate_history_summary_budget = int(self.phase_budgets["synthesis"] * 0.1)
         effective_history_budget = max(
             200,
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
-        )
-        summarized_debate_history_object = self._summarize_debate_history_for_llm(
-            debate_persona_results, effective_history_budget
-        )
-        debate_history_json_str = safe_json_dumps(
-            summarized_debate_history_object, default=convert_to_json_friendly
-        )
-
-        summarized_debate_history = self.prompt_optimizer.optimize_debate_history(
-            debate_history_json_str, effective_history_budget
         )
         synthesis_prompt_parts.append(
             f"Debate History:\n{summarized_debate_history}\n\n"
