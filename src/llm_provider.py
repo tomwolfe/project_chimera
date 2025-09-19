@@ -39,6 +39,9 @@ from src.exceptions import (
     SchemaValidationError,
 )
 
+# NEW: Import LLMOutput and SelfImprovementAnalysisOutputV1 from src.models
+from src.models import LLMOutput, SelfImprovementAnalysisOutputV1
+
 # --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
 from tenacity import (
     retry,
@@ -519,6 +522,59 @@ class GeminiProvider:
                         cleaned_generated_text = self.output_parser._clean_llm_output(
                             generated_text
                         )
+
+                        # NEW: Apply diff header repair proactively if schema expects it
+                        if output_schema in [
+                            SelfImprovementAnalysisOutputV1,
+                            LLMOutput,
+                        ]:
+                            try:
+                                # Temporarily parse to check for CODE_CHANGES/CODE_CHANGES_SUGGESTED
+                                temp_parsed = json.loads(cleaned_generated_text)
+                                if isinstance(temp_parsed, dict):
+                                    if "IMPACTFUL_SUGGESTIONS" in temp_parsed:
+                                        for suggestion in temp_parsed[
+                                            "IMPACTFUL_SUGGESTIONS"
+                                        ]:
+                                            if "CODE_CHANGES_SUGGESTED" in suggestion:
+                                                for change in suggestion[
+                                                    "CODE_CHANGES_SUGGESTED"
+                                                ]:
+                                                    if change.get(
+                                                        "ACTION"
+                                                    ) == "MODIFY" and change.get(
+                                                        "DIFF_CONTENT"
+                                                    ):
+                                                        change["DIFF_CONTENT"] = (
+                                                            LLMOutputParser._repair_diff_content_headers(
+                                                                change["DIFF_CONTENT"]
+                                                            )
+                                                        )
+                                        cleaned_generated_text = json.dumps(temp_parsed)
+                                    elif "CODE_CHANGES" in temp_parsed:
+                                        for change in temp_parsed["CODE_CHANGES"]:
+                                            if change.get(
+                                                "ACTION"
+                                            ) == "MODIFY" and change.get(
+                                                "DIFF_CONTENT"
+                                            ):
+                                                change["DIFF_CONTENT"] = (
+                                                    LLMOutputParser._repair_diff_content_headers(
+                                                        change["DIFF_CONTENT"]
+                                                    )
+                                                )
+                                        cleaned_generated_text = json.dumps(temp_parsed)
+                            except json.JSONDecodeError:
+                                # If it's not valid JSON yet, the incremental repair will handle it later.
+                                # This proactive step is for cases where the JSON is mostly valid but diff headers are off.
+                                pass
+                            except Exception as e:
+                                self._log_with_context(
+                                    "warning",
+                                    f"Proactive diff header repair failed: {e}",
+                                    exc_info=True,
+                                )
+
                         if hasattr(output_schema, "model_validate_json"):
                             output_schema.model_validate_json(cleaned_generated_text)
                         else:
@@ -564,9 +620,7 @@ class GeminiProvider:
 
                 final_output_to_return = generated_text
                 if output_schema:
-                    final_output_to_return = self.output_parser._clean_llm_output(
-                        generated_text
-                    )
+                    final_output_to_return = cleaned_generated_text
                 return final_output_to_return, input_tokens, output_tokens, is_truncated
 
             except SchemaValidationError as e:

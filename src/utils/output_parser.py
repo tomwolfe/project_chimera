@@ -34,29 +34,45 @@ class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
-    def _repair_diff_content_headers(self, diff_content: str) -> str:
+    @staticmethod
+    def _repair_diff_content_headers(diff_content: str) -> str:
         """
-        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing.
-        Specifically targets lines starting with '--- ' or '+++ ' followed by a path
-        that doesn't already have 'a/' or 'b/' after the initial '--- ' or '+++ '.
+        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing
+        or if paths start with a leading slash.
         """
+
+        def _replace_prefix(match, prefix_char):
+            prefix_str = match.group(1)  # e.g., "--- " or "+++ "
+            path = match.group(
+                2
+            )  # e.g., "/src/file.py" or "src/file.py" or "a/src/file.py"
+
+            # Remove any leading '/' from the path part
+            cleaned_path = path.lstrip("/")
+
+            # If the cleaned path already starts with the correct prefix_char + '/', return original
+            # This check is important to avoid adding 'a/' to 'a/src/file.py' resulting in 'a/a/src/file.py'
+            if cleaned_path.startswith(f"{prefix_char}/"):
+                return match.group(0)  # No change needed, return original match
+
+            # Otherwise, prepend the correct prefix_char + '/'
+            return f"{prefix_str}{prefix_char}/{cleaned_path}"
+
         repaired_diff = diff_content
 
-        # Regex to find '--- /path' and replace with '--- a/path'
+        # Apply the replacement for '--- ' lines
         repaired_diff = re.sub(
-            r"^(--- )([^a/].*)$", r"--- a/\2", repaired_diff, flags=re.MULTILINE
+            r"^(--- )(.*)$",
+            lambda m: _replace_prefix(m, "a"),
+            repaired_diff,
+            flags=re.MULTILINE,
         )
-        # Regex to find '+++ /path' and replace with '+++ b/path'
+        # Apply the replacement for '+++ ' lines
         repaired_diff = re.sub(
-            r"^(+++ )([^b/].*)$", r"+++ b/\2", repaired_diff, flags=re.MULTILINE
-        )
-
-        # Ensure we don't double-prefix if the LLM already added it (e.g., "--- a/a/path")
-        repaired_diff = re.sub(
-            r"^(--- a/)(a/.*)$", r"--- a/\2", repaired_diff, flags=re.MULTILINE
-        )
-        repaired_diff = re.sub(
-            r"^(+++ b/)(b/.*)$", r"+++ b/\2", repaired_diff, flags=re.MULTILINE
+            r"^(+++ )(.*)$",
+            lambda m: _replace_prefix(m, "b"),
+            repaired_diff,
+            flags=re.MULTILINE,
         )
         return repaired_diff
 
