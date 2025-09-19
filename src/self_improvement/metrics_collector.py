@@ -423,7 +423,7 @@ class FocusedMetricsCollector:
                                 )
                     else:
                         logger.warning(
-                            f"Repos section in pre-commit is malformed (not a list). Skipping repos processing."
+                            "Repos section in pre-commit is malformed (not a list). Skipping repos processing."
                         )
                         malformed_blocks.append(
                             {
@@ -532,7 +532,7 @@ class FocusedMetricsCollector:
                             )
                         elif pydantic_settings_config is not None:
                             logger.warning(
-                                f"Pydantic-settings config in pyproject.toml is malformed (not a dictionary). Skipping."
+                                "Pydantic-settings config in pyproject.toml is malformed (not a dictionary). Skipping."
                             )
                             malformed_blocks.append(
                                 {
@@ -867,7 +867,6 @@ class FocusedMetricsCollector:
         patterns = defaultdict(int)
         successful_attempts_per_pattern = defaultdict(int)
         total_attempts_per_pattern = defaultdict(int)
-        total_records = len(records)
 
         for record in records:
             record_success = record.get("success", False)

@@ -35,7 +35,6 @@ from src.exceptions import (
     LLMProviderError,
     CircuitBreakerError,
 )
-import traceback
 from collections import defaultdict
 from pydantic import ValidationError
 import html

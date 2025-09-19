@@ -11,9 +11,6 @@ from src.models import (
     SuggestionItem,
 )
 from src.utils.output_parser import LLMOutputParser
-from src.llm_tokenizers.gemini_tokenizer import (
-    GeminiTokenizer,
-)  # Not directly used here, but kept for context
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError
@@ -475,6 +472,7 @@ class ConflictResolutionManager:
             final_system_prompt_base = "You are a helpful AI assistant."  # Fallback
 
         full_system_prompt_parts = [final_system_prompt_base]
+        # Inject the shared, strict JSON instructions to improve self-correction success rate.
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
         full_system_prompt_parts.append(
             f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"

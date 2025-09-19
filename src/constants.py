@@ -1,6 +1,5 @@
 # src/constants.py
 
-import re
 import logging
 from typing import Dict, Any, List, Tuple
 
@@ -25,8 +24,15 @@ SELF_ANALYSIS_KEYWORDS = {
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
 NEGATION_PATTERNS: List[Tuple[str, float]] = [
-    (r"(?i)\b(not|don\'t|do not|avoid|without|never|no)\b", 0.7),
-    (r"(?i)\b(please do not|kindly avoid|do not intend to)\b", 0.9),
+    (
+        r"(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b",
+        0.7,
+    ),
+    (
+        r"(?i)(system|user|assistant|prompt|instruction|role)\s*[:=]\s*(system|user|assistant|prompt|instruction|role)\b",
+        0.7,
+    ),  # FIX: Removed "DIRECTIVE_PROBING" string
+    (r"(?i)(?:let\'s|let us|shall we|now|next)\s+ignore\s+previous", 0.9),
 ]
 
 THRESHOLD = 0.75

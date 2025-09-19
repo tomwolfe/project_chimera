@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-import sys
 import traceback
 from typing import Dict, Any, List, Optional, Type, Tuple
 from pathlib import Path
@@ -25,6 +24,7 @@ from src.models import (
     ConfigurationAnalysisOutput,
     DeploymentAnalysisOutput,
     SuggestionItem,
+    ConflictReport,  # ADDED
 )
 
 logger = logging.getLogger(__name__)
