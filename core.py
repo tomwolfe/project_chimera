@@ -706,7 +706,7 @@ class SocraticDebate:
             schema_name
         )
         self._log_with_context(
-            f"Using schema {output_schema_class.__name__} for {persona_name}."
+            "info", f"Using schema {output_schema_class.__name__} for {persona_name}."
         )
 
         # Render system prompt from template
