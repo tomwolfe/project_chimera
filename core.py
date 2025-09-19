@@ -2884,7 +2884,8 @@ class SocraticDebate:
                         consolidated_change.model_dump(by_alias=True)
                     )
 
-            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_for_suggestion
+            # FIX: Corrected typo here
+            suggestion["CODE_CHANGES_SUGGESTED"] = new_code_changes_for_suggestion
             if malformed_blocks_for_suggestion:
                 suggestion.setdefault("malformed_blocks", []).extend(
                     malformed_blocks_for_suggestion
