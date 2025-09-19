@@ -44,6 +44,7 @@ from src.exceptions import (
     LLMProviderRequestError,
     LLMProviderResponseError,
     CircuitBreakerError,
+    CodebaseAccessError,  # ADDED: Import CodebaseAccessError
 )
 from src.logging_config import setup_structured_logging
 from src.utils.error_handler import handle_errors
@@ -126,7 +127,9 @@ class SocraticDebate:
             self.logger.info(
                 "Performing self-analysis - scanning codebase for context (fallback scan in SocraticDebate init)..."
             )
-            full_codebase_analysis = self.codebase_scanner.scan_codebase()
+            full_codebase_analysis = (
+                self.codebase_scanner.load_own_codebase_context()
+            )  # Changed to load_own_codebase_context
             self.structured_codebase_context = full_codebase_analysis.get(
                 "file_structure", {}
             )
@@ -2426,6 +2429,33 @@ class SocraticDebate:
             self.get_total_estimated_cost()
         )
 
+    def _handle_codebase_access_error(
+        self, e: CodebaseAccessError
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Handles the CodebaseAccessError by generating a specific, actionable output."""
+        self._log_with_context("error", f"Codebase access error: {e}", exc_info=True)
+        error_output = SelfImprovementAnalysisOutputV1(
+            ANALYSIS_SUMMARY=f"Codebase access error: {e}",
+            IMPACTFUL_SUGGESTIONS=[
+                SuggestionItem(
+                    AREA="Maintainability",
+                    PROBLEM="Critical lack of codebase access prevents meaningful code-level analysis and improvements.",
+                    PROPOSED_SOLUTION="Implement proper codebase scanning functionality to grant the system access to its own files.",
+                    EXPECTED_IMPACT="Enables the self-improvement process to proceed effectively.",
+                    CODE_CHANGES_SUGGESTED=[
+                        {
+                            "FILE_PATH": "src/codebase_scanner.py",
+                            "ACTION": "CREATE",
+                            "FULL_CONTENT": "# ... (Implementation of CodebaseScanner class as suggested) ...",
+                        }
+                    ],
+                )
+            ],
+            malformed_blocks=[{"type": "CODEBASE_ACCESS_REQUIRED", "message": str(e)}],
+        ).model_dump(by_alias=True)
+        self._update_intermediate_steps_with_totals()
+        return error_output, self.intermediate_steps
+
     @handle_errors(default_return=None, log_level="ERROR")
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
         """
@@ -2434,6 +2464,13 @@ class SocraticDebate:
         """
         try:
             self._initialize_debate_state()
+
+            # Check for codebase access before proceeding with self-analysis
+            if self.is_self_analysis and not self.raw_file_contents:
+                raise CodebaseAccessError(
+                    "Codebase access required for self-analysis but not available. Ensure the scanner is functioning."
+                )
+
             initial_persona_sequence = self._get_final_persona_sequence(
                 self.initial_prompt, None
             )
@@ -2551,6 +2588,8 @@ class SocraticDebate:
             )
 
             return final_answer, intermediate_steps
+        except CodebaseAccessError as e:
+            return self._handle_codebase_access_error(e)
         finally:
             self.close()
 

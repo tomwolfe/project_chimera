@@ -57,6 +57,12 @@ class ChimeraError(Exception):
         return f"{self.error_code}: {self.message}"
 
 
+class CodebaseAccessError(ChimeraError):
+    """Exception raised when codebase access is not available."""
+
+    pass
+
+
 class LLMProviderError(ChimeraError):
     """Base exception for LLM provider errors."""
 

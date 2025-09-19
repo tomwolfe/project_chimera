@@ -1225,17 +1225,40 @@ class FocusedMetricsCollector:
         """
         Collects code quality and security metrics by running tools once on the entire codebase.
         """
-        # This is a much more efficient approach than running analysis on each temporary file.
         logger.info(
-            "Collecting code quality and security metrics for the entire codebase..."
+            "Collecting code quality and security metrics for relevant codebase files..."
         )
+
+        # For self-analysis, focus only on the most critical files to improve token efficiency.
+        relevant_files_for_analysis = [
+            "src/core.py",
+            "app.py",
+            "src/persona_manager.py",
+            "src/conflict_resolution.py",
+            "src/utils/prompt_optimizer.py",
+            "src/utils/output_parser.py",
+            "src/self_improvement/metrics_collector.py",
+            "src/utils/code_utils.py",
+            "src/utils/report_generator.py",
+            "src/exceptions.py",
+            "src/constants.py",
+            "src/config/settings.py",
+            "src/context/context_analyzer.py",
+            "src/codebase_scanner.py",  # Include the new scanner file
+        ]
+
+        files_to_analyze = {
+            path: content
+            for path, content in self.raw_file_contents.items()
+            if path in relevant_files_for_analysis
+        }
 
         all_ruff_issues = []
         all_bandit_issues = []
         all_ast_issues = []
         all_complexity_metrics = []
 
-        for file_path_str, content in self.raw_file_contents.items():
+        for file_path_str, content in files_to_analyze.items():
             if file_path_str.endswith(".py"):
                 all_ruff_issues.extend(_run_ruff(content, file_path_str))
                 all_bandit_issues.extend(_run_bandit(content, file_path_str))
@@ -1275,7 +1298,7 @@ class FocusedMetricsCollector:
             ],
         }
         logger.info(
-            f"Collected code quality and security metrics for {len(self.raw_file_contents)} files."
+            f"Collected code quality and security metrics for {len(files_to_analyze)} relevant files."
         )
 
     def collect_all_metrics(self) -> Dict[str, Any]:
