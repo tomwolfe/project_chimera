@@ -10,12 +10,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # NEW: Imports for self-improvement components (kept for clarity, though some might be unused in app.py directly)
 from src.self_improvement.strategy_manager import StrategyManager
 from src.self_improvement.critique_engine import CritiqueEngine
+import contextlib
 # REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
 
+import io
 import re
 import datetime
 import time
-from typing import Dict, Optional, Callable
+from typing import Dict, Optional, Callable, Any
 import logging
 from rich.console import Console
 from core import SocraticDebate
