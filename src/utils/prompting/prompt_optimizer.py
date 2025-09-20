@@ -1,13 +1,14 @@
 # src/utils/prompting/prompt_optimizer.py
 import logging
-from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING  # ADDED TYPE_CHECKING
-from jinja2 import Environment, FileSystemLoader, Template
-from src.llm_tokenizers.base import Tokenizer
-from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
-from src.config.settings import ChimeraSettings
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional  # ADDED TYPE_CHECKING
+
+from jinja2 import Environment, FileSystemLoader
+
+from src.config.settings import ChimeraSettings
+from src.llm_tokenizers.base import Tokenizer
 
 # NEW IMPORTS: For internal optimization decisions
 from src.models import PersonaConfig
@@ -15,7 +16,6 @@ from src.models import PersonaConfig
 # Use TYPE_CHECKING to avoid circular import at runtime for PersonaManager
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
-    from src.token_tracker import TokenUsageTracker
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class PromptOptimizer:
             return
 
         for template_file in template_path.glob("*.j2"):
-            with open(template_file, "r", encoding="utf-8") as f:
+            with open(template_file, encoding="utf-8") as f:
                 self.prompt_templates[template_file.stem] = f.read()
         logger.info(
             f"Loaded {len(self.prompt_templates)} prompt templates from '{template_dir}'."
@@ -213,9 +213,7 @@ class PromptOptimizer:
         system_message_for_token_count: str = "",
         is_self_analysis_prompt: bool = False,
     ) -> str:
-        """
-        Optimizes a user prompt string for a specific persona based on context and token limits.
-        """
+        """Optimizes a user prompt string for a specific persona based on context and token limits."""
         persona_name = persona_config.name
 
         # Check cache first
@@ -318,9 +316,7 @@ class PromptOptimizer:
     def optimize_debate_history(
         self, debate_history_json_str: str, max_tokens: int
     ) -> str:
-        """
-        Dynamically optimizes debate history by summarizing or prioritizing turns.
-        """
+        """Dynamically optimizes debate history by summarizing or prioritizing turns."""
         current_tokens = self._count_tokens_robustly(debate_history_json_str)
         if current_tokens <= max_tokens:
             return debate_history_json_str
@@ -337,8 +333,7 @@ class PromptOptimizer:
         )
 
     def optimize_persona_system_prompt(self, persona_config_data: Dict) -> Dict:
-        """
-        Optimizes a persona's system prompt by removing redundant generic instructions
+        """Optimizes a persona's system prompt by removing redundant generic instructions
         and adding specific token optimization directives for high-token personas.
         """
         persona_name = persona_config_data.get("name")

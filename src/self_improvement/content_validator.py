@@ -1,15 +1,15 @@
-import re
-import logging
 import json
-from typing import List, Tuple, Dict, Any, Union, Optional
+import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 # REMOVED: from jsonschema import validate # F401: unused import
 
 logger = logging.getLogger(__name__)
 
 
 class ContentAlignmentValidator:
-    """
-    Validates if a persona's output aligns with the original prompt's focus areas.
+    """Validates if a persona's output aligns with the original prompt's focus areas.
     Designed to prevent content drift during the debate process.
     """
 
@@ -181,7 +181,6 @@ class ContentAlignmentValidator:
             "you",
             "he",
             "she",
-            "it",
             "we",
             "they",
             "me",
@@ -192,7 +191,6 @@ class ContentAlignmentValidator:
             "my",
             "your",
             "his",
-            "her",
             "its",
             "our",
             "their",
@@ -206,19 +204,11 @@ class ContentAlignmentValidator:
             "does",
             "did",
             "am",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
             "been",
             "being",
             "have",
             "has",
             "had",
-            "do",
-            "does",
-            "did",
             "can",
             "could",
             "will",
@@ -245,8 +235,7 @@ class ContentAlignmentValidator:
     def validate(
         self, persona_name: str, persona_output: Union[str, Dict[str, Any]]
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:  # NEW: Return nuanced feedback
-        """
-        Checks if the persona's output aligns with the defined focus areas.
+        """Checks if the persona's output aligns with the defined focus areas.
 
         Args:
             persona_name: The name of the persona generating the output.
@@ -254,6 +243,7 @@ class ContentAlignmentValidator:
 
         Returns:
             Tuple[bool, str, Optional[Dict[str, Any]]]: (is_aligned, validation_message, nuanced_feedback)
+
         """
         output_text = ""
         if isinstance(persona_output, dict):

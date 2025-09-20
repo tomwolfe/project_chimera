@@ -1,22 +1,23 @@
-import pytest
 from unittest.mock import MagicMock, patch
-from src.llm_provider import GeminiProvider
+
+import pytest
+
 from core import SocraticDebate  # Core reasoning logic is in SocraticDebate
-from src.persona_manager import PersonaManager
-from src.token_tracker import TokenUsageTracker
 from src.config.settings import ChimeraSettings
-from src.context.context_analyzer import ContextRelevanceAnalyzer
-from src.utils.reporting.output_parser import LLMOutputParser
 from src.conflict_resolution import ConflictResolutionManager
-from src.self_improvement.metrics_collector import FocusedMetricsCollector
-from src.utils.prompting.prompt_optimizer import PromptOptimizer
+from src.context.context_analyzer import ContextRelevanceAnalyzer
+from src.llm_provider import GeminiProvider
+from src.persona_manager import PersonaManager
 from src.self_improvement.content_validator import ContentAlignmentValidator
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
+from src.token_tracker import TokenUsageTracker
+from src.utils.prompting.prompt_optimizer import PromptOptimizer
+from src.utils.reporting.output_parser import LLMOutputParser
 
 
 @pytest.fixture
 def mock_socratic_debate_instance():
-    """
-    Provides a mocked SocraticDebate instance for testing core reasoning paths.
+    """Provides a mocked SocraticDebate instance for testing core reasoning paths.
     This fixture sets up minimal mocks for SocraticDebate's dependencies
     to allow focused testing of its internal logic without full external calls.
     """
@@ -148,8 +149,7 @@ def mock_socratic_debate_instance():
 
 
 def test_complex_prompt_handling(mock_socratic_debate_instance):
-    """
-    Tests the SocraticDebate's ability to handle complex, multi-step prompts.
+    """Tests the SocraticDebate's ability to handle complex, multi-step prompts.
     This test should verify that the debate orchestrator correctly sequences
     persona interactions and integrates their outputs for a coherent final answer.
     """
@@ -204,8 +204,7 @@ def test_complex_prompt_handling(mock_socratic_debate_instance):
 
 
 def test_error_case_handling(mock_socratic_debate_instance):
-    """
-    Tests the SocraticDebate's robustness in handling various error conditions,
+    """Tests the SocraticDebate's robustness in handling various error conditions,
     such as LLM response validation failures and unexpected exceptions.
     """
     # Simulate an LLM response that consistently fails schema validation
@@ -264,8 +263,7 @@ def test_error_case_handling(mock_socratic_debate_instance):
 
 
 def test_edge_cases(mock_socratic_debate_instance):
-    """
-    Tests various edge cases in the SocraticDebate process,
+    """Tests various edge cases in the SocraticDebate process,
     such as empty prompts, minimal context, or unusual persona sequences.
     """
     # Edge Case 1: Empty initial prompt

@@ -5,8 +5,7 @@ logger = logging.getLogger(__name__)
 
 
 class PromptCache:
-    """
-    A simple in-memory cache for storing and retrieving generated prompts.
+    """A simple in-memory cache for storing and retrieving generated prompts.
     Aims to reduce redundant computation and token usage for frequently
     accessed or similar prompts.
     """
@@ -16,12 +15,14 @@ class PromptCache:
         logger.info("PromptCache initialized.")
 
     def get(self, key: str) -> Optional[Any]:
-        """
-        Retrieves an item from the cache.
+        """Retrieves an item from the cache.
+
         Args:
             key: The unique identifier for the cached item.
+
         Returns:
             The cached item if found, otherwise None.
+
         """
         item = self.cache.get(key)
         if item:
@@ -31,22 +32,25 @@ class PromptCache:
         return item
 
     def set(self, key: str, value: Any):
-        """
-        Adds or updates an item in the cache.
+        """Adds or updates an item in the cache.
+
         Args:
             key: The unique identifier for the item.
             value: The item to be cached.
+
         """
         self.cache[key] = value
         logger.debug(f"Cached item for key: {key}")
 
     def has(self, key: str) -> bool:
-        """
-        Checks if a key exists in the cache.
+        """Checks if a key exists in the cache.
+
         Args:
             key: The unique identifier to check.
+
         Returns:
             True if the key exists, False otherwise.
+
         """
         return key in self.cache
 

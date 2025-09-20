@@ -1,8 +1,9 @@
-import re
 import logging
 import os
-from typing import Tuple, Optional, Dict, Any  # Added Dict, Any for validate_input_data
-import google.genai as genai
+import re
+from typing import Any, Dict, Optional, Tuple  # Added Dict, Any for validate_input_data
+
+from google import genai
 from google.genai.errors import APIError
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,7 @@ _secrets_manager_client = MockSecretsManager()  # Initialize a mock/real client
 
 
 def fetch_api_key() -> Optional[str]:
-    """
-    Fetches the Gemini API key, prioritizing a secrets manager if configured,
+    """Fetches the Gemini API key, prioritizing a secrets manager if configured,
     then falling back to environment variables.
     """
     # 1. First check environment variables

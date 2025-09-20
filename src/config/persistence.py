@@ -1,20 +1,16 @@
 # src/config/persistence.py
-"""
-Configuration persistence system that synchronizes UI changes with YAML configuration.
+"""Configuration persistence system that synchronizes UI changes with YAML configuration.
 Handles loading and saving of default and custom persona/framework configurations.
 """
 
-import os
-import yaml
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
-from src.models import (
-    ReasoningFrameworkConfig,
-    PersonaConfig,
-)  # Assuming these models exist
 import json  # Added for JSON operations
-import re  # Added for sanitization
 import logging
+import os
+import re  # Added for sanitization
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +50,11 @@ class ConfigPersistence:
             )
             with open(self.personas_file, "w") as f:
                 yaml.dump({"personas": [], "persona_sets": {"General": []}}, f)
-        with open(self.personas_file, "r") as f:
+        with open(self.personas_file) as f:
             base_config = yaml.safe_load(f) or {}
 
         # Load user overrides
-        with open(self.user_overrides_file, "r") as f:
+        with open(self.user_overrides_file) as f:
             user_overrides = yaml.safe_load(f) or {"frameworks": {}, "personas": {}}
 
         # Merge configurations (user overrides take precedence)
@@ -119,7 +115,7 @@ class ConfigPersistence:
                 if filename.endswith(".json"):
                     filepath = self.custom_frameworks_dir / filename
                     try:
-                        with open(filepath, "r", encoding="utf-8") as f:
+                        with open(filepath, encoding="utf-8") as f:
                             config_data = json.load(f)
                             # Prefer 'framework_name' key, fallback to 'name', then filename stem
                             actual_name = (
@@ -145,7 +141,7 @@ class ConfigPersistence:
         """Loads a specific custom framework configuration from a JSON file."""
         filepath = self._get_filepath_for_framework(framework_name)
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 config_data = json.load(f)
             return config_data
         except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
@@ -194,8 +190,7 @@ class ConfigPersistence:
     def import_framework_from_file(
         self, file_content: str, original_filename: str
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """
-        Imports a framework configuration from a YAML/JSON string.
+        """Imports a framework configuration from a YAML/JSON string.
         Returns (success, message, loaded_config_data).
         """
         try:

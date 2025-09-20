@@ -1,10 +1,10 @@
 # tests/test_api_integration.py
 # tests/test_api_integration.py
-import unittest
-import requests
 import os
-import time
+import unittest
+
 import pytest  # NEW: Import pytest for skipping tests
+import requests
 
 # This test requires the FastAPI server (part of app.py) to be running.
 # You can run it separately, for example, using `uvicorn app:app --host 0.0.0.0 --port 8080`
@@ -18,12 +18,11 @@ class TestAPIIntegration(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """
-        Optional: Add logic here to start the FastAPI server if it's not expected to be running.
+        """Optional: Add logic here to start the FastAPI server if it's not expected to be running.
         For simplicity, this example assumes the server is already running.
         If the server is not running, these tests will fail with connection errors.
         """
-        print(f"\n--- Starting API Integration Tests ---")
+        print("\n--- Starting API Integration Tests ---")
         print(f"Attempting to connect to API at: {cls.BASE_URL}")
         # Basic check to see if the server is reachable
         try:

@@ -1,6 +1,6 @@
 # src/utils/command_executor.py
-import subprocess
 import logging
+import subprocess
 import sys  # NEW: Import sys
 
 logger = logging.getLogger(__name__)

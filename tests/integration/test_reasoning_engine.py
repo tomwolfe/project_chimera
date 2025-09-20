@@ -1,42 +1,39 @@
 # tests/integration/test_reasoning_engine.py
-import pytest
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
+from transformers import pipeline  # NEW: Import pipeline for summarization
 
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
 from core import (
     SocraticDebate,
 )  # SocraticDebate is in the project root, so direct import
+from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
+from src.conflict_resolution import (
+    ConflictResolutionManager,
+)  # NEW: Import for SocraticDebate init
+from src.context.context_analyzer import (
+    CodebaseScanner,
+    ContextRelevanceAnalyzer,
+)  # NEW: Import for SocraticDebate init
 from src.llm_provider import (
     GeminiProvider,
 )  # Assuming GeminiProvider is in src/llm_provider.py
 from src.persona_manager import PersonaManager  # Import PersonaManager
-from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
-from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
-from src.context.context_analyzer import (
-    ContextRelevanceAnalyzer,
-    CodebaseScanner,
-)  # NEW: Import for SocraticDebate init
-from src.utils.reporting.output_parser import (
-    LLMOutputParser,
-)  # NEW: Import for SocraticDebate init
-from src.conflict_resolution import (
-    ConflictResolutionManager,
-)  # NEW: Import for SocraticDebate init
 from src.self_improvement.metrics_collector import (
     FocusedMetricsCollector,
 )  # NEW: Import for SocraticDebate init
-from src.utils.prompting.prompt_optimizer import (
-    PromptOptimizer,
+from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
+from src.utils.reporting.output_parser import (
+    LLMOutputParser,
 )  # NEW: Import for SocraticDebate init
-from transformers import pipeline  # NEW: Import pipeline for summarization
 
 
 @pytest.mark.integration
 def test_reasoning_engine_integration():
-    """
-    Performs an end-to-end integration test of the SocraticDebate engine
+    """Performs an end-to-end integration test of the SocraticDebate engine
     using a mocked LLM client to ensure speed and reliability.
     """
     api_key = os.environ.get("TEST_LLM_API_KEY")

@@ -1,6 +1,6 @@
 # src/utils/domain_recommender.py
-from typing import Dict, Any, Optional, List
 import re  # Import re for regex
+from typing import Dict, List, Optional
 
 # Import NEGATION_PATTERNS and define proximity
 from src.constants import NEGATION_PATTERNS
@@ -9,8 +9,7 @@ from src.constants import NEGATION_PATTERNS
 def recommend_domain_from_keywords(
     user_prompt: str, domain_keywords: Dict[str, List[str]]
 ) -> Optional[str]:
-    """
-    Recommends a domain/framework based on keywords in the user prompt,
+    """Recommends a domain/framework based on keywords in the user prompt,
     incorporating negation awareness and proximity scoring.
 
     Args:
@@ -19,6 +18,7 @@ def recommend_domain_from_keywords(
 
     Returns:
         The recommended domain name, or None if no strong match is found.
+
     """
     if not user_prompt or not domain_keywords:
         return None

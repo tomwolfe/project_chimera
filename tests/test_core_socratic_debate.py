@@ -1,34 +1,31 @@
-import core  # ADD THIS LINE
-from core import SocraticDebate
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
+from core import SocraticDebate
+from src.config.settings import ChimeraSettings  # Import ChimeraSettings
+from src.context.context_analyzer import (
+    ContextRelevanceAnalyzer,
+)  # Import ContextRelevanceAnalyzer
+from src.exceptions import TokenBudgetExceededError  # Import specific exceptions
 
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
 from src.llm_provider import (
     GeminiProvider,
 )  # Assuming GeminiProvider is in src/llm_provider.py
+from src.models import (
+    CritiqueOutput,
+    GeneralOutput,
+    PersonaConfig,  # Import PersonaConfig
+    SelfImprovementAnalysisOutputV1,
+)  # Import specific models
 from src.persona_manager import PersonaManager  # Import PersonaManager
-from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
-from src.config.settings import ChimeraSettings  # Import ChimeraSettings
-from src.context.context_analyzer import (
-    ContextRelevanceAnalyzer,
-)  # Import ContextRelevanceAnalyzer
-from src.models import PersonaConfig  # Import PersonaConfig
-from src.utils.reporting.output_parser import LLMOutputParser  # Import LLMOutputParser
 from src.self_improvement.metrics_collector import (
     FocusedMetricsCollector,
 )  # Import FocusedMetricsCollector
-from src.exceptions import (
-    TokenBudgetExceededError,
-    SchemaValidationError,
-)  # Import specific exceptions
-from src.models import (
-    GeneralOutput,
-    CritiqueOutput,
-    SelfImprovementAnalysisOutputV1,
-)  # Import specific models
-from transformers import pipeline  # NEW: Import pipeline for summarization
+from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
+from src.utils.reporting.output_parser import LLMOutputParser  # Import LLMOutputParser
 
 
 @pytest.fixture

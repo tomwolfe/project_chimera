@@ -1,29 +1,28 @@
 # File: src/utils/prompt_analyzer.py
-import re
 import logging
+import re
 from functools import lru_cache
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # Assuming SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, and THRESHOLD are imported from src.constants
-from src.constants import SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, THRESHOLD
+from src.constants import NEGATION_PATTERNS, SELF_ANALYSIS_KEYWORDS, THRESHOLD
 
 logger = logging.getLogger(__name__)
 
 
 class PromptAnalyzer:
     def __init__(self, domain_keywords: Dict[str, List[str]]):
-        """
-        Initializes the PromptAnalyzer with domain-specific keywords.
+        """Initializes the PromptAnalyzer with domain-specific keywords.
 
         Args:
             domain_keywords: A dictionary mapping domain names to lists of keywords.
+
         """
         self.domain_keywords = domain_keywords
 
     @lru_cache(maxsize=256)
     def analyze_complexity(self, prompt: str) -> Dict[str, Any]:
-        """
-        Analyzes prompt complexity, including word count, sentence count,
+        """Analyzes prompt complexity, including word count, sentence count,
         and domain-specific keyword scores.
 
         Args:
@@ -31,6 +30,7 @@ class PromptAnalyzer:
 
         Returns:
             A dictionary containing complexity metrics and domain scores.
+
         """
         word_count = len(prompt.split())
         sentence_count = len(re.findall(r"[.!?]+", prompt))
@@ -110,8 +110,7 @@ class PromptAnalyzer:
     def is_self_analysis_prompt(
         self, prompt: str, threshold: float = THRESHOLD, negation_proximity: int = 100
     ) -> bool:
-        """
-        Checks if a prompt indicates a self-analysis task based on weighted keywords,
+        """Checks if a prompt indicates a self-analysis task based on weighted keywords,
         positional boosting, and negation detection.
 
         Args:
@@ -121,6 +120,7 @@ class PromptAnalyzer:
 
         Returns:
             True if the prompt is classified as self-analysis, False otherwise.
+
         """
         if not prompt:
             return False
@@ -181,8 +181,7 @@ class PromptAnalyzer:
 
     @lru_cache(maxsize=256)
     def recommend_domain_from_keywords(self, user_prompt: str) -> Optional[str]:
-        """
-        Recommends a domain/framework based on keywords in the user prompt,
+        """Recommends a domain/framework based on keywords in the user prompt,
         incorporating negation awareness and proximity scoring.
 
         Args:
@@ -190,6 +189,7 @@ class PromptAnalyzer:
 
         Returns:
             The recommended domain name, or None if no strong match is found.
+
         """
         if not user_prompt or not self.domain_keywords:
             return None
@@ -246,8 +246,7 @@ class PromptAnalyzer:
 
 @lru_cache(maxsize=256)
 def optimize_reasoning_prompt(prompt: str) -> str:
-    """
-    Optimizes a prompt for clarity, conciseness, and focus, potentially
+    """Optimizes a prompt for clarity, conciseness, and focus, potentially
     by removing redundant phrases, standardizing formatting, or emphasizing key instructions.
 
     Args:
@@ -255,6 +254,7 @@ def optimize_reasoning_prompt(prompt: str) -> str:
 
     Returns:
         An optimized prompt string.
+
     """
     if not prompt:
         return ""

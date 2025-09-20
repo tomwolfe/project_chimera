@@ -1,25 +1,17 @@
 # src/utils/file_operations.py
-"""
-Utility functions for file operations like backup and applying code changes.
-"""
+"""Utility functions for file operations like backup and applying code changes."""
 
 import logging
 import shutil
-import os
-import subprocess
-import re
-import sys
-from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
-import difflib  # NEW: Import difflib for applying diffs
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
 def _create_file_backup(file_path: Path) -> Optional[Path]:
-    """
-    Creates a timestamped backup of a file in a '.chimera_backups' directory
+    """Creates a timestamped backup of a file in a '.chimera_backups' directory
     within the file's parent directory.
 
     Args:
@@ -28,6 +20,7 @@ def _create_file_backup(file_path: Path) -> Optional[Path]:
     Returns:
         The Path object of the created backup file, or None if the file doesn't exist
         or backup creation fails.
+
     """
     if not file_path.exists():
         logger.warning(f"Backup skipped: File not found at {file_path}")
@@ -53,8 +46,7 @@ def _create_file_backup(file_path: Path) -> Optional[Path]:
 
 
 def _apply_unified_diff(original_content: str, diff_content: str) -> str:
-    """
-    Applies a unified diff to the original content.
+    """Applies a unified diff to the original content.
     This is a simplified in-memory patch. For complex diffs, a dedicated patch utility might be needed.
     """
     # This is a very basic diff application. A robust solution would use a library like `patch`
@@ -90,11 +82,10 @@ def _apply_unified_diff(original_content: str, diff_content: str) -> str:
             # Context line, append from original content
             patched_lines.append(original_lines[original_idx])
             original_idx += 1
-        else:
-            # Unexpected diff line, treat as context for now
-            if original_idx < len(original_lines):
-                patched_lines.append(original_lines[original_idx])
-                original_idx += 1
+        # Unexpected diff line, treat as context for now
+        elif original_idx < len(original_lines):
+            patched_lines.append(original_lines[original_idx])
+            original_idx += 1
         diff_idx += 1
 
     # Append any remaining original lines if the diff ended prematurely
@@ -106,13 +97,13 @@ def _apply_unified_diff(original_content: str, diff_content: str) -> str:
 
 
 def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
-    """
-    Applies a single code change (ADD, MODIFY, REMOVE) to the codebase.
+    """Applies a single code change (ADD, MODIFY, REMOVE) to the codebase.
 
     Args:
         change: A dictionary describing the change, containing 'FILE_PATH', 'ACTION',
                 and either 'FULL_CONTENT' or 'LINES'/'DIFF_CONTENT' depending on action.
         codebase_path: The root path of the codebase where changes should be applied.
+
     """
     file_path = codebase_path / change["FILE_PATH"]
     action = change["ACTION"]

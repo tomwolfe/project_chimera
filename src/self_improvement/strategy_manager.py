@@ -1,8 +1,7 @@
-import json
 import logging
-from typing import Dict, Any, List, Optional
-from pathlib import Path
 import re
+from pathlib import Path
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

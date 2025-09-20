@@ -2,45 +2,45 @@
 # This file imports key functionalities from the refactored sub-packages
 # to maintain a consistent import interface for the top-level 'utils' package.
 
-from .prompting import PromptAnalyzer, PromptOptimizer, format_prompt
-from .validation import (
-    validate_gemini_api_key_format,
-    test_gemini_api_key_functional,
-    validate_code_output_batch,
-    validate_and_resolve_file_path_for_action,
-    can_create_file,
+from .core_helpers import (
+    PROJECT_ROOT,
+    ComplexityVisitor,
+    _get_code_snippet,
+    _map_incorrect_file_path,
+    convert_to_json_friendly,
+    execute_command_safely,
+    handle_errors,
+    is_within_base_dir,
+    recommend_domain_from_keywords,
+    safe_json_dumps,  # NEW
+    safe_json_loads,  # NEW
+    sanitize_and_validate_file_path,
 )
-from .file_io import _create_file_backup, _apply_code_change, _apply_unified_diff
+from .file_io import _apply_code_change, _apply_unified_diff, _create_file_backup
+from .prompting import PromptAnalyzer, PromptOptimizer, format_prompt
 from .reporting import (
-    OutputFormatter,
     LLMOutputParser,
+    OutputFormatter,
     generate_markdown_report,
     strip_ansi_codes,
 )
 from .session import (
-    _initialize_session_state,
-    update_activity_timestamp,
-    reset_app_state,
-    check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
-    on_api_key_change,
+    _initialize_session_state,
+    check_session_expiration,
     display_key_status,
-    test_api_key,
+    on_api_key_change,
+    reset_app_state,
     shutdown_streamlit,
+    test_api_key,
+    update_activity_timestamp,
 )
-from .core_helpers import (
-    convert_to_json_friendly,
-    sanitize_and_validate_file_path,
-    PROJECT_ROOT,
-    _map_incorrect_file_path,
-    is_within_base_dir,
-    execute_command_safely,
-    _get_code_snippet,
-    ComplexityVisitor,
-    recommend_domain_from_keywords,
-    handle_errors,
-    safe_json_loads,  # NEW
-    safe_json_dumps,  # NEW
+from .validation import (
+    can_create_file,
+    test_gemini_api_key_functional,
+    validate_and_resolve_file_path_for_action,
+    validate_code_output_batch,
+    validate_gemini_api_key_format,
 )
 
 __all__ = [

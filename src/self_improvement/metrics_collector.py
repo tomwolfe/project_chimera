@@ -1,45 +1,46 @@
 # src/self_improvement/metrics_collector.py
-import os
-import json
 import ast
+import difflib
+import json
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+import os
+import re
+import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
-import re
-import yaml
+from typing import Any, Dict, List, Optional
+
 import toml
-import sys
-import difflib
+import yaml
 
-# NEW: Import modularized self-improvement components
-from src.self_improvement.strategy_manager import StrategyManager
-from src.self_improvement.critique_engine import CritiqueEngine
-from src.self_improvement.improvement_applicator import ImprovementApplicator
-import tempfile
-
-from src.utils.core_helpers.code_utils import _get_code_snippet, ComplexityVisitor
-from src.utils.validation.code_validator import (
-    _run_ruff,
-    _run_bandit,
-    _run_ast_security_checks,
-    validate_and_resolve_file_path_for_action,  # NEW: Import the new validation function
-)
+from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 from src.models import (
-    ConfigurationAnalysisOutput,
+    BanditConfig,
     CiWorkflowConfig,
     CiWorkflowJob,
     CiWorkflowStep,
+    ConfigurationAnalysisOutput,
+    DeploymentAnalysisOutput,
     PreCommitHook,
+    PydanticSettingsConfig,
     PyprojectTomlConfig,
     RuffConfig,
-    BanditConfig,
-    PydanticSettingsConfig,
-    DeploymentAnalysisOutput,
 )
+from src.self_improvement.critique_engine import CritiqueEngine
+from src.self_improvement.improvement_applicator import ImprovementApplicator
+
+# NEW: Import modularized self-improvement components
+from src.self_improvement.strategy_manager import StrategyManager
+from src.utils.core_helpers.code_utils import _get_code_snippet
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.path_utils import PROJECT_ROOT
-from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
+from src.utils.validation.code_validator import (
+    _run_ast_security_checks,
+    _run_bandit,
+    _run_ruff,
+    validate_and_resolve_file_path_for_action,  # NEW: Import the new validation function
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,7 @@ class FocusedMetricsCollector:
         content_validator: Any,
         codebase_scanner: CodebaseScanner,  # NEW: Accept codebase_scanner
     ):
-        """
-        Initializes the analyst with collected metrics and context.
-        """
+        """Initializes the analyst with collected metrics and context."""
         self.initial_prompt = initial_prompt
         self.metrics: Dict[str, Any] = {}  # Initialize internally
         self.debate_history = debate_history
@@ -219,8 +218,7 @@ class FocusedMetricsCollector:
     def _collect_configuration_analysis(
         cls, codebase_path: str
     ) -> ConfigurationAnalysisOutput:
-        """
-        Collects structured information about existing tool configurations from
+        """Collects structured information about existing tool configurations from
         critical project configuration files.
         """
         config_analysis_data = {
@@ -233,9 +231,9 @@ class FocusedMetricsCollector:
         ci_yml_path = Path(codebase_path) / ".github/workflows/ci.yml"
         if ci_yml_path.exists():
             try:
-                with open(ci_yml_path, "r", encoding="utf-8") as f:
+                with open(ci_yml_path, encoding="utf-8") as f:
                     ci_config_raw = yaml.safe_load(f) or {}
-                with open(ci_yml_path, "r", encoding="utf-8") as f:
+                with open(ci_yml_path, encoding="utf-8") as f:
                     ci_content_lines = f.readlines()
 
                     ci_workflow_jobs = {}
@@ -354,9 +352,9 @@ class FocusedMetricsCollector:
         pre_commit_path = Path(codebase_path) / ".pre-commit-config.yaml"
         if pre_commit_path.exists():
             try:
-                with open(pre_commit_path, "r", encoding="utf-8") as f:
+                with open(pre_commit_path, encoding="utf-8") as f:
                     pre_commit_config_raw = yaml.safe_load(f) or {}
-                with open(pre_commit_path, "r", encoding="utf-8") as f:
+                with open(pre_commit_path, encoding="utf-8") as f:
                     pre_commit_content_lines = f.readlines()
 
                     repos_section = pre_commit_config_raw.get("repos")
@@ -364,7 +362,7 @@ class FocusedMetricsCollector:
                         for repo_config in repos_section:
                             if not isinstance(repo_config, dict):
                                 logger.warning(
-                                    f"Repo config in pre-commit is malformed (not a dictionary). Skipping."
+                                    "Repo config in pre-commit is malformed (not a dictionary). Skipping."
                                 )
                                 malformed_blocks.append(
                                     {
@@ -456,9 +454,9 @@ class FocusedMetricsCollector:
         pyproject_path = Path(codebase_path) / "pyproject.toml"
         if pyproject_path.exists():
             try:
-                with open(pyproject_path, "r", encoding="utf-8") as f:
+                with open(pyproject_path, encoding="utf-8") as f:
                     pyproject_config_raw = toml.load(f) or {}
-                with open(pyproject_path, "r", encoding="utf-8") as f:
+                with open(pyproject_path, encoding="utf-8") as f:
                     pyproject_content_lines = f.readlines()
                     pyproject_toml_data = {}
 
@@ -490,7 +488,7 @@ class FocusedMetricsCollector:
                             )
                         elif ruff_tool_config is not None:
                             logger.warning(
-                                f"Ruff config in pyproject.toml is malformed (not a dictionary). Skipping."
+                                "Ruff config in pyproject.toml is malformed (not a dictionary). Skipping."
                             )
                             malformed_blocks.append(
                                 {
@@ -523,7 +521,7 @@ class FocusedMetricsCollector:
                             )
                         elif bandit_tool_config is not None:
                             logger.warning(
-                                f"Bandit config in pyproject.toml is malformed (not a dictionary). Skipping."
+                                "Bandit config in pyproject.toml is malformed (not a dictionary). Skipping."
                             )
                             malformed_blocks.append(
                                 {
@@ -551,7 +549,7 @@ class FocusedMetricsCollector:
                             )
                     else:
                         logger.warning(
-                            f"Tool section in pyproject.toml is malformed (not a dictionary). Skipping tool processing."
+                            "Tool section in pyproject.toml is malformed (not a dictionary). Skipping tool processing."
                         )
                         malformed_blocks.append(
                             {
@@ -586,8 +584,7 @@ class FocusedMetricsCollector:
     def _collect_deployment_robustness_metrics(
         cls, codebase_path: str
     ) -> DeploymentAnalysisOutput:
-        """
-        Collects metrics related to deployment robustness by analyzing Dockerfile
+        """Collects metrics related to deployment robustness by analyzing Dockerfile
         and production requirements.
         """
         deployment_metrics_data = {
@@ -608,7 +605,7 @@ class FocusedMetricsCollector:
         if dockerfile_path.exists():
             deployment_metrics_data["dockerfile_present"] = True
             try:
-                with open(dockerfile_path, "r", encoding="utf-8") as f:
+                with open(dockerfile_path, encoding="utf-8") as f:
                     dockerfile_content = f.read()
                     dockerfile_lines = dockerfile_content.splitlines()
 
@@ -660,7 +657,7 @@ class FocusedMetricsCollector:
         if prod_req_path.exists():
             deployment_metrics_data["prod_requirements_present"] = True
             try:
-                with open(prod_req_path, "r", encoding="utf-8") as f:
+                with open(prod_req_path, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
@@ -691,7 +688,7 @@ class FocusedMetricsCollector:
         if dev_req_path.exists() and prod_req_path.exists():
             dev_deps = set()
             try:
-                with open(dev_req_path, "r", encoding="utf-8") as f:
+                with open(dev_req_path, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
@@ -717,9 +714,7 @@ class FocusedMetricsCollector:
         return DeploymentAnalysisOutput(**deployment_metrics_data)
 
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
-        """
-        Collects token usage statistics from debate intermediate steps.
-        """
+        """Collects token usage statistics from debate intermediate steps."""
         total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
         total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
 
@@ -767,9 +762,7 @@ class FocusedMetricsCollector:
         }
 
     def _analyze_debate_efficiency(self) -> Dict[str, Any]:
-        """
-        Analyzes the efficiency of the debate process.
-        """
+        """Analyzes the efficiency of the debate process."""
         efficiency_summary = {
             "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
             "malformed_blocks_count": len(
@@ -800,8 +793,7 @@ class FocusedMetricsCollector:
         return efficiency_summary
 
     def _assess_test_coverage(self) -> Dict[str, Any]:
-        """
-        Assesses test coverage for the codebase.
+        """Assesses test coverage for the codebase.
         Executes pytest to check for basic test suite health.
         """
         coverage_data = {
@@ -837,8 +829,7 @@ class FocusedMetricsCollector:
     def _analyze_python_file_ast(
         cls, content: str, content_lines: List[str], file_path: str
     ) -> List[Dict[str, Any]]:
-        """
-        Analyzes a Python file's AST for complexity, lines of code in functions,
+        """Analyzes a Python file's AST for complexity, lines of code in functions,
         number of functions, code smells, and potential bottlenecks.
         """
         try:
@@ -932,7 +923,7 @@ class FocusedMetricsCollector:
             }
 
         try:
-            with open(history_file, "r", encoding="utf-8") as f:
+            with open(history_file, encoding="utf-8") as f:
                 records = [json.loads(line) for line in f if line.strip()]
 
             total = len(records)
@@ -1035,8 +1026,7 @@ class FocusedMetricsCollector:
     def record_self_improvement_suggestion_outcome(
         self, persona_name: str, is_successful: bool, schema_failed: bool
     ):
-        """
-        Records the outcome of a self-improvement suggestion generated by a persona
+        """Records the outcome of a self-improvement suggestion generated by a persona
         for the *current run*. This data will be saved historically.
         """
         self._current_run_total_suggestions_processed += 1
@@ -1088,8 +1078,7 @@ class FocusedMetricsCollector:
     def _validate_and_fix_code_suggestion(
         self, code_change: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """
-        Internally validates a code suggestion using Ruff and Bandit.
+        """Internally validates a code suggestion using Ruff and Bandit.
         If Ruff formatting issues are found, it attempts to auto-fix them.
         Returns the (potentially fixed) code change and any remaining issues.
         """
@@ -1165,8 +1154,7 @@ class FocusedMetricsCollector:
     def _process_suggestions_for_quality(
         self, suggestions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """
-        Processes and validates suggested code changes within each suggestion.
+        """Processes and validates suggested code changes within each suggestion.
         This includes path correction, action validation, and internal code quality checks.
         """
         processed_suggestions = []
@@ -1231,9 +1219,7 @@ class FocusedMetricsCollector:
         return processed_suggestions
 
     def _collect_code_quality_and_security_metrics(self):
-        """
-        Collects code quality and security metrics by running tools once on the entire codebase.
-        """
+        """Collects code quality and security metrics by running tools once on the entire codebase."""
         logger.info(
             "Collecting code quality and security metrics for relevant codebase files..."
         )
@@ -1311,8 +1297,7 @@ class FocusedMetricsCollector:
         )
 
     def collect_all_metrics(self) -> Dict[str, Any]:
-        """
-        Collects all objective metrics that are available *before* the synthesis persona runs.
+        """Collects all objective metrics that are available *before* the synthesis persona runs.
         This is the main entry point for `core.py` to get metrics for the synthesis prompt.
         """
         logger.info("Performing self-analysis for Project Chimera.")

@@ -1,15 +1,13 @@
-import streamlit as st
 import logging
-from typing import Dict, Any
 import os  # NEW: Import os
-import signal  # NEW: Import signal
-import sys  # NEW: Import sys
 
-from src.utils.validation.api_key_validator import (
-    validate_gemini_api_key_format,
-    test_gemini_api_key_functional,
-)
+import streamlit as st
+
 from src.utils.session.session_manager import update_activity_timestamp
+from src.utils.validation.api_key_validator import (
+    test_gemini_api_key_functional,
+    validate_gemini_api_key_format,
+)
 
 logger = logging.getLogger(__name__)
 

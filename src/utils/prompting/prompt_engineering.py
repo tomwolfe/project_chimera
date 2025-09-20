@@ -1,13 +1,6 @@
 # src/utils/prompt_engineering.py
-import json
-import os
-import io
-import contextlib
-import re
-import datetime
 import logging
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple  # Added Tuple
+from typing import Any, Dict, Optional  # Added Tuple
 
 # Assuming necessary models and constants are available via imports
 # from src.models import PersonaConfig, LLMOutput, ...
@@ -25,8 +18,7 @@ def format_prompt(
     is_self_analysis: bool = False,
     **kwargs,
 ) -> str:
-    """
-    Format a prompt with variables, adding codebase context when relevant for self-analysis.
+    """Format a prompt with variables, adding codebase context when relevant for self-analysis.
 
     Args:
         template: The base prompt template string.
@@ -36,6 +28,7 @@ def format_prompt(
 
     Returns:
         The formatted prompt string.
+
     """
     formatted_prompt = template
 

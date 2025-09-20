@@ -1,11 +1,9 @@
 # src/exceptions.py
-"""
-Custom exceptions for the Project Chimera application.
-"""
+"""Custom exceptions for the Project Chimera application."""
 
 import datetime
-from typing import Optional, Dict, Any
 import traceback  # Import traceback
+from typing import Any, Dict, Optional
 
 
 class ChimeraError(Exception):

@@ -3,7 +3,8 @@ from abc import ABC, abstractmethod
 
 class Tokenizer(ABC):
     """Abstract Base Class for tokenizers.
-    Defines the interface for counting tokens for different LLM providers."""
+    Defines the interface for counting tokens for different LLM providers.
+    """
 
     @abstractmethod
     def count_tokens(self, text: str) -> int:
@@ -17,13 +18,13 @@ class Tokenizer(ABC):
 
         Raises:
             Exception: If token counting fails.
+
         """
         pass
 
     @abstractmethod
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
-        """
-        Estimates the total tokens required for a given context and prompt.
+        """Estimates the total tokens required for a given context and prompt.
         This is a helper for budget calculation.
 
         Args:
@@ -32,6 +33,7 @@ class Tokenizer(ABC):
 
         Returns:
             The estimated total number of tokens.
+
         """
         pass
 
@@ -39,8 +41,7 @@ class Tokenizer(ABC):
     def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
-        """
-        Trims the given text to fit within the specified token limit.
+        """Trims the given text to fit within the specified token limit.
 
         Args:
             text: The input string to trim.
@@ -49,5 +50,6 @@ class Tokenizer(ABC):
 
         Returns:
             The trimmed string.
+
         """
         pass

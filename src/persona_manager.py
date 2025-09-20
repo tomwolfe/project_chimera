@@ -1,34 +1,19 @@
 # src/persona_manager.py
-import os
-import json
-import yaml
 import copy
+import logging
 import time
+from typing import Any, Dict, List, Optional, Tuple
 
-from typing import Dict, Any, List, Optional, Tuple
+import yaml
 from pydantic import ValidationError
 
-from src.persona.routing import PersonaRouter
-from src.models import (
-    PersonaConfig,
-    ReasoningFrameworkConfig,
-    LLMOutput,
-    CritiqueOutput,
-    GeneralOutput,
-    ConflictReport,
-    SelfImprovementAnalysisOutputV1,
-    ContextAnalysisOutput,
-    ConfigurationAnalysisOutput,
-    DeploymentAnalysisOutput,
-)
 from src.config.persistence import ConfigPersistence
-from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
-from src.token_tracker import TokenUsageTracker
-from src.exceptions import SchemaValidationError
 from src.config.settings import ChimeraSettings
+from src.models import PersonaConfig, ReasoningFrameworkConfig
+from src.persona.routing import PersonaRouter
+from src.token_tracker import TokenUsageTracker
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +74,7 @@ class PersonaManager:
     ) -> Tuple[bool, Optional[str]]:
         """Loads the default personas and persona sets from a YAML file."""
         try:
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 data = yaml.safe_load(f)
 
             if not data:
@@ -202,7 +187,7 @@ class PersonaManager:
     def _load_original_personas(self) -> Tuple[bool, Optional[str]]:
         """Loads the original default personas from the YAML file and stores them."""
         try:
-            with open(DEFAULT_PERSONAS_FILE, "r") as f:
+            with open(DEFAULT_PERSONAS_FILE) as f:
                 data = yaml.safe_load(f)
 
             if not data:
@@ -516,8 +501,7 @@ class PersonaManager:
         return success, message
 
     def get_adjusted_persona_config(self, persona_name: str) -> PersonaConfig:
-        """
-        Returns a PersonaConfig with dynamically adjusted parameters based on performance.
+        """Returns a PersonaConfig with dynamically adjusted parameters based on performance.
         Also handles `_TRUNCATED` persona names by adjusting max_tokens and system_prompt.
         Returns a deep copy to prevent direct modification of cached objects.
         """
@@ -705,8 +689,7 @@ class PersonaManager:
     def get_token_optimized_persona_sequence(
         self, persona_sequence: List[str]
     ) -> List[str]:
-        """
-        Optimizes the persona sequence by potentially replacing personas with their
+        """Optimizes the persona sequence by potentially replacing personas with their
         '_TRUNCATED' versions if historical performance indicates high truncation rates
         or if the overall token budget is becoming constrained.
         """

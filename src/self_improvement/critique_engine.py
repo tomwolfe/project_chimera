@@ -1,6 +1,5 @@
-import json
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +11,7 @@ class CritiqueEngine:
         pass
 
     def critique_output(self, prompt: str, response: str) -> Dict[str, Any]:
-        """
-        Generates a placeholder critique. In a real system, this would involve
+        """Generates a placeholder critique. In a real system, this would involve
         analyzing the response against the prompt and potentially using another
         LLM call or rule-based system to generate a detailed critique.
         """
@@ -32,9 +30,7 @@ class CritiqueEngine:
     def evaluate_system_performance(
         self, metrics: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """
-        Evaluates system performance metrics and generates high-level critique points.
-        """
+        """Evaluates system performance metrics and generates high-level critique points."""
         critique_points = []
         if metrics.get("performance_efficiency", {}).get("token_efficiency", 0) > 2000:
             critique_points.append(

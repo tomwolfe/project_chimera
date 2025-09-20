@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Dict, Any, Optional, Type
+from typing import Any, Dict, Optional, Type
+
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -9,8 +10,7 @@ logger = logging.getLogger(__name__)
 def validate_llm_output(
     raw_output: str, schema_model: Type[BaseModel]
 ) -> Optional[Dict[str, Any]]:
-    """
-    Attempts to parse and validate raw LLM output against a Pydantic schema.
+    """Attempts to parse and validate raw LLM output against a Pydantic schema.
     Returns the validated data as a dictionary if successful, None otherwise.
     """
     try:

@@ -2,10 +2,10 @@
 
 import datetime
 import json
-import re
-from typing import Any, Dict, List, Optional
-from pathlib import Path
 import logging
+import re
+from typing import Any, Dict, List
+
 from src.utils.core_helpers.json_utils import (
     convert_to_json_friendly,
 )  # NEW: Import the shared utility
@@ -27,11 +27,9 @@ def generate_markdown_report(
     config_params: Dict[str, Any],
     persona_audit_log: List[Dict[str, Any]],
 ) -> str:
-    """
-    Generates a comprehensive Markdown report from the analysis results.
-    """
+    """Generates a comprehensive Markdown report from the analysis results."""
     report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    md_content = f"# Project Chimera Socratic Debate Report\n\n"
+    md_content = "# Project Chimera Socratic Debate Report\n\n"
     md_content += f"**Date:** {report_date}\n"
     md_content += f"**Original Prompt:** {user_prompt}\n\n"
     md_content += "---\n\n"
@@ -79,7 +77,7 @@ def generate_markdown_report(
         step_keys_to_process = sorted(
             [
                 k
-                for k in intermediate_steps.keys()
+                for k in intermediate_steps
                 if not k.endswith("_Tokens_Used")
                 and not k.endswith("_Estimated_Cost_USD")
                 and k != "Total_Tokens_Used"

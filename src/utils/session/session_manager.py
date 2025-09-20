@@ -1,17 +1,18 @@
 # src/utils/session/session_manager.py
-import streamlit as st
-import time
-import os
-import uuid
 import logging
-from typing import Dict, Any, Optional, Callable
+import os
+import time
+import uuid
+from typing import Any, Callable, Dict
 
+import streamlit as st
+
+from src.config.settings import ChimeraSettings
+from src.middleware.rate_limiter import RateLimiter
 from src.persona_manager import PersonaManager
 
 # REMOVED: from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner # This caused a circular import
 from src.token_tracker import TokenUsageTracker
-from src.config.settings import ChimeraSettings
-from src.middleware.rate_limiter import RateLimiter
 from src.utils.validation.api_key_validator import (
     validate_gemini_api_key_format,
 )  # Updated import
@@ -170,8 +171,8 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
     # MODIFIED: Pass the cached functions to _initialize_session_state
     # The import from app is no longer needed here, as the functions are passed as arguments.
     from app import (
-        get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance,
+        get_context_relevance_analyzer_instance,
         get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
     )
 
@@ -200,8 +201,8 @@ def check_session_expiration(
             # MODIFIED: Pass the cached functions to _initialize_session_state
             # The import from app is no longer needed here, as the functions are passed as arguments.
             from app import (
-                get_context_relevance_analyzer_instance,
                 get_codebase_scanner_instance,
+                get_context_relevance_analyzer_instance,
                 get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
             )
 

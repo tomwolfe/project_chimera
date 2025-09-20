@@ -1,9 +1,9 @@
 # src/middleware/rate_limiter.py
+import logging
 import time
 from collections import defaultdict
-import logging
 from functools import wraps
-from typing import Callable, Any, Dict, Optional, List, Tuple  # Import List and Tuple
+from typing import Callable, Dict, List, Tuple  # Import List and Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -15,17 +15,16 @@ class RateLimitExceededError(Exception):
 
 
 class RateLimiter:
-    """
-    A simple in-memory rate limiter based on user/session identifiers.
+    """A simple in-memory rate limiter based on user/session identifiers.
     Limits the number of calls within a specified time period.
     """
 
     def __init__(self, key_func: Callable, calls: int = 10, period: float = 60.0):
-        """
-        Args:
-            key_func: A function that returns a unique identifier for the caller (e.g., session ID, IP).
-            calls: Maximum number of calls allowed within the period.
-            period: The time period in seconds.
+        """Args:
+        key_func: A function that returns a unique identifier for the caller (e.g., session ID, IP).
+        calls: Maximum number of calls allowed within the period.
+        period: The time period in seconds.
+
         """
         if calls <= 0:
             raise ValueError("calls must be positive.")
@@ -43,8 +42,7 @@ class RateLimiter:
     def check_and_record_call(
         self, key: str, dry_run: bool = False
     ) -> Tuple[bool, int, float, float]:
-        """
-        Checks if a call is allowed, records it if not a dry run, and returns usage stats.
+        """Checks if a call is allowed, records it if not a dry run, and returns usage stats.
         Returns: (is_allowed, current_count, time_to_wait, usage_percent)
         """
         now = time.time()

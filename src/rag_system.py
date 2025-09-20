@@ -1,11 +1,10 @@
 # src/rag_system.py
-import os
-import json
-import numpy as np
-from typing import List, Dict, Any, Optional
-from sentence_transformers import SentenceTransformer
 import logging
 from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 

@@ -1,14 +1,14 @@
+import json
+
 import pytest
-from src.utils.reporting.output_parser import LLMOutputParser
+
 from src.models import (
-    LLMOutput,
     CritiqueOutput,
     GeneralOutput,
+    LLMOutput,
     SelfImprovementAnalysisOutputV1,
-    SuggestionItem,
 )
-from pydantic import ValidationError
-import json
+from src.utils.reporting.output_parser import LLMOutputParser
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ def test_parse_and_validate_malformed_json_with_repair(parser):
         "another_key": "another_value",
     }
     assert any(
-        "JSON_REPAIR_ATTEMPTED" == block["type"] for block in result["malformed_blocks"]
+        block["type"] == "JSON_REPAIR_ATTEMPTED" for block in result["malformed_blocks"]
     )
 
 
@@ -116,7 +116,7 @@ def test_parse_and_validate_schema_mismatch(parser):
     """
     result = parser.parse_and_validate(raw_output, LLMOutput)
     assert any(
-        "SCHEMA_VALIDATION_ERROR" == block["type"]
+        block["type"] == "SCHEMA_VALIDATION_ERROR"
         for block in result["malformed_blocks"]
     )
     assert "COMMIT_MESSAGE" in result  # Fallback should still provide the field
@@ -138,7 +138,7 @@ def test_parse_and_validate_top_level_list_for_dict_schema(parser):
     assert len(result["IMPACTFUL_SUGGESTIONS"]) == 2
     assert result["IMPACTFUL_SUGGESTIONS"][0]["AREA"] == "Robustness"
     assert any(
-        "TOP_LEVEL_LIST_WRAPPING" == block["type"]
+        block["type"] == "TOP_LEVEL_LIST_WRAPPING"
         for block in result["malformed_blocks"]
     )
 
@@ -214,7 +214,7 @@ def test_parse_and_validate_top_level_list_of_strings_critique_output(parser):
     assert result["SUGGESTIONS"][0]["CODE_CHANGES_SUGGESTED"] == []
     assert result["SUGGESTIONS"][0]["RATIONALE"] is None
     assert any(
-        "TOP_LEVEL_LIST_WRAPPING" == block["type"]
+        block["type"] == "TOP_LEVEL_LIST_WRAPPING"
         for block in result["malformed_blocks"]
     )
 
@@ -229,7 +229,7 @@ def test_parse_and_validate_top_level_list_of_dicts_critique_output(parser):
     assert len(result["CRITIQUE_POINTS"]) == 2
     assert result["CRITIQUE_POINTS"][0]["point_summary"] == "P1"
     assert any(
-        "TOP_LEVEL_LIST_WRAPPING" == block["type"]
+        block["type"] == "TOP_LEVEL_LIST_WRAPPING"
         for block in result["malformed_blocks"]
     )
 
@@ -242,7 +242,7 @@ def test_parse_and_validate_top_level_list_of_code_changes_llm_output(parser):
     assert len(result["CODE_CHANGES"]) == 1
     assert result["CODE_CHANGES"][0]["FILE_PATH"] == "file1.py"
     assert any(
-        "TOP_LEVEL_LIST_WRAPPING" == block["type"]
+        block["type"] == "TOP_LEVEL_LIST_WRAPPING"
         for block in result["malformed_blocks"]
     )
 
@@ -253,7 +253,7 @@ def test_parse_and_validate_top_level_list_general_output(parser):
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "item1\nitem2"
     assert any(
-        "TOP_LEVEL_LIST_WRAPPING" == block["type"]
+        block["type"] == "TOP_LEVEL_LIST_WRAPPING"
         for block in result["malformed_blocks"]
     )
 
@@ -264,7 +264,7 @@ def test_parse_and_validate_empty_list_general_output(parser):
     result = parser.parse_and_validate(raw_output, GeneralOutput)
     assert result["general_output"] == "[]"
     assert any(
-        "EMPTY_JSON_LIST" == block["type"] for block in result["malformed_blocks"]
+        block["type"] == "EMPTY_JSON_LIST" for block in result["malformed_blocks"]
     )
 
 

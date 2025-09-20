@@ -1,9 +1,8 @@
 # src/utils/path_utils.py
 import logging
+import os
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any
-import os
 
 # Determine PROJECT_ROOT deterministically based on the location of this file.
 # This is more robust than searching for marker files.

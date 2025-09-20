@@ -2,18 +2,14 @@
 """Gemini-specific tokenizer implementation."""
 
 import logging
-from typing import Optional, Dict, Any, TYPE_CHECKING
-from .base import Tokenizer  # This import is relative, so it remains the same
-import hashlib
-import re
-import sys
 from functools import lru_cache
+from typing import Any
+
+from .base import Tokenizer  # This import is relative, so it remains the same
 
 logger = logging.getLogger(__name__)
 
 # Use TYPE_CHECKING to avoid circular import at runtime
-if TYPE_CHECKING:
-    from src.config.model_registry import ModelRegistry
 
 
 class GeminiTokenizer(Tokenizer):
@@ -27,6 +23,7 @@ class GeminiTokenizer(Tokenizer):
         Args:
             model_name: The Gemini model name to use for token counting.
             genai_client: An initialized google.genai.Client instance.
+
         """
         if genai_client is None:
             raise ValueError(
@@ -111,8 +108,7 @@ class GeminiTokenizer(Tokenizer):
     def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
-        """
-        Trim text to fit within the specified token limit.
+        """Trim text to fit within the specified token limit.
         Uses a binary search approach for efficiency.
         """
         if max_tokens < 1:

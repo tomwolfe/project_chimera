@@ -3,29 +3,22 @@
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Type, Tuple
-from pathlib import Path
-from pydantic import (
-    BaseModel,
-    ValidationError,
-    field_validator,
-    model_validator,
-    ConfigDict,
-)
+from typing import Any, Dict, List, Optional, Tuple, Type
+
+from pydantic import BaseModel, ValidationError
 
 # Ensure all relevant models are imported
 from src.models import (
-    CodeChange,
-    LLMOutput,
+    ConfigurationAnalysisOutput,
+    ConflictReport,
     ContextAnalysisOutput,
     CritiqueOutput,
+    DeploymentAnalysisOutput,
     GeneralOutput,
+    LLMOutput,
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
-    ConfigurationAnalysisOutput,
-    DeploymentAnalysisOutput,
     SuggestionItem,
-    ConflictReport,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,8 +49,7 @@ class LLMOutputParser:
 
     @staticmethod
     def _repair_diff_content_headers(diff_content: str) -> str:
-        """
-        Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing,
+        """Heuristically repairs unified diff headers if 'a/' or 'b/' prefixes are missing,
         or if paths start with a leading slash. This version processes line by line
         to avoid complex regex issues.
         """
@@ -100,8 +92,7 @@ class LLMOutputParser:
         start_marker: str = "START_JSON_OUTPUT",
         end_marker: str = "END_JSON_OUTPUT",
     ) -> Optional[Tuple[str, bool]]:
-        """
-        Extracts JSON content explicitly delimited by start and end markers.
+        """Extracts JSON content explicitly delimited by start and end markers.
         Returns (json_string_content, end_marker_found).
         If only start_marker is found, returns (content_after_start_marker, False).
         If no valid JSON can be extracted after a missing end marker, returns None.
@@ -152,8 +143,7 @@ class LLMOutputParser:
         return None
 
     def _extract_first_outermost_json(self, text: str) -> Optional[str]:
-        """
-        Extracts the first outermost balanced JSON object or array from text.
+        """Extracts the first outermost balanced JSON object or array from text.
         This is a robust, stack-based approach to handle nested delimiters.
         """
         self.logger.debug("Attempting to extract first outermost JSON block...")
@@ -209,8 +199,7 @@ class LLMOutputParser:
         return None
 
     def _extract_from_xml_tags(self, text: str, tag: str) -> Optional[str]:
-        """
-        Extracts content from within specific XML-like tags.
+        """Extracts content from within specific XML-like tags.
         E.g., for tag "json_output", extracts content from <json_output>...</json_output>.
         """
         start_tag = f"<{tag}>"
@@ -233,8 +222,7 @@ class LLMOutputParser:
         return text[start_match + len(start_tag) : end_match].strip()
 
     def _extract_json_from_markdown(self, text: str) -> Optional[str]:
-        """
-        Extracts content from markdown code blocks and then uses robust json extraction
+        """Extracts content from markdown code blocks and then uses robust json extraction
         on that content.
         """
         self.logger.debug("Attempting to extract JSON from markdown code blocks...")
@@ -442,9 +430,7 @@ class LLMOutputParser:
         return json_str, repair_log
 
     def _force_close_truncated_json(self, json_str: str) -> str:
-        """
-        Attempts to heuristically force-close a JSON string that appears to be truncated.
-        """
+        """Attempts to heuristically force-close a JSON string that appears to be truncated."""
         cleaned_str = json_str.strip()
         if not cleaned_str:
             return ""
@@ -557,8 +543,7 @@ class LLMOutputParser:
         return None, repair_log
 
     def _extract_largest_valid_subobject(self, text: str) -> Optional[str]:
-        """
-        Extracts the largest potentially valid JSON object or array from malformed text.
+        """Extracts the largest potentially valid JSON object or array from malformed text.
         Leverages _extract_first_outermost_json for robustness.
         """
         self.logger.debug(
@@ -660,8 +645,7 @@ class LLMOutputParser:
         return cleaned.strip()
 
     def _detect_potential_suggestion_item(self, text: str) -> Optional[Dict]:
-        """
-        Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
+        """Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
         at the top level, rather than the full SelfImprovementAnalysisOutput.
         """
         area_match = re.search(
@@ -692,9 +676,7 @@ class LLMOutputParser:
     def _attempt_schema_correction(
         self, output: Dict[str, Any], error: ValidationError
     ) -> Optional[Dict[str, Any]]:
-        """
-        Attempts automatic correction of common schema validation failures by adding default values.
-        """
+        """Attempts automatic correction of common schema validation failures by adding default values."""
         corrected_output = output.copy()
         correction_made = False
 
@@ -776,8 +758,7 @@ class LLMOutputParser:
     def parse_and_validate(
         self, raw_output: str, schema_model: Type[BaseModel]
     ) -> Dict[str, Any]:
-        """
-        Parse and validate the raw LLM output against a given Pydantic schema.
+        """Parse and validate the raw LLM output against a given Pydantic schema.
         Handles JSON extraction, parsing, and schema validation.
         Ensures the returned structure is a dictionary, even if LLM output is a JSON array.
         Populates 'malformed_blocks' field on failure.
@@ -1222,7 +1203,6 @@ class LLMOutputParser:
         extracted_json_str: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
-
         current_malformed_blocks = malformed_blocks.copy()
 
         error_message_from_partial = "Failed to generate valid structured output. "
@@ -1459,20 +1439,19 @@ class LLMOutputParser:
                         },
                         malformed_blocks=current_malformed_blocks,
                     )
+            elif schema_model == GeneralOutput:
+                validated_fallback = GeneralOutput(
+                    general_output=fallback_data_for_model.get(
+                        "general_output", error_message_from_partial
+                    ),
+                    malformed_blocks=current_malformed_blocks,
+                )
+            elif hasattr(schema_model, "model_validate"):
+                validated_fallback = schema_model.model_validate(
+                    fallback_data_for_model
+                )
             else:
-                if schema_model == GeneralOutput:
-                    validated_fallback = GeneralOutput(
-                        general_output=fallback_data_for_model.get(
-                            "general_output", error_message_from_partial
-                        ),
-                        malformed_blocks=current_malformed_blocks,
-                    )
-                elif hasattr(schema_model, "model_validate"):
-                    validated_fallback = schema_model.model_validate(
-                        fallback_data_for_model
-                    )
-                else:
-                    validated_fallback = schema_model.parse_obj(fallback_data_for_model)
+                validated_fallback = schema_model.parse_obj(fallback_data_for_model)
 
             return validated_fallback.model_dump(by_alias=True)
         except ValidationError as e:

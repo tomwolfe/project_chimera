@@ -1,11 +1,12 @@
 import unittest
-from unittest.mock import patch, MagicMock
-import json
-from src.llm_provider import GeminiProvider
+from typing import Optional
+from unittest.mock import MagicMock
+
+from pydantic import BaseModel
+
 from src.config.settings import ChimeraSettings
 from src.exceptions import SchemaValidationError
-from pydantic import BaseModel, Field
-from typing import Optional
+from src.llm_provider import GeminiProvider
 
 
 class TestModel(BaseModel):

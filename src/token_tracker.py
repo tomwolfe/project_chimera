@@ -1,6 +1,6 @@
-import time
-from typing import Dict, List, Optional, Any
 import logging
+import time
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +13,12 @@ class TokenUsageTracker:
         budget: int = 128000,
         max_history_items: int = 100,  # NEW: Add max_history_items parameter
     ):
-        """
-        Initializes the token tracker.
+        """Initializes the token tracker.
 
         Args:
             budget: The total token budget for the process.
             max_history_items: The maximum number of historical usage entries to store. # NEW: Docstring update
+
         """
         self.budget = budget
         self.current_usage = 0
@@ -32,13 +32,13 @@ class TokenUsageTracker:
         self._current_stage = None  # To be set by the orchestrator (e.g., core.py) to indicate the current phase (e.g., 'intermediate_reasoning', 'final_synthesis')
 
     def record_usage(self, tokens: int, persona: Optional[str] = None):
-        """
-        Records token usage, optionally attributing it to a persona.
+        """Records token usage, optionally attributing it to a persona.
         Also applies semantic token weighting based on the current stage.
 
         Args:
             tokens: The number of tokens used in this interaction.
             persona: The name of the persona involved, if applicable.
+
         """
         self.current_usage += tokens
         self.usage_history.append((time.time(), tokens))
@@ -75,14 +75,14 @@ class TokenUsageTracker:
         return min(1.0, self.current_usage / self.budget)
 
     def get_high_consumption_personas(self, threshold: float = 0.15) -> Dict[str, int]:
-        """
-        Identifies personas that are consuming a disproportionate amount of tokens.
+        """Identifies personas that are consuming a disproportionate amount of tokens.
 
         Args:
             threshold: The proportion of total tokens used by a persona to be considered high consumption.
 
         Returns:
             A dictionary mapping persona names to their token counts for high consumers.
+
         """
         total = sum(self.persona_token_map.values())
         if total == 0:
@@ -105,11 +105,11 @@ class TokenUsageTracker:
         self._current_stage = None
 
     def set_current_stage(self, stage: Optional[str]):
-        """
-        Sets the current processing stage. This is crucial for semantic token weighting
+        """Sets the current processing stage. This is crucial for semantic token weighting
         as it informs the `record_usage` method about the context of token consumption.
 
         Args:
             stage: The name of the current processing stage (e.g., 'intermediate_reasoning', 'final_synthesis').
+
         """
         self._current_stage = stage

@@ -1,15 +1,11 @@
 # src/utils/output_formatter.py
-import json  # Used for json.dumps
 import logging  # Used for logger
 from datetime import datetime  # Used for datetime.now
-from typing import Dict, Any, List, Optional  # Used for type hints
-from pathlib import Path  # Used for Path(change.get('FILE_PATH', 'N/A')).name
+from typing import Any, Dict, List  # Used for type hints
 
 from src.models import (  # Used for type hints in format_findings_list, format_complete_report
-    CodeChange,
-    SelfImprovementFinding,
-    QuantitativeImpactMetrics,
     SelfImprovementAnalysisOutput,
+    SelfImprovementFinding,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,7 +134,7 @@ class OutputFormatter:
     @staticmethod
     def format_complete_report(analysis: SelfImprovementAnalysisOutput) -> str:
         """Formats the complete analysis report in Markdown."""
-        markdown = f"# Project Chimera Self-Improvement Analysis Report\n\n"
+        markdown = "# Project Chimera Self-Improvement Analysis Report\n\n"
         markdown += f"**Analysis ID:** {analysis.metadata.get('analysis_id', 'N/A')}\n"
         markdown += f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         markdown += f"**Original Prompt:** {analysis.original_prompt}\n\n"

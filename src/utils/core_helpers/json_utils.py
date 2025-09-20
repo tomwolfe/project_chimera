@@ -1,15 +1,15 @@
 # src/utils/json_utils.py
 import json
-import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Callable
 import logging
+from typing import Any, Callable, Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 def convert_to_json_friendly(obj: Any) -> Any:
-    """
-    Recursively converts Pydantic models and NumPy types to dictionaries/standard Python types
+    """Recursively converts Pydantic models and NumPy types to dictionaries/standard Python types
     that are compatible with json.dumps.
     """
     if hasattr(obj, "model_dump"):
@@ -34,8 +34,7 @@ def convert_to_json_friendly(obj: Any) -> Any:
 def safe_json_loads(
     json_string: str, default_value: Optional[Any] = None
 ) -> Optional[Any]:
-    """
-    Safely loads a JSON string, returning a default value if parsing fails.
+    """Safely loads a JSON string, returning a default value if parsing fails.
     Logs errors for debugging.
     """
     if not isinstance(json_string, str):
@@ -65,8 +64,7 @@ def safe_json_dumps(
     ] = None,  # This is the 'default' callable for json.dumps
     on_error_return_str: str = "{}",  # This is the string to return if serialization fails completely
 ) -> str:
-    """
-    Safely dumps data to a JSON string.
+    """Safely dumps data to a JSON string.
     Uses a provided 'default' callable for non-serializable types, or falls back to 'str'.
     If serialization fails completely, returns 'on_error_return_str'.
     Logs errors for debugging.

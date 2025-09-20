@@ -1,14 +1,15 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Assuming core.py is in the project root
 from core import SocraticDebate
-from src.persona_manager import PersonaManager
-from src.llm_provider import GeminiProvider
-from src.token_tracker import TokenUsageTracker
 from src.config.settings import ChimeraSettings
 from src.context.context_analyzer import ContextRelevanceAnalyzer
-from src.models import PersonaConfig, GeneralOutput, CritiqueOutput, ConflictReport
+from src.llm_provider import GeminiProvider
+from src.models import ConflictReport, CritiqueOutput, GeneralOutput, PersonaConfig
+from src.persona_manager import PersonaManager
+from src.token_tracker import TokenUsageTracker
 
 
 @pytest.fixture

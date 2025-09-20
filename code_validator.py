@@ -1,24 +1,15 @@
 # src/utils/code_validator.py
-import io
-from typing import List, Tuple, Dict, Any, Optional
+import ast
+import hashlib
+import json  # Added for Bandit output parsing
+import logging
 import subprocess
 import sys
-import os
 import tempfile
-import hashlib
-import re
-import contextlib
-import logging
 from pathlib import Path
-import pycodestyle
-import ast
-import json  # Added for Bandit output parsing
+from typing import Any, Dict, List
 
-from src.utils.core_helpers.path_utils import (
-    find_project_root,
-    is_within_base_dir,
-    sanitize_and_validate_file_path,
-)
+import pycodestyle
 
 logger = logging.getLogger(__name__)
 
@@ -391,11 +382,10 @@ def validate_code_output(
                 issues.extend(_run_pycodestyle(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-        else:
-            if is_python:
-                issues.extend(_run_pycodestyle(content_to_check, file_path_str))
-                issues.extend(_run_bandit(content_to_check, file_path_str))
-                issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
+        elif is_python:
+            issues.extend(_run_pycodestyle(content_to_check, file_path_str))
+            issues.extend(_run_bandit(content_to_check, file_path_str))
+            issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
 
     elif action == "REMOVE":
         if original_content is not None:

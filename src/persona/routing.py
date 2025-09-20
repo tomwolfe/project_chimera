@@ -1,18 +1,16 @@
 # src/persona/routing.py
-"""
-Dynamic persona routing system that selects appropriate personas
+"""Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING
-import re
-import logging
-from functools import lru_cache
 
-from src.models import PersonaConfig
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
+from src.models import PersonaConfig
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -198,8 +196,7 @@ class PersonaRouter:
         context_analysis_results: Optional[Dict[str, Any]],
         domain: str,
     ) -> bool:
-        """
-        Determine if Test_Engineer persona is needed based on prompt, context, and domain.
+        """Determine if Test_Engineer persona is needed based on prompt, context, and domain.
         For 'Self-Improvement' domain, Test_Engineer is always relevant.
         """
         if domain.lower() == "self-improvement":
@@ -347,7 +344,7 @@ class PersonaRouter:
                 and software_count == 0
             ):
                 logger.warning(
-                    f"Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
+                    "Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
                 )
                 if "Code_Architect" in sequence:
                     sequence.remove("Code_Architect")
@@ -442,9 +439,7 @@ class PersonaRouter:
         intermediate_results: Optional[Dict[str, Any]] = None,
         context_analysis_results: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
-        """
-        Determine the optimal sequence of personas for processing the prompt.
-        """
+        """Determine the optimal sequence of personas for processing the prompt."""
         prompt_lower = prompt.lower()
 
         if self.prompt_analyzer.is_self_analysis_prompt(prompt):

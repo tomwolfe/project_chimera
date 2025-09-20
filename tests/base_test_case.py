@@ -1,5 +1,5 @@
-import unittest
 import logging
+import unittest
 
 # Suppress logging during tests to keep output clean
 logging.disable(logging.CRITICAL)

@@ -1,28 +1,22 @@
 # src/utils/code_validator.py
-import io
-from typing import List, Tuple, Dict, Any, Optional, Union
-import subprocess
-import sys
-import os
-import tempfile
-import hashlib
-import re
-import contextlib
-import logging
-from pathlib import Path
 import ast
+import hashlib
 import json
-from collections import defaultdict
+import logging
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+from src.utils.core_helpers.code_utils import _get_code_snippet
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.path_utils import (
-    is_within_base_dir,
-    sanitize_and_validate_file_path,
     PROJECT_ROOT,
     _map_incorrect_file_path,
     can_create_file,
+    sanitize_and_validate_file_path,
 )
-from src.utils.core_helpers.code_utils import _get_code_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +30,7 @@ class CodeValidationError(Exception):
 def validate_and_resolve_file_path_for_action(
     suggested_path: str, action: str, codebase_raw_file_contents: Dict[str, str]
 ) -> Tuple[bool, str, str, Optional[str]]:
-    """
-    Validates a suggested file path and action against the actual codebase context.
+    """Validates a suggested file path and action against the actual codebase context.
     Attempts to map incorrect paths to correct ones.
     Returns: (is_valid, resolved_path, suggested_action_if_changed, error_message)
     """
@@ -811,12 +804,11 @@ def validate_code_output(
                 issues.extend(_run_ruff(content_to_check, file_path_str))
                 issues.extend(_run_bandit(content_to_check, file_path_str))
                 issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-        else:  # If original_content is None, it means the file didn't exist or wasn't provided.
-            # The file_exists_in_codebase check above should have caught this.
-            if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str))
-                issues.extend(_run_bandit(content_to_check, file_path_str))
-                issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
+        # The file_exists_in_codebase check above should have caught this.
+        elif is_python:
+            issues.extend(_run_ruff(content_to_check, file_path_str))
+            issues.extend(_run_bandit(content_to_check, file_path_str))
+            issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
     elif action == "REMOVE":
         if original_content is not None:
             original_lines = original_content.splitlines()

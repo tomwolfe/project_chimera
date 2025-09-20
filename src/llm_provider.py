@@ -1,81 +1,71 @@
 # src/llm_provider.py
-"""
-Provides an interface for interacting with the Gemini LLM API,
+"""Provides an interface for interacting with the Gemini LLM API,
 including retry mechanisms, token counting, cost calculation,
 and circuit breaker protection.
 """
 
-from pathlib import Path
-import time
-import logging
-from functools import wraps
-from typing import Callable, Any, Dict, Optional, Type, Tuple
-import google.genai as genai
-from google.genai.errors import APIError, ServerError
-from google.genai import types as genai_types
 import hashlib
-import secrets
-import socket
 import json
-from pydantic import BaseModel, ValidationError
-
-from rich.console import Console
+import logging
+import socket
+from typing import Any, Dict, Optional, Type
 
 # --- Tokenizer Interface and Implementation ---
 import tiktoken
-from src.llm_tokenizers.base import Tokenizer
-from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
-
-# --- Custom Exceptions ---
-from src.exceptions import (
-    ChimeraError,
-    LLMProviderError,
-    LLMProviderRequestError,
-    LLMProviderResponseError,
-    GeminiAPIError,
-    LLMUnexpectedError,
-    TokenBudgetExceededError,
-    CircuitBreakerError,
-    SchemaValidationError,
-)
-
-# NEW: Import LLMOutput and SelfImprovementAnalysisOutputV1 from src.models
-from src.models import LLMOutput, SelfImprovementAnalysisOutputV1
+from google import genai
+from google.genai import types as genai_types
+from google.genai.errors import APIError, ServerError
+from pydantic import BaseModel, ValidationError
+from rich.console import Console
 
 # --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
 from tenacity import (
+    RetryError,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    RetryError,
-    retry_if_exception_type,
 )
-from src.middleware.rate_limiter import RateLimitExceededError
-# --- END NEW IMPORTS ---
 
-# --- NEW IMPORT FOR CIRCUIT BREAKER ---
-from src.resilience.circuit_breaker import CircuitBreaker
 # --- END NEW IMPORT ---
-
-# --- NEW IMPORT FOR ERROR HANDLER ---
-from src.utils.core_helpers.error_handler import handle_errors  # Updated import
-# --- END NEW IMPORT ---
-
 # FIX: Import ModelSpecification explicitly
 from src.config.model_registry import ModelRegistry, ModelSpecification
 from src.config.settings import ChimeraSettings
 
-# NEW IMPORTS: From src/utils/validation/api_key_validator.py # Updated import
-from src.utils.validation.api_key_validator import (  # Updated import
-    validate_gemini_api_key_format,
-    test_gemini_api_key_functional,
-    fetch_api_key,
+# --- Custom Exceptions ---
+from src.exceptions import (
+    CircuitBreakerError,
+    GeminiAPIError,
+    LLMProviderError,
+    LLMProviderRequestError,
+    LLMProviderResponseError,
+    LLMUnexpectedError,
+    SchemaValidationError,
+    TokenBudgetExceededError,
 )
-import os
-from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
+from src.llm_tokenizers.base import Tokenizer
+from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
+from src.middleware.rate_limiter import RateLimitExceededError
+
+# NEW: Import LLMOutput and SelfImprovementAnalysisOutputV1 from src.models
+from src.models import LLMOutput, SelfImprovementAnalysisOutputV1
+
+# --- END NEW IMPORTS ---
+# --- NEW IMPORT FOR CIRCUIT BREAKER ---
+from src.resilience.circuit_breaker import CircuitBreaker
+
+# --- END NEW IMPORT ---
+# --- NEW IMPORT FOR ERROR HANDLER ---
+from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 
 # NEW IMPORT: For PromptOptimizer
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
+
+# NEW IMPORTS: From src/utils/validation/api_key_validator.py # Updated import
+from src.utils.validation.api_key_validator import (  # Updated import
+    validate_gemini_api_key_format,
+)
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
@@ -162,7 +152,7 @@ class GeminiProvider:
                 or "invalid_api_key" in error_msg_lower
             ):
                 raise LLMProviderError(
-                    f"Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.",
+                    "Failed to initialize Gemini client: Invalid API Key. Please check your Gemini API Key.",
                     provider_error_code="INVALID_API_KEY",
                     original_exception=e,
                 ) from e
@@ -371,9 +361,7 @@ class GeminiProvider:
         intermediate_results: Dict[str, Any] = None,
         requested_model_name: str = None,
     ) -> tuple[str, int, int, bool]:
-        """
-        Generates content using the Gemini API, protected by a circuit breaker and tenacity retries.
-        """
+        """Generates content using the Gemini API, protected by a circuit breaker and tenacity retries."""
         final_model_to_use = requested_model_name
 
         current_model_spec = self.get_model_specification(
@@ -711,8 +699,7 @@ class GeminiProvider:
         )
 
     def close(self):
-        """
-        Explicitly releases resources held by the GeminiProvider.
+        """Explicitly releases resources held by the GeminiProvider.
         For google.genai, this primarily involves setting the client to None
         to encourage garbage collection.
         """

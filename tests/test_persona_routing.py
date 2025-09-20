@@ -1,12 +1,14 @@
 # tests/test_persona_routing.py
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
+from src.models import PersonaConfig
 from src.persona.routing import PersonaRouter
 from src.persona_manager import (
     PersonaManager,
 )  # Assuming PersonaManager is needed for PersonaRouter init
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer
-from src.models import PersonaConfig
 
 
 @pytest.fixture

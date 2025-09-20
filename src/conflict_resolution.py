@@ -1,20 +1,15 @@
 import json
 import logging
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
-from src.llm_provider import GeminiProvider
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from src.models import (
-    PersonaConfig,
-    GeneralOutput,
-    ConflictReport,
-    SelfImprovementAnalysisOutputV1,
-    SuggestionItem,
-)
-from src.utils.reporting.output_parser import LLMOutputParser
+from pydantic import ValidationError
+
 from src.config.settings import ChimeraSettings
 from src.constants import SHARED_JSON_INSTRUCTIONS
 from src.exceptions import ChimeraError
-from pydantic import ValidationError
+from src.llm_provider import GeminiProvider
+from src.models import ConflictReport, SelfImprovementAnalysisOutputV1, SuggestionItem
+from src.utils.reporting.output_parser import LLMOutputParser
 
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
@@ -23,8 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConflictResolutionManager:
-    """
-    Manages the resolution of conflicts or malformed outputs from LLM personas.
+    """Manages the resolution of conflicts or malformed outputs from LLM personas.
     Implements strategies to attempt to recover or synthesize a coherent output.
     """
 
@@ -90,9 +84,7 @@ class ConflictResolutionManager:
     def resolve_conflict(
         self, debate_history: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """
-        Analyzes debate history and attempts to resolve conflicts or malformed outputs.
-        """
+        """Analyzes debate history and attempts to resolve conflicts or malformed outputs."""
         logger.warning("ConflictResolutionManager: Attempting to resolve conflict...")
 
         if not debate_history:
@@ -325,9 +317,7 @@ class ConflictResolutionManager:
         valid_turns: List[Dict[str, Any]],
         custom_summary: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Attempts to synthesize a coherent output from previous valid turns.
-        """
+        """Attempts to synthesize a coherent output from previous valid turns."""
         if valid_turns:
             last_valid_output = valid_turns[-1]["output"]
             resolution_summary = (
@@ -360,9 +350,7 @@ class ConflictResolutionManager:
         return None
 
     def _manual_intervention_fallback(self, message: str) -> Dict[str, Any]:
-        """
-        Returns a structured output indicating that manual intervention is required.
-        """
+        """Returns a structured output indicating that manual intervention is required."""
         logger.error(
             f"ConflictResolutionManager: Manual intervention required: {message}"
         )
@@ -378,9 +366,7 @@ class ConflictResolutionManager:
     def _retry_persona_with_feedback(
         self, persona_name: str, debate_history: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """
-        Re-invokes the persona with explicit feedback on its previous problematic output.
-        """
+        """Re-invokes the persona with explicit feedback on its previous problematic output."""
         if (
             not self.llm_provider
             or not self.llm_provider.tokenizer

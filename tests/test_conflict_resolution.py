@@ -1,6 +1,6 @@
-import pytest
-import json
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Assuming ConflictResolutionManager is in src/conflict_resolution.py
 from src.conflict_resolution import ConflictResolutionManager

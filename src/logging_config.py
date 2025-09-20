@@ -1,9 +1,9 @@
 # src/logging_config.py
 import logging
-from pythonjsonlogger import jsonlogger
 import re
-from pathlib import Path
 import sys
+
+from pythonjsonlogger import jsonlogger
 
 
 class RequestIDFilter(logging.Filter):

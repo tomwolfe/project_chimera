@@ -1,12 +1,9 @@
 # src/utils/code_utils.py
-"""
-Utility functions related to code manipulation and analysis.
-"""
+"""Utility functions related to code manipulation and analysis."""
 
-import logging
 import ast
-
-from typing import List, Optional, Dict, Any, Union
+import logging
+from typing import List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +12,7 @@ logger = logging.getLogger(__name__)
 def _get_code_snippet(
     content_lines: List[str], line_number: Optional[int], context_lines: int = 2
 ) -> str:  # Changed return type from Optional[str] to str
-    """
-    Retrieves a snippet of code around a specific line number from a list of lines.
+    """Retrieves a snippet of code around a specific line number from a list of lines.
 
     Args:
         content_lines: A list of strings, where each string is a line of code.
@@ -25,6 +21,7 @@ def _get_code_snippet(
 
     Returns:
         A formatted string snippet of the code, or an empty string if input is invalid.
+
     """
     # Ensure line_number is valid and within bounds
     if (
@@ -55,8 +52,7 @@ def _get_code_snippet(
 
 # --- AST Visitor for detailed code metrics (if needed elsewhere, otherwise can be removed) ---
 class ComplexityVisitor(ast.NodeVisitor):
-    """
-    AST visitor to calculate various code metrics for functions and methods,
+    """AST visitor to calculate various code metrics for functions and methods,
     including cyclomatic complexity, lines of code, nesting depth, and code smells.
     """
 

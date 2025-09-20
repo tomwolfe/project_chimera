@@ -1,7 +1,8 @@
 # tests/test_app_logic.py
-import unittest
-from app import sanitize_user_input  # Import the function from app.py
 import html  # NEW: Import html for expected escaped output
+import unittest
+
+from app import sanitize_user_input  # Import the function from app.py
 
 
 class TestAppLogic(unittest.TestCase):

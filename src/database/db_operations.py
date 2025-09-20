@@ -1,6 +1,6 @@
 # src/database/db_operations.py
 import sqlite3
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
 # Placeholder for a database connection function
@@ -30,7 +30,7 @@ def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
     conn = get_db_connection()
     cursor = conn.cursor()
     # Construct parameterized query safely
-    placeholders = ", ".join([f"{key} = ?" for key in profile_data.keys()])
+    placeholders = ", ".join([f"{key} = ?" for key in profile_data])
     query = f"UPDATE users SET {placeholders} WHERE id = ?"
     params = list(profile_data.values()) + [user_id]
     cursor.execute(query, params)

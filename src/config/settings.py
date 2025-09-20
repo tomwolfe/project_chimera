@@ -1,23 +1,19 @@
 # src/config/settings.py
-"""
-Configuration settings for Project Chimera, including token budgeting and retry parameters.
-"""
+"""Configuration settings for Project Chimera, including token budgeting and retry parameters."""
 
-import os
+import logging
+from pathlib import Path
+from typing import Dict, List, Self
+
+import yaml
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Self, Dict, Any, List, Optional
-import yaml
-from pathlib import Path
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 class ChimeraSettings(BaseSettings):
-    """
-    Configuration settings for Project Chimera, including token budgeting and retry parameters.
-    """
+    """Configuration settings for Project Chimera, including token budgeting and retry parameters."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -134,8 +130,7 @@ class ChimeraSettings(BaseSettings):
 
     @model_validator(mode="after")
     def normalize_token_budget_ratios(self) -> Self:
-        """
-        Normalizes the token budget ratios to ensure they sum to 1.0,
+        """Normalizes the token budget ratios to ensure they sum to 1.0,
         maintaining their relative proportions. This is crucial for
         correctly allocating the total budget across phases.
         """
@@ -183,7 +178,7 @@ class ChimeraSettings(BaseSettings):
         """Loads settings from a YAML file."""
         try:
             config_path = Path(file_path)
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 config_data = yaml.safe_load(f)
             # BaseSettings will automatically load from env_file and env vars,
             # then merge with provided config_data.

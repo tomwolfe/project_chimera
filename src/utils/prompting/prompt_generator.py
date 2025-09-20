@@ -1,14 +1,13 @@
-import json
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict
+
 from src.utils.prompt_cache import prompt_cache  # Import the global cache instance
 
 logger = logging.getLogger(__name__)
 
 
 class PromptGenerator:
-    """
-    Generates prompts based on templates and caches frequently used prompts.
+    """Generates prompts based on templates and caches frequently used prompts.
     This class is intended to be a more direct interface for generating prompts
     than the PromptOptimizer, which focuses on optimization strategies.
     """
@@ -29,13 +28,15 @@ class PromptGenerator:
         return f"{prompt_key}:{hash(sorted_kwargs)}"
 
     def generate_prompt(self, prompt_key: str, **kwargs: Any) -> str:
-        """
-        Generates a prompt based on a prompt template and given arguments, utilizing a cache.
+        """Generates a prompt based on a prompt template and given arguments, utilizing a cache.
+
         Args:
             prompt_key: The key identifying the prompt template to use.
             **kwargs: Arguments to format the template with.
+
         Returns:
             The generated prompt string.
+
         """
         cache_key = self._generate_cache_key(prompt_key, kwargs)
 
@@ -67,8 +68,7 @@ class PromptGenerator:
             return f"Error: Failed to generate prompt for '{prompt_key}': {e}"
 
     def generate_response(self, prompt_key: str, **kwargs: Any) -> str:
-        """
-        Simulates generating a response from an LLM based on a prompt template.
+        """Simulates generating a response from an LLM based on a prompt template.
         This is a placeholder for actual LLM interaction.
         """
         # In a real system, this would involve calling an LLM client.

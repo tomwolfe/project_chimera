@@ -1,14 +1,13 @@
-from src.utils.prompt_generator import generate_analysis_prompt  # Corrected import path
-from src.llm.client import LLMClient  # Corrected import path
 import logging
-from typing import Dict, Any
+
+from src.llm.client import LLMClient  # Corrected import path
+from src.utils.prompt_generator import generate_analysis_prompt  # Corrected import path
 
 logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
-    """
-    A service responsible for orchestrating LLM-based analysis queries.
+    """A service responsible for orchestrating LLM-based analysis queries.
     It uses an LLMClient to generate responses and a prompt generator to format inputs.
     """
 
@@ -16,8 +15,7 @@ class AnalysisService:
         self.llm_client = llm_client
 
     def analyze_query(self, user_query: str, context_data: str) -> str:
-        """
-        Analyzes a user query using the LLM.
+        """Analyzes a user query using the LLM.
         Orchestrates prompt generation, LLM call, and basic response parsing.
         """
         try:

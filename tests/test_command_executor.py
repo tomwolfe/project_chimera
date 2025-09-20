@@ -1,10 +1,10 @@
 # tests/test_command_executor.py
 
-import unittest
-from unittest.mock import patch, MagicMock
 import subprocess
 import sys
-from pathlib import Path
+import unittest
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 # Assuming src/utils/command_executor.py contains the execute_command_safely function

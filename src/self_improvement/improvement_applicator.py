@@ -1,7 +1,6 @@
-import json
-import logging
-from typing import List, Dict, Any
 import datetime
+import logging
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +13,7 @@ class ImprovementApplicator:
         self.improvement_log = []
 
     def apply_improvement(self, improvement_suggestion: Dict[str, Any]) -> bool:
-        """
-        Applies an improvement suggestion. This is a placeholder for actual system modifications.
+        """Applies an improvement suggestion. This is a placeholder for actual system modifications.
         In a real system, this would involve modifying prompts, code, or configurations.
         """
         logger.info(

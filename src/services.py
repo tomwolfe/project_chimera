@@ -1,6 +1,6 @@
 # src/services.py
 import logging  # NEW: Import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)  # NEW: Initialize logger
 
@@ -9,9 +9,7 @@ logger = logging.getLogger(__name__)  # NEW: Initialize logger
 
 
 def process_user_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Processes the incoming user request data.
-    """
+    """Processes the incoming user request data."""
     user_id = request_data.get("user_id")
     action = request_data.get("action")
 
@@ -46,9 +44,7 @@ def process_user_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
 def perform_critical_operation(
     user_id: int, action: str
 ) -> str:  # MODIFIED: Added type hints
-    """
-    Simulates a critical operation that might fail.
-    """
+    """Simulates a critical operation that might fail."""
     # In a real application, this would involve database calls, complex logic, etc.
     # For demonstration, simulate a potential failure.
     if action == "fail_example":

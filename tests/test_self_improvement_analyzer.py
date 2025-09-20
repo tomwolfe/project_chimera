@@ -1,15 +1,16 @@
-import pytest
-from unittest.mock import MagicMock, patch  # NEW: Import patch
 import json
+from unittest.mock import MagicMock, patch  # NEW: Import patch
+
+import pytest
 
 try:
-    from src.personas.self_improvement_analyst import (
-        SelfImprovementAnalyst,
-    )  # Corrected import path
     from src.models import (
         SelfImprovementAnalysisOutputV1,
         SuggestionItem,
     )  # NEW: Import specific models
+    from src.personas.self_improvement_analyst import (
+        SelfImprovementAnalyst,
+    )  # Corrected import path
 except ModuleNotFoundError:
     pass  # Allow test collection even if import fails in some setups
 

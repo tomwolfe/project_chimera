@@ -1,8 +1,8 @@
 # src/resilience/circuit_breaker.py
+import logging
 import time
 from functools import wraps
-import logging
-from typing import Callable, Any, Type, Dict, Optional, Tuple, List
+from typing import Callable, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +14,7 @@ class CircuitBreakerError(Exception):
 
 
 class CircuitBreaker:
-    """
-    A circuit breaker implementation to prevent repeated calls to a failing service.
+    """A circuit breaker implementation to prevent repeated calls to a failing service.
     States:
     - CLOSED: Allows operations. If failure threshold is met, transitions to OPEN.
     - OPEN: Rejects operations immediately. If recovery timeout passes, transitions to HALF-OPEN.
@@ -86,14 +85,14 @@ class CircuitBreaker:
                 result = func(*args, **kwargs)
                 self.record_success()
                 return result
-            except self.expected_exception as e:
+            except self.expected_exception:
                 self.record_failure()
                 self.logger.error(
                     f"Call to {func.__name__} failed. Current state: {self.state}.",
                     exc_info=True,
                 )
                 raise  # Re-raise the original exception
-            except Exception as e:
+            except Exception:
                 # For unexpected exceptions, we also count as failures
                 self.record_failure()
                 self.logger.error(

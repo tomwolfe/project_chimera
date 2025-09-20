@@ -1,17 +1,16 @@
 # src/models.py
-from typing import Dict, Any, Optional, List, Literal
+import re
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
+
 from pydantic import (
     BaseModel,
-    Field,
-    model_validator,
     ConfigDict,
+    Field,
     ValidationError,
     field_validator,
+    model_validator,
 )
-import re
-from pathlib import Path
-from enum import Enum
-from typing import Self
 
 
 # --- Pydantic Models for Schema Validation ---
@@ -193,7 +192,7 @@ class ContextAnalysisOutput(BaseModel):
             from src.utils.core_helpers.path_utils import (
                 sanitize_and_validate_file_path,
             )
-        except ImportError as e:
+        except ImportError:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for ContextAnalysisOutput validation: {e}. Skipping path validation."
             # )
@@ -203,7 +202,7 @@ class ContextAnalysisOutput(BaseModel):
             if "name" in module and isinstance(module["name"], str):
                 try:
                     module["name"] = sanitize_and_validate_file_path(module["name"])
-                except ValueError as e:
+                except ValueError:
                     # logger.warning(
                     #     f"Invalid file path detected in ContextAnalysisOutput.key_modules: '{module['name']}' - {e}"
                     # )
@@ -239,7 +238,7 @@ class CodeChange(BaseModel):
             from src.utils.core_helpers.path_utils import (
                 sanitize_and_validate_file_path,
             )
-        except ImportError as e:
+        except ImportError:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for CodeChange validation: {e}. Proceeding without strict validation."
             # )
@@ -444,7 +443,7 @@ class GeneralOutput(BaseModel):
             from src.utils.core_helpers.path_utils import (
                 sanitize_and_validate_file_path,
             )
-        except ImportError as e:
+        except ImportError:
             # logger.warning(
             #     f"Could not import 'sanitize_and_validate_file_path' for GeneralOutput validation: {e}. Skipping path validation."
             # )
@@ -460,7 +459,7 @@ class GeneralOutput(BaseModel):
             try:
                 sanitized_path = sanitize_and_validate_file_path(path)
                 sanitized_output = sanitized_output.replace(path, sanitized_path)
-            except ValueError as e:
+            except ValueError:
                 # logger.warning(
                 #     f"Invalid file path detected in GeneralOutput.general_output: '{path}' - {e}"
                 # )
@@ -593,8 +592,7 @@ class SelfImprovementAnalysisOutput(BaseModel):
 
 # NEW: LLMResponseModel for general LLM outputs that need validation
 class LLMResponseModel(BaseModel):
-    """
-    A generic Pydantic model for validating LLM responses that are not
+    """A generic Pydantic model for validating LLM responses that are not
     specifically tied to a persona's structured output schema.
     """
 
