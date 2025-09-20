@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Self
+from typing import Any, Dict, List, Self
 
 import yaml
 from pydantic import Field, model_validator
@@ -16,9 +16,7 @@ class ChimeraSettings(BaseSettings):
     """Configuration settings for Project Chimera, including token budgeting and retry parameters."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",  # Ignore extra fields in .env or config.yaml not defined in the model
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
     # NEW: API Key setting, loaded from env_file or environment variables
@@ -175,7 +173,7 @@ class ChimeraSettings(BaseSettings):
 
     @classmethod
     def from_yaml(cls, file_path: str) -> "ChimeraSettings":
-        """Loads settings from a YAML file."""
+        """Loads settings from a YAML file, which are then overridden by environment variables."""
         try:
             config_path = Path(file_path)
             with open(config_path) as f:
@@ -189,3 +187,7 @@ class ChimeraSettings(BaseSettings):
                 exc_info=True,
             )
             return cls()
+
+
+# Global settings instance
+settings = ChimeraSettings.from_yaml("config.yaml")

@@ -113,7 +113,7 @@ class ConflictResolutionManager:
             logger.warning(
                 f"ConflictResolutionManager: Detected problematic output from {latest_persona_name}. Attempting self-correction."
             )
-
+            # PRIORITIZE SELF-CORRECTION
             resolved_output = self._retry_persona_with_feedback(
                 latest_persona_name, debate_history
             )

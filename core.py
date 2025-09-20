@@ -1,66 +1,89 @@
 # core.py
-import copy
-import difflib
-import gc
 import json
 import logging
-import uuid
+import re
+from pathlib import Path
 from collections import defaultdict
+from typing import List, Dict, Tuple, Any, Callable, Optional, Type, Union
 from functools import lru_cache
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
-
-from pydantic import BaseModel, ValidationError
 from rich.console import Console
-
-from src.config.model_registry import ModelRegistry
-from src.config.settings import ChimeraSettings
-from src.conflict_resolution import ConflictResolutionManager
-from src.constants import SHARED_JSON_INSTRUCTIONS
+from pydantic import BaseModel, ValidationError
+import difflib
+import uuid
+import numpy as np
+import gc
+import copy
 
 # --- IMPORT MODIFICATIONS ---
-# NEW IMPORT FOR CODEBASE SCANNING
-from src.context.context_analyzer import CodebaseScanner, ContextRelevanceAnalyzer
+from src.context.context_analyzer import ContextRelevanceAnalyzer
+from src.persona.routing import (
+    PersonaRouter,
+    calculate_persona_performance,
+    select_personas_by_weight,
+)
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
+from src.models import (
+    PersonaConfig,
+    ReasoningFrameworkConfig,
+    LLMOutput,
+    CodeChange,
+    ContextAnalysisOutput,
+    CritiqueOutput,
+    GeneralOutput,
+    SelfImprovementAnalysisOutput,
+    SelfImprovementAnalysisOutputV1,
+    ConfigurationAnalysisOutput,
+    SuggestionItem,  # Added for _handle_codebase_access_error
+)
+from src.config.settings import (
+    ChimeraSettings,
+    settings as global_settings_instance,
+)  # Import the global settings instance
 from src.exceptions import (
     ChimeraError,
-    CircuitBreakerError,
-    CodebaseAccessError,
+    LLMResponseValidationError,
+    SchemaValidationError,
+    TokenBudgetExceededError,
     LLMProviderError,
     LLMProviderRequestError,
     LLMProviderResponseError,
-    SchemaValidationError,
-    TokenBudgetExceededError,
+    CircuitBreakerError,
+    CodebaseAccessError,
 )
-from src.llm_provider import GeminiProvider
-from src.models import (
-    CodeChange,
-    PersonaConfig,
-    SelfImprovementAnalysisOutput,
-    SelfImprovementAnalysisOutputV1,
-)
-from src.persona.routing import PersonaRouter
+
+# from src.logging_config import setup_structured_logging # Removed as logging is global
+from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 from src.persona_manager import PersonaManager
-from src.rag_system import KnowledgeRetriever, RagOrchestrator  # New Import for RAG
+
+from src.utils.validation.json_validator import validate_llm_output  # NEW
 
 # NEW IMPORTS FOR SELF-IMPROVEMENT
 from src.self_improvement import (
-    ContentAlignmentValidator,
-    CritiqueEngine,
     FocusedMetricsCollector,
-    ImprovementApplicator,
+    ContentAlignmentValidator,
     StrategyManager,
+    CritiqueEngine,
+    ImprovementApplicator,
 )  # NEW: Import from modularized self_improvement package
 from src.token_tracker import TokenUsageTracker
-from src.utils.core_helpers.error_handler import handle_errors  # Updated import
-from src.utils.core_helpers.json_utils import (
-    convert_to_json_friendly,
-    safe_json_dumps,
-    safe_json_loads,
-)  # MODIFIED: Import safe_json_loads and safe_json_dumps
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import
+
+# NEW IMPORT FOR CODEBASE SCANNING
+from src.context.context_analyzer import CodebaseScanner
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE, SHARED_JSON_INSTRUCTIONS
+from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import
 
 # NEW IMPORT FOR PROMPT OPTIMIZER
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
-from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
-from src.utils.validation.json_validator import validate_llm_output  # NEW
+from src.llm_provider import GeminiProvider
+from src.conflict_resolution import ConflictResolutionManager
+from src.config.model_registry import ModelRegistry
+from src.utils.core_helpers.json_utils import (
+    convert_to_json_friendly,
+    safe_json_loads,
+    safe_json_dumps,
+)  # MODIFIED: Import safe_json_loads and safe_json_dumps
+from src.rag_system import RagOrchestrator, KnowledgeRetriever  # New Import for RAG
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +110,15 @@ class SocraticDebate:
         codebase_scanner: Optional[CodebaseScanner] = None,
         summarizer_pipeline_instance: Any = None,
     ):
-        """Initializes the Socratic debate session."""
+        """
+        Initializes the Socratic debate session.
+        """
         # setup_structured_logging(log_level=logging.INFO) # Removed: Logging setup is now handled globally in app.py
         self.logger = logging.getLogger(__name__)
 
-        self.settings = settings or ChimeraSettings()
+        self.settings = (
+            settings or global_settings_instance
+        )  # Use the global settings instance as default
         self.max_total_tokens_budget = self.settings.total_budget
         self.model_name = model_name
         self.status_callback = status_callback
@@ -317,7 +344,9 @@ class SocraticDebate:
         self._cleanup_performed = False
 
     def close(self):
-        """Explicitly cleans up resources held by the SocraticDebate instance."""
+        """
+        Explicitly cleans up resources held by the SocraticDebate instance.
+        """
         if self._cleanup_performed:
             self._log_with_context("debug", "SocraticDebate cleanup already performed.")
             return
@@ -604,7 +633,7 @@ class SocraticDebate:
                 },
             )
 
-    def get_total_used_tokens() -> int:
+    def get_total_used_tokens(self) -> int:  # Added self
         """Returns the total tokens used so far."""
         return self.token_tracker.current_usage
 
@@ -693,7 +722,8 @@ class SocraticDebate:
         context_for_template: Optional[Dict[str, Any]] = None,
         # Removed aggressive_optimization: bool = False as it's now internal to PromptOptimizer
     ) -> Tuple[PersonaConfig, Type[BaseModel], str, str, str, int]:
-        """Prepar es persona configuration, output schema, and the final system/user prompts
+        """
+        Prepar es persona configuration, output schema, and the final system/user prompts
         for an LLM call.
         """
         persona_config = self.persona_manager.get_adjusted_persona_config(persona_name)
@@ -765,7 +795,9 @@ class SocraticDebate:
         final_system_prompt: str,
         output_schema_class: Type[BaseModel],
     ) -> Tuple[str, int, int, bool]:
-        """Executes the actual LLM API call and tracks tokens."""
+        """
+        Executes the actual LLM API call and tracks tokens.
+        """
         raw_llm_output, input_tokens, output_tokens, is_truncated_from_llm = (
             self.llm_provider.generate(
                 prompt=optimized_user_prompt,
@@ -801,7 +833,9 @@ class SocraticDebate:
         is_truncated: bool,
         tokens_used_in_turn: int,
     ) -> Dict[str, Any]:
-        """Parses LLM output, tracks malformed blocks, and performs content alignment checks."""
+        """
+        Parses LLM output, tracks malformed blocks, and performs content alignment checks.
+        """
         parsed_output = self.output_parser.parse_and_validate(
             raw_llm_output, output_schema_class
         )
@@ -863,7 +897,9 @@ class SocraticDebate:
     def _generate_retry_feedback(
         self, error: SchemaValidationError, original_prompt: str
     ) -> str:
-        """Generates a new prompt for retrying an LLM turn, including feedback about the validation error."""
+        """
+        Generates a new prompt for retrying an LLM turn, including feedback about the validation error.
+        """
         error_details_str = json.dumps(error.to_dict().get("details", {}), indent=2)
         feedback_message = (
             f"Your previous response failed schema validation. "
@@ -890,7 +926,8 @@ class SocraticDebate:
         max_retries: int = 2,
         context_for_template: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Executes a single LLM turn for a given persona, handles API calls,
+        """
+        Executes a single LLM turn for a given persona, handles API calls,
         parsing, validation, and token tracking, with retry logic for validation failures.
         """
         self._log_with_context(
@@ -1158,7 +1195,9 @@ class SocraticDebate:
     def _perform_context_analysis_phase(
         self, persona_sequence: Tuple[str, ...]
     ) -> Optional[Dict[str, Any]]:
-        """Performs context analysis based on the initial prompt and codebase context."""
+        """
+        Performs context analysis based on the initial prompt and codebase context.
+        """
         if not self.raw_file_contents or not self.context_analyzer:
             self._log_with_context(
                 "info",
@@ -1244,7 +1283,8 @@ class SocraticDebate:
     def _get_final_persona_sequence(
         self, prompt: str, context_analysis_results: Optional[Dict[str, Any]]
     ) -> List[str]:
-        """Delegates to the PersonaRouter to determine the optimal persona sequence,
+        """
+        Delegates to the PersonaRouter to determine the optimal persona sequence,
         incorporating prompt analysis, domain, and context analysis results.
         """
         if not self.persona_router:
@@ -1267,7 +1307,8 @@ class SocraticDebate:
         return sequence
 
     def _distribute_debate_persona_budgets(self, persona_sequence: List[str]):
-        """Distributes the total debate token budget among the actual personas in the sequence.
+        """
+        Distributes the total debate token budget among the actual personas in the sequence.
         This is called *after* the final persona sequence is determined.
         """
         MIN_PERSONA_TOKENS = 256
@@ -1351,7 +1392,9 @@ class SocraticDebate:
         persona_sequence: List[str],
         context_analysis_results: Optional[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        """Executes the Context_Aware_Assistant persona turn if it's in the sequence."""
+        """
+        Executes the Context_Aware_Assistant persona turn if it's in the sequence.
+        """
         if "Context_Aware_Assistant" not in persona_sequence:
             self._log_with_context(
                 "info", "Context_Aware_Assistant not in sequence. Skipping turn."
@@ -1542,7 +1585,8 @@ class SocraticDebate:
     def _handle_devils_advocate_turn(
         self, output: Dict[str, Any], debate_history_so_far: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Handles the specific logic for the Devils_Advocate persona's output.
+        """
+        Handles the specific logic for the Devils_Advocate persona's output.
         If a conflict is found, it returns the ConflictReport for the main loop to handle resolution.
         """
         from src.models import ConflictReport
@@ -1635,36 +1679,42 @@ class SocraticDebate:
         return "\n".join(prompt_parts)
 
     def _handle_problematic_output(
-        self, turn_output: Dict[str, Any], debate_history: List[Dict[str, Any]]
+        self,
+        current_problematic_output: Dict[str, Any],
+        debate_history_so_far: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Handles conflict resolution for a problematic turn output."""
+        # Pass the current problematic output along with the history up to this point
         resolved_output_from_manager = self.conflict_manager.resolve_conflict(
-            debate_history
+            debate_history_so_far
+            + [
+                {
+                    "persona": "Current_Problematic_Persona",
+                    "output": current_problematic_output,
+                }
+            ]
         )
         if resolved_output_from_manager and resolved_output_from_manager.get(
             "resolved_output"
         ):
-            debate_history.append(
-                {
-                    "persona": "Conflict_Resolution_Manager",
-                    "output": resolved_output_from_manager,
-                }
-            )
+            # The conflict manager will append its own turn to the history in _execute_debate_persona_turns
             self.intermediate_steps["Conflict_Resolution_Attempt"] = {
                 "conflict_resolved": True,
                 **resolved_output_from_manager,
             }
             return resolved_output_from_manager["resolved_output"]
         else:
-            self.intermediate_steps["Unresolved_Conflict"] = turn_output
-            return turn_output
+            self.intermediate_steps["Unresolved_Conflict"] = current_problematic_output
+            return current_problematic_output
 
     def _execute_debate_persona_turns(
         self,
         persona_sequence: List[str],
         context_persona_turn_results: Optional[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Executes the main debate turns for each persona in the sequence."""
+        """
+        Executes the main debate turns for each persona in the sequence.
+        """
         debate_history = []
 
         previous_output_for_llm: Union[str, Dict[str, Any]]
@@ -1740,38 +1790,93 @@ class SocraticDebate:
             self.check_budget("debate", estimated_tokens, persona_name)
 
             turn_output = None
+            turn_status = "success"  # Default status
+            raw_llm_output_for_exception = ""  # Initialize for exception handling
+            input_tokens_for_exception = 0
+            output_tokens_for_exception = 0
+            is_truncated_for_exception = False
+
             try:
                 turn_output = self._execute_llm_turn(
                     persona_name, current_prompt, "debate", max_output_tokens_for_turn
                 )
+                # Capture values for potential exception handling
+                raw_llm_output_for_exception = turn_output  # Assuming _execute_llm_turn returns raw_llm_output as first element
+                input_tokens_for_exception = self.intermediate_steps.get(
+                    f"{persona_name}_Tokens_Used", 0
+                )  # Get from intermediate steps
+                output_tokens_for_exception = (
+                    0  # Not directly returned by _execute_llm_turn, but part of total
+                )
+                is_truncated_for_exception = (
+                    False  # Not directly returned by _execute_llm_turn
+                )
+
                 if persona_name == "Devils_Advocate" and isinstance(turn_output, dict):
                     turn_output = self._handle_devils_advocate_turn(
-                        turn_output, debate_history
+                        turn_output,
+                        debate_history,  # debate_history here is without the current turn
                     )
 
-                if len(debate_history) > 0 and persona_name != debate_history[-1].get(
-                    "persona"
-                ):
-                    last_response = (
-                        debate_history[-1]
-                        .get("output", {})
-                        .get("general_output", str(debate_history[-1].get("output")))
-                    )
-                    meta_reasoning_prompt = f"The previous speaker stated: '{last_response}'. Based on this, explicitly state your primary point of contention or agreement and the core reason for it before proceeding with your main response."
-                    self._log_with_context(
-                        "debug",
-                        f"Meta-reasoning step for {persona_name}: {meta_reasoning_prompt}",
-                        persona=persona_name,
-                    )
-
-                debate_history.append({"persona": persona_name, "output": turn_output})
-
+                # Check if the output is problematic (schema error, misalignment, or conflict_found=True)
                 if self._is_problematic_output(turn_output):
-                    # Refactored error handling
-                    previous_output_for_llm = self._handle_problematic_output(
-                        turn_output, debate_history
+                    turn_status = "problematic"
+                    # Attempt to resolve the problematic output.
+                    # Pass the current problematic turn's data along with the history up to this point.
+                    resolved_output_from_manager = (
+                        self.conflict_manager.resolve_conflict(
+                            debate_history
+                            + [
+                                {
+                                    "persona": persona_name,
+                                    "output": turn_output,
+                                    "status": "problematic",
+                                }
+                            ]
+                        )
                     )
-                else:
+
+                    if (
+                        resolved_output_from_manager
+                        and resolved_output_from_manager.get("resolved_output")
+                    ):
+                        # If conflict manager successfully resolved, update turn_output and status
+                        turn_output = resolved_output_from_manager["resolved_output"]
+                        turn_status = "corrected"
+                        # Append the conflict resolution manager's turn to history
+                        debate_history.append(
+                            {
+                                "persona": "Conflict_Resolution_Manager",
+                                "output": resolved_output_from_manager,
+                                "status": "success",  # Conflict manager's output is considered successful
+                            }
+                        )
+                        self.intermediate_steps["Conflict_Resolution_Attempt"] = {
+                            "conflict_resolved": True,
+                            **resolved_output_from_manager,
+                        }
+                        self.intermediate_steps["Unresolved_Conflict"] = None
+                    else:
+                        # If conflict manager failed to resolve, keep status as problematic
+                        self.intermediate_steps["Unresolved_Conflict"] = turn_output
+                        self.intermediate_steps["Conflict_Resolution_Attempt"] = None
+
+                # Append the current persona's turn to history with its final status
+                debate_history.append(
+                    {
+                        "persona": persona_name,
+                        "output": turn_output,
+                        "status": turn_status,
+                    }
+                )
+
+                # Update previous_output_for_llm for the next turn
+                if turn_status == "corrected":
+                    previous_output_for_llm = (
+                        turn_output  # Use the corrected output for the next turn
+                    )
+                elif turn_status == "problematic":
+                    # If problematic and not corrected, use the problematic output for the next turn's context
                     previous_output_for_llm = turn_output
                     # If content misalignment was detected, add a corrective note for the next persona
                     if isinstance(turn_output, dict) and turn_output.get(
@@ -1784,8 +1889,8 @@ class SocraticDebate:
                             previous_output_for_llm["CRITICAL_FEEDBACK"] = (
                                 "The previous turn was misaligned with the core topic. Ensure your response is strictly focused on the initial prompt and debate objectives."
                             )
-                    self.intermediate_steps["Unresolved_Conflict"] = None
-                    self.intermediate_steps["Conflict_Resolution_Attempt"] = None
+                else:  # success
+                    previous_output_for_llm = turn_output
 
             except (
                 LLMProviderRequestError,
@@ -1798,15 +1903,22 @@ class SocraticDebate:
                         {"type": "DEBATE_TURN_ERROR", "message": str(e)}
                     ],
                 }
-                debate_history.append({"persona": persona_name, "output": error_output})
+                # Append the failed turn to history immediately
+                debate_history.append(
+                    {
+                        "persona": persona_name,
+                        "output": error_output,
+                        "status": "failed",
+                    }
+                )  # Mark as failed
                 self._log_with_context(
                     "error",
-                    f"Non-retryable provider error during {persona_name} turn: {e}. Skipping conflict resolution for this turn. (Raw LLM Output: {raw_llm_output[:200]})",
+                    f"Non-retryable provider error during {persona_name} turn: {e}. Skipping conflict resolution for this turn. (Raw LLM Output: {raw_llm_output_for_exception[:200]})",  # Use the initialized variable
                     exc_info=True,
                     original_exception=e,
                 )
                 previous_output_for_llm = error_output
-                continue
+                continue  # Continue to next persona, no conflict resolution for non-retryable errors
             except Exception as e:
                 error_output = {
                     "error": f"Turn failed for {persona_name}: {str(e)}",
@@ -1814,7 +1926,14 @@ class SocraticDebate:
                         {"type": "DEBATE_TURN_ERROR", "message": str(e)}
                     ],
                 }
-                debate_history.append({"persona": persona_name, "output": error_output})
+                # Append the problematic turn to history first, then try to resolve
+                debate_history.append(
+                    {
+                        "persona": persona_name,
+                        "output": error_output,
+                        "status": "failed",
+                    }
+                )
                 self._log_with_context(
                     "error",
                     f"Error during {persona_name} turn: {e}. Attempting conflict resolution. ",
@@ -1822,7 +1941,7 @@ class SocraticDebate:
                     original_exception=e,
                 )
                 resolved_output_from_manager = self.conflict_manager.resolve_conflict(
-                    debate_history
+                    debate_history  # Pass the history including the failed turn
                 )
                 if resolved_output_from_manager and resolved_output_from_manager.get(
                     "resolved_output"
@@ -1831,6 +1950,7 @@ class SocraticDebate:
                         {
                             "persona": "Conflict_Resolution_Manager",
                             "output": resolved_output_from_manager,
+                            "status": "success",  # Conflict manager's output is considered successful
                         }
                     )
                     previous_output_for_llm = resolved_output_from_manager[
@@ -2100,7 +2220,8 @@ class SocraticDebate:
     def _summarize_metrics_for_llm(
         self, metrics: Dict[str, Any], max_tokens: int
     ) -> Dict[str, Any]:
-        """Intelligently summarizes the metrics dictionary to fit within a token budget.
+        """
+        Intelligently summarizes the metrics dictionary to fit within a token budget.
         Prioritizes high-level summaries and truncates verbose lists like 'detailed_issues'.
         Ensures critical configuration and deployment analysis are preserved.
         """
@@ -2142,7 +2263,8 @@ class SocraticDebate:
     def _summarize_debate_history_for_llm(
         self, debate_history: List[Dict[str, Any]], max_tokens: int
     ) -> List[Dict[str, Any]]:
-        """Summarizes the debate history to fit within a token budget.
+        """
+        Summarizes the debate history to fit within a token budget.
         Prioritizes recent turns and concise summaries of each turn's output.
         """
         summarized_history = []
@@ -2198,7 +2320,9 @@ class SocraticDebate:
     def _perform_synthesis_phase(
         self, persona_sequence: List[str], debate_persona_results: List[Dict[str, Any]]
     ) -> Tuple[Dict[str, Any], Optional[FocusedMetricsCollector]]:
-        """Executes the final synthesis persona turn based on the debate history."""
+        """
+        Executes the final synthesis persona turn based on the debate history.
+        """
         self._log_with_context("info", "Executing final synthesis persona turn.")
 
         synthesis_persona_name = ""
@@ -2334,7 +2458,7 @@ class SocraticDebate:
         )
         # Pass the summarized debate history as a context variable for the template
         synthesis_prompt_parts.append(
-            "Debate History:\n{{ context.debate_history_summary }}\\n\\n"
+            f"Debate History:\n{{{{ context.debate_history_summary }}}}\\n\\n"
         )
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
@@ -2565,7 +2689,8 @@ class SocraticDebate:
 
     @handle_errors(default_return=None, log_level="ERROR")
     def run_debate(self) -> Tuple[Any, Dict[str, Any]]:
-        """Orchestrates the full Socratic debate process by calling phase-specific methods.
+        """
+        Orchestrates the full Socratic debate process by calling phase-specific methods.
         Returns the final synthesized answer and a dictionary of intermediate steps.
         """
         try:
@@ -2882,7 +3007,8 @@ class SocraticDebate:
     def _consolidate_self_improvement_code_changes(
         self, analysis_output: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
+        """
+        Consolidates multiple CODE_CHANGES_SUGGESTED for the same file within
         SelfImprovementAnalysisOutput. Also filters out no-op changes.
         """
         if "IMPACTFUL_SUGGESTIONS" not in analysis_output:

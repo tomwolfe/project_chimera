@@ -16,6 +16,7 @@ from src.models import PersonaConfig
 # Use TYPE_CHECKING to avoid circular import at runtime for PersonaManager
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
+    from src.token_tracker import TokenUsageTracker  # Corrected import for TokenTracker
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class PromptOptimizer:
             "PersonaManager"
         ] = None,  # MODIFIED: Type hint with quotes
         token_tracker: Optional[
-            "TokenTracker"
+            "src.token_tracker.TokenUsageTracker"  # Corrected type hint
         ] = None,  # MODIFIED: Type hint with quotes
     ):
         """Initializes the PromptOptimizer."""

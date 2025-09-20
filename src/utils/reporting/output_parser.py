@@ -741,9 +741,6 @@ class LLMOutputParser:
                 elif field_path == ("conflicting_outputs_snippet",):
                     corrected_output["conflicting_outputs_snippet"] = ""
                     correction_made = True
-                elif field_path == ("proposed_resolution_paths",):
-                    corrected_output["proposed_resolution_paths"] = []
-                    correction_made = True
                 elif field_path == ("conflict_found",):
                     corrected_output["conflict_found"] = False
                     correction_made = True
@@ -1060,7 +1057,7 @@ class LLMOutputParser:
                 detected_suggestion = self._detect_potential_suggestion_item(
                     extracted_json_str
                     if extracted_json_str is not None
-                    else raw_output_snippet  # Fallback to raw output if JSON extraction fails
+                    else cleaned_raw_output  # Fallback to cleaned_raw_output
                 )
                 if (
                     detected_suggestion
