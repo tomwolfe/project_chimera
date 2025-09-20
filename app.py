@@ -7,10 +7,10 @@ import sys
 # NEW: Imports for self-improvement components
 from src.self_improvement.strategy_manager import StrategyManager
 from src.self_improvement.critique_engine import CritiqueEngine
-from src.self_improvement.improvement_applicator import ImprovementApplicator
+# REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
 
 # NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# REMOVED: os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import io
 import contextlib
 import re
@@ -24,7 +24,7 @@ from core import SocraticDebate
 from src.models import (
     PersonaConfig,
     LLMOutput,
-    CodeChange,
+    # REMOVED: CodeChange,
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
@@ -32,7 +32,7 @@ from src.utils.reporting.output_parser import LLMOutputParser  # Updated import 
 from src.persona_manager import PersonaManager
 from src.exceptions import (
     ChimeraError,
-    LLMResponseValidationError,  # Keep this import
+    LLMResponseValidationError,
     SchemaValidationError,
     TokenBudgetExceededError,
     LLMProviderError,
@@ -55,7 +55,7 @@ from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
 from src.config.settings import ChimeraSettings
 from pathlib import Path
 
-from src.utils.prompting.prompt_analyzer import PromptAnalyzer  # Updated import path
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 from src.token_tracker import TokenUsageTracker
 
 # NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
@@ -74,18 +74,22 @@ from src.utils.session.session_manager import (  # Updated import path
     check_session_expiration,
     SESSION_TIMEOUT_SECONDS,
 )
-from src.utils.session.ui_helpers import (  # Updated import path
+
+# CORRECTED IMPORT: Only import functions actually defined in ui_helpers.py
+from src.utils.session.ui_helpers import (
     on_api_key_change,
     display_key_status,
     test_api_key,
     shutdown_streamlit,
 )
 
+
 # NEW IMPORT for PromptOptimizer
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import path
 
 # NEW IMPORT: For the summarization pipeline
 from transformers import pipeline
+# REMOVED: import os
 
 # NEW IMPORT: For error_handling.log_event and handle_exception
 from src.utils.core_helpers.error_handler import (

@@ -2,12 +2,11 @@
 import os
 import json
 import yaml
-import datetime
-import logging
-from typing import Dict, Any, List, Optional, Tuple, Type
-from pydantic import ValidationError, BaseModel
 import copy
 import time
+
+from typing import Dict, Any, List, Optional, Tuple
+from pydantic import ValidationError
 
 from src.persona.routing import PersonaRouter
 from src.models import (
@@ -28,6 +27,8 @@ from src.token_tracker import TokenUsageTracker
 from src.exceptions import SchemaValidationError
 from src.config.settings import ChimeraSettings
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
+
+import logging
 
 logger = logging.getLogger(__name__)
 

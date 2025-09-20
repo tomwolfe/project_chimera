@@ -3,14 +3,10 @@ import os
 import json
 import ast
 import logging
-from typing import Dict, Any, List, Tuple, Union, Optional
+from typing import Dict, Any, List, Tuple, Optional
 from collections import defaultdict
 from pathlib import Path
 import re
-import yaml
-import toml
-from pydantic import ValidationError
-from datetime import datetime
 import sys
 import difflib
 
@@ -876,7 +872,7 @@ class FocusedMetricsCollector:
 
     def identify_successful_patterns(self, records: List[Dict]) -> Dict[str, float]:
         """Identify patterns that lead to successful self-improvement attempts."""
-        patterns = defaultdict(int)
+        patterns = defaultdict(int)  # Stores counts of each pattern
         successful_attempts_per_pattern = defaultdict(int)
         total_attempts_per_pattern = defaultdict(int)
 

@@ -9,7 +9,7 @@ from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
 )  # NEW: Import BaseSettings and SettingsConfigDict
-from typing import Self, Dict, Any, List, Optional  # NEW: Import Optional
+from typing import Self, Dict, Any, List, Optional
 import yaml
 from pathlib import Path
 import logging

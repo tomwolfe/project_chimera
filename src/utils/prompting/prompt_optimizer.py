@@ -1,20 +1,11 @@
 # src/utils/prompting/prompt_optimizer.py
 import logging
-from typing import (
-    Dict,
-    Any,
-    List,
-    Optional,
-    Tuple,
-    Union,
-    TYPE_CHECKING,
-)  # ADDED TYPE_CHECKING
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING  # ADDED TYPE_CHECKING
 from jinja2 import Environment, FileSystemLoader, Template
 from src.llm_tokenizers.base import Tokenizer
 from src.llm_tokenizers.gemini_tokenizer import GeminiTokenizer
 from src.config.settings import ChimeraSettings
 import re
-import json
 from collections import defaultdict
 from pathlib import Path
 
@@ -49,7 +40,9 @@ class PromptOptimizer:
         self.tokenizer = tokenizer
         self.settings = settings
         self.summarizer_pipeline = summarizer_pipeline
-        self.env = Environment(loader=FileSystemLoader("prompts"))
+        self.env = Environment(
+            loader=FileSystemLoader("prompts")
+        )  # Load Jinja2 templates from 'prompts' directory
         logger.info("PromptOptimizer initialized with template directory: prompts")
 
         if hasattr(self.summarizer_pipeline, "tokenizer"):

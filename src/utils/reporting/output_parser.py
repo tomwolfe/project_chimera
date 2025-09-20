@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import traceback
 from typing import Dict, Any, List, Optional, Type, Tuple
 from pathlib import Path
 from pydantic import (

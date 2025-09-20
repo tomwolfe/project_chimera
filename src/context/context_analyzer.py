@@ -7,10 +7,10 @@ import fnmatch
 from typing import Dict, Any, List, Tuple, Optional
 from sentence_transformers import SentenceTransformer
 import re
-import json  # NEW: Import json for caching
 import numpy as np
 import pickle  # Keep for potential fallback or other uses, but not for embeddings cache
 import hashlib  # NEW: Import hashlib for hashing codebase content
+import json  # NEW: Import json for caching
 
 logger = logging.getLogger(__name__)
 
@@ -466,31 +466,52 @@ class ContextRelevanceAnalyzer:
                 self.logger.warning("No file contents to encode for embeddings.")
 
             # --- FIX: Chunk large documents before embedding ---
-            processed_contents = []
-            # Respect the model's max sequence length. Use a safe character count based on that.
-            # all-MiniLM-L6-v2 has a max_seq_length of 256 tokens. A safe char limit is ~1000.
-            # The model's tokenizer max_length is a better source for this.
-            # Assuming self.model.max_seq_length is available and accurate.
+            all_chunks = []
+            chunk_map = defaultdict(list)  # Maps file_path to indices in all_chunks
+
             model_max_seq_length = getattr(
                 self.model, "max_seq_length", 256
             )  # Default to 256 if not found
-            CHUNK_SIZE = model_max_seq_length * 4  # Heuristic: 4 chars per token
-            for content in file_contents:
+            CHUNK_SIZE = (
+                model_max_seq_length * 3
+            )  # Heuristic: 3 chars per token, slightly less than 4 for safety
+            CHUNK_OVERLAP = CHUNK_SIZE // 5  # 20% overlap
+
+            for i, content in enumerate(file_contents):
+                file_path = file_paths[i]
                 if len(content) > CHUNK_SIZE:
-                    # For large files, we take the beginning and end chunks to capture imports and key logic.
-                    processed_contents.append(
-                        content[: CHUNK_SIZE // 2]
-                        + "\n...\n"
-                        + content[-CHUNK_SIZE // 2 :]
+                    # Split into overlapping chunks
+                    chunks_for_file = []
+                    for j in range(0, len(content), CHUNK_SIZE - CHUNK_OVERLAP):
+                        chunk = content[j : j + CHUNK_SIZE]
+                        chunks_for_file.append(chunk)
+                        chunk_map[file_path].append(
+                            len(all_chunks)
+                        )  # Store index of this chunk
+                        all_chunks.append(chunk)
+                    self.logger.debug(
+                        f"Chunked file {file_path} into {len(chunks_for_file)} chunks."
                     )
                 else:
-                    processed_contents.append(content)
+                    all_chunks.append(content)
+                    chunk_map[file_path].append(
+                        len(all_chunks) - 1
+                    )  # Store index of this chunk
 
-            file_embeddings_list = self.model.encode(
-                processed_contents, show_progress_bar=True
-            )
+            all_chunk_embeddings = self.model.encode(all_chunks, show_progress_bar=True)
 
-            embeddings = dict(zip(file_paths, file_embeddings_list))
+            embeddings = {}
+            for i, file_path in enumerate(file_paths):
+                file_chunk_embeddings = [
+                    all_chunk_embeddings[idx] for idx in chunk_map[file_path]
+                ]
+                if file_chunk_embeddings:
+                    embeddings[file_path] = np.mean(file_chunk_embeddings, axis=0)
+                else:
+                    embeddings[file_path] = np.zeros(
+                        self.model.get_sentence_embedding_dimension()
+                    )  # Fallback for empty files
+
             self.logger.info(f"Computed embeddings for {len(embeddings)} files.")
 
         except Exception as e:

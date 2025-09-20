@@ -23,7 +23,7 @@ SELF_ANALYSIS_KEYWORDS = {
 }
 
 # Keywords and patterns for negation detection, used to reduce the score of self-analysis prompts.
-NEGATION_PATTERNS: List[Tuple[str, float]] = [
+NEGATION_PATTERNS = [
     (
         r"(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b",
         0.7,
@@ -40,7 +40,7 @@ THRESHOLD = 0.75
 # --- Constants for Persona Routing ---
 
 # Optimized persona sequence for self-analysis prompts
-SELF_ANALYSIS_PERSONA_SEQUENCE: List[str] = [
+SELF_ANALYSIS_PERSONA_SEQUENCE = [
     "Self_Improvement_Analyst",  # Primary analyst first
     "Code_Architect",
     "Security_Auditor",
@@ -82,5 +82,18 @@ def old_func():
 **CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
 """
 
-# --- Other potential constants could be added here ---
-# e.g., default file paths, common error messages, etc.
+# --- SHARED CONSTANTS FOR FEW-SHOT PROMPTING ---
+
+SHARED_CRITIQUE_EXAMPLE: str = """
+**Example of a valid JSON object for CritiqueOutput:**
+```json
+{
+  \"CRITIQUE_SUMMARY\": \"The proposal is promising but lacks detailed implementation specifics.\",
+  \"CRITIQUE_POINTS\": [
+    {\"point_summary\": \"Missing Error Handling\", \"details\": \"The code does not specify how to handle API failures.\", \"recommendation\": \"Implement a try-except block with retry logic.\"}
+  ],
+  \"SUGGESTIONS\": [],
+  \"malformed_blocks\": []
+}
+```
+"""
