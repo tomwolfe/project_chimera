@@ -37,8 +37,8 @@ from src.models import (
 )
 from src.config.settings import (
     ChimeraSettings,
-    settings as global_settings_instance,
-)  # Import the global settings instance
+    settings as global_settings_instance,  # Import the global settings instance
+)
 from src.exceptions import (
     ChimeraError,
     LLMResponseValidationError,
@@ -116,9 +116,8 @@ class SocraticDebate:
         # setup_structured_logging(log_level=logging.INFO) # Removed: Logging setup is now handled globally in app.py
         self.logger = logging.getLogger(__name__)
 
-        self.settings = (
-            settings or global_settings_instance
-        )  # Use the global settings instance as default
+        # MODIFIED: Use the global settings instance as default
+        self.settings = settings or global_settings_instance
         self.max_total_tokens_budget = self.settings.total_budget
         self.model_name = model_name
         self.status_callback = status_callback
@@ -198,6 +197,7 @@ class SocraticDebate:
                 settings=self.settings,
                 summarizer_pipeline_instance=summarizer_pipeline_instance,
                 prompt_optimizer_instance=self.prompt_optimizer,
+                token_tracker=self.token_tracker,  # Pass token_tracker to LLMProvider
             )
         except LLMProviderError as e:
             self._log_with_context(

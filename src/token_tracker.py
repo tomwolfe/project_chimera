@@ -1,12 +1,13 @@
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 
 class TokenUsageTracker:
-    """Tracks token usage across the reasoning process with predictive capabilities."""
+    """Tracks token usage across the reasoning process."""
 
     def __init__(
         self,
@@ -22,8 +23,12 @@ class TokenUsageTracker:
         """
         self.budget = budget
         self.current_usage = 0
-        self.usage_history = []  # Stores (timestamp, tokens_used) tuples
-        self.persona_token_map = {}  # Stores total tokens used per persona: persona_name: total_tokens
+        self.usage_history: List[
+            Tuple[float, int]
+        ] = []  # Stores (timestamp, tokens_used) tuples
+        self.persona_token_map: Dict[str, int] = defaultdict(
+            int
+        )  # Stores total tokens used per persona: persona_name: total_tokens
         self.max_history_items = max_history_items  # NEW: Store max_history_items
 
         # NEW: Attributes for semantic token weighting
@@ -52,8 +57,7 @@ class TokenUsageTracker:
 
         # Attribute tokens to persona if provided
         if persona:
-            if persona not in self.persona_token_map:
-                self.persona_token_map[persona] = 0
+            # Using defaultdict means we don't need the if persona not in self.persona_token_map check
             self.persona_token_map[persona] += tokens
 
         # NEW: Semantic token weighting logic
@@ -98,7 +102,7 @@ class TokenUsageTracker:
         """Resets the tracker's state to initial values."""
         self.current_usage = 0
         self.usage_history = []
-        self.persona_token_map = {}
+        self.persona_token_map.clear()  # Use clear for defaultdict
         # NEW: Reset semantic token counters and stage
         self.high_value_tokens = 0
         self.low_value_tokens = 0

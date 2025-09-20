@@ -1,5 +1,5 @@
 # src/config/settings.py
-"""Configuration settings for Project Chimera, including token budgeting and retry parameters."""
+"""Centralized configuration settings for Project Chimera, loaded from YAML and environment variables."""
 
 import logging
 from pathlib import Path
@@ -13,17 +13,17 @@ logger = logging.getLogger(__name__)
 
 
 class ChimeraSettings(BaseSettings):
-    """Configuration settings for Project Chimera, including token budgeting and retry parameters."""
+    """Centralized configuration settings for Project Chimera, loaded from YAML and environment variables."""
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # NEW: API Key setting, loaded from env_file or environment variables
-    # MODIFIED: Make GEMINI_API_KEY optional with an empty string default
-    GEMINI_API_KEY: str = Field(
-        "", description="Google Gemini API Key"
-    )  # <--- CHANGE THIS LINE
+    # LLM Configuration
+    GEMINI_API_KEY: str = Field("", description="Google Gemini API Key")
+    model_name: str = Field(
+        "gemini-2.5-flash-lite", description="Default model for LLM calls."
+    )
 
     max_retries: int = Field(
         default=5,

@@ -66,6 +66,7 @@ from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 from src.utils.validation.api_key_validator import (  # Updated import
     validate_gemini_api_key_format,
 )
+from src.token_tracker import TokenUsageTracker  # Added for token_tracker type hint
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
@@ -97,6 +98,7 @@ class GeminiProvider:
         max_retries: int = None,
         max_backoff_seconds: int = None,
         tokenizer: Tokenizer = None,
+        token_tracker: TokenUsageTracker = None,  # Make this a required argument
         rich_console: Optional[Console] = None,
         request_id: Optional[str] = None,
         settings: Optional[
@@ -111,6 +113,7 @@ class GeminiProvider:
         self.request_id = request_id
         self._log_extra = {"request_id": self.request_id or "N/A"}
         self.output_parser = LLMOutputParser()
+        self.token_tracker = token_tracker  # Store the token_tracker
         self.settings = settings or ChimeraSettings()  # Ensure settings is initialized
         self.summarizer_pipeline_instance = summarizer_pipeline_instance
         self.prompt_optimizer = prompt_optimizer_instance
@@ -568,6 +571,13 @@ class GeminiProvider:
 
                 # Use native Gemini tokenizer for actual output token count for cost tracking
                 output_tokens = self.tokenizer.count_tokens(generated_text)
+
+                # Enforce token tracking for every successful call
+                self.token_tracker.record_usage(
+                    input_tokens + output_tokens,
+                    persona=persona_config.name if persona_config else "unknown",
+                )
+
                 is_truncated = output_tokens >= config.max_output_tokens * 0.95
                 self._log_with_context(
                     "debug",
