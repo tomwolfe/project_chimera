@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import toml
 import yaml
+from pydantic import ValidationError  # ADDED: Import ValidationError
 
 from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 from src.models import (
@@ -563,7 +564,10 @@ class FocusedMetricsCollector:
                         **pyproject_toml_data
                     )
 
-            except (toml.TomlDecodeError, OSError, ValidationError) as e:
+            except (
+                toml.TomlDecodeError,
+                OSError,
+            ) as e:  # MODIFIED: Removed ValidationError from here as it's not a direct exception from toml.load
                 logger.error(f"Error parsing pyproject.toml file {pyproject_path}: {e}")
                 malformed_blocks.append(
                     {
@@ -607,7 +611,7 @@ class FocusedMetricsCollector:
             try:
                 with open(dockerfile_path, encoding="utf-8") as f:
                     dockerfile_content = f.read()
-                    dockerfile_lines = dockerfile_content.splitlines()
+                    # dockerfile_lines = dockerfile_content.splitlines() # Unused variable # MODIFIED: Removed unused variable
 
                 if "HEALTHCHECK" not in dockerfile_content:
                     deployment_metrics_data["dockerfile_problem_snippets"].append(
@@ -715,8 +719,18 @@ class FocusedMetricsCollector:
 
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
         """Collects token usage statistics from debate intermediate steps."""
-        total_tokens = self.intermediate_steps.get("Total_Tokens_Used", 0)
-        total_cost = self.intermediate_steps.get("Total_Estimated_Cost_USD", 0.0)
+        # FIX: Correctly aggregate total tokens and cost from per-persona usage,
+        # as the top-level 'Total_Tokens_Used' might not be reliably populated.
+        total_tokens = sum(
+            v
+            for k, v in self.intermediate_steps.items()
+            if k.endswith("_Tokens_Used") and not k.startswith("Total_")
+        )
+        total_cost = sum(
+            v
+            for k, v in self.intermediate_steps.items()
+            if k.endswith("_Estimated_Cost_USD") and not k.startswith("Total_")
+        )
 
         phase_token_usage = {}
         for key, value in self.intermediate_steps.items():
@@ -1147,8 +1161,12 @@ class FocusedMetricsCollector:
             )
         finally:
             if tmp_file_path and tmp_file_path.exists():
-                os.unlink(tmp_file_path)
-
+                try:
+                    os.unlink(tmp_file_path)
+                except OSError as e:
+                    logger.warning(
+                        f"Failed to delete temporary Ruff file {tmp_file_path}: {e}"
+                    )
         return code_change
 
     def _process_suggestions_for_quality(

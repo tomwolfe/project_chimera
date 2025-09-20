@@ -6,13 +6,13 @@ import difflib
 import gc
 import html
 
-# REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
-# NEW: Set TOKENIZERS_PARALLELISM to false to avoid deadlocks on fork
-# REMOVED: os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# Set TOKENIZERS_PARALLELISM to false at the very top to avoid deadlocks on fork
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import io
 import json
 import logging  # Keep this import
-import os
 import re
 import sys
 import time
@@ -51,7 +51,6 @@ from src.utils.core_helpers.error_handler import (
     handle_exception as error_handling_handle_exception,
 )
 
-# REMOVED: import os
 # NEW IMPORT: For error_handling.log_event and handle_exception
 from src.utils.core_helpers.error_handler import log_event
 from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import path
@@ -204,7 +203,7 @@ if "initialized" not in st.session_state:
         example_prompts=EXAMPLE_PROMPTS,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
+        _get_summarizer_pipeline_instance=_get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
     )
     # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
     st.session_state.api_key_input = (
