@@ -1,35 +1,32 @@
 # app.py
 
 import streamlit as st
-import os  # This import is moved and used for TOKENIZERS_PARALLELISM
+import os
 import sys
 
 # Set TOKENIZERS_PARALLELISM to false at the very top to avoid deadlocks on fork
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# NEW: Imports for self-improvement components
+# NEW: Imports for self-improvement components (kept for clarity, though some might be unused in app.py directly)
 from src.self_improvement.strategy_manager import StrategyManager
 from src.self_improvement.critique_engine import CritiqueEngine
 # REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
 
-import io
-import contextlib
 import re
 import datetime
 import time
-from typing import Dict, Any, List, Optional, Callable
-import logging  # Keep this import
+from typing import Dict, Optional, Callable
+import logging
 from rich.console import Console
 from core import SocraticDebate
 
 from src.models import (
     PersonaConfig,
     LLMOutput,
-    # REMOVED: CodeChange,
-    SelfImprovementAnalysisOutputV1,
-    SuggestionItem,
+    SelfImprovementAnalysisOutputV1,  # Kept as it's used in the Self-Improvement domain display logic
+    SuggestionItem,  # Kept as it's used in the Self-Improvement domain display logic
 )
-from src.utils.reporting.output_parser import LLMOutputParser  # Updated import path
+from src.utils.reporting.output_parser import LLMOutputParser
 from src.persona_manager import PersonaManager
 from src.exceptions import (
     ChimeraError,
@@ -40,15 +37,11 @@ from src.exceptions import (
     CircuitBreakerError,
 )
 from collections import defaultdict
-from pydantic import ValidationError  # Keep this import
+from pydantic import ValidationError
 import html
 import difflib
-from src.utils.core_helpers.command_executor import (
-    execute_command_safely,
-)  # Updated import path
-from src.utils.validation.code_validator import (
-    validate_code_output_batch,
-)  # Updated import path
+from src.utils.core_helpers.command_executor import execute_command_safely
+from src.utils.validation.code_validator import validate_code_output_batch
 import json
 import uuid
 from src.logging_config import setup_structured_logging
@@ -66,14 +59,14 @@ import gc
 from src.utils.reporting.report_generator import (
     generate_markdown_report,
     strip_ansi_codes,
-)  # Updated import path
-from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import path
-from src.utils.session.session_manager import (  # Updated import path
+)
+from src.utils.core_helpers.path_utils import PROJECT_ROOT
+from src.utils.session.session_manager import (
     _initialize_session_state,
     update_activity_timestamp,
     reset_app_state,
     check_session_expiration,
-    SESSION_TIMEOUT_SECONDS,
+    # SESSION_TIMEOUT_SECONDS, # Removed as per diff
 )
 
 # CORRECTED IMPORT: Only import functions actually defined in ui_helpers.py
@@ -86,7 +79,7 @@ from src.utils.session.ui_helpers import (
 
 
 # NEW IMPORT for PromptOptimizer
-from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import path
+from src.utils.prompting.prompt_optimizer import PromptOptimizer
 
 # NEW IMPORT: For the summarization pipeline
 from transformers import pipeline
@@ -153,7 +146,7 @@ def get_codebase_scanner_instance():
 @st.cache_resource
 def get_context_relevance_analyzer_instance(
     _settings: ChimeraSettings, _summarizer_pipeline_instance: Any
-):  # MODIFIED: Added underscore to _summarizer_pipeline_instance
+):
     """Initializes and returns the ContextRelevanceAnalyzer, cached by Streamlit."""
     logger.info("Initializing ContextRelevanceAnalyzer via st.cache_resource.")
     return ContextRelevanceAnalyzer(
@@ -222,11 +215,13 @@ if "initialized" not in st.session_state:
         example_prompts=EXAMPLE_PROMPTS,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
+        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,
     )
-    # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
+    # MODIFIED: Prioritize os.getenv and st.secrets.get for API key loading
     st.session_state.api_key_input = (
-        st.session_state.api_key_input or settings_instance.GEMINI_API_KEY
+        os.getenv("GEMINI_API_KEY", "")
+        or st.secrets.get("GEMINI_API_KEY", "")
+        or settings_instance.GEMINI_API_KEY
     )
 # --- END Session State Initialization Call ---
 
@@ -538,7 +533,7 @@ def main():
                 if st.session_state.api_key_input:
                     if st.session_state.api_key_valid_format:
                         st.success("✅ API key format is valid.")
-                    else:  # MODIFIED: Check for empty API key from settings
+                    else:
                         st.error(f"❌ {st.session_state.api_key_format_message}")
                 else:
                     if (
@@ -548,7 +543,7 @@ def main():
                         st.warning(
                             "⚠️ API key is sourced from environment variable. Consider using a secrets manager for production."
                         )
-                    elif (  # MODIFIED: Check for empty API key from settings
+                    elif (
                         os.getenv("ENVIRONMENT") == "production"
                         and not st.session_state.api_key_input
                     ):
@@ -558,7 +553,7 @@ def main():
 
                     st.info("Please enter your Gemini API Key.")
 
-            with api_key_col2:  # MODIFIED: Test key functionality
+            with api_key_col2:
                 st.button("Test Key", on_click=test_api_key, key="test_api_key_btn")
 
             with api_key_col3:
@@ -1587,8 +1582,8 @@ def main():
 
         st.session_state.debate_ran = False
         final_answer = {
-            "ANALYSIS_SUMMARY": "Debate Failed - Unhandled Error",  # MODIFIED: Use ANALYSIS_SUMMARY for self-improvement domain
-            "IMPACTFUL_SUGGESTIONS": [],  # MODIFIED: Use IMPACTFUL_SUGGESTIONS
+            "ANALYSIS_SUMMARY": "Debate Failed - Unhandled Error",
+            "IMPACTFUL_SUGGESTIONS": [],
             "malformed_blocks": [
                 {
                     "type": "UNHANDLED_ERROR_INIT",
@@ -1693,7 +1688,7 @@ def main():
 
                     logger.info(f"Final domain selected for debate: {domain_for_run}")
 
-                    logger.debug(f"_run_socratic_debate_process started.")
+                    logger.debug("Socratic debate process started.")
                     logger.debug(
                         f"Prompt at start of debate function: {current_user_prompt_for_debate[:100]}..."
                     )
@@ -1844,7 +1839,7 @@ def main():
                 except Exception as e:
                     handle_debate_errors(e)
                     status.update(
-                        label=f"Socratic Debate Failed: An unexpected error occurred",
+                        label="Socratic Debate Failed: An unexpected error occurred",
                         state="error",
                         expanded=True,
                     )
@@ -2453,7 +2448,5 @@ if __name__ == "__main__":
         # This block is reached if sys.excepthook doesn't prevent the exception from propagating
         # or if an exception occurs before sys.excepthook is fully set up.
         # The sys.excepthook should handle logging, so we just re-raise here.
-        log_event(
-            f"Top-level exception caught in main execution: {e}", level="error"
-        )  # Corrected usage
-        raise  # Re-raise to let sys.excepthook handle it
+        log_event(f"Top-level exception caught in main execution: {e}", level="error")
+        raise
