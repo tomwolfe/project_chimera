@@ -626,7 +626,7 @@ class SocraticDebate:
                 },
             )
 
-    def get_total_used_tokens(self) -> int:
+    def get_total_used_tokens() -> int:
         """Returns the total tokens used so far."""
         return self.token_tracker.current_usage
 
@@ -917,6 +917,7 @@ class SocraticDebate:
         max_output_tokens_for_turn: int,
         requested_model_name: Optional[str] = None,
         max_retries: int = 2,
+        context_for_template: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Executes a single LLM turn for a given persona, handles API calls,
@@ -961,6 +962,7 @@ class SocraticDebate:
                     current_prompt_for_retry,
                     max_output_tokens_for_turn,
                     requested_model_name,
+                    context_for_template=context_for_template,
                     # Removed aggressive_optimization as it's now internal to PromptOptimizer
                 )
 
@@ -2343,8 +2345,9 @@ class SocraticDebate:
             200,
             min(debate_history_summary_budget, self.phase_budgets["synthesis"] // 4),
         )
+        # Pass the summarized debate history as a context variable for the template
         synthesis_prompt_parts.append(
-            f"Debate History:\n{summarized_debate_history}\n\n"
+            f"Debate History:\n{{{{ context.debate_history_summary }}}}\\n\\n"
         )
 
         if self.intermediate_steps.get("Conflict_Resolution_Attempt"):
@@ -2415,6 +2418,11 @@ class SocraticDebate:
             truncation_indicator="\n... (truncated for token limits) ...",
         )
 
+        # Pass the summarized debate history to the template context
+        synthesis_template_context = {
+            "debate_history_summary": summarized_debate_history
+        }
+
         max_output_tokens_for_turn = self.phase_budgets[
             "synthesis"
         ] - self.tokenizer.count_tokens(final_synthesis_prompt)
@@ -2435,6 +2443,7 @@ class SocraticDebate:
             final_synthesis_prompt,
             "synthesis",
             max_output_tokens_for_turn,
+            context_for_template=synthesis_template_context,
         )
         self._log_with_context("info", "Final synthesis persona turn completed.")
 

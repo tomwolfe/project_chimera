@@ -9,7 +9,7 @@ Consolidate the most impactful `CODE_CHANGES_SUGGESTED` from the debate into a f
 
 <CONTEXT>
 <DEBATE_HISTORY>
-{{ context.debate_history_json_str }}
+{{ context.debate_history_summary }}
 </DEBATE_HISTORY>
 
 <METRICS>
@@ -26,9 +26,11 @@ Consolidate the most impactful `CODE_CHANGES_SUGGESTED` from the debate into a f
 </CONTEXT>
 
 Based on the provided context, generate your analysis.
-
+ 
+**CRITICAL INSTRUCTION:** Your primary task is to review the entire debate history provided. Select the most specific, actionable, and impactful suggestions from the other personas. Consolidate these suggestions into a final, coherent list. Do not invent new suggestions unless absolutely necessary. Prioritize suggestions that include concrete code diffs.
+ 
 **CRITICAL INSTRUCTION:** All `FILE_PATH` values in your `CODE_CHANGES_SUGGESTED` MUST be from the list provided in `<AVAILABLE_FILES>`. Do not invent or assume file paths.
-
+ 
 <json_output>
   <!-- Your JSON output here, strictly adhering to SelfImprovementAnalysisOutputV1 schema -->
 </json_output>
