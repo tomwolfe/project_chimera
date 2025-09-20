@@ -63,7 +63,7 @@ personas:
   - name: "Self_Improvement_Analyst"
     system_prompt_template: "self_improvement_analyst"
     temperature: 0.15 # Slightly increased temperature for more creative suggestions
-    max_tokens: 16384 # Reduced to encourage conciseness and prevent token bloat
+    max_tokens: 65536
     output_schema: "SelfImprovementAnalysisOutputV1" # ADDED
     description: "Critically analyzes Project Chimera's codebase and debate process for self-improvement opportunities."
 

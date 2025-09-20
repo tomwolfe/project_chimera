@@ -2276,11 +2276,41 @@ class SocraticDebate:
         synthesis_prompt_parts = [f"Initial Problem: {self.initial_prompt}\n\n"]
 
         if self.raw_file_contents:
-            file_list = list(self.raw_file_contents.keys())
+            # MODIFIED: Limit the file list passed to the synthesis prompt
+            # Use relevant_files from context_analysis_results if available, otherwise truncate raw_file_contents keys
+            files_for_synthesis_context = []
+            context_analysis_results = self.intermediate_steps.get(
+                "Context_Analysis_Output"
+            )
+            if context_analysis_results and context_analysis_results.get(
+                "relevant_files"
+            ):
+                # context_analysis_results['relevant_files'] is a list of (file_path, score) tuples
+                files_for_synthesis_context = [
+                    f[0] for f in context_analysis_results["relevant_files"]
+                ]
+                self._log_with_context(
+                    "debug",
+                    f"Using {len(files_for_synthesis_context)} relevant files from context analysis for synthesis prompt.",
+                )
+            else:
+                # Fallback: use a truncated list of all files if context analysis didn't run or found nothing
+                all_files = list(self.raw_file_contents.keys())
+                MAX_FILES_IN_SYNTHESIS_LIST = 50  # Limit to 50 files for the list
+                files_for_synthesis_context = sorted(all_files)[
+                    :MAX_FILES_IN_SYNTHESIS_LIST
+                ]
+                if len(all_files) > MAX_FILES_IN_SYNTHESIS_LIST:
+                    self._log_with_context(
+                        "warning",
+                        f"Truncated file list for synthesis prompt from {len(all_files)} to {MAX_FILES_IN_SYNTHESIS_LIST} files.",
+                    )
+
+            file_list_json_str = safe_json_dumps(files_for_synthesis_context, indent=2)
             file_structure_prompt = (
                 "CRITICAL: Adhere to the following file list for all code change suggestions. "
                 "Do not suggest changes for files not in this list unless you are creating a new file.\n"
-                f"File List: {safe_json_dumps(file_list, indent=2)}\n\n"
+                f"File List: {file_list_json_str}\n\n"
             )
             synthesis_prompt_parts.append(file_structure_prompt)
 

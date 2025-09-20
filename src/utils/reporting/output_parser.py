@@ -126,20 +126,20 @@ class LLMOutputParser:
             self.logger.debug("Both markers found. Extracted content between them.")
         else:
             self.logger.warning(
-                "Start marker found, but end marker is missing. Attempting to extract first outermost JSON object from content after start marker."
+                f"Start marker '{start_marker}' found, but end marker '{end_marker}' is missing. Attempting to force-close and extract JSON from content after start marker."
             )
-            # If end marker is missing, try to robustly extract a single JSON object
-            # from the content that follows the start marker.
-            json_content_raw = self._extract_first_outermost_json(
+            # NEW: Apply force-close heuristic before attempting to extract outermost JSON
+            force_closed_content = self._force_close_truncated_json(
                 text_after_start_marker
             )
+            json_content_raw = self._extract_first_outermost_json(force_closed_content)
             if json_content_raw:
                 self.logger.debug(
-                    "Successfully extracted a single JSON object after missing end marker."
+                    "Successfully extracted a single JSON object after missing end marker and force-close."
                 )
             else:
                 self.logger.warning(
-                    "Could not extract a single JSON object after missing end marker."
+                    "Could not extract a single JSON object after missing end marker and force-close."
                 )
                 return None
 
@@ -223,9 +223,12 @@ class LLMOutputParser:
         if end_match == -1:
             # If end tag is missing, try to extract up to the end of the string
             self.logger.warning(
-                f"Start tag <{tag}> found, but end tag </{tag}> is missing. Extracting until end of string."
+                f"Start tag <{tag}> found, but end tag </{tag}> is missing. Extracting until end of string and attempting force-close."
             )
-            return text[start_match + len(start_tag) :].strip()
+            content_after_start = text[start_match + len(start_tag) :].strip()
+            return self._force_close_truncated_json(
+                content_after_start
+            )  # NEW: Apply force-close here
 
         return text[start_match + len(start_tag) : end_match].strip()
 
