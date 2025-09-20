@@ -1,21 +1,25 @@
 # src/context/context_analyzer.py
 
+import os
+import logging
+from pathlib import Path
 import fnmatch
+from typing import Dict, Any, List, Tuple, Optional
+from sentence_transformers import SentenceTransformer
+import re
+import numpy as np
+import pickle  # Keep for potential fallback or other uses, but not for embeddings cache
 import hashlib  # NEW: Import hashlib for hashing codebase content
 import json  # NEW: Import json for caching
-import logging
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 # --- Import PROJECT_ROOT and related utilities from src.utils.core_helpers.path_utils --- # Updated import
 from src.utils.core_helpers.path_utils import (  # Updated import
     PROJECT_ROOT,
+    is_within_base_dir,
+    sanitize_and_validate_file_path,
 )
 
 # REMOVED: Duplicated PROJECT_ROOT_MARKERS, _find_project_root_internal,
@@ -107,7 +111,8 @@ class CodebaseScanner:
             )
 
     def _collect_raw_file_contents(self) -> Dict[str, str]:
-        """Collects the raw string content of relevant files in the project.
+        """
+        Collects the raw string content of relevant files in the project.
         Filters out binary files, large files, and common ignore patterns.
         """
         raw_contents: Dict[str, str] = {}
@@ -182,7 +187,9 @@ class CodebaseScanner:
                         )
                         continue
 
-                    with open(full_file_path, encoding="utf-8", errors="ignore") as f:
+                    with open(
+                        full_file_path, "r", encoding="utf-8", errors="ignore"
+                    ) as f:
                         raw_contents[str(relative_file_path)] = f.read()
                 except Exception as e:
                     self.logger.warning(
@@ -239,7 +246,7 @@ class CodebaseScanner:
             file_path = Path(self.project_root) / filename
             if file_path.exists():
                 try:
-                    with open(file_path, encoding="utf-8") as f:
+                    with open(file_path, "r", encoding="utf-8") as f:
                         lines = f.readlines()[:50]  # Read first 50 lines
                         file_structure["critical_files_preview"][filename] = "".join(
                             lines
@@ -254,7 +261,8 @@ class CodebaseScanner:
 
 # --- ContextRelevanceAnalyzer Class ---
 class ContextRelevanceAnalyzer:
-    """Analyzes the relevance of codebase context to the prompt and personas,
+    """
+    Analyzes the relevance of codebase context to the prompt and personas,
     using semantic search and keyword matching.
     """
 
@@ -271,7 +279,9 @@ class ContextRelevanceAnalyzer:
         model_name: str = "all-MiniLM-L6-v2",  # NEW: Make model_name configurable
         summarizer_pipeline: Any = None,  # ADDED: summarizer_pipeline
     ):
-        """Initializes the analyzer."""
+        """
+        Initializes the analyzer.
+        """
         self.cache_dir = cache_dir
         self.max_file_content_size = max_file_content_size
         self.codebase_scanner = codebase_scanner
@@ -320,7 +330,7 @@ class ContextRelevanceAnalyzer:
         if self.cache_path.exists():
             try:
                 with open(
-                    self.cache_path, encoding="utf-8"
+                    self.cache_path, "r", encoding="utf-8"
                 ) as f:  # MODIFIED: Read as text for JSON
                     cached_data = json.load(f)  # MODIFIED: Use json.load
 
@@ -367,7 +377,8 @@ class ContextRelevanceAnalyzer:
 
     @classmethod
     def _get_model_instance(cls, model_name: str, cache_dir: str):
-        """Provides a singleton instance of the SentenceTransformer model.
+        """
+        Provides a singleton instance of the SentenceTransformer model.
         Ensures the model is loaded only once and from the specified cache directory.
         """
         if (
@@ -396,7 +407,8 @@ class ContextRelevanceAnalyzer:
         return hasher.hexdigest()
 
     def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
-        """Public method to compute embeddings for files in the codebase context.
+        """
+        Public method to compute embeddings for files in the codebase context.
         Includes a hash-based check to skip re-computation if the content hasn't changed.
         """
         if not context:
@@ -540,7 +552,8 @@ class ContextRelevanceAnalyzer:
         self.logger.info("Persona router set for context relevance analysis.")
 
     def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
-        """Internal method to compute embeddings. Delegates to the public `compute_file_embeddings`
+        """
+        Internal method to compute embeddings. Delegates to the public `compute_file_embeddings`
         to ensure the caching logic is always applied.
         """
         return self.compute_file_embeddings(context)
@@ -548,7 +561,8 @@ class ContextRelevanceAnalyzer:
     def find_relevant_files(
         self, prompt: str, max_context_tokens: int, active_personas: List[str] = []
     ) -> List[Tuple[str, float]]:
-        """Finds relevant files based on prompt and persona relevance using semantic search.
+        """
+        Finds relevant files based on prompt and persona relevance using semantic search.
         Returns a list of (file_path, relevance_score) tuples.
         """
         if not self.file_embeddings:
@@ -734,7 +748,8 @@ class ContextRelevanceAnalyzer:
         return "No raw file contents provided or scanned."
 
     def analyze_codebase(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
-        """Scans the codebase using the associated CodebaseScanner and updates internal context.
+        """
+        Scans the codebase using the associated CodebaseScanner and updates internal context.
         Returns structured context and raw file contents.
         """
         if not self.codebase_scanner:
