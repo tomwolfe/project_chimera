@@ -1,83 +1,102 @@
 # app.py
 
-import contextlib
-import datetime
-import difflib
-import gc
-import html
+import streamlit as st
+import os  # This import is moved and used for TOKENIZERS_PARALLELISM
+import sys
 
 # Set TOKENIZERS_PARALLELISM to false at the very top to avoid deadlocks on fork
-import os
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-import io
-import json
-import logging  # Keep this import
-import re
-import sys
-import time
-import uuid
-from collections import defaultdict
-from pathlib import Path
-from typing import Any, Dict, Optional
-
-import streamlit as st
-from rich.console import Console
-
-# NEW IMPORT: For the summarization pipeline
-from transformers import pipeline
-
-from core import SocraticDebate
-from src.config.settings import ChimeraSettings
-
-# NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
-from src.context.context_analyzer import CodebaseScanner, ContextRelevanceAnalyzer
-from src.exceptions import (
-    ChimeraError,
-    CircuitBreakerError,
-    LLMProviderError,
-    SchemaValidationError,
-    TokenBudgetExceededError,
-)
-from src.logging_config import setup_structured_logging
-from src.middleware.rate_limiter import RateLimitExceededError
-from src.models import LLMOutput, PersonaConfig
 
 # NEW: Imports for self-improvement components
+from src.self_improvement.strategy_manager import StrategyManager
+from src.self_improvement.critique_engine import CritiqueEngine
+# REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
+
+import io
+import contextlib
+import re
+import datetime
+import time
+from typing import Dict, Any, List, Optional, Callable
+import logging  # Keep this import
+from rich.console import Console
+from core import SocraticDebate
+
+from src.models import (
+    PersonaConfig,
+    LLMOutput,
+    # REMOVED: CodeChange,
+    SelfImprovementAnalysisOutputV1,
+    SuggestionItem,
+)
+from src.utils.reporting.output_parser import LLMOutputParser  # Updated import path
+from src.persona_manager import PersonaManager
+from src.exceptions import (
+    ChimeraError,
+    LLMResponseValidationError,
+    SchemaValidationError,
+    TokenBudgetExceededError,
+    LLMProviderError,
+    CircuitBreakerError,
+)
+from collections import defaultdict
+from pydantic import ValidationError  # Keep this import
+import html
+import difflib
 from src.utils.core_helpers.command_executor import (
     execute_command_safely,
 )  # Updated import path
-from src.utils.core_helpers.error_handler import (
-    handle_exception as error_handling_handle_exception,
-)
+from src.utils.validation.code_validator import (
+    validate_code_output_batch,
+)  # Updated import path
+import json
+import uuid
+from src.logging_config import setup_structured_logging
+from src.middleware.rate_limiter import RateLimiter, RateLimitExceededError
+from src.config.settings import ChimeraSettings
+from pathlib import Path
 
-# NEW IMPORT: For error_handling.log_event and handle_exception
-from src.utils.core_helpers.error_handler import log_event
-from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import path
+from src.utils.prompting.prompt_analyzer import PromptAnalyzer
+from src.token_tracker import TokenUsageTracker
 
-# NEW IMPORT for PromptOptimizer
-from src.utils.reporting.output_parser import LLMOutputParser  # Updated import path
+# NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
+from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner
+import gc
+
 from src.utils.reporting.report_generator import (
     generate_markdown_report,
     strip_ansi_codes,
 )  # Updated import path
+from src.utils.core_helpers.path_utils import PROJECT_ROOT  # Updated import path
 from src.utils.session.session_manager import (  # Updated import path
     _initialize_session_state,
-    check_session_expiration,
-    reset_app_state,
     update_activity_timestamp,
+    reset_app_state,
+    check_session_expiration,
+    SESSION_TIMEOUT_SECONDS,
 )
 
 # CORRECTED IMPORT: Only import functions actually defined in ui_helpers.py
 from src.utils.session.ui_helpers import (
-    display_key_status,
     on_api_key_change,
-    shutdown_streamlit,
+    display_key_status,
     test_api_key,
+    shutdown_streamlit,
 )
-from src.utils.validation.code_validator import (
-    validate_code_output_batch,
-)  # Updated import path
+
+
+# NEW IMPORT for PromptOptimizer
+from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import path
+
+# NEW IMPORT: For the summarization pipeline
+from transformers import pipeline
+
+
+# NEW IMPORT: For error_handling.log_event and handle_exception
+from src.utils.core_helpers.error_handler import (
+    log_event,
+    handle_exception as error_handling_handle_exception,
+)
 
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
@@ -203,7 +222,7 @@ if "initialized" not in st.session_state:
         example_prompts=EXAMPLE_PROMPTS,
         get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
         get_codebase_scanner_instance=get_codebase_scanner_instance,
-        _get_summarizer_pipeline_instance=_get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
+        _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Added underscore here
     )
     # MODIFIED: Use settings_instance.GEMINI_API_KEY as default
     st.session_state.api_key_input = (
@@ -218,7 +237,8 @@ check_session_expiration(settings_instance, EXAMPLE_PROMPTS)
 
 # --- NEW HELPER FUNCTION FOR ROBUST TOKEN COUNTING (as suggested) ---
 def calculate_token_count(text: str, tokenizer) -> int:
-    """Robustly counts tokens using available tokenizer methods.
+    """
+    Robustly counts tokens using available tokenizer methods.
     This helper is for UI display or other direct token counting needs in app.py.
     """
     if hasattr(tokenizer, "count_tokens"):
@@ -456,7 +476,8 @@ def handle_debate_errors(error: Exception):
 
 
 def execute_command(command_str: str, timeout: int = 60) -> str:
-    """Executes a simple command safely using the centralized utility.
+    """
+    Executes a simple command safely using the centralized utility.
     This function is specifically for simple 'echo' commands within the app's UI.
     """
     try:
@@ -501,7 +522,7 @@ def main():
         st.header("Configuration")
 
         with st.expander("Core LLM Settings", expanded=True):
-            api_key_input_val = st.text_input(
+            st.text_input(
                 "Enter your Gemini API Key",
                 type="password",
                 key="api_key_input",
@@ -1077,7 +1098,9 @@ def main():
                 if (
                     st.session_state.selected_persona_set
                     in unique_framework_options_for_load
-                ) or (
+                ):
+                    current_selection_for_load = st.session_state.selected_persona_set
+                elif (
                     st.session_state.selected_persona_set
                     in st.session_state.persona_manager.all_custom_frameworks_data
                 ):
@@ -1253,7 +1276,7 @@ def main():
                         st.session_state.raw_file_contents = {}
                         st.session_state.codebase_context = {}
                         st.session_state.uploaded_files = []
-                    except (OSError, FileNotFoundError, ValueError) as e:
+                    except (FileNotFoundError, ValueError, IOError) as e:
                         st.error(f"❌ Error loading demo codebase context: {e}")
                         st.session_state.raw_file_contents = {}
                         st.session_state.codebase_context = {}
@@ -1430,6 +1453,7 @@ def main():
 
     def _run_socratic_debate_process():
         """Handles the execution of the Socratic debate process."""
+
         debate_instance: Optional[SocraticDebate] = None
 
         request_id = str(uuid.uuid4())[:8]
@@ -1669,7 +1693,7 @@ def main():
 
                     logger.info(f"Final domain selected for debate: {domain_for_run}")
 
-                    logger.debug("_run_socratic_debate_process started.")
+                    logger.debug(f"_run_socratic_debate_process started.")
                     logger.debug(
                         f"Prompt at start of debate function: {current_user_prompt_for_debate[:100]}..."
                     )
@@ -1820,7 +1844,7 @@ def main():
                 except Exception as e:
                     handle_debate_errors(e)
                     status.update(
-                        label="Socratic Debate Failed: An unexpected error occurred",
+                        label=f"Socratic Debate Failed: An unexpected error occurred",
                         state="error",
                         expanded=True,
                     )
