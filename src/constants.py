@@ -68,7 +68,12 @@ SHARED_JSON_INSTRUCTIONS: str = """
 9. ALL REQUIRED FIELDS in the schema MUST be present. Do not omit them.
 ---
 
-**CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html). It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers, followed by lines starting with `+`, `-`, or ` ` (space). Example:
+**CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html).
+- It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers. The `a/` and `b/` prefixes are MANDATORY.
+- It MUST be followed by `@@ ... @@` hunk headers.
+- Lines MUST start with `+`, `-`, or ` ` (a space).
+
+**VALID EXAMPLE:**
 ```diff
 --- a/src/example.py
 +++ b/src/example.py

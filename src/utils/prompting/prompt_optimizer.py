@@ -3,7 +3,7 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional  # ADDED TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -16,7 +16,7 @@ from src.models import PersonaConfig
 # Use TYPE_CHECKING to avoid circular import at runtime for PersonaManager
 if TYPE_CHECKING:
     from src.persona_manager import PersonaManager
-    from src.token_tracker import TokenUsageTracker  # Corrected import for TokenTracker
+    from src.token_tracker import TokenUsageTracker
 
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,8 @@ class PromptOptimizer:
         tokenizer: Tokenizer,
         settings: ChimeraSettings,
         summarizer_pipeline: Any,
-        persona_manager: Optional[
-            "PersonaManager"
-        ] = None,  # MODIFIED: Type hint with quotes
-        token_tracker: Optional[
-            "src.token_tracker.TokenUsageTracker"  # Corrected type hint
-        ] = None,  # MODIFIED: Type hint with quotes
+        persona_manager: Optional["PersonaManager"] = None,
+        token_tracker: Optional["TokenUsageTracker"] = None,
     ):
         """Initializes the PromptOptimizer."""
         self.tokenizer = tokenizer
