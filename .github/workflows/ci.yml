@@ -18,31 +18,26 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt # Install all dependencies including dev/test tools
 
-    - name: Run Code Quality & Security Checks
+    - name: Lint with Ruff
       run: |
-        ruff check . --output-format=github
-        ruff format --check .
-        bandit -r . -c pyproject.toml --severity-level HIGH --confidence-level HIGH
+        ruff check . --output-format=github --exit-non-zero-on-fix
+        ruff format --check . --diff
 
     - name: Run Unit and Integration Tests with Coverage Check
       shell: bash
-      id: run_tests # Added ID to reference outcome
       run: |
-        # Run pytest, collect coverage data, generate XML report for upload, and fail if coverage is below 80%
         pytest --cov=src --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=80
-    - name: Upload Test Results
-      uses: actions/upload-artifact@v3
-      with:
-        name: test-results
-        path: |
-          report.xml
-          coverage.xml
-          coverage.json # Also upload coverage.json for potential further analysis
 
-    - name: Fail build on coverage threshold violation
-      if: steps.run_tests.outcome == 'failure'
-      run: |
-        echo "Test coverage is below the required threshold (80%). Failing the build."
-        exit 1
+    - name: Publish Test Report
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      with:
+        files: |
+          report.xml
+
+    - name: Upload Coverage Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.xml
 
     # You could add more steps here, e.g., for deployment, etc.

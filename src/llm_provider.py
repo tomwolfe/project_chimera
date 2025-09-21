@@ -59,6 +59,7 @@ from src.resilience.circuit_breaker import CircuitBreaker
 from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 
 # NEW IMPORT: For PromptOptimizer
+from src.utils.prompt_cache import prompt_cache
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 
@@ -365,6 +366,20 @@ class GeminiProvider:
         requested_model_name: str = None,
     ) -> tuple[str, int, int, bool]:
         """Generates content using the Gemini API, protected by a circuit breaker and tenacity retries."""
+        # Check cache before making an API call
+        cached_response = prompt_cache.get(
+            prompt, requested_model_name or self.model_name, temperature
+        )
+        if cached_response:
+            self._log_with_context("info", "LLM response retrieved from cache.")
+            # Assuming cached response includes token counts
+            return (
+                cached_response["text"],
+                cached_response["input_tokens"],
+                cached_response["output_tokens"],
+                False,
+            )
+
         final_model_to_use = requested_model_name
 
         current_model_spec = self.get_model_specification(
@@ -585,15 +600,6 @@ class GeminiProvider:
                 )
 
                 self._log_with_context(
-                    "debug",
-                    "LLM Response Snippet",
-                    model=current_model_name,
-                    output_tokens=output_tokens,
-                    generated_text_snippet=generated_text[:500] + "..."
-                    if len(generated_text) > 500
-                    else generated_text,
-                )
-                self._log_with_context(
                     "info",
                     "LLM Response Received",
                     model=current_model_name,
@@ -604,6 +610,19 @@ class GeminiProvider:
                 final_output_to_return = generated_text
                 if output_schema:
                     final_output_to_return = cleaned_generated_text
+
+                # Set response in cache
+                prompt_cache.set(
+                    prompt,
+                    current_model_name,
+                    temperature,
+                    {
+                        "text": final_output_to_return,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    },
+                )
+
                 return final_output_to_return, input_tokens, output_tokens, is_truncated
 
             except SchemaValidationError as e:

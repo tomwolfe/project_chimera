@@ -32,11 +32,13 @@ def setup_structured_logging(log_level=logging.INFO):
     logger.setLevel(log_level)
     log_handler = logging.StreamHandler(sys.stdout)
     formatter = jsonlogger.JsonFormatter(
-        "%(asctime)s %(levelname)s %(name)s %(request_id)s %(message)s",
+        "%(asctime)s %(levelname)s %(name)s %(funcName)s %(lineno)d %(request_id)s %(message)s",
         rename_fields={
             "asctime": "timestamp",
             "levelname": "level",
             "name": "logger_name",
+            "funcName": "function",
+            "lineno": "line_number",
         },
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )

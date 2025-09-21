@@ -1,65 +1,20 @@
-import logging
-from typing import Any, Dict, Optional
-
-logger = logging.getLogger(__name__)
+import hashlib
+from typing import Dict, Any, Optional
 
 
 class PromptCache:
-    """A simple in-memory cache for storing and retrieving generated prompts.
-    Aims to reduce redundant computation and token usage for frequently
-    accessed or similar prompts.
-    """
-
     def __init__(self):
         self.cache: Dict[str, Any] = {}
-        logger.info("PromptCache initialized.")
 
-    def get(self, key: str) -> Optional[Any]:
-        """Retrieves an item from the cache.
+    def _get_key(self, prompt: str, model_name: str, temperature: float) -> str:
+        key_str = f"{model_name}:{temperature}:{prompt}"
+        return hashlib.sha256(key_str.encode()).hexdigest()
 
-        Args:
-            key: The unique identifier for the cached item.
+    def get(self, prompt: str, model_name: str, temperature: float) -> Optional[Any]:
+        return self.cache.get(self._get_key(prompt, model_name, temperature))
 
-        Returns:
-            The cached item if found, otherwise None.
-
-        """
-        item = self.cache.get(key)
-        if item:
-            logger.debug(f"Cache hit for key: {key}")
-        else:
-            logger.debug(f"Cache miss for key: {key}")
-        return item
-
-    def set(self, key: str, value: Any):
-        """Adds or updates an item in the cache.
-
-        Args:
-            key: The unique identifier for the item.
-            value: The item to be cached.
-
-        """
-        self.cache[key] = value
-        logger.debug(f"Cached item for key: {key}")
-
-    def has(self, key: str) -> bool:
-        """Checks if a key exists in the cache.
-
-        Args:
-            key: The unique identifier to check.
-
-        Returns:
-            True if the key exists, False otherwise.
-
-        """
-        return key in self.cache
-
-    def clear(self):
-        """Clears all items from the cache."""
-        self.cache.clear()
-        logger.info("PromptCache cleared.")
+    def set(self, prompt: str, model_name: str, temperature: float, response: Any):
+        self.cache[self._get_key(prompt, model_name, temperature)] = response
 
 
-# Instantiate a global cache object for easy access
-# In a larger application, consider dependency injection frameworks
 prompt_cache = PromptCache()

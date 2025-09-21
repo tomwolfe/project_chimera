@@ -68,22 +68,10 @@ SHARED_JSON_INSTRUCTIONS: str = """
 9. ALL REQUIRED FIELDS in the schema MUST be present. Do not omit them.
 ---
 
-**CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html).
+**CRITICAL DIFF FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "MODIFY"`, the `DIFF_CONTENT` field MUST be a valid, complete [Unified Diff Format](https://www.gnu.org/software/diffutils/manual/html_node/Unified-Format.html).
 - It MUST start with `--- a/path/to/file` and `+++ b/path/to/file` headers. The `a/` and `b/` prefixes are MANDATORY.
-- It MUST be followed by `@@ ... @@` hunk headers.
-- Lines MUST start with `+`, `-`, or ` ` (a space).
-
-**VALID EXAMPLE:**
-```diff
---- a/src/example.py
-+++ b/src/example.py
-@@ -1,3 +1,4 @@
-def old_func():
--    print("old")
-+    print("new")
-+    print("added")
-```
-**CRITICAL REMOVE FORMAT INSTRUCTION:** For any `CODE_CHANGES_SUGGESTED` with `ACTION: "REMOVE"`, you MUST provide the `LINES` field containing a non-empty list of the exact lines to be removed. `FULL_CONTENT` and `DIFF_CONTENT` MUST be null.
+- It MUST be followed by one or more `@@ ... @@` hunk headers.
+- ALL content lines MUST start with `+`, `-`, or a single space ` `. NO other characters are permitted at the start of a line.
 """
 
 # --- SHARED CONSTANTS FOR FEW-SHOT PROMPTING ---
