@@ -1,3 +1,4 @@
+# File: constants.py
 # src/constants.py
 
 import logging
@@ -89,3 +90,27 @@ SHARED_CRITIQUE_EXAMPLE: str = """
 }
 ```
 """
+
+# NEW: Critical files required for comprehensive self-analysis
+CRITICAL_FILES_FOR_SELF_ANALYSIS = [
+    "core.py",
+    "app.py",
+    "src/llm_provider.py",
+    "src/services.py",
+    "src/self_improvement/critique_engine.py",
+    "src/self_improvement/improvement_applicator.py",
+    "src/self_improvement/metrics_collector.py",
+    "src/config/settings.py",
+    "src/constants.py",
+    "docs/project_chimera_context.md",  # Include the documentation itself
+    "schemas/analysis_schema.json",
+    "personas.yaml",
+    "pyproject.toml",
+    ".github/workflows/analysis.yml",
+    ".github/workflows/ci.yml",
+    ".ruff.toml",
+    ".pre-commit-config.yaml",
+    "requirements.txt",
+    "requirements-prod.txt",
+    "Dockerfile",
+]

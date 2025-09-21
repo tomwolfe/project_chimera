@@ -1480,18 +1480,8 @@ def main():
                 logger.info(
                     "Successfully loaded Project Chimera's codebase context for self-analysis into cached instances."
                 )
-                if not st.session_state.raw_file_contents or all(
-                    not content
-                    for content in st.session_state.raw_file_contents.values()
-                ):
-                    st.warning(
-                        "⚠️ Self-analysis: No codebase content available for analysis. "
-                        "This might indicate an issue with the scanner's include/exclude patterns, "
-                        "empty files, or an empty project directory. Self-analysis will proceed but may be limited."
-                    )
-                    logger.warning(
-                        "Self-analysis: Codebase context is empty after loading."
-                    )
+                # REMOVED: Redundant warning about empty codebase content.
+                # The SocraticDebate.run_debate will now raise CodebaseAccessError if raw_file_contents is truly empty.
             except Exception as e:
                 if st.session_state.context_analyzer:
                     st.session_state.context_analyzer.file_embeddings = {}
@@ -1500,7 +1490,7 @@ def main():
                     f"❌ Error loading Project Chimera's codebase for self-analysis: {e}"
                 )
                 logger.error(f"Failed to load own codebase context: {e}", exc_info=True)
-                return
+                return  # Exit early if codebase loading fails
 
         logger.info(
             "Starting Socratic Debate process.",

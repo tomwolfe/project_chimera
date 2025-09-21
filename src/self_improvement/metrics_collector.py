@@ -1,3 +1,4 @@
+# File: metrics_collector.py
 # src/self_improvement/metrics_collector.py
 import ast
 import difflib
@@ -42,6 +43,7 @@ from src.utils.validation.code_validator import (
     _run_ruff,
     validate_and_resolve_file_path_for_action,  # NEW: Import the new validation function
 )
+from src.constants import CRITICAL_FILES_FOR_SELF_ANALYSIS  # NEW: Import the constant
 
 logger = logging.getLogger(__name__)
 
@@ -716,6 +718,31 @@ class FocusedMetricsCollector:
                 )
 
         return DeploymentAnalysisOutput(**deployment_metrics_data)
+
+    def collect_codebase_access_metrics(self) -> Dict[str, Any]:
+        """Collect metrics related to codebase access availability."""
+        metrics = {
+            "codebase_available": False,
+            "critical_files_available_count": 0,
+            "critical_files_missing": [],
+            "total_critical_files_required": len(CRITICAL_FILES_FOR_SELF_ANALYSIS),
+        }
+
+        if self.raw_file_contents:
+            metrics["codebase_available"] = True
+            available_critical_files = [
+                f
+                for f in CRITICAL_FILES_FOR_SELF_ANALYSIS
+                if f in self.raw_file_contents
+            ]
+            metrics["critical_files_available_count"] = len(available_critical_files)
+            metrics["critical_files_missing"] = [
+                f
+                for f in CRITICAL_FILES_FOR_SELF_ANALYSIS
+                if f not in self.raw_file_contents
+            ]
+
+        return metrics
 
     def _collect_token_usage_stats(self) -> Dict[str, Any]:
         """Collects token usage statistics from debate intermediate steps."""
@@ -1407,6 +1434,11 @@ This document outlines the refined methodology for identifying and implementing 
         )
 
         self._collect_code_quality_and_security_metrics()
+
+        # NEW: Call the new method to collect codebase access metrics
+        self.collected_metrics["codebase_access"] = (
+            self.collect_codebase_access_metrics()
+        )
 
         self._identify_critical_metric(
             self.collected_metrics

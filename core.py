@@ -14,11 +14,11 @@ from rich.console import Console
 
 from src.config.model_registry import ModelRegistry
 from src.config.settings import ChimeraSettings
-from src.config.settings import (
-    settings as global_settings_instance,  # Import the global settings instance
-)
+
+# Import the global settings instance
+from src.config.settings import settings as global_settings_instance
+from src.constants import CRITICAL_FILES_FOR_SELF_ANALYSIS, SHARED_JSON_INSTRUCTIONS
 from src.conflict_resolution import ConflictResolutionManager
-from src.constants import SHARED_JSON_INSTRUCTIONS
 
 # --- IMPORT MODIFICATIONS ---
 # NEW IMPORT FOR CODEBASE SCANNING
@@ -63,7 +63,7 @@ from src.utils.core_helpers.json_utils import (
     safe_json_loads,
 )  # MODIFIED: Import safe_json_loads and safe_json_dumps
 
-# NEW IMPORT FOR PROMPT OPTIMIZER
+# NEW IMPORT for PromptOptimizer
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 from src.utils.validation.json_validator import validate_llm_output  # NEW
@@ -2623,19 +2623,23 @@ class SocraticDebate:
     ) -> Tuple[Any, Dict[str, Any]]:
         """Handles the CodebaseAccessError by generating a specific, actionable output."""
         self._log_with_context("error", f"Codebase access error: {e}", exc_info=True)
+
+        # Dynamically generate the list of critical files needed for the proposed solution
+        critical_files_list_str = ", ".join(CRITICAL_FILES_FOR_SELF_ANALYSIS)
+
         error_output = SelfImprovementAnalysisOutputV1(
-            ANALYSIS_SUMMARY=f"Codebase access error: {e}",
+            ANALYSIS_SUMMARY=f"Codebase access required for meaningful self-improvement analysis. {e}",
             IMPACTFUL_SUGGESTIONS=[
                 SuggestionItem(
-                    AREA="Maintainability",
-                    PROBLEM="Critical lack of codebase access prevents meaningful code-level analysis and improvements.",
-                    PROPOSED_SOLUTION="Implement proper codebase scanning functionality to grant the system access to its own files.",
-                    EXPECTED_IMPACT="Enables the self-improvement process to proceed effectively.",
+                    AREA="Codebase Access",
+                    PROBLEM="No source code files provided or accessible for analysis.",
+                    PROPOSED_SOLUTION=f"Provide access to the following critical files: {critical_files_list_str}. Ensure the application has read permissions to the project directory and that the codebase scanner's include/exclude patterns are correct. Refer to `docs/project_chimera_context.md` for detailed instructions.",
+                    EXPECTED_IMPACT="Enables comprehensive critique and identification of architectural improvements related to reasoning, robustness, efficiency, maintainability, security, test coverage, CI/CD, and token usage.",
                     CODE_CHANGES_SUGGESTED=[
                         {
-                            "FILE_PATH": "src/codebase_scanner.py",
-                            "ACTION": "CREATE",
-                            "FULL_CONTENT": "# ... (Implementation of CodebaseScanner class as suggested) ...",
+                            "FILE_PATH": "docs/project_chimera_context.md",
+                            "ACTION": "MODIFY",
+                            "DIFF_CONTENT": "--- a/docs/project_chimera_context.md\n+++ b/docs/project_chimera_context.md\n@@ -1,5 +1,22 @@\n # Project Chimera Codebase Context\n \n This document outlines the necessary structure and files required for effective self-improvement analysis.\n+\n+## Required Files for Analysis\n+- `core.py`: Main application logic\n+- `app.py`: Streamlit web application entry point\n+- `src/llm_provider.py`: LLM interaction and API handling\n+- `src/services.py`: Core service implementations\n+- `src/self_improvement/critique_engine.py`: Critique and analysis logic\n+- `src/self_improvement/improvement_applicator.py`: Application of improvements\n+- `src/self_improvement/metrics_collector.py`: Metrics collection for self-improvement\n+- `src/config/settings.py`: Application settings\n+- `src/constants.py`: Global constants\n+- `docs/project_chimera_context.md`: This documentation file itself\n+- `schemas/analysis_schema.json`: Schema for self-improvement output\n+- `personas.yaml`: Persona definitions\n+- `pyproject.toml`: Project configuration\n+- `.github/workflows/analysis.yml`: Self-analysis workflow\n+- `.github/workflows/ci.yml`: CI workflow\n+- `.ruff.toml`: Ruff linter/formatter configuration\n+- `.pre-commit-config.yaml`: Pre-commit hooks configuration\n+- `requirements.txt`: Development Python dependencies\n+- `requirements-prod.txt`: Production Python dependencies\n+- `Dockerfile`: Docker container definition\n+- All other files in `src/` and `tests/` directories\n+\n+## How to Provide Context\n+When running self-improvement analysis, ensure these files are included in the context provided to the analysis system. The context should include:\n+- File paths\n+- File contents\n+- Directory structure\n+- Any relevant configuration files\n+\n+This will enable the system to perform a thorough analysis and identify meaningful improvements.\n",
                         }
                     ],
                 )
