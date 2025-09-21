@@ -669,21 +669,58 @@ class ContextRelevanceAnalyzer:
                 )
                 break
 
-            # --- FIX for summarizer input truncation ---
-            # The summarizer pipeline has its own tokenizer and max length. Truncate content for it specifically.
-            if self.summarizer_pipeline and hasattr(
+            # --- IMPROVEMENT: More intelligent summarization/truncation for context ---
+            # Prioritize full content for smaller files, summarize larger ones.
+            file_content_tokens = self._count_tokens_robustly(file_content)
+            if (
+                file_content_tokens <= remaining_tokens_for_content * 0.5
+            ):  # If it's less than half of remaining budget, include full
+                truncated_content = file_content
+                self.logger.debug(
+                    f"Including full content for {file_path} ({file_content_tokens} tokens)."
+                )
+            elif self.summarizer_pipeline and hasattr(
                 self.summarizer_pipeline, "tokenizer"
             ):
+                self.logger.debug(
+                    f"Summarizing content for {file_path} ({file_content_tokens} tokens)."
+                )
                 summarizer_tokenizer = self.summarizer_pipeline.tokenizer
                 summarizer_max_len = summarizer_tokenizer.model_max_length
+                # Truncate content for the summarizer's input limit, then summarize
+                # and then truncate the summary to fit remaining_tokens_for_content
+                # This ensures the summarizer gets a manageable input and the output fits.
+                summarizer_input_tokens = min(file_content_tokens, summarizer_max_len)
                 token_ids = summarizer_tokenizer.encode(
-                    file_content,
-                    max_length=min(remaining_tokens_for_content, summarizer_max_len),
-                    truncation=True,
+                    file_content, max_length=summarizer_input_tokens, truncation=True
                 )
-                truncated_content = summarizer_tokenizer.decode(
+                summarizer_input_text = summarizer_tokenizer.decode(
                     token_ids, skip_special_tokens=True
                 )
+
+                summary_result = self.summarizer_pipeline(
+                    summarizer_input_text,
+                    max_length=min(
+                        remaining_tokens_for_content, 256
+                    ),  # Max 256 output tokens for summarizer
+                    min_length=min(
+                        remaining_tokens_for_content // 2, 50
+                    ),  # Min 50 tokens for summary
+                    do_sample=False,
+                )
+                truncated_content = summary_result[0]["summary_text"]
+
+                # Final truncation to ensure it fits the remaining budget
+                truncated_content = self.model.tokenizer.truncate_to_token_limit(
+                    truncated_content, remaining_tokens_for_content
+                )
+
+                if (
+                    self._count_tokens_robustly(truncated_content)
+                    >= remaining_tokens_for_content
+                ):
+                    truncated_content += "\n... (truncated)"
+
             else:
                 # Fallback to generic tokenizer if summarizer_pipeline or its tokenizer is not available
                 self.logger.warning(
@@ -692,13 +729,6 @@ class ContextRelevanceAnalyzer:
                 truncated_content = self.model.tokenizer.truncate_to_token_limit(
                     file_content, remaining_tokens_for_content
                 )
-
-            if (
-                self._count_tokens_robustly(truncated_content)
-                >= remaining_tokens_for_content
-            ):
-                truncated_content += "\n... (truncated)"
-            # --- END FIX ---
 
             file_block = f"### File: {file_path}\n```\n{truncated_content}\n```\n\n"
             file_block_tokens = self._count_tokens_robustly(file_block)

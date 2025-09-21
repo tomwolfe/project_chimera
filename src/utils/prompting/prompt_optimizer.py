@@ -302,7 +302,7 @@ class PromptOptimizer:
                     available_for_user_prompt,
                     truncation_indicator="\n... (user prompt truncated)",
                 )
-            logger.info(
+            logger.debug(
                 f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_prompt_text)} tokens."
             )
 

@@ -65,8 +65,12 @@ class TokenUsageTracker:
         # 'final_synthesis' stage tokens are considered high-value.
         # 'intermediate_reasoning' stage tokens are considered lower-value.
         if self._current_stage == "final_synthesis":
-            self.high_value_tokens += tokens
-        elif self._current_stage == "intermediate_reasoning":
+            self.high_value_tokens += tokens  # High value tokens are those directly contributing to final output
+        elif self._current_stage == "debate":  # Debate turns are intermediate reasoning
+            self.low_value_tokens += (
+                tokens  # Low value tokens are for intermediate steps
+            )
+        elif self._current_stage == "context":  # Context analysis is also intermediate
             self.low_value_tokens += tokens
         # Other stages (e.g., context analysis, initial prompt) are not explicitly categorized here
         # but contribute to current_usage and potentially persona_token_map.

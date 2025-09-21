@@ -1746,7 +1746,10 @@ class SocraticDebate:
             current_prompt = self._prepare_prompt_for_turn(
                 persona_name,
                 previous_output_for_llm,
-                context_persona_turn_results,
+                # Pass the full raw_file_contents for detailed context, not just summary
+                # The persona's prompt template can then select what it needs.
+                # This ensures maximum available context is provided.
+                self.raw_file_contents,  # Pass full raw file contents
                 self.initial_prompt,  # Pass initial_prompt for RAG
             )
 
