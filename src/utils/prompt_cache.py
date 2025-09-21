@@ -1,5 +1,5 @@
 import hashlib
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
 class PromptCache:

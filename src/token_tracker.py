@@ -1,7 +1,7 @@
 import logging
 import time
-from typing import Dict, Optional, List, Tuple
 from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

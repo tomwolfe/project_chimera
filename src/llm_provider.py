@@ -53,6 +53,7 @@ from src.models import LLMOutput, SelfImprovementAnalysisOutputV1
 # --- END NEW IMPORTS ---
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
 from src.resilience.circuit_breaker import CircuitBreaker
+from src.token_tracker import TokenUsageTracker  # Added for token_tracker type hint
 
 # --- END NEW IMPORT ---
 # --- NEW IMPORT FOR ERROR HANDLER ---
@@ -67,7 +68,6 @@ from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 from src.utils.validation.api_key_validator import (  # Updated import
     validate_gemini_api_key_format,
 )
-from src.token_tracker import TokenUsageTracker  # Added for token_tracker type hint
 
 # --- Token Cost Definitions (per 1,000 tokens) ---
 TOKEN_COSTS_PER_1K_TOKENS = {
