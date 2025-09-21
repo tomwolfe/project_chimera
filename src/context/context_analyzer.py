@@ -7,17 +7,15 @@ import logging
 import os
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-logger = logging.getLogger(__name__)
+# --- Import PROJECT_ROOT and related utilities from src.utils.core_helpers.path_utils --- # FIX: Moved imports to top
+from src.utils.core_helpers.path_utils import PROJECT_ROOT
 
-# --- Import PROJECT_ROOT and related utilities from src.utils.core_helpers.path_utils --- # Updated import
-from src.utils.core_helpers.path_utils import (  # Updated import
-    PROJECT_ROOT,
-)
+logger = logging.getLogger(__name__)
 
 # REMOVED: Duplicated PROJECT_ROOT_MARKERS, _find_project_root_internal,
 # and dynamic PROJECT_ROOT definition as they are now imported from src.utils.core_helpers.path_utils.
@@ -43,7 +41,7 @@ class CodebaseScanner:
             f"CodebaseScanner initialized with project root: {self.project_root}"
         )
 
-    def scan_codebase(self) -> Dict[str, Any]:
+    def scan_codebase(self) -> dict[str, Any]:
         """Scan the entire codebase and return structured context, including raw file contents."""
         context = {
             "file_structure": {},
@@ -64,7 +62,7 @@ class CodebaseScanner:
             logger.error(f"Error scanning codebase: {str(e)}", exc_info=True)
             return {"error": str(e)}
 
-    def load_own_codebase_context(self) -> Dict[str, Any]:
+    def load_own_codebase_context(self) -> dict[str, Any]:
         """Loads Project Chimera's own codebase context for self-analysis, including raw file contents."""
         project_root_path = Path(self.project_root)
         if not project_root_path.exists():
@@ -107,11 +105,11 @@ class CodebaseScanner:
                 f"Missing critical files for self-analysis: {', '.join(missing)}"
             )
 
-    def _collect_raw_file_contents(self) -> Dict[str, str]:
+    def _collect_raw_file_contents(self) -> dict[str, str]:
         """Collects the raw string content of relevant files in the project.
         Filters out binary files, large files, and common ignore patterns.
         """
-        raw_contents: Dict[str, str] = {}
+        raw_contents: dict[str, str] = {}
         exclude_patterns = [
             ".git/",
             "__pycache__/",
@@ -141,7 +139,6 @@ class CodebaseScanner:
             ".sh",
             ".dockerignore",
             ".gitignore",
-            ".pre-commit-config.yaml",
             ".github/workflows/*.yml",  # Include GitHub Actions workflows
             "requirements.txt",
             "requirements-prod.txt",
@@ -191,7 +188,7 @@ class CodebaseScanner:
                     )
         return raw_contents
 
-    def _scan_file_structure(self) -> Dict[str, Any]:
+    def _scan_file_structure(self) -> dict[str, Any]:
         """Scan and document the file structure of the project."""
         file_structure = {}
         try:
@@ -266,7 +263,7 @@ class ContextRelevanceAnalyzer:
     def __init__(
         self,
         cache_dir: str,
-        raw_file_contents: Optional[Dict[str, str]] = None,
+        raw_file_contents: Optional[dict[str, str]] = None,
         max_file_content_size: int = 500000,
         codebase_scanner: Optional[CodebaseScanner] = None,
         model_name: str = "all-MiniLM-L6-v2",  # NEW: Make model_name configurable
@@ -299,7 +296,7 @@ class ContextRelevanceAnalyzer:
 
         self.logger = logger
         self.persona_router = None
-        self.file_embeddings: Dict[str, Any] = {}
+        self.file_embeddings: dict[str, Any] = {}
         self._last_raw_file_contents_hash: Optional[str] = (
             None  # Changed to str for hashlib output
         )
@@ -388,7 +385,7 @@ class ContextRelevanceAnalyzer:
             )
         return cls._model_instance
 
-    def _hash_codebase(self, context: Dict[str, str]) -> str:
+    def _hash_codebase(self, context: dict[str, str]) -> str:
         """NEW: Creates a hash of the codebase content to check for changes."""
         hasher = hashlib.sha256()
         for file_path in sorted(context.keys()):
@@ -396,7 +393,7 @@ class ContextRelevanceAnalyzer:
             hasher.update(context[file_path].encode("utf-8"))
         return hasher.hexdigest()
 
-    def compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+    def compute_file_embeddings(self, context: dict[str, str]) -> dict[str, Any]:
         """Public method to compute embeddings for files in the codebase context.
         Includes a hash-based check to skip re-computation if the content hasn't changed.
         """
@@ -540,18 +537,20 @@ class ContextRelevanceAnalyzer:
         self.persona_router = persona_router
         self.logger.info("Persona router set for context relevance analysis.")
 
-    def _compute_file_embeddings(self, context: Dict[str, str]) -> Dict[str, Any]:
+    def _compute_file_embeddings(self, context: dict[str, str]) -> dict[str, Any]:
         """Internal method to compute embeddings. Delegates to the public `compute_file_embeddings`
         to ensure the caching logic is always applied.
         """
         return self.compute_file_embeddings(context)
 
     def find_relevant_files(
-        self, prompt: str, max_context_tokens: int, active_personas: List[str] = []
-    ) -> List[Tuple[str, float]]:
+        self, prompt: str, max_context_tokens: int, active_personas: list[str] = None
+    ) -> list[tuple[str, float]]:
         """Finds relevant files based on prompt and persona relevance using semantic search.
         Returns a list of (file_path, relevance_score) tuples.
         """
+        if active_personas is None:
+            active_personas = []
         if not self.file_embeddings:
             self.logger.warning(
                 "No file embeddings available. Cannot perform semantic search."
@@ -625,7 +624,7 @@ class ContextRelevanceAnalyzer:
             return len(text) // 4  # Rough estimate
 
     def generate_context_summary(
-        self, relevant_files: List[Tuple[str, float]], max_tokens: int, prompt: str = ""
+        self, relevant_files: list[tuple[str, float]], max_tokens: int, prompt: str = ""
     ) -> str:
         """Generates a detailed summary of the relevant codebase context, including actual file contents."""
         current_summary_parts = [
@@ -636,7 +635,8 @@ class ContextRelevanceAnalyzer:
         # Diagnostic print to inspect relevant_files before the loop
         self.logger.debug(f"Relevant files received for summary: {relevant_files}")
 
-        for i, item in enumerate(relevant_files):
+        # FIX: B007 - Changed loop variable from 'i' to '_' and removed 'i' from log messages
+        for _, item in enumerate(relevant_files):
             file_path = None
             score = None
             try:
@@ -644,15 +644,12 @@ class ContextRelevanceAnalyzer:
                 file_path, score = item
             except (ValueError, TypeError) as e:
                 self.logger.warning(
-                    f"Skipping malformed item at index {i} in relevant_files: {item}. Error: {e}"
+                    f"Skipping malformed item in relevant_files: {item}. Error: {e}"
                 )
                 continue
-
             # Additional defensive checks for type
             if not isinstance(file_path, str):
-                self.logger.warning(
-                    f"Skipping item with non-string file path at index {i} : {item}"
-                )
+                self.logger.warning(f"Skipping item with non-string file path : {item}")
                 continue
 
             file_content = self.raw_file_contents.get(file_path, "")
@@ -764,7 +761,7 @@ class ContextRelevanceAnalyzer:
             return f"Raw file contents available ({len(self.raw_file_contents)} files). See details in intermediate steps."
         return "No raw file contents provided or scanned."
 
-    def analyze_codebase(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    def analyze_codebase(self) -> tuple[dict[str, Any], dict[str, str]]:
         """Scans the codebase using the associated CodebaseScanner and updates internal context.
         Returns structured context and raw file contents.
         """

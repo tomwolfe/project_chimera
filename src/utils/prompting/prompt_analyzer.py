@@ -1,28 +1,44 @@
 # File: src/utils/prompt_analyzer.py
-import logging
 import re
-from functools import lru_cache
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Dict, Any, List, Optional, Tuple
 
-# Assuming SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, and THRESHOLD are imported from src.constants
-from src.constants import NEGATION_PATTERNS, SELF_ANALYSIS_KEYWORDS, THRESHOLD
+# Removed lru_cache import as it is no longer used on methods/functions
+from src.constants import SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, THRESHOLD
 
 logger = logging.getLogger(__name__)
+
+# --- Constants derived from PLR2004 fixes ---
+WORD_COUNT_DIVISOR = 500.0
+SENTENCE_COUNT_DIVISOR = 20.0
+REASONING_SCORE_COMPONENT = 0.25
+CODE_PROMPT_BOOST = 0.15
+EXPLICIT_PHRASE_FLOOR = 0.95
+KEYWORD_COUNT_MULTIPLIER_BASE = 1.1
+MAX_SCORE_MULTIPLIER = 1.5
+POSITIONAL_BOOST_BASE = 1.0
+POSITIONAL_BOOST_FACTOR = 0.5
+POSITIONAL_BOOST_MAX_DIST = 200.0
+DEFAULT_NEGATION_PROXIMITY = 100
+DEFAULT_KEYWORD_WEIGHT = 1.0
+DOMAIN_NEGATION_PROXIMITY = 50
+SE_DOMAIN_BOOST = 2.0
+DOMAIN_SCORE_THRESHOLD = 1.0
 
 
 class PromptAnalyzer:
     def __init__(self, domain_keywords: Dict[str, List[str]]):
-        """Initializes the PromptAnalyzer with domain-specific keywords.
+        """
+        Initializes the PromptAnalyzer with domain-specific keywords.
 
         Args:
             domain_keywords: A dictionary mapping domain names to lists of keywords.
-
         """
         self.domain_keywords = domain_keywords
 
-    @lru_cache(maxsize=256)
     def analyze_complexity(self, prompt: str) -> Dict[str, Any]:
-        """Analyzes prompt complexity, including word count, sentence count,
+        """
+        Analyzes prompt complexity, including word count, sentence count,
         and domain-specific keyword scores.
 
         Args:
@@ -30,7 +46,6 @@ class PromptAnalyzer:
 
         Returns:
             A dictionary containing complexity metrics and domain scores.
-
         """
         word_count = len(prompt.split())
         sentence_count = len(re.findall(r"[.!?]+", prompt))
@@ -47,7 +62,9 @@ class PromptAnalyzer:
             else None
         )
 
-        complexity_score = min(1.0, word_count / 500 + sentence_count / 20)
+        complexity_score = min(
+            1.0, word_count / WORD_COUNT_DIVISOR + sentence_count / SENTENCE_COUNT_DIVISOR
+        )
 
         reasoning_indicators = {
             "contains_80_20_language": "80/20" in prompt or "Pareto" in prompt.lower(),
@@ -66,10 +83,10 @@ class PromptAnalyzer:
         }
 
         reasoning_score = (
-            0.25 * reasoning_indicators["contains_80_20_language"]
-            + 0.25 * reasoning_indicators["explicit_focus_areas"]
-            + 0.25 * reasoning_indicators["token_usage_warning"]
-            + 0.25 * reasoning_indicators["structured_output_request"]
+            REASONING_SCORE_COMPONENT * reasoning_indicators["contains_80_20_language"]
+            + REASONING_SCORE_COMPONENT * reasoning_indicators["explicit_focus_areas"]
+            + REASONING_SCORE_COMPONENT * reasoning_indicators["token_usage_warning"]
+            + REASONING_SCORE_COMPONENT * reasoning_indicators["structured_output_request"]
         )
 
         return {
@@ -106,11 +123,12 @@ class PromptAnalyzer:
             suggestions.append("Request strict adherence to JSON schema for output.")
         return suggestions
 
-    @lru_cache(maxsize=256)
+    @staticmethod
     def is_self_analysis_prompt(
-        self, prompt: str, threshold: float = THRESHOLD, negation_proximity: int = 100
+        prompt: str, threshold: float = THRESHOLD, negation_proximity: int = DEFAULT_NEGATION_PROXIMITY
     ) -> bool:
-        """Checks if a prompt indicates a self-analysis task based on weighted keywords,
+        """
+        Checks if a prompt indicates a self-analysis task based on weighted keywords,
         positional boosting, and negation detection.
 
         Args:
@@ -120,7 +138,6 @@ class PromptAnalyzer:
 
         Returns:
             True if the prompt is classified as self-analysis, False otherwise.
-
         """
         if not prompt:
             return False
@@ -131,7 +148,18 @@ class PromptAnalyzer:
         for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
             keyword_pos = prompt_lower.find(keyword)
             if keyword_pos != -1:
-                positional_boost = 1.0 + (0.5 * (1.0 - min(keyword_pos / 200, 1.0)))
+                positional_boost = (
+                    POSITIONAL_BOOST_BASE
+                    + (
+                        POSITIONAL_BOOST_FACTOR
+                        * (
+                            1.0
+                            - min(
+                                keyword_pos / POSITIONAL_BOOST_MAX_DIST, 1.0
+                            )
+                        )
+                    )
+                )
                 negated_weight_multiplier = 1.0
 
                 search_window_start = max(0, keyword_pos - negation_proximity)
@@ -154,12 +182,12 @@ class PromptAnalyzer:
             or "refactor" in prompt_lower
             or "evaluate" in prompt_lower
         ):
-            score += 0.15
+            score += CODE_PROMPT_BOOST
 
         if "project chimera" in prompt_lower and (
             "analyze" in prompt_lower or "improve" in prompt_lower
         ):
-            score += 0.15
+            score += CODE_PROMPT_BOOST
 
         explicit_phrases = [
             "analyze the entire Project Chimera codebase",
@@ -168,20 +196,20 @@ class PromptAnalyzer:
             "evaluate my own implementation",
         ]
         if any(phrase in prompt_lower for phrase in explicit_phrases):
-            score = max(score, 0.95)
+            score = max(score, EXPLICIT_PHRASE_FLOOR)
 
         found_keywords_count = sum(
             1 for kw in SELF_ANALYSIS_KEYWORDS if kw in prompt_lower
         )
         if found_keywords_count > 1:
-            score *= 1.1 ** (found_keywords_count - 1)
-            score = min(score, 1.5)
+            score *= KEYWORD_COUNT_MULTIPLIER_BASE ** (found_keywords_count - 1)
+            score = min(score, MAX_SCORE_MULTIPLIER)
 
         return score >= threshold
 
-    @lru_cache(maxsize=256)
     def recommend_domain_from_keywords(self, user_prompt: str) -> Optional[str]:
-        """Recommends a domain/framework based on keywords in the user prompt,
+        """
+        Recommends a domain/framework based on keywords in the user prompt,
         incorporating negation awareness and proximity scoring.
 
         Args:
@@ -189,7 +217,6 @@ class PromptAnalyzer:
 
         Returns:
             The recommended domain name, or None if no strong match is found.
-
         """
         if not user_prompt or not self.domain_keywords:
             return None
@@ -198,8 +225,7 @@ class PromptAnalyzer:
         best_match = None
         highest_score = 0.0
 
-        DEFAULT_KEYWORD_WEIGHT = 1.0
-        NEGATION_PROXIMITY = 50
+        NEGATION_PROXIMITY = DOMAIN_NEGATION_PROXIMITY
 
         for domain, keywords_list in self.domain_keywords.items():
             score = 0.0  # Reset score for each domain
@@ -212,6 +238,7 @@ class PromptAnalyzer:
                     r"\b" + re.escape(keyword_lower) + r"\b", prompt_lower
                 ):
                     negated = False  # Initialize for each match
+
                     keyword_start_pos = match.start()
 
                     search_window_start = max(0, keyword_start_pos - NEGATION_PROXIMITY)
@@ -220,8 +247,9 @@ class PromptAnalyzer:
                     for neg_pattern, penalty in NEGATION_PATTERNS:
                         if re.search(neg_pattern, search_window):
                             negated = True
+                            # Reduced score based on penalty
                             score += DEFAULT_KEYWORD_WEIGHT * (1 - penalty)
-                            break  # Break from negation patterns loop, not keyword matches loop
+                            break
 
                     if not negated:
                         score += DEFAULT_KEYWORD_WEIGHT
@@ -232,21 +260,21 @@ class PromptAnalyzer:
                     for term in ["implement", "endpoint", "api", "function"]
                 ):
                     if "error handling" in prompt_lower or "validation" in prompt_lower:
-                        score += 2.0
+                        score += SE_DOMAIN_BOOST
 
             if score > highest_score:
                 highest_score = score
                 best_match = domain
 
-        if highest_score >= 1.0:
+        if highest_score >= DOMAIN_SCORE_THRESHOLD:
             return best_match
 
         return None
 
 
-@lru_cache(maxsize=256)
 def optimize_reasoning_prompt(prompt: str) -> str:
-    """Optimizes a prompt for clarity, conciseness, and focus, potentially
+    """
+    Optimizes a prompt for clarity, conciseness, and focus, potentially
     by removing redundant phrases, standardizing formatting, or emphasizing key instructions.
 
     Args:
@@ -254,7 +282,6 @@ def optimize_reasoning_prompt(prompt: str) -> str:
 
     Returns:
         An optimized prompt string.
-
     """
     if not prompt:
         return ""

@@ -6,6 +6,14 @@ import unittest
 import pytest  # NEW: Import pytest for skipping tests
 import requests
 
+# --- CONSTANTS FOR PLR2004 FIXES ---
+HTTP_OK = 200
+HTTP_BAD_REQUEST = 400
+HTTP_UNAUTHORIZED = 401
+HTTP_TOO_MANY_REQUESTS = 429
+HTTP_UNPROCESSABLE_ENTITY = 422
+# --- END CONSTANTS ---
+
 # This test requires the FastAPI server (part of app.py) to be running.
 # You can run it separately, for example, using `uvicorn app:app --host 0.0.0.0 --port 8080`
 # or by ensuring the Streamlit app is running and its internal FastAPI is active.
@@ -27,7 +35,7 @@ class TestAPIIntegration(unittest.TestCase):
         # Basic check to see if the server is reachable
         try:
             response = requests.get(f"{cls.BASE_URL}/status", timeout=5)
-            if response.status_code == 200:
+            if response.status_code == HTTP_OK:  # FIX: PLR2004 (200)
                 print("API server is reachable.")
             else:
                 print(
@@ -46,7 +54,7 @@ class TestAPIIntegration(unittest.TestCase):
         """Test the /api/v1/status endpoint."""
         try:
             response = requests.get(f"{self.BASE_URL}/status", timeout=5)  # Add timeout
-            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.status_code, HTTP_OK)  # FIX: PLR2004 (200)
             self.assertEqual(response.json(), {"status": "operational"})
         except requests.exceptions.ConnectionError as e:
             self.fail(
@@ -68,7 +76,7 @@ class TestAPIIntegration(unittest.TestCase):
             "api_key": os.environ.get(
                 "TEST_LLM_API_KEY", "sk-test-api-key-placeholder"
             ),
-            "model_name": "gemini-2.5-flash-lite",
+            "model_name": "gemini-2.5-flash-lite-preview-09-2025",
             "domain": "Software Engineering",
             "codebase_context": {"test_file.py": "def example_func():\n    pass"},
             "max_tokens_budget": 10000,
@@ -80,10 +88,15 @@ class TestAPIIntegration(unittest.TestCase):
             # Expect 200 for success, or 400/401/429 if API key is missing/invalid or rate limited
             self.assertIn(
                 response.status_code,
-                [200, 400, 401, 429],
+                [
+                    HTTP_OK,
+                    HTTP_BAD_REQUEST,
+                    HTTP_UNAUTHORIZED,
+                    HTTP_TOO_MANY_REQUESTS,
+                ],  # FIX: PLR2004 (200, 400, 401, 429)
                 f"Unexpected status code: {response.status_code}, Response: {response.text}",
             )
-            if response.status_code == 200:
+            if response.status_code == HTTP_OK:  # FIX: PLR2004 (200)
                 data = response.json()
                 self.assertIn("message", data)
                 self.assertEqual(data["message"], "Analysis complete")
@@ -104,7 +117,7 @@ class TestAPIIntegration(unittest.TestCase):
         """Test the /api/v1/analyze_code endpoint with invalid input (missing prompt)."""
         payload = {
             "api_key": "sk-test-api-key-placeholder",
-            "model_name": "gemini-2.5-flash-lite",
+            "model_name": "gemini-2.5-flash-lite-preview-09-2025",
             "domain": "Software Engineering",
             "codebase_context": {},
             "max_tokens_budget": 10000,
@@ -113,7 +126,9 @@ class TestAPIIntegration(unittest.TestCase):
             response = requests.post(
                 f"{self.BASE_URL}/analyze_code", json=payload, timeout=10
             )  # Add timeout
-            self.assertEqual(response.status_code, 422)  # FastAPI validation error
+            self.assertEqual(
+                response.status_code, HTTP_UNPROCESSABLE_ENTITY
+            )  # FIX: PLR2004 (422)
             data = response.json()
             self.assertIn("detail", data)
             self.assertIn("field required", str(data["detail"]))

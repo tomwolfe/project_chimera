@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import socket
-from typing import Any, Dict, Optional, Type
+from typing import Any, Optional
 
 # --- Tokenizer Interface and Implementation ---
 import tiktoken
@@ -19,14 +19,6 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 # --- NEW IMPORTS FOR RETRY AND RATE LIMIT ---
-from tenacity import (
-    RetryError,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-
 # --- END NEW IMPORT ---
 # FIX: Import ModelSpecification explicitly
 from src.config.model_registry import ModelRegistry, ModelSpecification
@@ -34,7 +26,6 @@ from src.config.settings import ChimeraSettings
 
 # --- Custom Exceptions ---
 from src.exceptions import (
-    CircuitBreakerError,
     GeminiAPIError,
     LLMProviderError,
     LLMProviderRequestError,
@@ -52,7 +43,6 @@ from src.models import LLMOutput, SelfImprovementAnalysisOutputV1
 
 # --- END NEW IMPORTS ---
 # --- NEW IMPORT FOR CIRCUIT BREAKER ---
-from src.resilience.circuit_breaker import CircuitBreaker
 from src.token_tracker import TokenUsageTracker  # Added for token_tracker type hint
 
 # --- END NEW IMPORT ---
@@ -60,7 +50,6 @@ from src.token_tracker import TokenUsageTracker  # Added for token_tracker type 
 from src.utils.core_helpers.error_handler import handle_errors  # Updated import
 
 # NEW IMPORT: For PromptOptimizer
-from src.utils.prompt_cache import prompt_cache
 from src.utils.prompting.prompt_optimizer import PromptOptimizer  # Updated import
 from src.utils.reporting.output_parser import LLMOutputParser  # Updated import
 
@@ -69,11 +58,13 @@ from src.utils.validation.api_key_validator import (  # Updated import
     validate_gemini_api_key_format,
 )
 
-# --- Token Cost Definitions (per 1,000 tokens) ---
-TOKEN_COSTS_PER_1K_TOKENS = {
-    "gemini-1.5-flash": {"input": 0.00008, "output": 0.00024},
-    "gemini-1.5-pro": {"input": 0.0005, "output": 0.0015},
-}
+# --- CONSTANTS FOR PLR2004 FIXES ---
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
+HTTP_TOO_MANY_REQUESTS = 429
+HTTP_BAD_REQUEST = 400
+PROMPT_SNIPPET_LENGTH = 500
+# --- END CONSTANTS ---
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +86,7 @@ class GeminiProvider:
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash-lite",
+        model_name: str = "gemini-2.5-flash-lite-preview-09-2025",
         max_retries: int = None,
         max_backoff_seconds: int = None,
         tokenizer: Tokenizer = None,
@@ -214,7 +205,7 @@ class GeminiProvider:
         return (
             self.model_name == other.model_name
             and self._api_key == other._api_key  # MODIFIED: Use _api_key
-            and type(self.tokenizer) == type(other.tokenizer)
+            and isinstance(self.tokenizer, type(other.tokenizer))  # FIX: E721
         )
 
     def get_model_specification(self, model_name: str) -> Optional[ModelSpecification]:
@@ -238,30 +229,27 @@ class GeminiProvider:
             logger_method(message, extra=log_data)
 
     def _get_pricing_model_name(self) -> str:
-        model_spec = self.get_model_specification(self.model_name)
-        if model_spec:
-            if "flash" in model_spec.name:
-                return "gemini-1.5-flash"
-            if "pro" in model_spec.name:
-                return "gemini-1.5-pro"
-        return "gemini-1.5-flash"
+        # Pricing model name should be derived from the actual model used for pricing
+        # For now, assume a direct mapping or a default if not found in registry
+        return self.model_name  # Or a more specific pricing key if different
 
     def calculate_usd_cost(self, input_tokens: int, output_tokens: int) -> float:
-        pricing_model = self._get_pricing_model_name()
-        costs = TOKEN_COSTS_PER_1K_TOKENS.get(pricing_model)
-        if not costs:
+        pricing_model_name = self._get_pricing_model_name()
+        model_spec = self.get_model_specification(pricing_model_name)
+
+        if not model_spec:
             self._log_with_context(
                 "warning",
-                f"No pricing information for model '{self.model_name}'. Cost estimation will be $0.",
+                f"No pricing information for model '{pricing_model_name}' in ModelRegistry. Cost estimation will be $0.",
             )
             return 0.0
 
-        input_cost = (input_tokens / 1000) * costs["input"]
-        output_cost = (output_tokens / 1000) * costs["output"]
+        input_cost = (input_tokens / 1000) * model_spec.cost_per_1k_input
+        output_cost = (output_tokens / 1000) * model_spec.cost_per_1k_output
         return input_cost + output_cost
 
     def _adjust_prompt_for_schema_validation(
-        self, prompt: str, output_schema: Type[BaseModel]
+        self, prompt: str, output_schema: type[BaseModel]
     ) -> str:
         # Add more specific instructions about the required schema
         schema_info = self._get_schema_info(output_schema)
@@ -274,7 +262,7 @@ class GeminiProvider:
         )
         return new_prompt
 
-    def _get_schema_info(self, output_schema: Type[BaseModel]) -> str:
+    def _get_schema_info(self, output_schema: type[BaseModel]) -> str:
         # Convert the schema to a string representation
         schema = output_schema.model_json_schema()
         return json.dumps(schema, indent=2)
@@ -329,57 +317,21 @@ class GeminiProvider:
         )
 
     @handle_errors(log_level="ERROR")
-    @CircuitBreaker(
-        failure_threshold=5,
-        recovery_timeout=60,
-        expected_exception=(
-            APIError,
-            CircuitBreakerError,
-            LLMUnexpectedError,
-            GeminiAPIError,
-            RetryError,
-            RateLimitExceededError,
-            LLMProviderRequestError,
-            LLMProviderResponseError,
-        ),
-    )
-    @retry(
-        wait=wait_exponential(multiplier=1, min=4, max=60),
-        stop=stop_after_attempt(5),
-        reraise=True,
-        retry=(
-            retry_if_exception_type(APIError)
-            | retry_if_exception_type(socket.gaierror)
-            | retry_if_exception_type(LLMProviderRequestError)
-            | retry_if_exception_type(LLMProviderResponseError)
-        ),
-    )
+    # REMOVED: @CircuitBreaker and @retry decorators as they are moved to LLMOrchestrator
     def generate(
         self,
         prompt: str,
         system_prompt: str = "",
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: int = 100,
         persona_config: Any = None,
-        intermediate_results: Dict[str, Any] = None,
+        intermediate_results: dict[str, Any] = None,
         requested_model_name: str = None,
     ) -> tuple[str, int, int, bool]:
-        """Generates content using the Gemini API, protected by a circuit breaker and tenacity retries."""
-        # Check cache before making an API call
-        cached_response = prompt_cache.get(
-            prompt, requested_model_name or self.model_name, temperature
-        )
-        if cached_response:
-            self._log_with_context("info", "LLM response retrieved from cache.")
-            # Assuming cached response includes token counts
-            return (
-                cached_response["text"],
-                cached_response["input_tokens"],
-                cached_response["output_tokens"],
-                False,
-            )
-
+        """Generates content using the Gemini API. This method is a thin wrapper around the actual API call.
+        Resilience (retry, circuit breaker) and token tracking are handled by LLMOrchestrator.
+        """
         final_model_to_use = requested_model_name
 
         current_model_spec = self.get_model_specification(
@@ -429,7 +381,7 @@ class GeminiProvider:
             max_output_tokens=max_tokens,
         )
 
-        max_schema_retries = 3
+        # Removed max_schema_retries loop as retries are handled by LLMOrchestrator
         current_prompt_for_llm = prompt
 
         # NEW: Token counting and enforcement before API call
@@ -462,270 +414,250 @@ class GeminiProvider:
             f"Prompt token count for model '{current_model_name}': {prompt_tokens_for_check}/{max_input_tokens_for_model}",
         )
 
-        for i in range(max_schema_retries):
-            try:
-                optimized_prompt = current_prompt_for_llm
+        # Only one attempt here, retries are external
+        try:
+            optimized_prompt = current_prompt_for_llm
 
-                prompt_with_system = (
-                    f"{system_prompt}\n\n{optimized_prompt}"
-                    if system_prompt
-                    else optimized_prompt
-                )
-                # Use native Gemini tokenizer for actual input token count for cost tracking
-                input_tokens = self.tokenizer.count_tokens(prompt_with_system)
+            prompt_with_system = (
+                f"{system_prompt}\n\n{optimized_prompt}"
+                if system_prompt
+                else optimized_prompt
+            )
+            # Use native Gemini tokenizer for actual input token count for cost tracking
+            input_tokens = self.tokenizer.count_tokens(prompt_with_system)
 
-                self._log_with_context(
-                    "debug",
-                    "LLM Prompt Snippet",
-                    model=current_model_name,
-                    input_tokens=input_tokens,
-                    prompt_snippet=prompt_with_system[:500] + "..."
-                    if len(prompt_with_system) > 500
-                    else prompt_with_system,
-                )
-                self._log_with_context(
-                    "info",
-                    "LLM Prompt Sent",
-                    model=current_model_name,
-                    temperature=config.temperature,
-                    max_output_tokens=config.max_output_tokens,
-                    full_system_prompt=system_prompt,
-                    full_user_prompt=optimized_prompt,
-                    input_tokens=input_tokens,
+            self._log_with_context(
+                "debug",
+                "LLM Prompt Snippet",
+                model=current_model_name,
+                input_tokens=input_tokens,
+                prompt_snippet=prompt_with_system[:PROMPT_SNIPPET_LENGTH]
+                + "..."  # FIX: PLR2004
+                if len(prompt_with_system) > PROMPT_SNIPPET_LENGTH
+                else prompt_with_system,
+            )
+            self._log_with_context(
+                "info",
+                "LLM Prompt Sent",
+                model=current_model_name,
+                temperature=config.temperature,
+                max_output_tokens=config.max_output_tokens,
+                full_system_prompt=system_prompt,
+                full_user_prompt=optimized_prompt,
+                input_tokens=input_tokens,
+            )
+
+            response = self.client.models.generate_content(
+                model=current_model_name, contents=optimized_prompt, config=config
+            )
+
+            if not response.candidates:
+                raise LLMUnexpectedError(
+                    "No candidates in response", details={"response": response}
                 )
 
-                response = self.client.models.generate_content(
-                    model=current_model_name, contents=optimized_prompt, config=config
+            if not response.candidates[0].content.parts:
+                raise LLMUnexpectedError(
+                    "No content parts in response", details={"response": response}
                 )
 
-                if not response.candidates:
-                    raise LLMUnexpectedError(
-                        "No candidates in response", details={"response": response}
+            generated_text = response.candidates[0].content.parts[0].text
+
+            if output_schema:
+                try:
+                    cleaned_generated_text = self.output_parser._clean_llm_output(
+                        generated_text
                     )
 
-                if not response.candidates[0].content.parts:
-                    raise LLMUnexpectedError(
-                        "No content parts in response", details={"response": response}
-                    )
-
-                generated_text = response.candidates[0].content.parts[0].text
-
-                if output_schema:
-                    try:
-                        cleaned_generated_text = self.output_parser._clean_llm_output(
-                            generated_text
-                        )
-
-                        # NEW: Apply diff header repair proactively if schema expects it
-                        if output_schema in [
-                            SelfImprovementAnalysisOutputV1,
-                            LLMOutput,
-                        ]:
-                            try:
-                                # Temporarily parse to check for CODE_CHANGES/CODE_CHANGES_SUGGESTED
-                                temp_parsed = json.loads(cleaned_generated_text)
-                                if isinstance(temp_parsed, dict):
-                                    if "IMPACTFUL_SUGGESTIONS" in temp_parsed:
-                                        for suggestion in temp_parsed[
-                                            "IMPACTFUL_SUGGESTIONS"
-                                        ]:
-                                            if "CODE_CHANGES_SUGGESTED" in suggestion:
-                                                for change in suggestion[
-                                                    "CODE_CHANGES_SUGGESTED"
-                                                ]:
-                                                    if change.get(
-                                                        "ACTION"
-                                                    ) == "MODIFY" and change.get(
-                                                        "DIFF_CONTENT"
-                                                    ):
-                                                        change["DIFF_CONTENT"] = (
-                                                            LLMOutputParser._repair_diff_content_headers(
-                                                                change["DIFF_CONTENT"]
-                                                            )
+                    # NEW: Apply diff header repair proactively if schema expects it
+                    if output_schema in [SelfImprovementAnalysisOutputV1, LLMOutput]:
+                        try:
+                            # Temporarily parse to check for CODE_CHANGES/CODE_CHANGES_SUGGESTED
+                            temp_parsed = json.loads(cleaned_generated_text)
+                            if isinstance(temp_parsed, dict):
+                                if "IMPACTFUL_SUGGESTIONS" in temp_parsed:
+                                    for suggestion in temp_parsed[
+                                        "IMPACTFUL_SUGGESTIONS"
+                                    ]:
+                                        if "CODE_CHANGES_SUGGESTED" in suggestion:
+                                            for change in suggestion[
+                                                "CODE_CHANGES_SUGGESTED"
+                                            ]:
+                                                if change.get(
+                                                    "ACTION"
+                                                ) == "MODIFY" and change.get(
+                                                    "DIFF_CONTENT"
+                                                ):
+                                                    change["DIFF_CONTENT"] = (
+                                                        LLMOutputParser._repair_diff_content_headers(
+                                                            change["DIFF_CONTENT"]
                                                         )
-                                        cleaned_generated_text = json.dumps(temp_parsed)
-                                    elif "CODE_CHANGES" in temp_parsed:
-                                        for change in temp_parsed["CODE_CHANGES"]:
-                                            if change.get(
-                                                "ACTION"
-                                            ) == "MODIFY" and change.get(
-                                                "DIFF_CONTENT"
-                                            ):
-                                                change["DIFF_CONTENT"] = (
-                                                    LLMOutputParser._repair_diff_content_headers(
-                                                        change["DIFF_CONTENT"]
                                                     )
+                                    cleaned_generated_text = json.dumps(temp_parsed)
+                                elif "CODE_CHANGES" in temp_parsed:
+                                    for change in temp_parsed["CODE_CHANGES"]:
+                                        if change.get(
+                                            "ACTION"
+                                        ) == "MODIFY" and change.get("DIFF_CONTENT"):
+                                            change["DIFF_CONTENT"] = (
+                                                LLMOutputParser._repair_diff_content_headers(
+                                                    change["DIFF_CONTENT"]
                                                 )
-                                        cleaned_generated_text = json.dumps(temp_parsed)
-                            except json.JSONDecodeError:
-                                pass
-                            except Exception as e:
-                                self._log_with_context(
-                                    "warning",
-                                    f"Proactive diff header repair failed: {e}",
-                                    exc_info=True,
-                                )
+                                            )
+                                    cleaned_generated_text = json.dumps(temp_parsed)
+                        except json.JSONDecodeError:
+                            pass
+                        except Exception as e:
+                            self._log_with_context(
+                                "warning",
+                                f"Proactive diff header repair failed: {e}",
+                                exc_info=True,
+                            )
 
-                        if hasattr(output_schema, "model_validate_json"):
-                            output_schema.model_validate_json(cleaned_generated_text)
-                        else:
-                            output_schema.parse_raw(cleaned_generated_text)
-                    except ValidationError as ve:
-                        error_msg = f"LLM output failed schema validation: {ve}"
-                        self._log_with_context(
-                            "warning",
-                            error_msg,
-                            llm_output_snippet=generated_text[:200],
-                        )
-                        raise SchemaValidationError(
-                            error_type="EARLY_SCHEMA_VALIDATION_FAILED",
-                            field_path="LLM_OUTPUT",
-                            invalid_value=generated_text[:500],
-                            original_exception=ve,
-                        )
-
-                # Use native Gemini tokenizer for actual output token count for cost tracking
-                output_tokens = self.tokenizer.count_tokens(generated_text)
-
-                # Enforce token tracking for every successful call
-                self.token_tracker.record_usage(
-                    input_tokens + output_tokens,
-                    persona=persona_config.name if persona_config else "unknown",
-                )
-
-                is_truncated = output_tokens >= config.max_output_tokens * 0.95
-                self._log_with_context(
-                    "debug",
-                    f"Generated response (model: {current_model_name}, input: {input_tokens}, output: {output_tokens} tokens)",
-                )
-
-                self._log_with_context(
-                    "info",
-                    "LLM Response Received",
-                    model=current_model_name,
-                    output_tokens=output_tokens,
-                    full_generated_text=generated_text,
-                )
-
-                final_output_to_return = generated_text
-                if output_schema:
-                    final_output_to_return = cleaned_generated_text
-
-                # Set response in cache
-                prompt_cache.set(
-                    prompt,
-                    current_model_name,
-                    temperature,
-                    {
-                        "text": final_output_to_return,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                    },
-                )
-
-                return final_output_to_return, input_tokens, output_tokens, is_truncated
-
-            except SchemaValidationError as e:
-                if i < max_schema_retries - 1:
-                    current_prompt_for_llm = self._adjust_prompt_for_schema_validation(
-                        current_prompt_for_llm, output_schema
+                    if hasattr(output_schema, "model_validate_json"):
+                        output_schema.model_validate_json(cleaned_generated_text)
+                    else:
+                        output_schema.parse_raw(cleaned_generated_text)
+                except ValidationError as ve:
+                    error_msg = f"LLM output failed schema validation: {ve}"
+                    self._log_with_context(
+                        "warning", error_msg, llm_output_snippet=generated_text[:200]
                     )
-                    continue
-                else:
-                    raise e
-            except ServerError as e:
-                error_msg = str(e)
-                self._log_with_context(
-                    "error",
-                    f"Gemini ServerError encountered: {error_msg}",
-                    exc_info=True,
-                )
-                raise LLMProviderRequestError(
-                    message=f"Gemini ServerError: {error_msg}",
-                    provider_error_code=e.code if hasattr(e, "code") else 500,
+                    raise SchemaValidationError(
+                        error_type="EARLY_SCHEMA_VALIDATION_FAILED",
+                        field_path="LLM_OUTPUT",
+                        invalid_value=generated_text[:PROMPT_SNIPPET_LENGTH],
+                        original_exception=ve,
+                    ) from ve  # FIX: B904
+
+            # Use native Gemini tokenizer for actual output token count for cost tracking
+            output_tokens = self.tokenizer.count_tokens(generated_text)
+
+            # REMOVED: Enforce token tracking for every successful call as it's now in LLMOrchestrator
+            # self.token_tracker.record_usage(
+            #     input_tokens + output_tokens,
+            #     persona=persona_config.name if persona_config else "unknown",
+            # )
+
+            is_truncated = output_tokens >= config.max_output_tokens * 0.95
+            self._log_with_context(
+                "debug",
+                f"Generated response (model: {current_model_name}, input: {input_tokens}, output: {output_tokens} tokens)",
+            )
+
+            self._log_with_context(
+                "info",
+                "LLM Response Received",
+                model=current_model_name,
+                output_tokens=output_tokens,
+                full_generated_text=generated_text,
+            )
+
+            final_output_to_return = generated_text
+            if output_schema:
+                final_output_to_return = cleaned_generated_text
+
+            # REMOVED: Set response in cache as it's now in LLMOrchestrator
+            # prompt_cache.set(
+            #     prompt,
+            #     current_model_name,
+            #     temperature,
+            #     {
+            #         "text": final_output_to_return,
+            #         "input_tokens": input_tokens,
+            #         "output_tokens": output_tokens,
+            #     },
+            # )
+
+            return final_output_to_return, input_tokens, output_tokens, is_truncated
+
+        except ServerError as e:
+            error_msg = str(e)
+            self._log_with_context(
+                "error", f"Gemini ServerError encountered: {error_msg}", exc_info=True
+            )
+            raise LLMProviderRequestError(
+                message=f"Gemini ServerError: {error_msg}",
+                provider_error_code=e.code if hasattr(e, "code") else 500,
+                original_exception=e,
+            ) from e
+        except APIError as e:
+            error_msg = str(e)
+            error_msg_lower = error_msg.lower()
+            response_json = (
+                e.response_json
+                if hasattr(e, "response_json") and isinstance(e.response_json, dict)
+                else {
+                    "error": {
+                        "code": e.code if hasattr(e, "code") else 500,
+                        "message": error_msg,
+                        "raw_response": str(getattr(e, "response_json", None)),
+                    }
+                }
+            )
+
+            if hasattr(e, "code") and e.code == HTTP_UNAUTHORIZED:  # FIX: PLR2004 (401)
+                raise GeminiAPIError(
+                    f"Invalid API Key: {error_msg}",
+                    code=e.code,
+                    response_details=response_json,
                     original_exception=e,
                 ) from e
-            except APIError as e:
-                error_msg = str(e)
-                error_msg_lower = error_msg.lower()
-                response_json = (
-                    e.response_json
-                    if hasattr(e, "response_json") and isinstance(e.response_json, dict)
-                    else {
-                        "error": {
-                            "code": e.code if hasattr(e, "code") else 500,
-                            "message": error_msg,
-                            "raw_response": str(getattr(e, "response_json", None)),
-                        }
-                    }
-                )
-
-                if hasattr(e, "code") and e.code == 401:
-                    raise GeminiAPIError(
-                        f"Invalid API Key: {error_msg}",
-                        code=e.code,
-                        response_details=response_json,
-                        original_exception=e,
-                    ) from e
-                elif hasattr(e, "code") and e.code == 403:
-                    raise GeminiAPIError(
-                        f"API Key lacks permissions: {error_msg}",
-                        code=e.code,
-                        response_details=response_json,
-                        original_exception=e,
-                    ) from e
-                elif hasattr(e, "code") and e.code == 429:
-                    raise RateLimitExceededError(
-                        f"Rate limit exceeded: {error_msg}", original_exception=e
-                    ) from e
-                elif (
-                    hasattr(e, "code")
-                    and e.code == 400
-                    and (
-                        "context window exceeded" in error_msg_lower
-                        or "prompt too large" in error_msg_lower
-                    )
-                ):
-                    raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}",
-                        original_exception=e,
-                    ) from e
-                elif (
-                    hasattr(e, "code")
-                    and e.code == 400
-                    and (
-                        "invalid json" in error_msg_lower
-                        or "invalid json format" in error_msg_lower
-                        or "invalid response format" in error_msg_lower
-                    )
-                ):
-                    raise LLMProviderResponseError(
-                        error_type="API_INVALID_JSON",
-                        field_path="LLM_OUTPUT",
-                        invalid_value=error_msg[:500],
-                        original_exception=e,
-                    ) from e
-                else:
-                    raise LLMProviderError(error_msg, original_exception=e) from e
-            except socket.gaierror as e:
-                raise LLMUnexpectedError(
-                    f"Network error: {e}", original_exception=e
+            elif hasattr(e, "code") and e.code == HTTP_FORBIDDEN:  # FIX: PLR2004 (403)
+                raise GeminiAPIError(
+                    f"API Key lacks permissions: {error_msg}",
+                    code=e.code,
+                    response_details=response_json,
+                    original_exception=e,
                 ) from e
-            except Exception as e:
-                error_msg = str(e)
-                if (
-                    "context window exceeded" in error_msg.lower()
-                    or "prompt too large" in error_msg.lower()
-                ):
-                    raise LLMUnexpectedError(
-                        f"LLM context window exceeded: {error_msg}",
-                        original_exception=e,
-                    ) from e
+            elif (
+                hasattr(e, "code") and e.code == HTTP_TOO_MANY_REQUESTS
+            ):  # FIX: PLR2004 (429)
+                raise RateLimitExceededError(
+                    f"Rate limit exceeded: {error_msg}", original_exception=e
+                ) from e
+            elif (
+                hasattr(e, "code")
+                and e.code == HTTP_BAD_REQUEST  # FIX: PLR2004 (400)
+                and (
+                    "context window exceeded" in error_msg_lower
+                    or "prompt too large" in error_msg_lower
+                )
+            ):
+                raise LLMUnexpectedError(
+                    f"LLM context window exceeded: {error_msg}", original_exception=e
+                ) from e
+            elif (
+                hasattr(e, "code")
+                and e.code == HTTP_BAD_REQUEST  # FIX: PLR2004 (400)
+                and (
+                    "invalid json" in error_msg_lower
+                    or "invalid json format" in error_msg_lower
+                    or "invalid response format" in error_msg_lower
+                )
+            ):
+                raise LLMProviderResponseError(
+                    error_type="API_INVALID_JSON",
+                    field_path="LLM_OUTPUT",
+                    invalid_value=error_msg[:PROMPT_SNIPPET_LENGTH],
+                    original_exception=e,
+                ) from e
+            else:
                 raise LLMProviderError(error_msg, original_exception=e) from e
+        except socket.gaierror as e:
+            raise LLMUnexpectedError(f"Network error: {e}", original_exception=e) from e
+        except Exception as e:
+            error_msg = str(e)
+            if (
+                "context window exceeded" in error_msg.lower()
+                or "prompt too large" in error_msg.lower()
+            ):
+                raise LLMUnexpectedError(
+                    f"LLM context window exceeded: {error_msg}", original_exception=e
+                ) from e
+            raise LLMProviderError(error_msg, original_exception=e) from e
 
-        raise LLMProviderError(
-            "Failed to generate valid response after all schema retries."
-        )
+        # Removed final raise LLMProviderError as retries are external
 
     def close(self):
         """Explicitly releases resources held by the GeminiProvider.

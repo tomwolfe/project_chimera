@@ -1,12 +1,18 @@
 import logging
 import os
 import re
-from typing import Any, Dict, Optional, Tuple  # Added Dict, Any for validate_input_data
+from typing import Any, Optional  # Added Dict, Any for validate_input_data
 
 from google import genai
 from google.genai.errors import APIError
 
 logger = logging.getLogger(__name__)
+
+# --- Constants for Validation ---
+MIN_API_KEY_LENGTH = 35
+INVALID_CREDENTIALS_CODE = 401
+PERMISSION_DENIED_CODE = 403
+# --------------------------------
 
 
 # Placeholder for a secrets manager client (e.g., AWS Secrets Manager, Google Secret Manager)
@@ -56,14 +62,14 @@ def fetch_api_key() -> Optional[str]:
     return None
 
 
-def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
+def validate_gemini_api_key_format(api_key: str) -> tuple[bool, str]:
     """Validate Gemini API key format with multiple security layers."""
     if not api_key or not isinstance(api_key, str):
         return False, "API key is empty or invalid type"
 
     # Check length requirement
-    if len(api_key) < 35:
-        return False, "API key must be at least 35 characters long"
+    if len(api_key) < MIN_API_KEY_LENGTH:
+        return False, f"API key must be at least {MIN_API_KEY_LENGTH} characters long"
 
     # Check character set
     if not all(c.isalnum() or c in "-_" for c in api_key):
@@ -76,20 +82,20 @@ def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
     # is now redundant with the explicit length and character set checks above, so it is removed.
 
     # Check for common secret patterns that indicate exposure (heuristic)
-    if (
-        "AIza" not in api_key and "AIza" not in api_key[:10]
-    ):  # Common prefix for Google API keys
-        return False, "API key appears to be missing standard prefix (e.g., 'AIza')"
+    is_missing_prefix_heuristic = "AIza" not in api_key and "AIza" not in api_key[:10]
 
     # Check for embedded in code patterns (heuristic)
-    if (
+    is_exposed_pattern = (
         "github" in api_key.lower()
         or "gitlab" in api_key.lower()
         or "repo" in api_key.lower()
-    ):
+    )
+
+    if is_missing_prefix_heuristic or is_exposed_pattern:
+        # Combined two previous return points into one failure path to satisfy PLR0911
         return (
             False,
-            "API key appears to contain repository information, indicating potential exposure",
+            "API key appears suspicious (missing prefix or contains repository info)",
         )
 
     # Check for standard Google API key prefix
@@ -102,7 +108,7 @@ def validate_gemini_api_key_format(api_key: str) -> Tuple[bool, str]:
     return True, "API key format validated"
 
 
-def test_gemini_api_key_functional(api_key: str) -> Tuple[bool, str]:
+def test_gemini_api_key_functional(api_key: str) -> tuple[bool, str]:
     """Test if the Gemini API key is functional by making a minimal API call."""
     try:
         test_client = genai.Client(api_key=api_key)
@@ -110,9 +116,9 @@ def test_gemini_api_key_functional(api_key: str) -> Tuple[bool, str]:
         return True, "API key is valid and functional"
     except APIError as e:
         logger.error(f"API key functional test failed: {e}")
-        if e.code == 401:
+        if e.code == INVALID_CREDENTIALS_CODE:
             return False, "Invalid API key - access denied"
-        elif e.code == 403:
+        elif e.code == PERMISSION_DENIED_CODE:
             return False, "API key valid but lacks required permissions"
         else:
             return False, f"API error: {e.message}"
@@ -137,15 +143,11 @@ def validate_api_key(api_key: str) -> bool:
         r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",  # UUID pattern
     ]
 
-    for pattern in patterns:
-        if re.match(pattern, api_key):
-            return True
-
-    return False
+    return any(re.match(pattern, api_key) for pattern in patterns)
 
 
 # NEW FUNCTION: validate_input_data (from the diff, not present in original codebase)
-def validate_input_data(data: Dict[str, Any]) -> bool:
+def validate_input_data(data: dict[str, Any]) -> bool:
     """Validate input data for potential injection attacks."""
     # Check for common injection patterns
     # This is a placeholder; actual implementation would involve more robust checks
@@ -153,7 +155,7 @@ def validate_input_data(data: Dict[str, Any]) -> bool:
     if not isinstance(data, dict):
         return False
 
-    for key, value in data.items():
+    for _key, value in data.items():
         if isinstance(value, str):
             if re.search(r"(?i)\b(select|insert|update|delete|drop)\b", value):
                 return False  # Basic SQL injection detection

@@ -2,7 +2,7 @@
 import logging
 import time
 from functools import wraps
-from typing import Callable, Tuple, Type
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class CircuitBreaker:
         self,
         failure_threshold=5,  # Changed from 3 to 5 as per suggestion
         recovery_timeout=60,
-        expected_exception: Tuple[Type[Exception], ...] = (Exception,),
+        expected_exception: tuple[type[Exception], ...] = (Exception,),
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout

@@ -1,10 +1,10 @@
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from src.config.settings import ChimeraSettings
 from src.llm_tokenizers.base import Tokenizer
 from src.models import PersonaConfig  # NEW: Import PersonaConfig
-from src.token_tracker import TokenUsageTracker
 from src.utils.prompting.prompt_optimizer import PromptOptimizer
 
 

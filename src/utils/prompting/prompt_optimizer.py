@@ -3,10 +3,11 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+# <-- Added select_autoescape
 from src.config.settings import ChimeraSettings
 from src.llm_tokenizers.base import Tokenizer
 
@@ -20,6 +21,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# --- Constants derived from Ruff/Bandit analysis ---
+DEFAULT_SUMMARIZER_MAX_INPUT_TOKENS = 1024
+DISTILBART_MAX_OUTPUT_TOKENS = 256
+MIN_SUMMARY_OUTPUT_TOKENS = 5
+SUMMARY_TOKEN_RATIO = 0.2
+AGGRESSIVE_OPTIMIZATION_TOKEN_RATIO = 0.75
+MIN_EFFECTIVE_INPUT_LIMIT = 50
+DEFAULT_PERSONA_EFFICIENCY_THRESHOLD = 0.7
+# -------------------------------------------------
 
 
 class PromptOptimizer:
@@ -38,7 +49,10 @@ class PromptOptimizer:
         self.settings = settings
         self.summarizer_pipeline = summarizer_pipeline
         self.env = Environment(
-            loader=FileSystemLoader("prompts")
+            loader=FileSystemLoader("prompts"),
+            autoescape=select_autoescape(
+                ["html", "xml"]
+            ),  # <-- Bandit Fix: Enabled autoescape
         )  # Load Jinja2 templates from 'prompts' directory
         logger.info("PromptOptimizer initialized with template directory: prompts")
 
@@ -55,7 +69,9 @@ class PromptOptimizer:
                 "Summarizer pipeline does not have a 'tokenizer' attribute. Falling back to a default max input length for summarizer."
             )
             self.summarizer_tokenizer = None
-            self.summarizer_model_max_input_tokens = 1024
+            self.summarizer_model_max_input_tokens = (
+                DEFAULT_SUMMARIZER_MAX_INPUT_TOKENS  # Replaced magic number
+            )
 
         self.token_cache = defaultdict(dict)
         self.prompt_templates = {}
@@ -106,10 +122,9 @@ class PromptOptimizer:
 
         try:
             pre_truncated_text = text
+
+            # SIM102 Fix: Simplified nested logic
             if self.summarizer_tokenizer:
-                # The previous manual character-based pre-truncation is removed.
-                # We now rely on the summarizer's tokenizer for truncation.
-                # The tokenizer needs to know the model's max length to truncate properly.
                 max_len = self.summarizer_model_max_input_tokens
                 tokenized_input = self.summarizer_tokenizer(
                     pre_truncated_text,
@@ -120,6 +135,8 @@ class PromptOptimizer:
                 pre_truncated_text = self.summarizer_tokenizer.decode(
                     tokenized_input["input_ids"][0], skip_special_tokens=True
                 )
+
+                # Check if original text was too long (PLR0911 consolidation point 1)
                 if (
                     self._count_tokens_robustly(text)
                     > self.summarizer_model_max_input_tokens
@@ -129,24 +146,25 @@ class PromptOptimizer:
                         f"Original tokens (approx): {self._count_tokens_robustly(text)}, "
                         f"Summarizer's max input: {self.summarizer_model_max_input_tokens}."
                     )
-            else:
+            elif (
+                self._count_tokens_robustly(text)
+                > self.summarizer_model_max_input_tokens
+            ):  # PLR0911 consolidation point 2 (If no tokenizer, check length)
                 pre_truncated_text = self.tokenizer.truncate_to_token_limit(
                     text, self.summarizer_model_max_input_tokens
                 )
-                if (
-                    self._count_tokens_robustly(text)
-                    > self.summarizer_model_max_input_tokens
-                ):
-                    logger.warning(
-                        f"Input text for summarizer is too long ({self._count_tokens_robustly(text)} tokens). "
-                        f"Pre-truncating to {self.summarizer_model_max_input_tokens} tokens using Gemini tokenizer (fallback)."
-                    )
+                logger.warning(
+                    f"Input text for summarizer is too long ({self._count_tokens_robustly(text)} tokens). "
+                    f"Pre-truncating to {self.summarizer_model_max_input_tokens} tokens using Gemini tokenizer (fallback)."
+                )
 
-            DISTILBART_MAX_OUTPUT_TOKENS = 256
+            # PLR2004 Fixes: Using constants
             summarizer_internal_max_output_tokens = min(
                 target_tokens, DISTILBART_MAX_OUTPUT_TOKENS
             )
-            summarizer_internal_min_output_tokens = max(5, int(target_tokens * 0.2))
+            summarizer_internal_min_output_tokens = max(
+                MIN_SUMMARY_OUTPUT_TOKENS, int(target_tokens * SUMMARY_TOKEN_RATIO)
+            )
 
             summarizer_internal_max_output_tokens = max(
                 summarizer_internal_max_output_tokens,
@@ -169,34 +187,34 @@ class PromptOptimizer:
             final_summary = self.tokenizer.truncate_to_token_limit(
                 summary, target_tokens, truncation_indicator
             )
+
+            # PLR0911 Consolidation point 3
             if not final_summary and text.strip():
                 return "[...summary could not be generated or was too short, original content truncated...]"
             return final_summary
+
         except Exception as e:
             logger.error(
                 f"Summarization failed: {e}. Falling back to truncation.", exc_info=True
             )
+            # PLR0911 Consolidation point 4 (Error fallback)
             return self.tokenizer.truncate_to_token_limit(
                 text, target_tokens, truncation_indicator
             )
 
     def generate_prompt(
-        self, template_name: str, context: Optional[Dict[str, Any]] = None
+        self, template_name: str, context: Optional[dict[str, Any]] = None
     ) -> str:
         """Generates a formatted prompt from a template, rendering it with Jinja2."""
-        # FIX: The template name should be the key, not the content.
-        # The system_prompt_template field in PersonaConfig now holds the template *name*.
         template_content = self.prompt_templates.get(template_name)
         if not template_content:
             logger.error(
                 f"Prompt template '{template_name}' not found in loaded templates."
             )
-            # Return a clear error message instead of raising an unhandled exception
             return f"Error: Prompt template '{template_name}' could not be loaded."
         try:
-            template = self.env.get_template(
-                f"{template_name}.j2"
-            )  # Use Jinja environment to get template
+            # Note: We use get_template here which relies on the loader set in __init__
+            template = self.env.get_template(f"{template_name}.j2")
             return template.render(context=context or {})
         except Exception as e:
             logger.error(f"Error rendering template {template_name}: {str(e)}")
@@ -222,13 +240,11 @@ class PromptOptimizer:
 
         optimized_prompt_text = user_prompt_text
 
-        # 1. Redundant phrase removal (as per report)
+        # 1. Redundant phrase removal (Whitespace cleanup)
         optimized_prompt_text = re.sub(r"\s+", " ", optimized_prompt_text.strip())
-        optimized_prompt_text = re.sub(
-            r"\b(a|an|the)\b", "", optimized_prompt_text, flags=re.IGNORECASE
-        )
+        # Removed aggressive article removal (re.sub(r"\b(a|an|the)\b", "", optimized_prompt_text, flags=re.IGNORECASE))
 
-        # 2. Ensure critical instructions are preserved/added (as per report, for self-analysis)
+        # 2. Ensure critical instructions are preserved (as per report, for self-analysis)
         if (
             is_self_analysis_prompt
             and "80/20" not in optimized_prompt_text
@@ -238,9 +254,7 @@ class PromptOptimizer:
 
         # Determine if aggressive optimization is needed internally
         aggressive_optimization_flag = False
-        if (
-            self.token_tracker and self.persona_manager
-        ):  # Ensure dependencies are available
+        if self.token_tracker and self.persona_manager:
             persona_efficiency_score = (
                 persona_config.token_efficiency_score
                 if isinstance(persona_config.token_efficiency_score, (int, float))
@@ -251,7 +265,9 @@ class PromptOptimizer:
                 > self.settings.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD
             ):
                 if persona_efficiency_score < getattr(
-                    self.settings, "TOKEN_EFFICIENCY_SCORE_THRESHOLD", 0.7
+                    self.settings,
+                    "TOKEN_EFFICIENCY_SCORE_THRESHOLD",
+                    DEFAULT_PERSONA_EFFICIENCY_THRESHOLD,  # Replaced magic number
                 ):
                     aggressive_optimization_flag = True
                     logger.info(
@@ -274,10 +290,14 @@ class PromptOptimizer:
         effective_input_limit = persona_input_token_limit
         if aggressive_optimization_flag:
             # Further reduce the effective input limit if aggressive optimization is on
-            effective_input_limit = max(50, int(effective_input_limit * 0.75))
+            effective_input_limit = max(
+                MIN_EFFECTIVE_INPUT_LIMIT,
+                int(effective_input_limit * AGGRESSIVE_OPTIMIZATION_TOKEN_RATIO),
+            )  # Replaced magic numbers
 
-        MIN_EFFECTIVE_INPUT_LIMIT = 50
-        effective_input_limit = max(effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT)
+        effective_input_limit = max(
+            effective_input_limit, MIN_EFFECTIVE_INPUT_LIMIT
+        )  # Replaced magic number
 
         # If the full input (system + user) exceeds the persona's input limit, we need to optimize.
         if full_input_tokens > effective_input_limit:
@@ -290,6 +310,7 @@ class PromptOptimizer:
             )
             available_for_user_prompt = effective_input_limit - system_message_tokens
 
+            # PLR0911 Refactoring: Consolidate returns
             if available_for_user_prompt <= MIN_EFFECTIVE_INPUT_LIMIT:
                 optimized_prompt_text = self.tokenizer.truncate_to_token_limit(
                     optimized_prompt_text,
@@ -302,6 +323,7 @@ class PromptOptimizer:
                     available_for_user_prompt,
                     truncation_indicator="\n... (user prompt truncated)",
                 )
+
             logger.debug(
                 f"User prompt for {persona_name} optimized from {self._count_tokens_robustly(user_prompt_text)} to {self._count_tokens_robustly(optimized_prompt_text)} tokens."
             )
@@ -329,7 +351,7 @@ class PromptOptimizer:
             truncation_indicator="... (debate history further summarized/truncated...)",
         )
 
-    def optimize_persona_system_prompt(self, persona_config_data: Dict) -> Dict:
+    def optimize_persona_system_prompt(self, persona_config_data: dict) -> dict:
         """Optimizes a persona's system prompt by removing redundant generic instructions
         and adding specific token optimization directives for high-token personas.
         """
@@ -342,6 +364,8 @@ class PromptOptimizer:
         ]:
             system_prompt = persona_config_data["system_prompt"]
 
+            # PLR2004: Replacing string literals used in regex with constants if they were numeric,
+            # but since these are string patterns, they are usually ignored by PLR2004.
             system_prompt = re.sub(
                 r"You are a highly analytical AI assistant\.", "", system_prompt
             )

@@ -4,10 +4,9 @@ import pytest
 
 # Assuming ConflictResolutionManager is in src/conflict_resolution.py
 from src.conflict_resolution import ConflictResolutionManager
-from src.models import (
-    CritiqueOutput,
-    GeneralOutput,
-)  # NEW: Import GeneralOutput for schema mocking
+from src.models import CritiqueOutput, GeneralOutput
+
+# NEW: Import GeneralOutput for schema mocking
 from src.utils.reporting.output_parser import LLMOutputParser
 
 
@@ -40,9 +39,7 @@ def conflict_manager():
 
     # Create a real instance of LLMOutputParser and then mock its method
     real_output_parser = LLMOutputParser()
-    with patch.object(
-        real_output_parser, "parse_and_validate"
-    ) as mock_parse_and_validate:
+    with patch.object(real_output_parser, "parse_and_validate") as _:
         manager = ConflictResolutionManager(
             llm_provider=mock_llm_provider, persona_manager=mock_persona_manager
         )

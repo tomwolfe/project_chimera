@@ -3,7 +3,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 import streamlit as st
 
@@ -13,9 +13,7 @@ from src.persona_manager import PersonaManager
 
 # REMOVED: from src.context.context_analyzer import ContextRelevanceAnalyzer, CodebaseScanner # This caused a circular import
 from src.token_tracker import TokenUsageTracker
-from src.utils.validation.api_key_validator import (
-    validate_gemini_api_key_format,
-)  # Updated import
+from src.utils.validation.api_key_validator import validate_gemini_api_key_format
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +27,7 @@ def update_activity_timestamp():
 
 def _initialize_session_state(
     app_config: ChimeraSettings,
-    example_prompts: Dict[str, Any],
+    example_prompts: dict[str, Any],
     # NEW: Add these two parameters to the function signature
     get_context_relevance_analyzer_instance: Callable[
         [ChimeraSettings, Any],  # MODIFIED: Added Any for summarizer_pipeline_instance
@@ -166,11 +164,11 @@ def _initialize_session_state(
         st.session_state.api_key_format_message = message
 
 
-def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]):
+def reset_app_state(app_config: ChimeraSettings, example_prompts: dict[str, Any]):
     """Resets all session state variables to their default values."""
     # MODIFIED: Pass the cached functions to _initialize_session_state
     # The import from app is no longer needed here, as the functions are passed as arguments.
-    from app import (
+    from app import (  # noqa: PLC0415
         get_codebase_scanner_instance,
         get_context_relevance_analyzer_instance,
         get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
@@ -187,30 +185,33 @@ def reset_app_state(app_config: ChimeraSettings, example_prompts: Dict[str, Any]
 
 
 def check_session_expiration(
-    app_config: ChimeraSettings, example_prompts: Dict[str, Any]
+    app_config: ChimeraSettings, example_prompts: dict[str, Any]
 ):
     """Checks for session expiration due to inactivity."""
-    if "initialized" in st.session_state and st.session_state.initialized:
-        if (
+    if (  # FIX SIM102
+        "initialized" in st.session_state
+        and st.session_state.initialized
+        and (
             time.time() - st.session_state.last_activity_timestamp
             > SESSION_TIMEOUT_SECONDS
-        ):
-            st.warning(
-                "Your session has expired due to inactivity. Resetting the application."
-            )
-            # MODIFIED: Pass the cached functions to _initialize_session_state
-            # The import from app is no longer needed here, as the functions are passed as arguments.
-            from app import (
-                get_codebase_scanner_instance,
-                get_context_relevance_analyzer_instance,
-                get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
-            )
+        )
+    ):
+        st.warning(
+            "Your session has expired due to inactivity. Resetting the application."
+        )
+        # MODIFIED: Pass the cached functions to _initialize_session_state
+        # The import from app is no longer needed here, as the functions are passed as arguments.
+        from app import (  # noqa: PLC0415
+            get_codebase_scanner_instance,
+            get_context_relevance_analyzer_instance,
+            get_summarizer_pipeline_instance,  # NEW: Import the summarizer pipeline instance
+        )
 
-            _initialize_session_state(
-                app_config=app_config,
-                example_prompts=example_prompts,
-                get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
-                get_codebase_scanner_instance=get_codebase_scanner_instance,
-                _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Pass the _summarizer_pipeline_instance
-            )
-            st.rerun()
+        _initialize_session_state(
+            app_config=app_config,
+            example_prompts=example_prompts,
+            get_context_relevance_analyzer_instance=get_context_relevance_analyzer_instance,
+            get_codebase_scanner_instance=get_codebase_scanner_instance,
+            _get_summarizer_pipeline_instance=get_summarizer_pipeline_instance,  # MODIFIED: Pass the _summarizer_pipeline_instance
+        )
+        st.rerun()

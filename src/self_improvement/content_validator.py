@@ -1,11 +1,24 @@
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 # REMOVED: from jsonschema import validate # F401: unused import
 
 logger = logging.getLogger(__name__)
+
+# --- Constants for PLR2004 ---
+DEFAULT_KEYWORD_COUNT = 5
+DEFAULT_ALIGNMENT_THRESHOLD = 0.3
+STRICT_ALIGNMENT_THRESHOLD = 0.5
+DEVILS_ADVOCATE_MIN_SCORE = 0.05
+UNRELATED_TOPICS = [
+    "mars city",
+    "ethical ai framework",
+    "climate change solution",
+    "fastapi endpoint",
+]
+# -----------------------------
 
 
 class ContentAlignmentValidator:
@@ -17,7 +30,7 @@ class ContentAlignmentValidator:
         self,
         original_prompt: str,
         debate_domain: str,
-        focus_areas: Optional[List[str]] = None,
+        focus_areas: Optional[list[str]] = None,
     ):
         self.original_prompt = original_prompt.lower()
         self.debate_domain = debate_domain.lower()
@@ -140,7 +153,7 @@ class ContentAlignmentValidator:
                 # For other domains, extract keywords from the original prompt itself
                 # This is a basic heuristic and can be refined.
                 self.base_focus_areas = self._extract_keywords_from_prompt(
-                    self.original_prompt
+                    self.original_prompt, num_keywords=DEFAULT_KEYWORD_COUNT
                 )
         else:
             self.base_focus_areas = [area.lower() for area in focus_areas]
@@ -150,8 +163,8 @@ class ContentAlignmentValidator:
         )
 
     def _extract_keywords_from_prompt(
-        self, prompt: str, num_keywords: int = 5
-    ) -> List[str]:
+        self, prompt: str, num_keywords: int = DEFAULT_KEYWORD_COUNT
+    ) -> list[str]:
         """Extracts significant keywords from the prompt to form dynamic focus areas."""
         words = re.findall(r"\b\w+\b", prompt.lower())
         stop_words = {
@@ -233,8 +246,8 @@ class ContentAlignmentValidator:
         return [kw[0] for kw in sorted_keywords[:num_keywords]]
 
     def validate(
-        self, persona_name: str, persona_output: Union[str, Dict[str, Any]]
-    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:  # NEW: Return nuanced feedback
+        self, persona_name: str, persona_output: Union[str, dict[str, Any]]
+    ) -> tuple[bool, str, Optional[dict[str, Any]]]:  # NEW: Return nuanced feedback
         """Checks if the persona's output aligns with the defined focus areas.
 
         Args:
@@ -304,7 +317,7 @@ class ContentAlignmentValidator:
         # For non-synthesis personas in self-improvement, their focus is narrower.
         # We can dynamically adjust the focus areas for validation.
         if (
-            self.debate_domain == "self-improvement"
+            self.debate_domain == "self_improvement"
             and persona_name != "Self_Improvement_Analyst"
         ):
             if persona_name.startswith("Code_Architect"):  # Handle _TRUNCATED versions
@@ -438,10 +451,12 @@ class ContentAlignmentValidator:
         ):
             # FIX: Lowered threshold for Devils_Advocate to account for it critiquing lack of info
             alignment_threshold = (
-                0.05 if persona_name.startswith("Devils_Advocate") else 0.5
+                DEVILS_ADVOCATE_MIN_SCORE
+                if persona_name.startswith("Devils_Advocate")
+                else STRICT_ALIGNMENT_THRESHOLD
             )  # Very low threshold for Devils_Advocate
         else:
-            alignment_threshold = 0.3  # Default for others
+            alignment_threshold = DEFAULT_ALIGNMENT_THRESHOLD  # Default for others
 
         if nuanced_feedback["alignment_score"] < alignment_threshold:
             nuanced_feedback["is_aligned"] = False
@@ -453,13 +468,7 @@ class ContentAlignmentValidator:
 
         # Additionally, check for strong negative indicators (e.g., discussing unrelated topics too much)
         # These are examples of topics from other example prompts.
-        negative_keywords = [
-            "mars city",
-            "ethical ai framework",
-            "climate change solution",
-            "fastapi endpoint",
-        ]
-        for neg_kw in negative_keywords:
+        for neg_kw in UNRELATED_TOPICS:
             if (
                 neg_kw in output_text_lower
                 and "project chimera" not in output_text_lower
@@ -474,11 +483,3 @@ class ContentAlignmentValidator:
 
         nuanced_feedback["is_aligned"] = True
         return True, "Content aligned with focus areas.", nuanced_feedback
-
-    # DELETED: def validate_schema_compliance(self, response: dict, schema: dict) -> tuple[bool, str]:
-    # DELETED:     """Validates response against JSON schema with detailed error reporting"""
-    # DELETED:     try:
-    # DELETED:         # REMOVED: validate(instance=response, schema=schema) # F401: unused import
-    # DELETED:         return True, "Schema validation passed"
-    # DELETED:     except Exception as e:
-    # DELETED:         return False, f"Schema validation failed: {str(e)}"

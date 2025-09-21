@@ -3,7 +3,7 @@
 
 import datetime
 import traceback  # Import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class ChimeraError(Exception):
@@ -32,7 +32,7 @@ class ChimeraError(Exception):
         )  # Use format_stack for current frame
 
     # FIX: Modified to_dict to include error_code and use self.message
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert exception to structured dictionary for logging/reporting."""
         return {
             "error_type": self.__class__.__name__,
@@ -200,7 +200,7 @@ class TokenBudgetExceededError(ChimeraError):
         self,
         current_tokens: int,
         budget: int,
-        details: Optional[Dict[str, Any]] = None,
+        details: Optional[dict[str, Any]] = None,
         original_exception: Optional[Exception] = None,
     ):
         error_details = {

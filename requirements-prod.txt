@@ -10,6 +10,7 @@ sentence-transformers
 python-json-logger
 tiktoken # For token counting
 tenacity # NEW: For robust retry mechanisms
+cachetools
 
 # Code quality and security tools required by src/utils/code_validator.py in production
 pycodestyle

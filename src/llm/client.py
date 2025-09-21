@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Dict
+from typing import Any
 
 
 class LLMClient(abc.ABC):
@@ -8,7 +8,7 @@ class LLMClient(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate_response(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, **kwargs) -> dict[str, Any]:
         """Generates a response from the LLM based on the given prompt."""
         pass
 
@@ -23,7 +23,7 @@ class MockLLMClient(LLMClient):
     Returns predefined responses and token counts.
     """
 
-    def __init__(self, mock_response: Dict[str, Any] = None, mock_token_count: int = 0):
+    def __init__(self, mock_response: dict[str, Any] = None, mock_token_count: int = 0):
         self.mock_response = (
             mock_response
             if mock_response is not None
@@ -31,7 +31,7 @@ class MockLLMClient(LLMClient):
         )
         self.mock_token_count = mock_token_count
 
-    def generate_response(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, **kwargs) -> dict[str, Any]:
         """Simulates generating a response from the LLM.
         Prints the received prompt for debugging.
         """

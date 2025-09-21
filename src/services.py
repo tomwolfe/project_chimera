@@ -1,6 +1,6 @@
 # src/services.py
 import logging  # NEW: Import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)  # NEW: Initialize logger
 
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)  # NEW: Initialize logger
 # from src.api import get_external_data
 
 
-def process_user_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
+def process_user_request(request_data: dict[str, Any]) -> dict[str, Any]:
     """Processes the incoming user request data."""
     user_id = request_data.get("user_id")
     action = request_data.get("action")

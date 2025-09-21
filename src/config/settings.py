@@ -3,7 +3,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Self
+from typing import Self
 
 import yaml
 from pydantic import Field, model_validator
@@ -22,7 +22,8 @@ class ChimeraSettings(BaseSettings):
     # LLM Configuration
     GEMINI_API_KEY: str = Field("", description="Google Gemini API Key")
     model_name: str = Field(
-        "gemini-2.5-flash-lite", description="Default model for LLM calls."
+        "gemini-2.5-flash-lite-preview-09-2025",
+        description="Default model for LLM calls.",
     )
 
     max_retries: int = Field(
@@ -95,13 +96,13 @@ class ChimeraSettings(BaseSettings):
         le=64000,
         description="Default maximum input tokens for a persona's prompt if not specified.",
     )
-    max_tokens_per_persona: Dict[str, int] = Field(
+    max_tokens_per_persona: dict[str, int] = Field(
         default_factory=dict,
         description="Specific maximum input tokens for individual personas.",
     )
 
     # NEW: Domain keywords for prompt analysis, loaded from config.yaml
-    domain_keywords: Dict[str, List[str]] = Field(
+    domain_keywords: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Keywords for classifying prompts into domains.",
     )

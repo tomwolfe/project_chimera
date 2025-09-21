@@ -8,7 +8,7 @@ import logging
 import os
 import re  # Added for sanitization
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import yaml
 
@@ -40,10 +40,10 @@ class ConfigPersistence:
             with open(self.user_overrides_file, "w") as f:
                 yaml.dump({"frameworks": {}, "personas": {}}, f)
 
-    def load_personas_config(self) -> Dict[str, Any]:
+    def load_personas_config(self) -> dict[str, Any]:
         """Load the complete personas configuration including user overrides."""
         # Load base configuration
-        # Ensure personas.yaml exists, create a default if not
+        # Ensure personas.yaml exists, create a minimal default if not
         if not self.personas_file.exists():
             logger.warning(
                 f"Default personas file not found at '{self.personas_file}'. Creating a minimal default."
@@ -61,8 +61,8 @@ class ConfigPersistence:
         return self._merge_configs(base_config, user_overrides)
 
     def _merge_configs(
-        self, base: Dict[str, Any], overrides: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, base: dict[str, Any], overrides: dict[str, Any]
+    ) -> dict[str, Any]:
         """Merge base configuration with user overrides."""
         # Deep copy base config
         result = {**base}
@@ -107,7 +107,7 @@ class ConfigPersistence:
         sanitized_name = self._sanitize_framework_filename(framework_name)
         return self.custom_frameworks_dir / f"{sanitized_name}.json"
 
-    def _get_saved_custom_framework_names(self) -> List[str]:
+    def _get_saved_custom_framework_names(self) -> list[str]:
         """Returns a list of actual framework names found on disk by reading their files."""
         framework_names = []
         try:
@@ -137,7 +137,7 @@ class ConfigPersistence:
 
     def _load_custom_framework_config_from_file(
         self, framework_name: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """Loads a specific custom framework configuration from a JSON file."""
         filepath = self._get_filepath_for_framework(framework_name)
         try:
@@ -151,8 +151,8 @@ class ConfigPersistence:
             return None
 
     def save_user_framework(
-        self, framework_name: str, framework_data: Dict[str, Any]
-    ) -> Tuple[bool, str]:
+        self, framework_name: str, framework_data: dict[str, Any]
+    ) -> tuple[bool, str]:
         """Save a user-defined framework to a dedicated JSON file."""
         filepath = self._get_filepath_for_framework(framework_name)
         try:
@@ -189,7 +189,7 @@ class ConfigPersistence:
 
     def import_framework_from_file(
         self, file_content: str, original_filename: str
-    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    ) -> tuple[bool, str, Optional[dict[str, Any]]]:
         """Imports a framework configuration from a YAML/JSON string.
         Returns (success, message, loaded_config_data).
         """
@@ -205,7 +205,7 @@ class ConfigPersistence:
                     False,
                     "Invalid framework file format: Expected a dictionary.",
                     None,
-                )
+                )  # R1
 
             framework_name = config_data.get("framework_name") or config_data.get(
                 "name"
@@ -215,7 +215,7 @@ class ConfigPersistence:
                     False,
                     "Framework name not found in the file. Please ensure 'framework_name' or 'name' is present.",
                     None,
-                )
+                )  # R2
 
             # Validate basic structure (optional, but good practice)
             if "personas" not in config_data or "persona_sets" not in config_data:
@@ -223,27 +223,31 @@ class ConfigPersistence:
                     False,
                     "Invalid framework structure: Missing 'personas' or 'persona_sets' section.",
                     None,
-                )
+                )  # R3
 
             # Save to custom frameworks directory using the framework_name from the file
             success, message = self.save_user_framework(framework_name, config_data)
+
             if success:
-                return (
+                return (  # R4
                     True,
                     f"Framework '{framework_name}' imported and saved successfully.",
                     config_data,
                 )
             else:
-                return False, message, None
-        except (yaml.YAMLError, json.JSONDecodeError) as e:
-            logger.error(f"Error parsing framework file '{original_filename}': {e}")
-            return (
-                False,
-                f"Error parsing framework file '{original_filename}': {e}. Please ensure it's valid YAML or JSON.",
-                None,
-            )
-        except Exception as e:
-            logger.exception(
-                f"An unexpected error occurred during import of '{original_filename}': {e}"
-            )
-            return False, f"An unexpected error occurred during import: {e}", None
+                return False, message, None  # R5
+
+        except (
+            Exception
+        ) as e:  # Catches parsing errors and all others (R6 & R7 combined)
+            if isinstance(e, (yaml.YAMLError, json.JSONDecodeError)):
+                logger.error(f"Error parsing framework file '{original_filename}': {e}")
+                msg = f"Error parsing framework file '{original_filename}': {e}. Please ensure it's valid YAML or JSON."
+            else:
+                logger.exception(
+                    f"An unexpected error occurred during import of '{original_filename}': {e}"
+                )
+                msg = f"An unexpected error occurred during import: {e}"
+
+            # Single return point for all exceptions (R6/R7 consolidated)
+            return False, msg, None

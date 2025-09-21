@@ -29,7 +29,7 @@ jobs:
           # Execute analysis script and capture output
           python scripts/run_analysis.py > analysis_output.json
           # Validate the output against a schema
-          python -c "import json; import jsonschema; 
+          python -c "import json; import jsonschema;
                      with open('analysis_output.json', 'r') as f: data = json.load(f);
                      with open('schemas/analysis_schema.json', 'r') as f: schema = json.load(f);
                      try: jsonschema.validate(instance=data, schema=schema)

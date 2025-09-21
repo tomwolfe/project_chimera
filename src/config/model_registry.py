@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -15,16 +15,27 @@ class ModelSpecification(BaseModel):
 
 class ModelRegistry:
     def __init__(self):
-        self.models: Dict[str, ModelSpecification] = {}
+        self.models: dict[str, ModelSpecification] = {}
 
         # Default model configurations
         self.register_model(
             ModelSpecification(
-                name="gemini-2.5-flash-lite",
+                name="gemini-2.5-flash-lite-preview-09-2025",
                 max_input_tokens=2097152,  # Increased to reflect 2M context window
                 max_output_tokens=65536,  # Updated to 65k output tokens
                 cost_per_1k_input=0.075,
                 cost_per_1k_output=0.30,
+                capabilities=["reasoning", "coding"],
+            )
+        )
+
+        self.register_model(
+            ModelSpecification(
+                name="gemini-2.5-flash-preview-09-2025",
+                max_input_tokens=2097152,  # Increased to reflect 2M context window
+                max_output_tokens=65536,  # Updated to 65k output tokens
+                cost_per_1k_input=0.10,  # Assuming slightly higher cost for non-lite flash
+                cost_per_1k_output=0.40,
                 capabilities=["reasoning", "coding"],
             )
         )

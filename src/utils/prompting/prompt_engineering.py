@@ -1,6 +1,6 @@
 # src/utils/prompt_engineering.py
 import logging
-from typing import Any, Dict, Optional  # Added Tuple
+from typing import Any, Optional  # Added Tuple
 
 # Assuming necessary models and constants are available via imports
 # from src.models import PersonaConfig, LLMOutput, ...
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # --- MODIFICATION: Add format_prompt function ---
 def format_prompt(
     template: str,
-    codebase_context: Optional[Dict[str, Any]] = None,
+    codebase_context: Optional[dict[str, Any]] = None,
     is_self_analysis: bool = False,
     **kwargs,
 ) -> str:

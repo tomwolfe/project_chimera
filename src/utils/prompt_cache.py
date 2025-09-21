@@ -1,10 +1,10 @@
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class PromptCache:
     def __init__(self):
-        self.cache: Dict[str, Any] = {}
+        self.cache: dict[str, Any] = {}
 
     def _get_key(self, prompt: str, model_name: str, temperature: float) -> str:
         key_str = f"{model_name}:{temperature}:{prompt}"

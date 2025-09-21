@@ -1,6 +1,6 @@
 import datetime
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class ImprovementApplicator:
         self.applied_improvements = []
         self.improvement_log = []
 
-    def apply_improvement(self, improvement_suggestion: Dict[str, Any]) -> bool:
+    def apply_improvement(self, improvement_suggestion: dict[str, Any]) -> bool:
         """Applies an improvement suggestion. This is a placeholder for actual system modifications.
         In a real system, this would involve modifying prompts, code, or configurations.
         """
@@ -45,8 +45,8 @@ class ImprovementApplicator:
         logger.info("Improvement applied (logged).")
         return True
 
-    def get_applied_improvements(self) -> List[Dict[str, Any]]:
+    def get_applied_improvements(self) -> list[dict[str, Any]]:
         return self.applied_improvements
 
-    def get_improvement_log(self) -> List[Dict[str, Any]]:
+    def get_improvement_log(self) -> list[dict[str, Any]]:
         return self.improvement_log

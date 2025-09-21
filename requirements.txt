@@ -12,6 +12,7 @@ pytest-cov # Required for test coverage metrics collection in production
 tiktoken # For token counting
 tenacity # NEW: For robust retry mechanisms
 jinja2 # ADDED: For template support in prompt_optimizer
+cachetools
 
 # Code quality and security tools (used in core logic and pre-commit)
 pycodestyle # Keep as it's used by src/utils/code_validator.py

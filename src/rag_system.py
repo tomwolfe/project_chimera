@@ -1,18 +1,23 @@
 # src/rag_system.py
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
+# --- Constants for RAG System ---
+MIN_SIMILARITY_THRESHOLD = 0.5
+DEFAULT_SNIPPET_LENGTH = 200
+# --------------------------------
+
 
 class KnowledgeRetriever:
     def __init__(
         self,
-        raw_file_contents: Dict[str, str],
+        raw_file_contents: dict[str, str],
         cache_dir: str = "./.cache/rag_embeddings",
     ):
         self.raw_file_contents = raw_file_contents
@@ -21,7 +26,7 @@ class KnowledgeRetriever:
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.file_embeddings = self._load_or_compute_embeddings()
 
-    def _load_or_compute_embeddings(self) -> Dict[str, Any]:
+    def _load_or_compute_embeddings(self) -> dict[str, Any]:
         # For simplicity, recompute every time for now, but a real system would use hashing
         # to check if raw_file_contents changed before recomputing.
         logger.info("Computing RAG embeddings for codebase files...")
@@ -32,7 +37,7 @@ class KnowledgeRetriever:
         embeddings_list = self.model.encode(file_contents)
         return dict(zip(file_paths, embeddings_list))
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[str]:
+    def retrieve(self, query: str, top_k: int = 5) -> list[str]:
         if not self.file_embeddings:
             return []
         query_embedding = self.model.encode([query])[0]
@@ -48,10 +53,14 @@ class KnowledgeRetriever:
 
         retrieved_snippets = []
         for file_path, score in sorted_docs[:top_k]:
-            if score > 0.5:  # Only include sufficiently relevant documents
+            if score > MIN_SIMILARITY_THRESHOLD:  # Replaced 0.5
                 content = self.raw_file_contents.get(file_path, "")
                 # Simple snippet extraction (e.g., first 200 chars)
-                snippet = content[:200] + "..." if len(content) > 200 else content
+                snippet = (
+                    content[:DEFAULT_SNIPPET_LENGTH] + "..."
+                    if len(content) > DEFAULT_SNIPPET_LENGTH
+                    else content
+                )  # Replaced 200
                 retrieved_snippets.append(f"File: {file_path}\nContent: {snippet}")
         return retrieved_snippets
 

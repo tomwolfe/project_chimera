@@ -1,7 +1,10 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Define constant for token efficiency threshold (Fix for PLR2004)
+MAX_TOKEN_EFFICIENCY_THRESHOLD = 2000
 
 
 class CritiqueEngine:
@@ -10,7 +13,7 @@ class CritiqueEngine:
     def __init__(self):
         pass
 
-    def critique_output(self, prompt: str, response: str) -> Dict[str, Any]:
+    def critique_output(self, prompt: str, response: str) -> dict[str, Any]:
         """Generates a placeholder critique. In a real system, this would involve
         analyzing the response against the prompt and potentially using another
         LLM call or rule-based system to generate a detailed critique.
@@ -28,11 +31,14 @@ class CritiqueEngine:
         return critique
 
     def evaluate_system_performance(
-        self, metrics: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, metrics: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Evaluates system performance metrics and generates high-level critique points."""
         critique_points = []
-        if metrics.get("performance_efficiency", {}).get("token_efficiency", 0) > 2000:
+        if (
+            metrics.get("performance_efficiency", {}).get("token_efficiency", 0)
+            > MAX_TOKEN_EFFICIENCY_THRESHOLD
+        ):
             critique_points.append(
                 {
                     "AREA": "Efficiency",

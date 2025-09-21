@@ -1,3 +1,4 @@
+# tests/test_reasoning.py
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.token_tracker import TokenUsageTracker
 from src.utils.prompting.prompt_optimizer import PromptOptimizer
 from src.utils.reporting.output_parser import LLMOutputParser
+from src.llm.orchestrator import LLMOrchestrator # ADD THIS LINE
 
 
 @pytest.fixture
@@ -99,7 +101,7 @@ def mock_socratic_debate_instance():
     mock_metrics_collector.file_analysis_cache = {}
 
     mock_prompt_optimizer = MagicMock(spec=PromptOptimizer)
-    mock_prompt_optimizer.optimize_prompt.side_effect = lambda p, pn, mot, sm: p
+    mock_prompt_optimizer.optimize_prompt.side_effect = lambda p, pn, mot, sm, is_self_analysis_prompt: p # ADD is_self_analysis_prompt
     mock_prompt_optimizer.optimize_debate_history.side_effect = lambda h, mt: h
     mock_prompt_optimizer.tokenizer = mock_llm_provider.tokenizer
 
@@ -109,6 +111,16 @@ def mock_socratic_debate_instance():
     mock_summarizer_pipeline = MagicMock()
     mock_summarizer_pipeline.return_value = [{"summary_text": "Mock summary."}]
     mock_summarizer_pipeline.tokenizer.model_max_length = 1024
+
+    # ADD THIS BLOCK
+    mock_llm_orchestrator = MagicMock(spec=LLMOrchestrator)
+    mock_llm_orchestrator.call_llm.return_value = {
+        "text": '{"general_output": "Mock LLM output from orchestrator"}',
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        "is_truncated": False,
+    }
+    mock_llm_orchestrator.close.return_value = None
+    # END ADD THIS BLOCK
 
     # Patch the SocraticDebate constructor's dependencies to use our mocks
     with (
@@ -121,6 +133,7 @@ def mock_socratic_debate_instance():
         patch("core.FocusedMetricsCollector", return_value=mock_metrics_collector),
         patch("core.PromptOptimizer", return_value=mock_prompt_optimizer),
         patch("core.ContentAlignmentValidator", return_value=mock_content_validator),
+        patch("core.LLMOrchestrator", return_value=mock_llm_orchestrator), # ADD THIS LINE
     ):
         debate_instance = SocraticDebate(
             initial_prompt="Test prompt",
@@ -136,6 +149,7 @@ def mock_socratic_debate_instance():
             status_callback=MagicMock(),
             rich_console=MagicMock(),
             summarizer_pipeline_instance=mock_summarizer_pipeline,
+            llm_orchestrator=mock_llm_orchestrator, # ADD THIS LINE
         )
         # Ensure the instance's internal references are set to our mocks
         debate_instance.llm_provider = mock_llm_provider
@@ -144,6 +158,7 @@ def mock_socratic_debate_instance():
         debate_instance.metrics_collector = mock_metrics_collector
         debate_instance.prompt_optimizer = mock_prompt_optimizer
         debate_instance.content_validator = mock_content_validator
+        debate_instance.llm_orchestrator = mock_llm_orchestrator # ADD THIS LINE
 
         yield debate_instance
 
@@ -162,16 +177,27 @@ def test_complex_prompt_handling(mock_socratic_debate_instance):
     ]
 
     # Mock LLM responses for each step in the complex sequence
-    mock_socratic_debate_instance.llm_provider.generate.side_effect = [
-        ('{"general_output": "Initial idea for complex prompt"}', 10, 10, False),
-        ('{"general_output": "Critique of initial idea"}', 10, 10, False),
-        (
-            '{"CRITIQUE_SUMMARY": "Constructive feedback", "CRITIQUE_POINTS": [], "SUGGESTIONS": []}',
-            10,
-            10,
-            False,
-        ),
-        ('{"general_output": "Final synthesis for complex prompt"}', 10, 10, False),
+    mock_socratic_debate_instance.llm_orchestrator.call_llm.side_effect = [ # MODIFIED: Use orchestrator
+        {
+            "text": '{"general_output": "Initial idea for complex prompt"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },
+        {
+            "text": '{"general_output": "Critique of initial idea"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },
+        {
+            "text": '{"CRITIQUE_SUMMARY": "Constructive feedback", "CRITIQUE_POINTS": [], "SUGGESTIONS": []}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },
+        {
+            "text": '{"general_output": "Final synthesis for complex prompt"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },
     ]
     mock_socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
         {"general_output": "Initial idea for complex prompt", "malformed_blocks": []},
@@ -200,7 +226,7 @@ def test_complex_prompt_handling(mock_socratic_debate_instance):
     assert "Skeptical_Generator_Output" in intermediate_steps
     assert "Constructive_Critic_Output" in intermediate_steps
     assert "Impartial_Arbitrator_Output" in intermediate_steps
-    assert mock_socratic_debate_instance.llm_provider.generate.call_count == 4
+    assert mock_socratic_debate_instance.llm_orchestrator.call_llm.call_count == 4 # MODIFIED: Check orchestrator call count
 
 
 def test_error_case_handling(mock_socratic_debate_instance):
@@ -208,26 +234,27 @@ def test_error_case_handling(mock_socratic_debate_instance):
     such as LLM response validation failures and unexpected exceptions.
     """
     # Simulate an LLM response that consistently fails schema validation
-    mock_socratic_debate_instance.llm_provider.generate.side_effect = [
-        ('{"invalid_json": "malformed"}', 10, 10, False),  # First attempt
-        (
-            '{"invalid_json": "malformed_retry"}',
-            10,
-            10,
-            False,
-        ),  # Second attempt (retry)
-        (
-            '{"invalid_json": "malformed_final"}',
-            10,
-            10,
-            False,
-        ),  # Third attempt (max retries)
-        (
-            '{"general_output": "Fallback after errors"}',
-            10,
-            10,
-            False,
-        ),  # Final synthesis
+    mock_socratic_debate_instance.llm_orchestrator.call_llm.side_effect = [ # MODIFIED: Use orchestrator
+        {
+            "text": '{"invalid_json": "malformed"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },  # First attempt
+        {
+            "text": '{"invalid_json": "malformed_retry"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },  # Second attempt (retry)
+        {
+            "text": '{"invalid_json": "malformed_final"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },  # Third attempt (max retries)
+        {
+            "text": '{"general_output": "Fallback after errors"}',
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            "is_truncated": False,
+        },  # Final synthesis
     ]
     # Mock the parser to always return malformed blocks for the persona
     mock_socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
@@ -258,7 +285,7 @@ def test_error_case_handling(mock_socratic_debate_instance):
     )
     # Verify that the LLM was called multiple times due to retries
     assert (
-        mock_socratic_debate_instance.llm_provider.generate.call_count >= 3
+        mock_socratic_debate_instance.llm_orchestrator.call_llm.call_count >= 3 # MODIFIED: Check orchestrator call count
     )  # At least 3 calls for the failing persona + 1 for synthesis
 
 
@@ -291,5 +318,5 @@ def test_edge_cases(mock_socratic_debate_instance):
         "general_output", ""
     )  # Should still work with single persona
     assert (
-        mock_socratic_debate_instance.llm_provider.generate.call_count >= 1
+        mock_socratic_debate_instance.llm_orchestrator.call_llm.call_count >= 1 # MODIFIED: Check orchestrator call count
     )  # At least one call for the arbitrator

@@ -1,7 +1,7 @@
 # src/models.py
 import re
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import (
     BaseModel,
@@ -31,8 +31,8 @@ class PersonaConfig(BaseModel):
 
 class ReasoningFrameworkConfig(BaseModel):
     framework_name: str
-    personas: Dict[str, PersonaConfig]
-    persona_sets: Dict[str, List[str]]
+    personas: dict[str, PersonaConfig]
+    persona_sets: dict[str, list[str]]
     version: int = 1
 
     @model_validator(mode="after")
@@ -45,42 +45,42 @@ class ReasoningFrameworkConfig(BaseModel):
 class CiWorkflowStep(BaseModel):
     name: str
     uses: Optional[str] = None
-    runs_commands: Optional[List[str]] = None
+    runs_commands: Optional[list[str]] = None
     code_snippet: Optional[str] = None
 
 
 class CiWorkflowJob(BaseModel):
-    steps_summary: List[CiWorkflowStep]
+    steps_summary: list[CiWorkflowStep]
 
 
 class CiWorkflowConfig(BaseModel):
     name: Optional[str] = None
-    on_triggers: Optional[Dict[str, Any]] = None
-    jobs: Dict[str, CiWorkflowJob] = Field(default_factory=dict)
+    on_triggers: Optional[dict[str, Any]] = None
+    jobs: dict[str, CiWorkflowJob] = Field(default_factory=dict)
 
 
 class PreCommitHook(BaseModel):
     repo: str
     rev: str
     id: str
-    args: List[str] = Field(default_factory=list)
+    args: list[str] = Field(default_factory=list)
     code_snippet: Optional[str] = None
 
 
 class RuffConfig(BaseModel):
     line_length: Optional[int] = None
     target_version: Optional[str] = None
-    lint_select: Optional[List[str]] = None
-    lint_ignore: Optional[List[str]] = None
-    format_settings: Optional[Dict[str, Any]] = None
+    lint_select: Optional[list[str]] = None
+    lint_ignore: Optional[list[str]] = None
+    format_settings: Optional[dict[str, Any]] = None
     config_snippet: Optional[str] = None
 
 
 class BanditConfig(BaseModel):
-    exclude_dirs: Optional[List[str]] = None
+    exclude_dirs: Optional[list[str]] = None
     severity_level: Optional[str] = None
     confidence_level: Optional[str] = None
-    skip_checks: Optional[List[str]] = None
+    skip_checks: Optional[list[str]] = None
     config_snippet: Optional[str] = None
 
 
@@ -98,9 +98,9 @@ class ConfigurationAnalysisOutput(BaseModel):
     """Structured output for analyzing project configuration files."""
 
     ci_workflow: Optional[CiWorkflowConfig] = None
-    pre_commit_hooks: List[PreCommitHook] = Field(default_factory=list)
+    pre_commit_hooks: list[PreCommitHook] = Field(default_factory=list)
     pyproject_toml: Optional[PyprojectTomlConfig] = None
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -112,58 +112,58 @@ class DeploymentAnalysisOutput(BaseModel):
     dockerfile_present: bool = False
     dockerfile_healthcheck_present: bool = False
     dockerfile_non_root_user: bool = False
-    dockerfile_exposed_ports: List[int] = Field(default_factory=list)
+    dockerfile_exposed_ports: list[int] = Field(default_factory=list)
     dockerfile_multi_stage_build: bool = False
-    dockerfile_problem_snippets: List[str] = Field(default_factory=list)
+    dockerfile_problem_snippets: list[str] = Field(default_factory=list)
     prod_requirements_present: bool = False
     prod_dependency_count: int = 0
     dev_dependency_overlap_count: int = 0
-    unpinned_prod_dependencies: List[str] = Field(default_factory=list)
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    unpinned_prod_dependencies: list[str] = Field(default_factory=list)
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
 
 # NEW: Pydantic model for Context_Aware_Assistant's output
 class ContextAnalysisOutput(BaseModel):
-    key_modules: List[Dict[str, Any]] = Field(
+    key_modules: list[dict[str, Any]] = Field(
         ...,
         alias="key_modules",
         description="List of important modules/files and their purpose.",
     )
-    security_concerns: List[str] = Field(
+    security_concerns: list[str] = Field(
         ...,
         alias="security_concerns",
         description="List of potential security issues or patterns.",
     )
-    architectural_patterns: List[str] = Field(
+    architectural_patterns: list[str] = Field(
         ...,
         alias="architectural_patterns",
         description="List of observed architectural patterns or design principles.",
     )
-    performance_bottlenecks: List[str] = Field(
+    performance_bottlenecks: list[str] = Field(
         ...,
         alias="performance_bottlenecks",
         description="List of potential performance issues or areas for optimization.",
     )
 
     # NEW: Fields for persona-specific summaries (Improvement 3)
-    security_summary: Optional[Dict[str, Any]] = Field(
+    security_summary: Optional[dict[str, Any]] = Field(
         None,
         alias="security_summary",
         description="Summary tailored for Security_Auditor, including problem snippets.",
     )
-    architecture_summary: Optional[Dict[str, Any]] = Field(
+    architecture_summary: Optional[dict[str, Any]] = Field(
         None,
         alias="architecture_summary",
         description="Summary tailored for Code_Architect, including problem snippets.",
     )
-    devops_summary: Optional[Dict[str, Any]] = Field(
+    devops_summary: Optional[dict[str, Any]] = Field(
         None,
         alias="devops_summary",
         description="Summary tailored for DevOps_Engineer, including problem snippets.",
     )
-    testing_summary: Optional[Dict[str, Any]] = Field(
+    testing_summary: Optional[dict[str, Any]] = Field(
         None,
         alias="testing_summary",
         description="Summary tailored for Test_Engineer, including problem snippets.",
@@ -219,7 +219,7 @@ class CodeChange(BaseModel):
     )
     full_content: Optional[str] = Field(None, alias="FULL_CONTENT")
     # MODIFIED: Allow 'lines' to be Optional[List[str]] to accept 'null' from LLM
-    lines: Optional[List[str]] = Field(
+    lines: Optional[list[str]] = Field(
         None,
         alias="LINES",
         description="List of line numbers or content for REMOVE action",
@@ -325,13 +325,13 @@ class CodeChange(BaseModel):
 class LLMOutput(BaseModel):
     commit_message: str = Field(alias="COMMIT_MESSAGE")
     rationale: str = Field(alias="RATIONALE")
-    code_changes: List[CodeChange] = Field(alias="CODE_CHANGES")
+    code_changes: list[CodeChange] = Field(alias="CODE_CHANGES")
     conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION")
     unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
-    malformed_code_change_items: List[Dict[str, Any]] = Field(
+    malformed_code_change_items: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_code_change_items"
     )
 
@@ -380,7 +380,7 @@ class SelfImprovementFinding(BaseModel):
     solution: str
     impact: str
     priority_score: float = Field(ge=0.0, le=1.0)
-    code_changes: List[CodeChange]
+    code_changes: list[CodeChange]
     metrics: Optional[QuantitativeImpactMetrics] = None
     pareto_score: float = Field(
         ge=0.0, le=1.0, description="80/20 Pareto principle score (impact/effort)"
@@ -415,7 +415,7 @@ class SuggestionItem(BaseModel):
     validation_method: str = Field(
         ..., alias="VALIDATION_METHOD", description="How to validate the improvement."
     )
-    code_changes_suggested: List[CodeChange] = Field(
+    code_changes_suggested: list[CodeChange] = Field(
         default_factory=list,
         alias="CODE_CHANGES_SUGGESTED",
         description="Details of suggested code modifications.",
@@ -430,15 +430,15 @@ class CritiqueOutput(BaseModel):
     critique_summary: str = Field(
         ..., alias="CRITIQUE_SUMMARY", description="A concise summary of the critique."
     )
-    critique_points: List[Dict[str, Any]] = Field(
+    critique_points: list[dict[str, Any]] = Field(
         ..., alias="CRITIQUE_POINTS", description="Detailed points of critique."
     )
-    suggestions: List[SuggestionItem] = Field(
+    suggestions: list[SuggestionItem] = Field(
         default_factory=list,
         alias="SUGGESTIONS",
         description="Actionable suggestions for improvement.",
     )
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -448,7 +448,7 @@ class GeneralOutput(BaseModel):
     general_output: str = Field(
         ..., alias="general_output", description="The synthesized general output."
     )
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -497,21 +497,21 @@ class ConflictReport(BaseModel):
         "NO_CONFLICT",
     ] = Field(..., description="Type of conflict identified.")
     summary: str = Field(..., description="A concise summary of the conflict.")
-    involved_personas: List[str] = Field(
+    involved_personas: list[str] = Field(
         ..., description="Names of personas whose outputs are in conflict."
     )
     conflicting_outputs_snippet: str = Field(
         ...,
         description="A brief snippet or reference to the conflicting parts of the debate history.",
     )
-    proposed_resolution_paths: List[str] = Field(
+    proposed_resolution_paths: list[str] = Field(
         default_factory=list,
         description="2-3 high-level suggestions for resolving this conflict.",
     )
     conflict_found: bool = Field(
         ..., description="True if a conflict was identified, False otherwise."
     )
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -526,7 +526,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
         description="Overall summary of the self-improvement analysis.",
     )
     # MODIFIED: Changed impactful_suggestions to be a list of SuggestionItem objects
-    impactful_suggestions: List[SuggestionItem] = Field(
+    impactful_suggestions: list[SuggestionItem] = Field(
         ...,
         alias="IMPACTFUL_SUGGESTIONS",
         description="List of structured suggestions for improvement.",
@@ -537,7 +537,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
         le=1.0,
         description="AI's self-estimated impact score for the overall analysis (0.0 to 1.0).",
     )
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -570,13 +570,13 @@ class SelfImprovementAnalysisOutput(BaseModel):
     """Current version of the self-improvement analysis output schema with versioning."""
 
     version: str = Field(default="1.0", description="Schema version")
-    data: Dict = Field(
+    data: dict = Field(
         ..., description="Actual analysis data following version-specific schema"
     )
-    metadata: Dict = Field(
+    metadata: dict = Field(
         default_factory=dict, description="Additional metadata about the analysis"
     )
-    malformed_blocks: List[Dict[str, Any]] = Field(
+    malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
 
@@ -588,18 +588,20 @@ class SelfImprovementAnalysisOutput(BaseModel):
                 self.malformed_blocks.extend(v1_data.malformed_blocks)
                 self.data = v1_data.model_dump(by_alias=True)
             except ValidationError as e:
+                # B904 Fix 1
                 raise ValueError(
                     f"Data does not match schema version {self.version}: {str(e)}"
-                )
+                ) from e
             except Exception as e:  # Catch other potential errors during validation
+                # B904 Fix 2
                 raise ValueError(
                     f"An unexpected error occurred during V1 data validation: {str(e)}"
-                )
+                ) from e
         else:
             raise ValueError(f"Unsupported schema version: {self.version}")
         return self
 
-    def to_v1(self) -> Dict:
+    def to_v1(self) -> dict:
         """Convert to version 1 format for backward compatibility."""
         if self.version == "1.0":
             return self.data

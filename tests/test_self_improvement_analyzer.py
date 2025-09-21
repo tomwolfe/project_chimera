@@ -1,18 +1,12 @@
 import json
-from unittest.mock import MagicMock, patch  # NEW: Import patch
+from contextlib import suppress
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-try:
-    from src.models import (
-        SelfImprovementAnalysisOutputV1,
-        SuggestionItem,
-    )  # NEW: Import specific models
-    from src.personas.self_improvement_analyst import (
-        SelfImprovementAnalyst,
-    )  # Corrected import path
-except ModuleNotFoundError:
-    pass  # Allow test collection even if import fails in some setups
+with suppress(ModuleNotFoundError):
+    # Corrected import path
+    from src.personas.self_improvement_analyst import SelfImprovementAnalyst
 
 
 # Mocking necessary components for SelfImprovementAnalyst
@@ -47,8 +41,6 @@ def mock_metrics_collector():
     collector.analyze_historical_effectiveness.return_value = {
         "total_attempts": 0,
         "success_rate": 0.0,
-        "top_performing_areas": [],
-        "common_failure_modes": {},
         "historical_total_suggestions_processed": 0,
         "historical_successful_suggestions": 0,
         "historical_schema_validation_failures": {},
@@ -69,8 +61,8 @@ def mock_llm_provider():
     provider.tokenizer.max_output_tokens = 8192
     provider.generate.return_value = (
         '{"ANALYSIS_SUMMARY": "Mock analysis summary.", "IMPACTFUL_SUGGESTIONS": []}',
+        200,
         100,
-        50,
         False,
     )
     return provider
@@ -113,7 +105,6 @@ def test_self_improvement_analyzer_initialization(
     mock_tokenizer,
 ):
     """Tests the initialization of the SelfImprovementAnalyst."""
-    # Only run if SelfImprovementAnalyst was successfully imported
     if "SelfImprovementAnalyst" in locals():
         analyzer = SelfImprovementAnalyst(
             initial_prompt="Test prompt",  # NEW: Added initial_prompt
@@ -248,15 +239,17 @@ def test_analyze_self_improvement_plan_parsing_error(
     # The analyze method calls llm_provider.generate, which now performs early schema validation.
     # If the mock_llm_provider.generate returns "Invalid JSON response", it will raise SchemaValidationError.
     # The analyze method itself expects a list of suggestions.
-    # So, we need to mock the llm_provider.generate to return a valid SelfImprovementAnalysisOutputV1 dict,
-    # and then the test should check if the analyze method correctly extracts suggestions.
     # For this test, we'll mock the internal parsing to fail.
-    with patch(
-        "src.personas.self_improvement_analyst.json.loads",
-        side_effect=json.JSONDecodeError("Mock JSON error", doc="Invalid JSON", pos=0),
+    with (
+        patch(
+            "src.personas.self_improvement_analyst.json.loads",
+            side_effect=json.JSONDecodeError(
+                "Mock JSON error", doc="Invalid JSON", pos=0
+            ),
+        ),
+        pytest.raises(ValueError, match="Could not parse LLM output as JSON"),
     ):
-        with pytest.raises(ValueError, match="Could not parse LLM output as JSON"):
-            analyzer.analyze()
+        analyzer.analyze()
     mock_llm_provider.generate.assert_called_once()
 
 

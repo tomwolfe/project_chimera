@@ -10,12 +10,13 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import toml
 import yaml
 from pydantic import ValidationError  # ADDED: Import ValidationError
 
+from src.constants import CRITICAL_FILES_FOR_SELF_ANALYSIS  # NEW: Import the constant
 from src.context.context_analyzer import CodebaseScanner  # NEW: Import CodebaseScanner
 from src.models import (
     BanditConfig,
@@ -34,6 +35,7 @@ from src.self_improvement.improvement_applicator import ImprovementApplicator
 
 # NEW: Import modularized self-improvement components
 from src.self_improvement.strategy_manager import StrategyManager
+from src.token_tracker import TokenUsageTracker  # NEW: Import TokenUsageTracker
 from src.utils.core_helpers.code_utils import _get_code_snippet
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.path_utils import PROJECT_ROOT
@@ -43,7 +45,6 @@ from src.utils.validation.code_validator import (
     _run_ruff,
     validate_and_resolve_file_path_for_action,  # NEW: Import the new validation function
 )
-from src.constants import CRITICAL_FILES_FOR_SELF_ANALYSIS  # NEW: Import the constant
 
 logger = logging.getLogger(__name__)
 
@@ -69,20 +70,23 @@ class FocusedMetricsCollector:
         },
     }
 
+    MIN_ATTEMPTS_FOR_SUCCESS_RATE = 2  # FIX PLR2004
+
     def __init__(
         self,
         initial_prompt: str,
-        debate_history: List[Dict],
-        intermediate_steps: Dict[str, Any],
+        debate_history: list[dict],
+        intermediate_steps: dict[str, Any],
         tokenizer: Any,
         llm_provider: Any,
         persona_manager: Any,
         content_validator: Any,
         codebase_scanner: CodebaseScanner,  # NEW: Accept codebase_scanner
+        token_tracker: TokenUsageTracker,  # NEW: Accept token_tracker directly
     ):
         """Initializes the analyst with collected metrics and context."""
         self.initial_prompt = initial_prompt
-        self.metrics: Dict[str, Any] = {}  # Initialize internally
+        self.metrics: dict[str, Any] = {}  # Initialize internally
         self.debate_history = debate_history
         self.intermediate_steps = intermediate_steps
         self.codebase_scanner = codebase_scanner  # NEW: Store the scanner
@@ -101,19 +105,20 @@ class FocusedMetricsCollector:
             ImprovementApplicator()
         )  # NEW: Initialize ImprovementApplicator
         self.codebase_path = PROJECT_ROOT
-        self.collected_metrics: Dict[str, Any] = {}
-        self.reasoning_quality_metrics: Dict[str, Any] = {}
-        self.file_analysis_cache: Dict[
-            str, Dict[str, Any]
+        self.collected_metrics: dict[str, Any] = {}
+        self.reasoning_quality_metrics: dict[str, Any] = {}
+        self.file_analysis_cache: dict[
+            str, dict[str, Any]
         ] = {}  # This cache will be cleared at the start of collect_all_metrics
+        self.token_tracker = token_tracker  # NEW: Store token_tracker directly
 
         self._current_run_total_suggestions_processed: int = 0
         self._current_run_successful_suggestions: int = 0
-        self._current_run_schema_validation_failures: Dict[str, int] = defaultdict(int)
+        self._current_run_schema_validation_failures: dict[str, int] = defaultdict(int)
 
         self._historical_total_suggestions_processed: int = 0
         self._historical_successful_suggestions: int = 0
-        self._historical_schema_validation_failures: Dict[str, int] = defaultdict(int)
+        self._historical_schema_validation_failures: dict[str, int] = defaultdict(int)
 
         self.critical_metric: Optional[str] = None
 
@@ -128,7 +133,7 @@ class FocusedMetricsCollector:
             int, historical_summary.get("historical_schema_validation_failures", {})
         )
 
-    def _identify_critical_metric(self, collected_metrics: Dict[str, Any]):
+    def _identify_critical_metric(self, collected_metrics: dict[str, Any]):
         """Identify the single most critical metric that's furthest from threshold."""
         critical_metric = None
         max_deviation = -1
@@ -148,7 +153,7 @@ class FocusedMetricsCollector:
 
         self.critical_metric = critical_metric
 
-    def analyze_reasoning_quality(self, analysis_output: Dict[str, Any]):
+    def analyze_reasoning_quality(self, analysis_output: dict[str, Any]):
         """Analyzes the quality of reasoning in the debate process and final output."""
         debate_history = self.debate_history
 
@@ -613,7 +618,7 @@ class FocusedMetricsCollector:
             try:
                 with open(dockerfile_path, encoding="utf-8") as f:
                     dockerfile_content = f.read()
-                    # dockerfile_lines = dockerfile_content.splitlines() # Unused variable # MODIFIED: Removed unused variable
+                    # dockerfile_lines = dockerfile_content.splitlines() # Unused variable
 
                 if "HEALTHCHECK" not in dockerfile_content:
                     deployment_metrics_data["dockerfile_problem_snippets"].append(
@@ -665,10 +670,10 @@ class FocusedMetricsCollector:
             try:
                 with open(prod_req_path, encoding="utf-8") as f:
                     for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            if not re.search(r"[=~><]=", line):
-                                unpinned_prod_deps.append(line)
+                        stripped_line = line.strip()  # FIX PLW2901
+                        if stripped_line and not stripped_line.startswith("#"):
+                            if not re.search(r"[=~><]=", stripped_line):
+                                unpinned_prod_deps.append(stripped_line)
                             prod_deps.add(
                                 line.split("==")[0]
                                 .split(">=")[0]
@@ -696,8 +701,8 @@ class FocusedMetricsCollector:
             try:
                 with open(dev_req_path, encoding="utf-8") as f:
                     for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#"):
+                        stripped_line = line.strip()  # FIX PLW2901
+                        if stripped_line and not stripped_line.startswith("#"):
                             dev_deps.add(
                                 line.split("==")[0]
                                 .split(">=")[0]
@@ -719,7 +724,7 @@ class FocusedMetricsCollector:
 
         return DeploymentAnalysisOutput(**deployment_metrics_data)
 
-    def collect_codebase_access_metrics(self) -> Dict[str, Any]:
+    def collect_codebase_access_metrics(self) -> dict[str, Any]:
         """Collect metrics related to codebase access availability."""
         metrics = {
             "codebase_available": False,
@@ -744,28 +749,29 @@ class FocusedMetricsCollector:
 
         return metrics
 
-    def _collect_token_usage_stats(self) -> Dict[str, Any]:
-        """Collects token usage statistics from debate intermediate steps."""
-        # FIX: Correctly aggregate total tokens and cost from per-persona usage,
-        # as the top-level 'Total_Tokens_Used' might not be reliably populated.
-        total_tokens = sum(
-            v
-            for k, v in self.intermediate_steps.items()
-            if k.endswith("_Tokens_Used") and not k.startswith("Total_")
-        )
-        total_cost = sum(
-            v
-            for k, v in self.intermediate_steps.items()
-            if k.endswith("_Estimated_Cost_USD") and not k.startswith("Total_")
+    def _collect_token_usage_stats(self) -> dict[str, Any]:
+        """Collects token usage statistics from the TokenUsageTracker."""
+        granular_usage = (
+            self.token_tracker.get_granular_usage_summary()
+        )  # MODIFIED: Use self.token_tracker directly
+
+        total_tokens = granular_usage["total_tokens"]
+        total_prompt_tokens = granular_usage["total_prompt_tokens"]
+        total_completion_tokens = granular_usage["total_completion_tokens"]
+
+        # Calculate total cost based on granular tokens
+        total_cost = self.llm_provider.calculate_usd_cost(
+            total_prompt_tokens, total_completion_tokens
         )
 
-        phase_token_usage = {}
-        for key, value in self.intermediate_steps.items():
-            if key.endswith("_Tokens_Used") and not key.startswith(
-                ("Total_", "context_", "synthesis_", "debate_")
-            ):
-                persona_name = key.replace("_Tokens_Used", "")
-                phase_token_usage[persona_name] = value
+        persona_token_breakdown = {
+            p_name: p_data["total"]
+            for p_name, p_data in granular_usage["persona_breakdown"].items()
+        }
+        persona_successful_turns = {
+            p_name: p_data["successful_turns"]
+            for p_name, p_data in granular_usage["persona_breakdown"].items()
+        }
 
         suggestions_count = 0
         try:
@@ -797,12 +803,16 @@ class FocusedMetricsCollector:
 
         return {
             "total_tokens": total_tokens,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
             "total_cost_usd": total_cost,
-            "persona_token_usage": phase_token_usage,
+            "persona_token_usage": persona_token_breakdown,
+            "persona_successful_turns": persona_successful_turns,
             "token_efficiency": token_efficiency,
+            "granular_details": granular_usage,  # Include full granular details
         }
 
-    def _analyze_debate_efficiency(self) -> Dict[str, Any]:
+    def _analyze_debate_efficiency(self) -> dict[str, Any]:
         """Analyzes the efficiency of the debate process."""
         efficiency_summary = {
             "num_turns": len(self.intermediate_steps.get("Debate_History", [])),
@@ -833,7 +843,7 @@ class FocusedMetricsCollector:
 
         return efficiency_summary
 
-    def _assess_test_coverage(self) -> Dict[str, Any]:
+    def _assess_test_coverage(self) -> dict[str, Any]:
         """Assesses test coverage for the codebase.
         Executes pytest to check for basic test suite health.
         """
@@ -868,15 +878,13 @@ class FocusedMetricsCollector:
 
     @classmethod
     def _analyze_python_file_ast(
-        cls, content: str, content_lines: List[str], file_path: str
-    ) -> List[Dict[str, Any]]:
+        cls, content: str, content_lines: list[str], file_path: str
+    ) -> list[dict[str, Any]]:
         """Analyzes a Python file's AST for complexity, lines of code in functions,
         number of functions, code smells, and potential bottlenecks.
         """
         try:
-            from src.utils.core_helpers.code_utils import (
-                ComplexityVisitor,
-            )  # Local import
+            from src.utils.core_helpers.code_utils import ComplexityVisitor
 
             tree = ast.parse(content)
             visitor = ComplexityVisitor(content_lines)
@@ -893,7 +901,7 @@ class FocusedMetricsCollector:
             return []
 
     @staticmethod
-    def _generate_suggestion_id(suggestion: Dict) -> str:
+    def _generate_suggestion_id(suggestion: dict) -> str:
         """Generates a consistent ID for a suggestion to track its impact over time."""
         import hashlib
 
@@ -904,9 +912,9 @@ class FocusedMetricsCollector:
         )
         return hashlib.sha256(hash_input.encode()).hexdigest()[:8]
 
-    def identify_successful_patterns(self, records: List[Dict]) -> Dict[str, float]:
+    def identify_successful_patterns(self, records: list[dict]) -> dict[str, float]:
         """Identify patterns that lead to successful self-improvement attempts."""
-        patterns = defaultdict(int)  # Stores counts of each pattern
+        # patterns = defaultdict(int)  # Stores counts of each pattern # FIX F841
         successful_attempts_per_pattern = defaultdict(int)
         total_attempts_per_pattern = defaultdict(int)
 
@@ -948,7 +956,7 @@ class FocusedMetricsCollector:
 
         return pattern_success_rates
 
-    def analyze_historical_effectiveness(self) -> Dict[str, Any]:
+    def analyze_historical_effectiveness(self) -> dict[str, Any]:
         """Analyzes historical improvement data to identify patterns of success."""
         history_file = Path("data/improvement_history.jsonl")
         if not history_file.exists():
@@ -1003,7 +1011,7 @@ class FocusedMetricsCollector:
                     "attempts": data["attempts"],
                 }
                 for area, data in area_success.items()
-                if data["attempts"] > 2
+                if data["attempts"] > self.MIN_ATTEMPTS_FOR_SUCCESS_RATE
             ]
             top_areas.sort(key=lambda x: x["success_rate"], reverse=True)
 
@@ -1036,7 +1044,7 @@ class FocusedMetricsCollector:
             }
 
     @staticmethod
-    def _identify_common_failure_modes(records: List[Dict]) -> Dict[str, int]:
+    def _identify_common_failure_modes(records: list[dict]) -> dict[str, int]:
         """Identifies common patterns in failed improvements by analyzing malformed_blocks and error types."""
         failure_modes_count = defaultdict(int)
 
@@ -1048,7 +1056,9 @@ class FocusedMetricsCollector:
                             block.get("type", "UNKNOWN_MALFORMED_BLOCK")
                         ] += 1
 
-                for category, changes in record.get("performance_changes", {}).items():
+                for _category, changes in record.get(
+                    "performance_changes", {}
+                ).items():  # FIX B007
                     if "schema_validation_failures" in changes and changes[
                         "schema_validation_failures"
                     ].get("after", 0) > changes["schema_validation_failures"].get(
@@ -1112,13 +1122,13 @@ class FocusedMetricsCollector:
             )
         return 0.0
 
-    def _get_historical_schema_validation_failures(self) -> Dict[str, int]:
+    def _get_historical_schema_validation_failures(self) -> dict[str, int]:
         """Returns the historical counts of schema validation failures for self-improvement suggestions."""
         return self._historical_schema_validation_failures
 
     def _validate_and_fix_code_suggestion(
-        self, code_change: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, code_change: dict[str, Any]
+    ) -> dict[str, Any]:
         """Internally validates a code suggestion using Ruff and Bandit.
         If Ruff formatting issues are found, it attempts to auto-fix them.
         Returns the (potentially fixed) code change and any remaining issues.
@@ -1197,8 +1207,8 @@ class FocusedMetricsCollector:
         return code_change
 
     def _process_suggestions_for_quality(
-        self, suggestions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, suggestions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Processes and validates suggested code changes within each suggestion.
         This includes path correction, action validation, and internal code quality checks.
         """
@@ -1248,7 +1258,7 @@ class FocusedMetricsCollector:
                 if resolved_path.endswith(".py") and code_change_data.get(
                     "FULL_CONTENT"
                 ):
-                    code_change_data = self._validate_and_fix_code_suggestion(
+                    self._validate_and_fix_code_suggestion(  # FIX PLW2901
                         code_change_data
                     )
 
@@ -1341,7 +1351,7 @@ class FocusedMetricsCollector:
             f"Collected code quality and security metrics for {len(files_to_analyze)} relevant files."
         )
 
-    def collect_all_metrics(self) -> Dict[str, Any]:
+    def collect_all_metrics(self) -> dict[str, Any]:
         """Collects all objective metrics that are available *before* the synthesis persona runs.
         This is the main entry point for `core.py` to get metrics for the synthesis prompt.
         """

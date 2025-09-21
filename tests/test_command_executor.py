@@ -130,7 +130,7 @@ class TestCommandExecutor(unittest.TestCase):
             returncode=1, cmd=command, stderr="Error message"
         )
 
-        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        with pytest.raises(subprocess.CalledProcessError):
             execute_command_safely(command, check=True)
         self.mock_run.assert_called_once_with(
             [sys.executable, "-m", "false_command"],

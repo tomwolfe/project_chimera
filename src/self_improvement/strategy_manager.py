@@ -1,7 +1,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ class StrategyManager:
         self.strategy_file = Path(strategy_file)
         self.current_strategy = self._load_strategy()
 
-    def _load_strategy(self) -> Dict[str, Any]:
+    def _load_strategy(self) -> dict[str, Any]:
         """Loads the self-improvement strategy from the documentation file."""
         if self.strategy_file.exists():
             try:
@@ -77,16 +77,16 @@ class StrategyManager:
             ],
         }
 
-    def get_current_strategy(self) -> Dict[str, Any]:
+    def get_current_strategy(self) -> dict[str, Any]:
         return self.current_strategy
 
-    def update_strategy(self, new_strategy: Dict[str, Any]):
+    def update_strategy(self, new_strategy: dict[str, Any]):
         # Logic to update the strategy document and internal state
         logger.info("Updating strategy (in-memory only for now)...")
         self.current_strategy = new_strategy
         # TODO: Implement saving the strategy back to a file (e.g., by modifying the markdown)
 
-    def get_improvement_goals(self) -> List[str]:
+    def get_improvement_goals(self) -> list[str]:
         return self.current_strategy.get("key_areas", [])
 
     def get_framework_step_goal(self, step: str) -> str:

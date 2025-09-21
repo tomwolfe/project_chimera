@@ -1,19 +1,27 @@
 # src/persona/routing.py
-"""Dynamic persona routing system that selects appropriate personas
+"""
+Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
-import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
-
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING
+import re
+import logging
+from functools import lru_cache
 
-from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 from src.models import PersonaConfig
+from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
+
+# NEW: Define constants for magic numbers found by Ruff
+MAX_CONCISE_WORD_COUNT = 100
+CODE_QUALITY_THRESHOLD = 0.7  # Used for both quality and complexity checks
+TEST_FILE_THRESHOLD = 3
+CODE_FILE_THRESHOLD = 5
 
 # NEW: Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
@@ -30,7 +38,7 @@ def calculate_persona_performance(turn):
         score += 0.3
 
     # Check if the response was concise and relevant
-    if len(turn.content.split()) < 100:
+    if len(turn.content.split()) < MAX_CONCISE_WORD_COUNT:  # Fixed PLR2004 (100)
         score += 0.2
 
     return score
@@ -196,7 +204,8 @@ class PersonaRouter:
         context_analysis_results: Optional[Dict[str, Any]],
         domain: str,
     ) -> bool:
-        """Determine if Test_Engineer persona is needed based on prompt, context, and domain.
+        """
+        Determine if Test_Engineer persona is needed based on prompt, context, and domain.
         For 'Self-Improvement' domain, Test_Engineer is always relevant.
         """
         if domain.lower() == "self-improvement":
@@ -272,7 +281,8 @@ class PersonaRouter:
                     "Prioritized Security_Auditor due to security concerns from context analysis."
                 )
 
-            if avg_code_quality < 0.7 or avg_complexity > 0.7:
+            # Fixed PLR2004 (0.7) and SIM102 (nested if)
+            if avg_code_quality < CODE_QUALITY_THRESHOLD or avg_complexity > CODE_QUALITY_THRESHOLD:
                 self._insert_persona_before_arbitrator(sequence, "Code_Architect")
                 logger.info(
                     "Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis."
@@ -304,14 +314,14 @@ class PersonaRouter:
             )
 
             # If Code_Architect is in the sequence but no strong architectural focus is detected, remove it.
+            # SIM102 Fix: Removed redundant inner 'if "Code_Architect" in sequence:' check
             if not (
                 architectural_keywords_in_prompt or context_has_architectural_focus
             ):
-                if "Code_Architect" in sequence:
-                    sequence.remove("Code_Architect")
-                    logger.info(
-                        "Removed Code_Architect from sequence as no strong architectural context/keywords detected."
-                    )
+                sequence.remove("Code_Architect")
+                logger.info(
+                    "Removed Code_Architect from sequence as no strong architectural context/keywords detected."
+                )
 
             # Handle potential misclassification for "building architecture" vs "software architecture"
             # This is a more nuanced check to prevent removing Code_Architect for valid software architecture prompts.
@@ -344,7 +354,7 @@ class PersonaRouter:
                 and software_count == 0
             ):
                 logger.warning(
-                    "Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
+                    f"Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
                 )
                 if "Code_Architect" in sequence:
                     sequence.remove("Code_Architect")
@@ -439,7 +449,9 @@ class PersonaRouter:
         intermediate_results: Optional[Dict[str, Any]] = None,
         context_analysis_results: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
-        """Determine the optimal sequence of personas for processing the prompt."""
+        """
+        Determine the optimal sequence of personas for processing the prompt.
+        """
         prompt_lower = prompt.lower()
 
         if self.prompt_analyzer.is_self_analysis_prompt(prompt):
@@ -532,15 +544,14 @@ class PersonaRouter:
                     # append Arbitrator at the end.
                     base_sequence.append("Impartial_Arbitrator")
 
+
             if "Devils_Advocate" in base_sequence:
                 base_sequence.remove("Devils_Advocate")
 
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
-            elif (
-                "Self_Improvement_Analyst" in base_sequence
-            ):  # Standardized to snake_case
+            elif "Self_Improvement_Analyst" in base_sequence:  # Standardized to snake_case
                 insert_pos_for_advocate = base_sequence.index(
                     "Self_Improvement_Analyst"  # Standardized to snake_case
                 )
@@ -637,10 +648,12 @@ class PersonaRouter:
                 if file_path.endswith((".py", ".js", ".ts", ".java", ".go"))
             )
 
-            if test_file_count > 3 and "Test_Engineer" not in final_sequence:
+            # Fixed PLR2004 (3)
+            if test_file_count > TEST_FILE_THRESHOLD and "Test_Engineer" not in final_sequence:
                 self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
 
-            if code_file_count > 5:
+            # Fixed PLR2004 (5)
+            if code_file_count > CODE_FILE_THRESHOLD:
                 if "Code_Architect" not in final_sequence:
                     self._insert_persona_before_arbitrator(
                         final_sequence, "Code_Architect"

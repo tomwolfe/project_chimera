@@ -3,7 +3,7 @@ import logging
 import time
 from collections import defaultdict
 from functools import wraps
-from typing import Callable, Dict, List, Tuple  # Import List and Tuple
+from typing import Callable  # Import List and Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +34,14 @@ class RateLimiter:
         self.calls = calls
         self.period = period
         self.key_func = key_func  # Store the provided key_func
-        self.timestamps: Dict[str, List[float]] = defaultdict(list)
+        self.timestamps: dict[str, list[float]] = defaultdict(list)
         self.warning_threshold = 0.7  # NEW: Threshold for warning (70% of limit)
 
         self.logger = logging.getLogger(__name__)
 
     def check_and_record_call(
         self, key: str, dry_run: bool = False
-    ) -> Tuple[bool, int, float, float]:
+    ) -> tuple[bool, int, float, float]:
         """Checks if a call is allowed, records it if not a dry run, and returns usage stats.
         Returns: (is_allowed, current_count, time_to_wait, usage_percent)
         """

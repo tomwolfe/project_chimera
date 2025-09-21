@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import ValidationError
 
@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# --- FIX: PLR2004: Define constant for max retries ---
+MAX_SELF_CORRECTION_RETRIES = 2
+
 
 class ConflictResolutionManager:
     """Manages the resolution of conflicts or malformed outputs from LLM personas.
@@ -30,11 +33,12 @@ class ConflictResolutionManager:
         logger.info("ConflictResolutionManager initialized.")
         self.llm_provider = llm_provider
         self.persona_manager = persona_manager
-        self.max_self_correction_retries = 2
+        # --- FIX: Use constant ---
+        self.max_self_correction_retries = MAX_SELF_CORRECTION_RETRIES
         self.settings = ChimeraSettings()
         self.output_parser = LLMOutputParser()
 
-    def _detect_conflict_type(self, debate_history: List[Dict]) -> str:
+    def _detect_conflict_type(self, debate_history: list[dict]) -> str:
         """Detect the type of conflict between personas."""
         logger.info("Attempting to detect conflict type.")
 
@@ -82,10 +86,13 @@ class ConflictResolutionManager:
         return "GENERAL_DISAGREEMENT"
 
     def resolve_conflict(
-        self, debate_history: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, debate_history: list[dict[str, Any]]
+    ) -> Optional[dict[str, Any]]:
         """Analyzes debate history and attempts to resolve conflicts or malformed outputs."""
         logger.warning("ConflictResolutionManager: Attempting to resolve conflict...")
+
+        # --- FIX: PLR0911/SIM102 Refactoring: Use a single result variable ---
+        final_result = None
 
         if not debate_history:
             logger.warning(
@@ -98,11 +105,12 @@ class ConflictResolutionManager:
         latest_persona_name = latest_turn.get("persona", "Unknown")
 
         is_problematic = False
-        if isinstance(latest_output, dict):
-            if latest_output.get("malformed_blocks") or (
-                latest_output.get("conflict_found") is True
-            ):
-                is_problematic = True
+        # --- FIX: SIM102 applied here: Merging nested if statement ---
+        if isinstance(latest_output, dict) and (
+            latest_output.get("malformed_blocks")
+            or (latest_output.get("conflict_found") is True)
+        ):
+            is_problematic = True
         elif isinstance(latest_output, str):
             try:
                 json.loads(latest_output)
@@ -121,7 +129,7 @@ class ConflictResolutionManager:
                 logger.info(
                     f"ConflictResolutionManager: Successfully self-corrected output from {latest_persona_name}."
                 )
-                return {
+                final_result = {
                     "resolution_strategy": "self_correction_retry",
                     "resolved_output": resolved_output,
                     "resolution_summary": f"Persona '{latest_persona_name}' self-corrected its output after receiving validation feedback.",
@@ -137,13 +145,13 @@ class ConflictResolutionManager:
                     f"ConflictResolutionManager: Self-correction failed for {latest_persona_name}. Falling back to synthesis/manual intervention."
                 )
 
-        if isinstance(latest_output, str):
+        if not final_result and isinstance(latest_output, str):
             try:
                 parsed_latest_output = json.loads(latest_output)
                 logger.info(
                     f"ConflictResolutionManager: Successfully parsed string output from {latest_persona_name}."
                 )
-                return {
+                final_result = {
                     "resolution_strategy": "parsed_malformed_string",
                     "resolved_output": parsed_latest_output,
                     "resolution_summary": f"Successfully parsed malformed string output from {latest_persona_name}.",
@@ -159,151 +167,157 @@ class ConflictResolutionManager:
                     f"ConflictResolutionManager: Latest output from {latest_persona_name} is a malformed string, cannot parse directly."
                 )
 
-        conflict_type = self._detect_conflict_type(debate_history)
-        logger.info(f"Detected conflict type: {conflict_type}")
+        if not final_result:
+            conflict_type = self._detect_conflict_type(debate_history)
+            logger.info(f"Detected conflict type: {conflict_type}")
 
-        latest_conflict_report = None
-        for turn in reversed(debate_history):
-            if turn["persona"] == "Devils_Advocate" and isinstance(
-                turn["output"], dict
+            latest_conflict_report = None
+            for turn in reversed(debate_history):
+                if turn["persona"] == "Devils_Advocate" and isinstance(
+                    turn["output"], dict
+                ):
+                    try:
+                        latest_conflict_report = ConflictReport.model_validate(
+                            turn["output"]
+                        )
+                        break
+                    except ValidationError:
+                        continue
+
+            if latest_conflict_report and (
+                "lack of information" in latest_conflict_report.summary.lower()
+                or "no codebase context" in latest_conflict_report.summary.lower()
             ):
-                try:
-                    latest_conflict_report = ConflictReport.model_validate(
-                        turn["output"]
-                    )
-                    break
-                except ValidationError:
-                    continue
+                logger.warning(
+                    "ConflictResolutionManager: Detected conflict due to missing codebase context."
+                )
+                resolved_output_data = SelfImprovementAnalysisOutputV1(
+                    ANALYSIS_SUMMARY="Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
+                    IMPACTFUL_SUGGESTIONS=[
+                        SuggestionItem(
+                            AREA="Maintainability",
+                            PROBLEM="Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase.",
+                            PROPOSED_SOLUTION="Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
+                            EXPECTED_IMPACT="Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
+                            CODE_CHANGES_SUGGESTED=[
+                                {
+                                    "FILE_PATH": "docs/project_chimera_context.md",
+                                    "ACTION": "CREATE",
+                                    "FULL_CONTENT": "# Project Chimera Codebase Context\n\nThis document outlines the codebase structure and key files required for AI analysis. Please populate this file with relevant information.",
+                                }
+                            ],
+                        )
+                    ],
+                    malformed_blocks=[
+                        {
+                            "type": "CODEBASE_ACCESS_REQUIRED",
+                            "message": "Analysis requires codebase access.",
+                        }
+                    ],
+                ).model_dump(by_alias=True)
 
-        if latest_conflict_report and (
-            "lack of information" in latest_conflict_report.summary.lower()
-            or "no codebase context" in latest_conflict_report.summary.lower()
-        ):
-            logger.warning(
-                "ConflictResolutionManager: Detected conflict due to missing codebase context."
-            )
-            resolved_output_data = SelfImprovementAnalysisOutputV1(
-                ANALYSIS_SUMMARY="Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
-                IMPACTFUL_SUGGESTIONS=[
-                    SuggestionItem(
-                        AREA="Maintainability",
-                        PROBLEM="Critical lack of codebase access prevents meaningful code-level analysis and improvements. The system cannot perform security, robustness, or detailed maintainability analyses without the codebase.",
-                        PROPOSED_SOLUTION="Establish a mechanism for providing the Project Chimera codebase and its context. This includes providing relevant files, their purpose, architecture, and any prior analysis. A `docs/project_chimera_context.md` file is proposed to guide this collection.",
-                        EXPECTED_IMPACT="Enables the self-improvement process to proceed effectively, allowing for specific vulnerability identification, optimization opportunities, and actionable code modifications. This directly addresses the 'Maintainability' aspect of the self-improvement goals.",
-                        CODE_CHANGES_SUGGESTED=[
-                            {
-                                "FILE_PATH": "docs/project_chimera_context.md",
-                                "ACTION": "CREATE",
-                                "FULL_CONTENT": "# Project Chimera Codebase Context\n\nThis document outlines the codebase structure and key files required for AI analysis. Please populate this file with relevant information.",
-                            }
-                        ],
-                    )
-                ],
-                malformed_blocks=[
-                    {
-                        "type": "CODEBASE_ACCESS_REQUIRED",
-                        "message": "Analysis requires codebase access.",
-                    }
-                ],
-            ).model_dump(by_alias=True)
-
-            return {
-                "resolution_strategy": "missing_codebase_context",
-                "resolved_output": resolved_output_data,
-                "resolution_summary": "Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
-                "malformed_blocks": [
-                    {
-                        "type": "CODEBASE_ACCESS_REQUIRED",
-                        "message": "Analysis requires codebase access.",
-                    }
-                ],
-            }
-
-        if conflict_type == "SECURITY_VS_ARCHITECTURE":
-            logger.info(
-                "Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict."
-            )
-            resolution_summary = "Security concerns were identified by Security_Auditor but not adequately addressed by Code_Architect. Prioritizing security in the resolution."
-            synthesized_output = self._synthesize_from_history(
-                latest_output, debate_history[:-1], resolution_summary
-            )
-            if synthesized_output:
-                return {
-                    "resolution_strategy": "security_vs_architecture_synthesis",
-                    "resolved_output": synthesized_output,
-                    "resolution_summary": resolution_summary,
+                final_result = {
+                    "resolution_strategy": "missing_codebase_context",
+                    "resolved_output": resolved_output_data,
+                    "resolution_summary": "Cannot perform analysis without codebase access. Please provide access to the Project Chimera codebase.",
                     "malformed_blocks": [
                         {
-                            "type": "SECURITY_VS_ARCHITECTURE_RESOLVED",
-                            "message": resolution_summary,
+                            "type": "CODEBASE_ACCESS_REQUIRED",
+                            "message": "Analysis requires codebase access.",
                         }
                     ],
                 }
-            else:
-                logger.warning(
-                    "SECURITY_VS_ARCHITECTURE synthesis failed. Falling back to general resolution."
-                )
 
-        elif conflict_type == "FUNDAMENTAL_FLAW_DETECTION":
-            logger.info(
-                "Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict."
-            )
-            resolution_summary = "Devils_Advocate identified a fundamental flaw. The resolution focuses on addressing this core issue."
-            synthesized_output = self._synthesize_from_history(
-                latest_output, debate_history[:-1], resolution_summary
-            )
-            if synthesized_output:
-                return {
-                    "resolution_strategy": "fundamental_flaw_resolution_synthesis",
-                    "resolved_output": synthesized_output,
-                    "resolution_summary": resolution_summary,
-                    "malformed_blocks": [
-                        {
-                            "type": "FUNDAMENTAL_FLAW_RESOLVED",
-                            "message": resolution_summary,
-                        }
-                    ],
-                }
-            else:
-                logger.warning(
-                    "FUNDAMENTAL_FLAW_DETECTION synthesis failed. Falling back to general resolution."
-                )
-        else:
-            logger.info("Applying general conflict resolution strategy.")
-            valid_turns = [
-                turn
-                for turn in debate_history[:-1]
-                if isinstance(turn.get("output"), dict)
-                and not turn["output"].get("malformed_blocks")
-            ]
-
-            if len(valid_turns) >= 2:
+            if not final_result and conflict_type == "SECURITY_VS_ARCHITECTURE":
                 logger.info(
-                    f"ConflictResolutionManager: Found {len(valid_turns)} previous valid turns. Attempting synthesis."
+                    "Applying specific resolution for SECURITY_VS_ARCHITECTURE conflict."
                 )
+                resolution_summary = "Security concerns were identified by Security_Auditor but not adequately addressed by Code_Architect. Prioritizing security in the resolution."
                 synthesized_output = self._synthesize_from_history(
-                    latest_output, valid_turns
+                    latest_output, debate_history[:-1], resolution_summary
                 )
                 if synthesized_output:
-                    logger.info(
-                        "ConflictResolutionManager: Successfully synthesized from history."
-                    )
-                    return {
-                        "resolution_strategy": "synthesis_from_history",
+                    final_result = {
+                        "resolution_strategy": "security_vs_architecture_synthesis",
                         "resolved_output": synthesized_output,
-                        "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
+                        "resolution_summary": resolution_summary,
                         "malformed_blocks": [
                             {
-                                "type": "SYNTHESIS_ATTEMPT",
-                                "message": "Automated synthesis from history due to problematic output.",
+                                "type": "SECURITY_VS_ARCHITECTURE_RESOLVED",
+                                "message": resolution_summary,
                             }
                         ],
                     }
                 else:
                     logger.warning(
-                        "ConflictResolutionManager: Synthesis from history failed."
+                        "SECURITY_VS_ARCHITECTURE synthesis failed. Falling back to general resolution."
                     )
 
+            elif not final_result and conflict_type == "FUNDAMENTAL_FLAW_DETECTION":
+                logger.info(
+                    "Applying specific resolution for FUNDAMENTAL_FLAW_DETECTION conflict."
+                )
+                resolution_summary = "Devils_Advocate identified a fundamental flaw. The resolution focuses on addressing this core issue."
+                synthesized_output = self._synthesize_from_history(
+                    latest_output, debate_history[:-1], resolution_summary
+                )
+                if synthesized_output:
+                    final_result = {
+                        "resolution_strategy": "fundamental_flaw_resolution_synthesis",
+                        "resolved_output": synthesized_output,
+                        "resolution_summary": resolution_summary,
+                        "malformed_blocks": [
+                            {
+                                "type": "FUNDAMENTAL_FLAW_RESOLVED",
+                                "message": resolution_summary,
+                            }
+                        ],
+                    }
+                else:
+                    logger.warning(
+                        "FUNDAMENTAL_FLAW_DETECTION synthesis failed. Falling back to general resolution."
+                    )
+
+            if not final_result:
+                logger.info("Applying general conflict resolution strategy.")
+                valid_turns = [
+                    turn
+                    for turn in debate_history[:-1]
+                    if isinstance(turn.get("output"), dict)
+                    and not turn["output"].get("malformed_blocks")
+                ]
+
+                if len(valid_turns) >= 2:
+                    logger.info(
+                        f"ConflictResolutionManager: Found {len(valid_turns)} previous valid turns. Attempting synthesis."
+                    )
+                    synthesized_output = self._synthesize_from_history(
+                        latest_output, valid_turns
+                    )
+                    if synthesized_output:
+                        logger.info(
+                            "ConflictResolutionManager: Successfully synthesized from history."
+                        )
+                        final_result = {
+                            "resolution_strategy": "synthesis_from_history",
+                            "resolved_output": synthesized_output,
+                            "resolution_summary": "Synthesized a coherent output from previous valid debate turns.",
+                            "malformed_blocks": [
+                                {
+                                    "type": "SYNTHESIS_ATTEMPT",
+                                    "message": "Automated synthesis from history due to problematic output.",
+                                }
+                            ],
+                        }
+                    else:
+                        logger.warning(
+                            "ConflictResolutionManager: Synthesis from history failed."
+                        )
+
+        if final_result:
+            return final_result
+
+        # If we reach here, all automated attempts failed.
         logger.warning(
             "ConflictResolutionManager: Automated resolution strategies exhausted."
         )
@@ -314,9 +328,9 @@ class ConflictResolutionManager:
     def _synthesize_from_history(
         self,
         problematic_output: Any,
-        valid_turns: List[Dict[str, Any]],
+        valid_turns: list[dict[str, Any]],
         custom_summary: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[dict[str, Any]]:
         """Attempts to synthesize a coherent output from previous valid turns."""
         if valid_turns:
             last_valid_output = valid_turns[-1]["output"]
@@ -349,7 +363,7 @@ class ConflictResolutionManager:
 
         return None
 
-    def _manual_intervention_fallback(self, message: str) -> Dict[str, Any]:
+    def _manual_intervention_fallback(self, message: str) -> dict[str, Any]:
         """Returns a structured output indicating that manual intervention is required."""
         logger.error(
             f"ConflictResolutionManager: Manual intervention required: {message}"
@@ -364,8 +378,8 @@ class ConflictResolutionManager:
         }
 
     def _retry_persona_with_feedback(
-        self, persona_name: str, debate_history: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, persona_name: str, debate_history: list[dict[str, Any]]
+    ) -> Optional[dict[str, Any]]:
         """Re-invokes the persona with explicit feedback on its previous problematic output."""
         if (
             not self.llm_provider

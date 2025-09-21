@@ -2,11 +2,9 @@ from .code_utils import ComplexityVisitor, _get_code_snippet
 from .command_executor import execute_command_safely
 from .domain_recommender import recommend_domain_from_keywords
 from .error_handler import handle_errors
-from .json_utils import (
-    convert_to_json_friendly,
-    safe_json_dumps,
-    safe_json_loads,
-)  # MODIFIED: Added safe_json_loads, safe_json_dumps
+from .json_utils import convert_to_json_friendly, safe_json_dumps, safe_json_loads
+
+# MODIFIED: Added safe_json_loads, safe_json_dumps
 from .path_utils import (
     PROJECT_ROOT,
     _map_incorrect_file_path,

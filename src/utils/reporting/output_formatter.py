@@ -1,7 +1,7 @@
 # src/utils/output_formatter.py
 import logging  # Used for logger
 from datetime import datetime  # Used for datetime.now
-from typing import Any, Dict, List  # Used for type hints
+from typing import Any  # Used for type hints
 
 from src.models import (  # Used for type hints in format_findings_list, format_complete_report
     SelfImprovementAnalysisOutput,
@@ -15,7 +15,7 @@ class OutputFormatter:
     """Utility class for formatting analysis results into various outputs (e.g., Markdown)."""
 
     @staticmethod
-    def format_suggestion(suggestion: Dict[str, Any]) -> str:
+    def format_suggestion(suggestion: dict[str, Any]) -> str:
         """Formats a single self-improvement suggestion."""
         markdown = f"### AREA: {suggestion.get('AREA', 'N/A')}\n\n"
         markdown += f"**Problem:** {suggestion.get('PROBLEM', 'N/A')}\n\n"
@@ -52,7 +52,7 @@ class OutputFormatter:
         return markdown
 
     @staticmethod
-    def format_findings_list(findings: List[SelfImprovementFinding]) -> str:
+    def format_findings_list(findings: list[SelfImprovementFinding]) -> str:
         """Formats a list of findings into Markdown."""
         markdown = "## Detailed Analysis Findings\n\n"
         if not findings:
@@ -95,7 +95,7 @@ class OutputFormatter:
 
     @staticmethod
     def format_pareto_prioritized_findings(
-        findings: List[SelfImprovementFinding],
+        findings: list[SelfImprovementFinding],
     ) -> str:
         """Formats findings with explicit 80/20 prioritization and quantitative metrics."""
         # Sort by Pareto score (impact/effort) descending

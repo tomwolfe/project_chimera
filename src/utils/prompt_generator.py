@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from src.utils.prompt_cache import prompt_cache  # Import the global cache instance
 
@@ -14,14 +14,14 @@ class PromptGenerator:
 
     def __init__(self):
         # In a real scenario, this might load templates or models
-        self.templates: Dict[str, str] = {
+        self.templates: dict[str, str] = {
             "problem_analysis": "Analyze the following problem: {problem_description}",
             "solution_refinement": "Refine the proposed solution: {solution} for problem: {problem_description}",
             # Add other common prompt templates here
         }
         self.cache = prompt_cache  # Use the global prompt_cache instance
 
-    def _generate_cache_key(self, prompt_key: str, kwargs: Dict[str, Any]) -> str:
+    def _generate_cache_key(self, prompt_key: str, kwargs: dict[str, Any]) -> str:
         """Generates a consistent cache key for a given prompt and its arguments."""
         # Sort kwargs items to ensure consistent key generation regardless of dict order
         sorted_kwargs = tuple(sorted(kwargs.items()))

@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
 
@@ -23,13 +23,33 @@ from src.models import (
 
 logger = logging.getLogger(__name__)
 
+# --- CONSTANTS FOR PLR2004 FIXES ---
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_SNIPPET_LENGTH = 100
+DEFAULT_THRESHOLD = 0.7
+DEFAULT_DEPTH = 3
+DEFAULT_LIMIT = 5
+DEFAULT_FACTOR_A = 0.2
+DEFAULT_FACTOR_B = 0.05
+DEFAULT_FACTOR_C = 0.15
+DEFAULT_SCORE = 0.5
+DEFAULT_CONTEXT_SIZE = 200
+DEFAULT_MAX_TOKENS = 2000
+DEFAULT_MAX_ITEMS = 50
+DEFAULT_MAX_CHARS = 1000
+DEFAULT_MIN_LENGTH_35 = 35
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
+DEFAULT_FALLBACK_SIZE = 500
+# -----------------------------------
+
 
 class LLMOutputParser:
     def __init__(self):
         self.logger = logger
 
     # NEW: Centralized mapping of schema names to Pydantic models
-    _SCHEMA_MODEL_MAP: Dict[str, Type[BaseModel]] = {
+    _SCHEMA_MODEL_MAP: dict[str, type[BaseModel]] = {
         "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
         "ContextAnalysisOutput": ContextAnalysisOutput,
         "CritiqueOutput": CritiqueOutput,
@@ -42,7 +62,7 @@ class LLMOutputParser:
     }
 
     # NEW: Helper method to get schema class from its name
-    def _get_schema_class_from_name(self, schema_name: str) -> Type[BaseModel]:
+    def _get_schema_class_from_name(self, schema_name: str) -> type[BaseModel]:
         return self._SCHEMA_MODEL_MAP.get(
             schema_name, GeneralOutput
         )  # Fallback to GeneralOutput
@@ -93,7 +113,7 @@ class LLMOutputParser:
         text: str,
         start_marker: str = "START_JSON_OUTPUT",
         end_marker: str = "END_JSON_OUTPUT",
-    ) -> Optional[Tuple[str, bool]]:
+    ) -> Optional[tuple[str, bool]]:
         """Extracts JSON content explicitly delimited by start and end markers.
         Returns (json_string_content, end_marker_found).
         If only start_marker is found, returns (content_after_start_marker, False).
@@ -176,11 +196,10 @@ class LLMOutputParser:
                     balance -= 1
                     if expected_closers_stack and expected_closers_stack[-1] == "}":
                         expected_closers_stack.pop()
-            elif char == "]":
-                if start_index != -1:
-                    balance -= 1
-                    if expected_closers_stack and expected_closers_stack[-1] == "]":
-                        expected_closers_stack.pop()
+            elif char == "]" and start_index != -1:
+                balance -= 1
+                if expected_closers_stack and expected_closers_stack[-1] == "]":
+                    expected_closers_stack.pop()
 
             if start_index != -1 and balance == 0 and not expected_closers_stack:
                 potential_json_str = text[start_index : i + 1]
@@ -255,7 +274,7 @@ class LLMOutputParser:
         self.logger.debug("No valid JSON block found in markdown code blocks.")
         return None
 
-    def _repair_json_string(self, json_str: str) -> Tuple[str, List[Dict[str, str]]]:
+    def _repair_json_string(self, json_str: str) -> tuple[str, list[dict[str, str]]]:
         """Applies common JSON repair heuristics and logs repairs."""
         repair_log = []
         original_str = json_str
@@ -340,7 +359,7 @@ class LLMOutputParser:
 
         # Heuristic 7: Handle cases where entire array is wrapped in quotes
         temp_str = re.sub(r'"\[\s*{', "[{", json_str)
-        temp_str = re.sub(r'}\s*\]"', "}]", temp_str)
+        temp_str = re.sub(r"}\s*\]\"", "}]", temp_str)
         if temp_str != json_str:
             repair_log.append(
                 {
@@ -460,7 +479,7 @@ class LLMOutputParser:
 
     def _parse_with_incremental_repair(
         self, json_str: str
-    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]]]:
+    ) -> tuple[Optional[dict[str, Any]], list[dict[str, str]]]:
         """Attempts to parse JSON with incremental repair strategies."""
         repair_log = []
         current_json_str = json_str
@@ -484,7 +503,7 @@ class LLMOutputParser:
             return result, repair_log
         except json.JSONDecodeError:
             self.logger.debug(
-                f"Initial repair failed to parse. Trying further heuristics. Snippet: {repaired_text[:100]}"
+                f"Initial repair failed to parse. Trying further heuristics. Snippet: {repaired_text[:DEFAULT_SNIPPET_LENGTH]}"
             )
             current_json_str = repaired_text
 
@@ -502,7 +521,7 @@ class LLMOutputParser:
                 return result, repair_log
             except json.JSONDecodeError:
                 self.logger.debug(
-                    f"Largest sub-object extraction failed to parse. Snippet: {largest_sub_object_str[:100]}"
+                    f"Largest sub-object extraction failed to parse. Snippet: {largest_sub_object_str[:DEFAULT_SNIPPET_LENGTH]}"
                 )
                 pass
 
@@ -520,7 +539,7 @@ class LLMOutputParser:
                 return result, repair_log
             except json.JSONDecodeError:
                 self.logger.debug(
-                    f"JSON lines conversion failed to parse. Snippet: {json_lines_str[:100]}"
+                    f"JSON lines conversion failed to parse. Snippet: {json_lines_str[:DEFAULT_SNIPPET_LENGTH]}"
                 )
                 pass
 
@@ -538,7 +557,7 @@ class LLMOutputParser:
                 return result, repair_log
             except json.JSONDecodeError:
                 self.logger.debug(
-                    f"Force-closed JSON failed to parse. Snippet: {force_closed_json_str[:100]}"
+                    f"Force-closed JSON failed to parse. Snippet: {force_closed_json_str[:DEFAULT_SNIPPET_LENGTH]}"
                 )
                 pass
 
@@ -569,7 +588,7 @@ class LLMOutputParser:
 
         if longest_valid_match:
             self.logger.debug(
-                f"Successfully extracted largest valid sub-object: {longest_valid_match[:100]}..."
+                f"Successfully extracted largest valid sub-object: {longest_valid_match[:DEFAULT_SNIPPET_LENGTH]}..."
             )
             return longest_valid_match
 
@@ -581,8 +600,9 @@ class LLMOutputParser:
         lines = json_str.strip().split("\n")
         json_objects = []
 
-        for line in lines:
-            line = line.strip()
+        # PLW2901 Fix: Renamed loop variable from 'line' to 'raw_line'
+        for raw_line in lines:
+            line = raw_line.strip()
             if line.startswith("{") and line.endswith("}"):
                 try:
                     json.loads(line)
@@ -629,7 +649,7 @@ class LLMOutputParser:
         json_end = -1
 
         for i, char in enumerate(cleaned):
-            if char == "{" or char == "[":
+            if char in {"{", "["}:
                 json_start = i
                 break
 
@@ -643,10 +663,10 @@ class LLMOutputParser:
         if json_start != -1 and json_end != -1 and json_end > json_start:
             cleaned = cleaned[json_start:json_end]
 
-        self.logger.debug(f"Cleaned LLM output: {cleaned[:500]}...")
+        self.logger.debug(f"Cleaned LLM output: {cleaned[:DEFAULT_SNIPPET_LENGTH]}...")
         return cleaned.strip()
 
-    def _detect_potential_suggestion_item(self, text: str) -> Optional[Dict]:
+    def _detect_potential_suggestion_item(self, text: str) -> Optional[dict]:
         """Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
         at the top level, rather than the full SelfImprovementAnalysisOutput.
         """
@@ -676,8 +696,8 @@ class LLMOutputParser:
         return None
 
     def _attempt_schema_correction(
-        self, output: Dict[str, Any], error: ValidationError
-    ) -> Optional[Dict[str, Any]]:
+        self, output: dict[str, Any], error: ValidationError
+    ) -> Optional[dict[str, Any]]:
         """Attempts automatic correction of common schema validation failures by adding default values."""
         corrected_output = output.copy()
         correction_made = False
@@ -762,14 +782,16 @@ class LLMOutputParser:
         return None
 
     def parse_and_validate(
-        self, raw_output: str, schema_model: Type[BaseModel]
-    ) -> Dict[str, Any]:
+        self, raw_output: str, schema_model: type[BaseModel]
+    ) -> dict[str, Any]:
         """Parse and validate the raw LLM output against a given Pydantic schema.
         Handles JSON extraction, parsing, and schema validation.
         Ensures the returned structure is a dictionary, even if LLM output is a JSON array.
         Populates 'malformed_blocks' field on failure.
         """
-        self.logger.debug(f"Attempting to parse raw output: {raw_output[:500]}...")
+        self.logger.debug(
+            f"Attempting to parse raw output: {raw_output[:DEFAULT_SNIPPET_LENGTH]}..."
+        )
 
         malformed_blocks_list = []
         extracted_json_str = None
@@ -782,7 +804,7 @@ class LLMOutputParser:
 
         cleaned_raw_output = self._clean_llm_output(raw_output)
         self.logger.debug(
-            f"Cleaned raw output for parsing: {cleaned_raw_output[:500]}..."
+            f"Cleaned raw output for parsing: {cleaned_raw_output[:DEFAULT_SNIPPET_LENGTH]}..."
         )
 
         marker_extraction_result = self._extract_json_with_markers(cleaned_raw_output)
@@ -793,8 +815,10 @@ class LLMOutputParser:
                     {
                         "type": "MISSING_END_MARKER",
                         "message": "START_JSON_OUTPUT was found, but END_JSON_OUTPUT was missing. Attempted to parse content after START_JSON_OUTPUT.",
-                        "raw_string_snippet": cleaned_raw_output[:1000]
-                        + ("..." if len(cleaned_raw_output) > 1000 else ""),
+                        "raw_string_snippet": cleaned_raw_output[:DEFAULT_MAX_CHARS]
+                        + (
+                            "..." if len(cleaned_raw_output) > DEFAULT_MAX_CHARS else ""
+                        ),
                     }
                 )
                 transformation_needed = True
@@ -819,8 +843,8 @@ class LLMOutputParser:
                 {
                     "type": "JSON_EXTRACTION_FAILED",
                     "message": "Could not find or extract a valid JSON structure from the output.",
-                    "raw_string_snippet": cleaned_raw_output[:1000]
-                    + ("..." if len(cleaned_raw_output) > 1000 else ""),
+                    "raw_string_snippet": cleaned_raw_output[:DEFAULT_MAX_CHARS]
+                    + ("..." if len(cleaned_raw_output) > DEFAULT_MAX_CHARS else ""),
                 }
             )
             return self._create_fallback_output(
@@ -837,8 +861,10 @@ class LLMOutputParser:
                         "type": "JSON_REPAIR_ATTEMPTED",
                         "message": "JSON repair heuristics applied.",
                         "details": repair_log,
-                        "raw_string_snippet": extracted_json_str[:1000]
-                        + ("..." if len(extracted_json_str) > 1000 else ""),
+                        "raw_string_snippet": extracted_json_str[:DEFAULT_MAX_CHARS]
+                        + (
+                            "..." if len(extracted_json_str) > DEFAULT_MAX_CHARS else ""
+                        ),
                     }
                 )
                 transformation_needed = True
@@ -848,8 +874,8 @@ class LLMOutputParser:
                 {
                     "type": "JSON_DECODE_ERROR",
                     "message": "Failed to decode JSON even after repair attempts.",
-                    "raw_string_snippet": extracted_json_str[:1000]
-                    + ("..." if len(extracted_json_str) > 1000 else ""),
+                    "raw_string_snippet": extracted_json_str[:DEFAULT_MAX_CHARS]
+                    + ("..." if len(extracted_json_str) > DEFAULT_MAX_CHARS else ""),
                 }
             )
             return self._create_fallback_output(
@@ -859,6 +885,8 @@ class LLMOutputParser:
                 parsed_data,
                 extracted_json_str=extracted_json_str,
             )
+
+        data_to_validate: dict[str, Any] = {}
 
         if isinstance(parsed_data, list):
             transformation_needed = True
@@ -956,8 +984,10 @@ class LLMOutputParser:
                             malformed_blocks_list.append(
                                 {
                                     "type": "MALFORMED_CRITIQUE_ITEM",
-                                    "message": f"Critique item is not a dictionary: {str(item)[:100]}",
-                                    "raw_string_snippet": str(item)[:100],
+                                    "message": f"Critique item is not a dictionary: {str(item)[:DEFAULT_SNIPPET_LENGTH]}",
+                                    "raw_string_snippet": str(item)[
+                                        :DEFAULT_SNIPPET_LENGTH
+                                    ],
                                 }
                             )
                     data_to_validate["CRITIQUE_POINTS"] = processed_critique_points
@@ -967,7 +997,7 @@ class LLMOutputParser:
                         "LLM returned a mixed/unexpected list for CritiqueOutput. Creating generic fallback."
                     )
                     data_to_validate = {
-                        "CRITIQUE_SUMMARY": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:100]}...",
+                        "CRITIQUE_SUMMARY": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:DEFAULT_SNIPPET_LENGTH]}...",
                         "CRITIQUE_POINTS": [],
                         "SUGGESTIONS": [],
                         "malformed_blocks": malformed_blocks_list,
@@ -993,7 +1023,7 @@ class LLMOutputParser:
                     )
                     data_to_validate = {
                         "COMMIT_MESSAGE": "LLM_OUTPUT_ERROR: Unexpected list format",
-                        "RATIONALE": f"LLM returned an unexpected list for LLMOutput. First item: {str(parsed_data[0])[:100]}...",
+                        "RATIONALE": f"LLM returned an unexpected list for LLMOutput. First item: {str(parsed_data[0])[:DEFAULT_SNIPPET_LENGTH]}...",
                         "CODE_CHANGES": [],
                         "malformed_blocks": malformed_blocks_list,
                     }
@@ -1012,7 +1042,7 @@ class LLMOutputParser:
                     )
                     data_to_validate = {
                         "conflict_type": "METHODOLOGY_DISAGREEMENT",
-                        "summary": f"LLM returned a list instead of a single ConflictReport object. First item: {str(parsed_data[0])[:100]}...",
+                        "summary": f"LLM returned a list instead of a single ConflictReport object. First item: {str(parsed_data[0])[:DEFAULT_SNIPPET_LENGTH]}...",
                         "involved_personas": [],
                         "conflicting_outputs_snippet": "",
                         "proposed_resolution_paths": [],
@@ -1039,8 +1069,8 @@ class LLMOutputParser:
                     )
                     summarized_content = (
                         "LLM returned a list of objects. Summarized content: "
-                        + json.dumps(parsed_data[:3])
-                        + ("..." if len(parsed_data) > 3 else "")
+                        + json.dumps(parsed_data[:DEFAULT_LIMIT])
+                        + ("..." if len(parsed_data) > DEFAULT_LIMIT else "")
                     )
                     data_to_validate = {
                         "general_output": summarized_content,
@@ -1051,12 +1081,12 @@ class LLMOutputParser:
                         "LLM returned a mixed/unexpected list for GeneralOutput. Creating generic fallback."
                     )
                     data_to_validate = {
-                        "general_output": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:100]}...",
+                        "general_output": f"LLM returned a mixed/unexpected list. First item: {str(parsed_data[0])[:DEFAULT_SNIPPET_LENGTH]}...",
                         "malformed_blocks": malformed_blocks_list,
                     }
             else:
                 data_to_validate = {
-                    "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(parsed_data)[:500]}...",
+                    "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(parsed_data)[:DEFAULT_MAX_CHARS]}...",
                     "malformed_blocks": malformed_blocks_list,
                 }
         elif isinstance(parsed_data, dict):
@@ -1115,8 +1145,8 @@ class LLMOutputParser:
                     {
                         "type": "LLM_OUTPUT_MALFORMED",
                         "message": "LLM output required structural transformation or repair to conform to schema.",
-                        "raw_string_snippet": raw_output[:500]
-                        + ("..." if len(raw_output) > 500 else ""),
+                        "raw_string_snippet": raw_output[:DEFAULT_SNIPPET_LENGTH]
+                        + ("..." if len(raw_output) > DEFAULT_SNIPPET_LENGTH else ""),
                     },
                 )
             result_dict.setdefault("malformed_blocks", []).extend(malformed_blocks_list)
@@ -1157,8 +1187,12 @@ class LLMOutputParser:
                         {
                             "type": "SCHEMA_VALIDATION_ERROR",
                             "message": str(second_validation_e),
-                            "raw_string_snippet": extracted_json_str[:1000]
-                            + ("..." if len(extracted_json_str) > 1000 else ""),
+                            "raw_string_snippet": extracted_json_str[:DEFAULT_MAX_CHARS]
+                            + (
+                                "..."
+                                if len(extracted_json_str) > DEFAULT_MAX_CHARS
+                                else ""
+                            ),
                         }
                     )
                     return self._create_fallback_output(
@@ -1174,8 +1208,10 @@ class LLMOutputParser:
                     {
                         "type": "SCHEMA_VALIDATION_ERROR",
                         "message": str(validation_e),
-                        "raw_string_snippet": extracted_json_str[:1000]
-                        + ("..." if len(extracted_json_str) > 1000 else ""),
+                        "raw_string_snippet": extracted_json_str[:DEFAULT_MAX_CHARS]
+                        + (
+                            "..." if len(extracted_json_str) > DEFAULT_MAX_CHARS else ""
+                        ),
                     }
                 )
                 return self._create_fallback_output(
@@ -1190,8 +1226,8 @@ class LLMOutputParser:
                 {
                     "type": "UNEXPECTED_VALIDATION_ERROR",
                     "message": str(general_e),
-                    "raw_string_snippet": extracted_json_str[:1000]
-                    + ("..." if len(extracted_json_str) > 1000 else ""),
+                    "raw_string_snippet": extracted_json_str[:DEFAULT_MAX_CHARS]
+                    + ("..." if len(extracted_json_str) > DEFAULT_MAX_CHARS else ""),
                 }
             )
             return self._create_fallback_output(
@@ -1204,18 +1240,18 @@ class LLMOutputParser:
 
     def _create_fallback_output(
         self,
-        schema_model: Type[BaseModel],
-        malformed_blocks: List[Dict[str, Any]],
+        schema_model: type[BaseModel],
+        malformed_blocks: list[dict[str, Any]],
         raw_output_snippet: str,
         partial_data: Optional[Any] = None,
         extracted_json_str: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Creates a structured fallback output based on the schema model."""
         current_malformed_blocks = malformed_blocks.copy()
 
         error_message_from_partial = "Failed to generate valid structured output. "
 
-        partial_data_as_dict: Dict[str, Any]
+        partial_data_as_dict: dict[str, Any]
         if partial_data is None:
             partial_data_as_dict = {}
             error_message_from_partial += (
@@ -1224,13 +1260,13 @@ class LLMOutputParser:
         elif isinstance(partial_data, str):
             partial_data_as_dict = {}
             error_message_from_partial += (
-                f"LLM returned raw string: '{partial_data[:100]}...'"
-                if len(partial_data) > 100
+                f"LLM returned raw string: '{partial_data[:DEFAULT_SNIPPET_LENGTH]}...'"
+                if len(partial_data) > DEFAULT_SNIPPET_LENGTH
                 else f"LLM returned raw string: '{partial_data}'"
             )
         elif not isinstance(partial_data, dict):
             partial_data_as_dict = {}
-            error_message_from_partial += f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:100]}"
+            error_message_from_partial += f"Unexpected partial data type: {type(partial_data).__name__}. Value: {str(partial_data)[:DEFAULT_SNIPPET_LENGTH]}"
         else:
             partial_data_as_dict = partial_data
             error_message_from_partial += "Failed to generate valid structured output."
@@ -1243,9 +1279,9 @@ class LLMOutputParser:
                 0,
                 {
                     "type": "LLM_OUTPUT_MALFORMED",
-                    "message": "LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:500]}...",
-                    "raw_string_snippet": raw_output_snippet[:1000]
-                    + ("..." if len(raw_output_snippet) > 1000 else ""),
+                    "message": "LLM output could not be fully parsed or validated. Raw snippet: {raw_output_snippet[:DEFAULT_SNIPPET_LENGTH]}...",
+                    "raw_string_snippet": raw_output_snippet[:DEFAULT_MAX_CHARS]
+                    + ("..." if len(raw_output_snippet) > DEFAULT_MAX_CHARS else ""),
                 },
             )
 
@@ -1264,7 +1300,7 @@ class LLMOutputParser:
                 }
             )
 
-        fallback_data_for_model: Dict[str, Any] = {}
+        fallback_data_for_model: dict[str, Any] = {}
 
         is_single_suggestion_dict = False
         if schema_model in [
@@ -1352,9 +1388,9 @@ class LLMOutputParser:
                 "deployment_summary", {}
             )
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
-        elif (
-            schema_model == SelfImprovementAnalysisOutput
-            or schema_model == SelfImprovementAnalysisOutputV1
+        elif schema_model in (
+            SelfImprovementAnalysisOutput,
+            SelfImprovementAnalysisOutputV1,
         ):
             fallback_data_for_model["ANALYSIS_SUMMARY"] = partial_data_as_dict.get(
                 "ANALYSIS_SUMMARY", error_message_from_partial
@@ -1377,7 +1413,7 @@ class LLMOutputParser:
                             {
                                 "AREA": "Unknown",
                                 "PROBLEM": "Malformed suggestion",
-                                "PROPOSED_SOLUTION": str(item)[:100],
+                                "PROPOSED_SOLUTION": str(item)[:DEFAULT_SNIPPET_LENGTH],
                                 "EXPECTED_IMPACT": "N/A",
                                 "PARETO_SCORE": 0.0,
                                 "VALIDATION_METHOD": "N/A",
@@ -1391,7 +1427,7 @@ class LLMOutputParser:
                         {
                             "AREA": "Unknown",
                             "PROBLEM": "Malformed suggestion",
-                            "PROPOSED_SOLUTION": str(item)[:100],
+                            "PROPOSED_SOLUTION": str(item)[:DEFAULT_SNIPPET_LENGTH],
                             "EXPECTED_IMPACT": "N/A",
                             "PARETO_SCORE": 0.0,
                             "VALIDATION_METHOD": "N/A",
@@ -1417,7 +1453,7 @@ class LLMOutputParser:
             fallback_data_for_model["malformed_blocks"] = current_malformed_blocks
         else:
             fallback_data_for_model = {
-                "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(partial_data_as_dict)[:500]}...",
+                "general_output": f"LLM returned a list instead of a {schema_model.__name__}. Content: {str(partial_data_as_dict)[:DEFAULT_SNIPPET_LENGTH]}...",
                 "malformed_blocks": current_malformed_blocks,
             }
 
@@ -1501,7 +1537,7 @@ class LLMOutputParser:
                             minimal_fallback_data[prop] = {}
                     minimal_fallback_data["malformed_blocks"] = (
                         current_malformed_blocks
-                        + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
+                        + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}],
                     )
                     return schema_model.model_validate(
                         minimal_fallback_data

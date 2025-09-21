@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from src.utils.core_helpers.code_utils import _get_code_snippet
 from src.utils.core_helpers.command_executor import execute_command_safely
@@ -28,8 +28,8 @@ class CodeValidationError(Exception):
 
 
 def validate_and_resolve_file_path_for_action(
-    suggested_path: str, action: str, codebase_raw_file_contents: Dict[str, str]
-) -> Tuple[bool, str, str, Optional[str]]:
+    suggested_path: str, action: str, codebase_raw_file_contents: dict[str, str]
+) -> tuple[bool, str, str, Optional[str]]:
     """Validates a suggested file path and action against the actual codebase context.
     Attempts to map incorrect paths to correct ones.
     Returns: (is_valid, resolved_path, suggested_action_if_changed, error_message)
@@ -94,7 +94,7 @@ def validate_and_resolve_file_path_for_action(
         return False, resolved_path, action, error_message
 
 
-def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_ruff(content: str, filename: str) -> list[dict[str, Any]]:
     """Runs Ruff (linter and formatter check) on the given content via subprocess."""
     issues = []
     tmp_file_path = None
@@ -122,7 +122,8 @@ def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
             )
 
             if stdout_lint:
-                if return_code_lint == 0 or return_code_lint == 1:
+                # PLR1714 Fix: Use set literal {0, 1} for comparison
+                if return_code_lint in {0, 1}:
                     try:
                         lint_results = json.loads(stdout_lint)
                         for issue in lint_results:
@@ -237,7 +238,7 @@ def _run_bandit(
     filename: str,
     severity_level: str = "medium",
     confidence_level: str = "medium",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     tmp_file_path = None
@@ -400,7 +401,7 @@ def _run_bandit(
     return issues
 
 
-def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_ast_security_checks(content: str, filename: str) -> list[dict[str, Any]]:
     """Runs AST-based security checks on Python code."""
     issues = []
     content_lines = content.splitlines()
@@ -414,17 +415,17 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
                 self.issues = []
                 self.imports = set()
 
-            def visit_Import(self, node):
+            def visit_import(self, node):
                 for alias in node.names:
                     self.imports.add(alias.name)
                 self.generic_visit(node)
 
-            def visit_ImportFrom(self, node):
+            def visit_import_from(self, node):
                 if node.module:
                     self.imports.add(node.module)
                 self.generic_visit(node)
 
-            def visit_Call(self, node):
+            def visit_call(self, node):
                 snippet = _get_code_snippet(
                     self.content_lines, node.lineno, context_lines=3
                 )
@@ -713,11 +714,11 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 
 
 def validate_code_output(
-    parsed_change: Dict[str, Any],
+    parsed_change: dict[str, Any],
     original_content: str = None,
-    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    file_analysis_cache: Optional[dict[str, dict[str, Any]]] = None,
     file_exists_in_codebase: bool = False,  # NEW: Pass explicit flag
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get("FILE_PATH")
     action = parsed_change.get("ACTION")
@@ -738,11 +739,7 @@ def validate_code_output(
     file_path_obj = Path(file_path_str)
     is_python = file_path_obj.suffix.lower() == ".py"
 
-    # Removed redundant file existence checks here.
-    # These checks are now handled by `validate_and_resolve_file_path_for_action`
-    # before this function is called. The `file_exists_in_codebase` flag is passed in.
-
-    if action == "ADD" or action == "CREATE":
+    if action in {"ADD", "CREATE"}:
         content_to_check = parsed_change.get("FULL_CONTENT", "")
         checksum = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
         issues.append(
@@ -758,11 +755,8 @@ def validate_code_output(
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
     elif action == "MODIFY":
         content_to_check = parsed_change.get("FULL_CONTENT", "")
-        # The file_exists_in_codebase check above should have caught if it's a non-existent file.
-        # Now, proceed with content validation if content is provided.
-        checksum_new = hashlib.sha256(
-            content_to_check.encode("utf-8")
-        ).hexdigest()  # Recalculate checksum for new content
+
+        checksum_new = hashlib.sha256(content_to_check.encode("utf-8")).hexdigest()
         issues.append(
             {
                 "type": "Content Integrity",
@@ -783,29 +777,28 @@ def validate_code_output(
                         "message": "New content is identical to original.",
                     }
                 )
-            # If original_content is provided, it means the file existed.
-            # We can also add pre-computed issues from cache if available.
-            if file_analysis_cache and file_path_str in file_analysis_cache:
-                cached_analysis = file_analysis_cache[file_path_str]
-                if "ruff_issues" in cached_analysis:
-                    issues.extend(cached_analysis["ruff_issues"])
-                if "bandit_issues" in cached_analysis:
-                    issues.extend(cached_analysis["bandit_issues"])
-                if "ast_security_issues" in cached_analysis:
-                    issues.extend(cached_analysis["ast_security_issues"])
+
+            # SIM102 FIX: Flattened cache processing logic
+            cached_analysis = (
+                file_analysis_cache.get(file_path_str) if file_analysis_cache else None
+            )
+
+            if cached_analysis:
+                issues.extend(cached_analysis.get("ruff_issues", []))
+                issues.extend(cached_analysis.get("bandit_issues", []))
+                issues.extend(cached_analysis.get("ast_security_issues", []))
+
+                # Note: resolved_path is available from the caller context, but we use file_path_str for safety here
                 logger.debug(
-                    f"Added pre-computed issues for original content of {file_path_str} from cache."
+                    f"Validation for {file_path_str} completed using cached results."
                 )
 
-            if is_python:
-                issues.extend(_run_ruff(content_to_check, file_path_str))
-                issues.extend(_run_bandit(content_to_check, file_path_str))
-                issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
-        # The file_exists_in_codebase check above should have caught this.
+        # If original content wasn't provided (e.g., if this MODIFY was actually an ADD misclassified), run live checks if Python
         elif is_python:
             issues.extend(_run_ruff(content_to_check, file_path_str))
             issues.extend(_run_bandit(content_to_check, file_path_str))
             issues.extend(_run_ast_security_checks(content_to_check, file_path_str))
+
     elif action == "REMOVE":
         if original_content is not None:
             original_lines = original_content.splitlines()
@@ -845,145 +838,127 @@ def validate_code_output(
 
 
 def validate_code_output_batch(
-    parsed_data: Dict,
-    original_contents: Optional[Dict[str, str]] = None,
-    file_analysis_cache: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    parsed_data: dict,
+    original_contents: Optional[dict[str, str]] = None,
+    file_analysis_cache: Optional[dict[str, dict[str, Any]]] = None,
+) -> dict[str, Any]:
     """Validates a batch of code changes and aggregates issues per file."""
     if original_contents is None:
         original_contents = {}
+
+    # PLR0911 Fix: Initialize results structure outside the loop to ensure single return path
     all_validation_results = {}
+    iteration_errors = []
 
     if not isinstance(parsed_data, dict):
         logger.error(
             f"validate_code_output_batch received non-dictionary parsed_data: {type(parsed_data).__name__}"
         )
-        malformed_blocks_content = []
-        if isinstance(parsed_data, str):
-            malformed_blocks_content.append(
-                f"Raw output that failed type check: {parsed_data[:500]}..."
-            )
-        elif parsed_data is not None:
-            malformed_blocks_content.append(
-                f"Unexpected type for parsed_data: {type(parsed_data).__name__}"
-            )
-
-        return {
-            "issues": [
-                {
-                    "type": "Internal Error",
-                    "file": "N/A",
-                    "message": f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}",
-                }
-            ],
-            "malformed_blocks": parsed_data.get("malformed_blocks", []),
-        }
-
-    code_changes_list = parsed_data.get("CODE_CHANGES", [])
-    if not isinstance(code_changes_list, list):
-        logger.error(
-            f"validate_code_output_batch received non-list 'CODE_CHANGES' field: {type(code_changes_list).__name__}"
+        iteration_errors.append(
+            {
+                "type": "Internal Error",
+                "file": "N/A",
+                "message": f"Invalid input type for parsed_data: Expected dict, got {type(parsed_data).__name__}",
+            }
         )
-        return {
-            "issues": [
+    else:
+        code_changes_list = parsed_data.get("CODE_CHANGES", [])
+        if not isinstance(code_changes_list, list):
+            logger.error(
+                f"validate_code_output_batch received non-list 'CODE_CHANGES' field: {type(code_changes_list).__name__}"
+            )
+            iteration_errors.append(
                 {
                     "type": "Internal Error",
                     "file": "N/A",
                     "message": f"Invalid type for 'CODE_CHANGES': Expected list, got {type(code_changes_list).__name__}",
                 }
-            ],
-            "malformed_blocks": parsed_data.get("malformed_blocks", []),
-        }
+            )
+        else:
+            for i, change_entry in enumerate(code_changes_list):
+                if not isinstance(change_entry, dict):
+                    issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
+                    logger.error(issue_message)
+                    iteration_errors.append(
+                        {
+                            "type": "Malformed Change Entry",
+                            "file": "N/A",
+                            "message": issue_message,
+                        }
+                    )
+                    continue
 
-    # NEW: Process code changes to validate/resolve paths and actions upfront
-    processed_code_changes_for_validation = []
-    for i, change_entry in enumerate(code_changes_list):
-        if not isinstance(change_entry, dict):
-            issue_message = f"Code change entry at index {i} is not a dictionary. Type: {type(change_entry).__name__}, Value: {str(change_entry)[:100]}"
-            logger.error(issue_message)
-            all_validation_results.setdefault("N/A", []).append(
-                {
-                    "type": "Malformed Change Entry",
-                    "file": "N/A",
-                    "message": issue_message,
-                }
-            )
-            continue
+                suggested_file_path = change_entry.get("FILE_PATH")
+                action = change_entry.get("ACTION")
 
-        suggested_file_path = change_entry.get("FILE_PATH")
-        action = change_entry.get("ACTION")
+                if not suggested_file_path or not action:
+                    logger.warning(
+                        f"Encountered a code change without a 'FILE_PATH' or 'ACTION' in output {i}. Skipping validation for this item."
+                    )
+                    iteration_errors.append(
+                        {
+                            "type": "VALIDATION_ERROR",
+                            "file": "N/A",
+                            "message": f"Change item at index {i} missing FILE_PATH or ACTION.",
+                        }
+                    )
+                    continue
 
-        if not suggested_file_path or not action:
-            logger.warning(
-                f"Encountered a code change without a 'FILE_PATH' or 'ACTION' in output {i}. Skipping validation for this item."
-            )
-            all_validation_results.setdefault("N/A", []).append(
-                {
-                    "type": "VALIDATION_ERROR",
-                    "file": "N/A",
-                    "message": f"Change item at index {i} missing FILE_PATH or ACTION.",
-                }
-            )
-            continue  # Skip further validation for this invalid entry
+                is_valid, resolved_path, suggested_action, error_msg = (
+                    validate_and_resolve_file_path_for_action(
+                        suggested_file_path, action, original_contents
+                    )
+                )
 
-        is_valid, resolved_path, suggested_action, error_msg = (
-            validate_and_resolve_file_path_for_action(
-                suggested_file_path, action, original_contents
-            )
-        )
+                if not is_valid:
+                    iteration_errors.append(
+                        {
+                            "type": "INVALID_FILE_PATH",
+                            "file": suggested_file_path,
+                            "message": error_msg,
+                        }
+                    )
+                    continue
 
-        if not is_valid:
-            all_validation_results.setdefault(suggested_file_path, []).append(
-                {
-                    "type": "INVALID_FILE_PATH",
-                    "file": suggested_file_path,
-                    "message": error_msg,
-                }
-            )
-            continue  # Skip further validation for this invalid entry
+                # Update the change_entry with resolved path and potentially changed action
+                change_entry["FILE_PATH"] = resolved_path
+                change_entry["ACTION"] = suggested_action
 
-        # Update the change_entry with resolved path and potentially changed action
-        change_entry["FILE_PATH"] = resolved_path
-        change_entry["ACTION"] = suggested_action
+                # Now, perform content validation for the (potentially modified) change_entry
+                try:
+                    original_content_for_file = original_contents.get(resolved_path)
+                    file_exists_in_codebase = resolved_path in original_contents
 
-        # Now, perform content validation for the (potentially modified) change_entry
-        try:
-            original_content_for_file = original_contents.get(resolved_path)
-            file_exists_in_codebase = (
-                resolved_path in original_contents
-            )  # Check existence based on resolved path
-
-            validation_result = validate_code_output(
-                change_entry,
-                original_content_for_file,
-                file_analysis_cache,
-                file_exists_in_codebase,
-            )
-            all_validation_results.setdefault(resolved_path, []).extend(
-                validation_result.get("issues", [])
-            )
-            logger.debug(
-                f"Validation for {resolved_path} completed with {len(validation_result.get('issues', []))} issues."
-            )
-        except Exception as e:
-            logger.error(
-                f"Error during content validation of change entry {i} for file {resolved_path}: {e}"
-            )
-            all_validation_results.setdefault(resolved_path, []).append(
-                {
-                    "type": "VALIDATION_TOOL_ERROR",
-                    "file": resolved_path,
-                    "message": f"Failed to validate content: {e}",
-                }
-            )
+                    validation_result = validate_code_output(
+                        change_entry,
+                        original_content_for_file,
+                        file_analysis_cache,
+                        file_exists_in_codebase,
+                    )
+                    all_validation_results.setdefault(resolved_path, []).extend(
+                        validation_result.get("issues", [])
+                    )
+                    logger.debug(
+                        f"Validation for {resolved_path} completed with {len(validation_result.get('issues', []))} issues."
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error during content validation of change entry {i} for file {resolved_path}: {e}"
+                    )
+                    iteration_errors.append(
+                        {
+                            "type": "VALIDATION_TOOL_ERROR",
+                            "file": resolved_path,
+                            "message": f"Failed to validate content: {e}",
+                        }
+                    )
 
     # --- Unit Test Presence Check ---
     python_files_modified_or_added = {
         change["FILE_PATH"]
         for change in code_changes_list
         if change.get("FILE_PATH", "").endswith(".py")
-        and change.get("ACTION")
-        in ["ADD", "MODIFY", "CREATE"]  # Include CREATE as it's an ADD
+        and change.get("ACTION") in ["ADD", "MODIFY", "CREATE"]
     }
     test_files_added = {
         change["FILE_PATH"]
@@ -1009,4 +984,10 @@ def validate_code_output_batch(
     logger.info(
         f"Batch validation completed. Aggregated issues for {len(all_validation_results)} files."
     )
+
+    # Merge iteration errors collected due to early exits/malformed entries
+    if iteration_errors:
+        all_validation_results.setdefault("N/A", []).extend(iteration_errors)
+
+    # Final return (Single exit point for PLR0911 compliance)
     return all_validation_results

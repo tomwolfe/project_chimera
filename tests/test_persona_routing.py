@@ -5,9 +5,9 @@ import pytest
 
 from src.models import PersonaConfig
 from src.persona.routing import PersonaRouter
-from src.persona_manager import (
-    PersonaManager,
-)  # Assuming PersonaManager is needed for PersonaRouter init
+from src.persona_manager import PersonaManager
+
+# Assuming PersonaManager is needed for PersonaRouter init
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 
 

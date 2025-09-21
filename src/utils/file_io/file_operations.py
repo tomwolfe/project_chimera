@@ -5,7 +5,7 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def _apply_unified_diff(original_content: str, diff_content: str) -> str:
     return "".join(patched_lines)
 
 
-def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
+def _apply_code_change(change: dict[str, Any], codebase_path: Path):
     """Applies a single code change (ADD, MODIFY, REMOVE) to the codebase.
 
     Args:
@@ -108,7 +108,7 @@ def _apply_code_change(change: Dict[str, Any], codebase_path: Path):
     file_path = codebase_path / change["FILE_PATH"]
     action = change["ACTION"]
 
-    if action == "ADD" or action == "CREATE":
+    if action in {"ADD", "CREATE"}:
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:

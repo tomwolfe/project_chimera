@@ -1,18 +1,27 @@
 # src/utils/code_utils.py
-"""Utility functions related to code manipulation and analysis."""
+"""
+Utility functions related to code manipulation and analysis.
+"""
 
 import ast
 import logging
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
+
+# --- Constants for Code Smell Heuristics (Replaced PLR2004 magic values) ---
+MAX_LOC_FOR_SMELL = 50
+MAX_ARGS_FOR_SMELL = 5
+MAX_NESTING_DEPTH_FOR_SMELL = 3
+# --------------------------------------------------------------------------
 
 
 # --- Helper to get a snippet around a line number ---
 def _get_code_snippet(
-    content_lines: List[str], line_number: Optional[int], context_lines: int = 2
+    content_lines: list[str], line_number: Optional[int], context_lines: int = 2
 ) -> str:  # Changed return type from Optional[str] to str
-    """Retrieves a snippet of code around a specific line number from a list of lines.
+    """
+    Retrieves a snippet of code around a specific line number from a list of lines.
 
     Args:
         content_lines: A list of strings, where each string is a line of code.
@@ -21,7 +30,6 @@ def _get_code_snippet(
 
     Returns:
         A formatted string snippet of the code, or an empty string if input is invalid.
-
     """
     # Ensure line_number is valid and within bounds
     if (
@@ -52,11 +60,12 @@ def _get_code_snippet(
 
 # --- AST Visitor for detailed code metrics (if needed elsewhere, otherwise can be removed) ---
 class ComplexityVisitor(ast.NodeVisitor):
-    """AST visitor to calculate various code metrics for functions and methods,
+    """
+    AST visitor to calculate various code metrics for functions and methods,
     including cyclomatic complexity, lines of code, nesting depth, and code smells.
     """
 
-    def __init__(self, content_lines: List[str]):
+    def __init__(self, content_lines: list[str]):
         self.content_lines = content_lines
         self.function_metrics = []  # Stores metrics for each function/method
         self.current_function_name = None
@@ -80,11 +89,13 @@ class ComplexityVisitor(ast.NodeVisitor):
                     loc_count += 1
         return loc_count
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    # N802 Fix: Renamed visit_FunctionDef to visit_functiondef
+    def visit_functiondef(self, node: ast.FunctionDef):
         self._analyze_function(node)
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+    # N802 Fix: Renamed visit_AsyncFunctionDef to visit_asyncfunctiondef
+    def visit_asyncfunctiondef(self, node: ast.AsyncFunctionDef):
         self._analyze_function(node)
         self.generic_visit(node)
 
@@ -123,35 +134,38 @@ class ComplexityVisitor(ast.NodeVisitor):
                 complexity += len(sub_node.ifs)
 
             # Track nesting depth
-            if isinstance(
-                sub_node,
-                (
-                    ast.If,
-                    ast.For,
-                    ast.While,
-                    ast.AsyncFor,
-                    ast.With,
-                    ast.AsyncWith,
-                    ast.ExceptHandler,
-                    ast.FunctionDef,
-                    ast.AsyncFunctionDef,
-                    ast.ClassDef,
-                ),
-            ):
-                # Avoid counting the current node itself in depth calculation
-                if sub_node != node and sub_node not in stack:
-                    stack.append(sub_node)
-                    current_nesting_depth = len(stack)
-                    max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
+            if (
+                isinstance(
+                    sub_node,
+                    (
+                        ast.If,
+                        ast.For,
+                        ast.While,
+                        ast.AsyncFor,
+                        ast.With,
+                        ast.AsyncWith,
+                        ast.ExceptHandler,
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                    ),
+                )
+                and sub_node != node
+                and sub_node not in stack
+            ):  # SIM102 Fix: Combined nested if
+                stack.append(sub_node)
+                current_nesting_depth = len(stack)
+                max_nesting_depth = max(max_nesting_depth, current_nesting_depth)
 
             # Count nested loops
-            if isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor)):
-                # Check if any parent node in the stack is also a loop/conditional
-                if any(
+            if (
+                isinstance(sub_node, (ast.For, ast.While, ast.AsyncFor))
+                and any(  # SIM102 Fix: Combined nested if
                     isinstance(s, (ast.For, ast.While, ast.AsyncFor))
                     for s in stack[:-1]
-                ):
-                    nested_loops_count += 1
+                )
+            ):
+                nested_loops_count += 1
 
         stack.clear()  # Clear stack after visiting the function node
         loc = self._calculate_loc(node)
@@ -165,11 +179,13 @@ class ComplexityVisitor(ast.NodeVisitor):
 
         # Simple code smell heuristics
         code_smells = 0
-        if loc > 50:  # Long function
+        if loc > MAX_LOC_FOR_SMELL:  # Long function (PLR2004 Fix)
             code_smells += 1
-        if num_args > 5:  # High number of arguments
+        if num_args > MAX_ARGS_FOR_SMELL:  # High number of arguments (PLR2004 Fix)
             code_smells += 1
-        if max_nesting_depth > 3:  # Deeply nested logic
+        if (
+            max_nesting_depth > MAX_NESTING_DEPTH_FOR_SMELL
+        ):  # Deeply nested logic (PLR2004 Fix)
             code_smells += 1
 
         # Placeholder for potential performance bottlenecks (e.g., nested loops)

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pycodestyle
 
@@ -20,11 +20,11 @@ class CodeValidationError(Exception):
     pass
 
 
-def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_pycodestyle(content: str, filename: str) -> list[dict[str, Any]]:
     """Runs pycodestyle on the given content using its library API."""
     issues = []
     try:
-        style_guide = pycodestyle.StyleGuide(quiet=True, format="default")
+        pycodestyle.StyleGuide(quiet=True, format="default")
         checker = pycodestyle.Checker(
             filename=filename, lines=content.splitlines(keepends=True)
         )
@@ -60,7 +60,7 @@ def _run_pycodestyle(content: str, filename: str) -> List[Dict[str, Any]]:
     return issues
 
 
-def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_bandit(content: str, filename: str) -> list[dict[str, Any]]:
     """Runs Bandit security analysis on the given content via subprocess."""
     issues = []
     try:
@@ -173,7 +173,7 @@ def _run_bandit(content: str, filename: str) -> List[Dict[str, Any]]:
 
 
 # --- NEW FUNCTION FOR IMPROVEMENT 2.2 (AST Security Checks) ---
-def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]]:
+def _run_ast_security_checks(content: str, filename: str) -> list[dict[str, Any]]:
     """Runs AST-based security checks on Python code."""
     issues = []
     try:
@@ -317,8 +317,8 @@ def _run_ast_security_checks(content: str, filename: str) -> List[Dict[str, Any]
 
 
 def validate_code_output(
-    parsed_change: Dict[str, Any], original_content: str = None
-) -> Dict[str, Any]:
+    parsed_change: dict[str, Any], original_content: str = None
+) -> dict[str, Any]:
     """Validates a single code change (ADD, MODIFY, REMOVE) for syntax, style, and security."""
     file_path_str = parsed_change.get("FILE_PATH")
     action = parsed_change.get("ACTION")
@@ -416,8 +416,8 @@ def validate_code_output(
 
 
 def validate_code_output_batch(
-    parsed_data: Dict, original_contents: Dict[str, str] = None
-) -> Dict[str, List[Dict[str, Any]]]:
+    parsed_data: dict, original_contents: dict[str, str] = None
+) -> dict[str, list[dict[str, Any]]]:
     """Validates a batch of code changes and aggregates issues per file."""
     if original_contents is None:
         original_contents = {}

@@ -4,13 +4,13 @@ import datetime
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
-from src.utils.core_helpers.json_utils import (
-    convert_to_json_friendly,
-)  # NEW: Import the shared utility
+from src.utils.core_helpers.json_utils import convert_to_json_friendly
 
 logger = logging.getLogger(__name__)
+
+MAX_AUDIT_LOG_VALUE_LENGTH = 50  # FIX PLR2004
 
 
 def strip_ansi_codes(text: str) -> str:
@@ -22,12 +22,14 @@ def strip_ansi_codes(text: str) -> str:
 def generate_markdown_report(
     user_prompt: str,
     final_answer: Any,
-    intermediate_steps: Dict[str, Any],
+    intermediate_steps: dict[str, Any],
     process_log_output: str,
-    config_params: Dict[str, Any],
-    persona_audit_log: List[Dict[str, Any]],
+    config_params: dict[str, Any],
+    persona_audit_log: list[dict[str, Any]],
 ) -> str:
-    """Generates a comprehensive Markdown report from the analysis results."""
+    """
+    Generates a comprehensive Markdown report from the analysis results.
+    """
     report_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     md_content = "# Project Chimera Socratic Debate Report\n\n"
     md_content += f"**Date:** {report_date}\n"
@@ -51,10 +53,14 @@ def generate_markdown_report(
             old_val_str = str(entry.get("old_value", ""))
             new_val_str = str(entry.get("new_value", ""))
             old_val_display = (
-                (old_val_str[:50] + "...") if len(old_val_str) > 50 else old_val_str
+                (old_val_str[:MAX_AUDIT_LOG_VALUE_LENGTH] + "...")
+                if len(old_val_str) > MAX_AUDIT_LOG_VALUE_LENGTH
+                else old_val_str
             )
             new_val_display = (
-                (new_val_str[:50] + "...") if len(new_val_str) > 50 else new_val_str
+                (new_val_str[:MAX_AUDIT_LOG_VALUE_LENGTH] + "...")
+                if len(new_val_str) > MAX_AUDIT_LOG_VALUE_LENGTH
+                else new_val_str
             )
 
             old_val_display_escaped = old_val_display.replace(
@@ -78,11 +84,15 @@ def generate_markdown_report(
             [
                 k
                 for k in intermediate_steps
-                if not k.endswith("_Tokens_Used")
-                and not k.endswith("_Estimated_Cost_USD")
-                and k != "Total_Tokens_Used"
-                and k != "Total_Estimated_Cost_USD"
-                and k != "debate_history"
+                if not k.endswith(
+                    ("_Tokens_Used", "_Estimated_Cost_USD")
+                )  # FIX PLR1714
+                and k
+                not in (
+                    "Total_Tokens_Used",
+                    "Total_Estimated_Cost_USD",
+                    "debate_history",
+                )  # FIX PLR1714
                 and not k.startswith("malformed_blocks")
             ],
             key=lambda x: (x.split("_")[0] if "_" in x else "", x),

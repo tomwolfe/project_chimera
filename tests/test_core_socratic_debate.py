@@ -1,31 +1,39 @@
+# tests/test_core_socratic_debate.py
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core import SocraticDebate
 from src.config.settings import ChimeraSettings  # Import ChimeraSettings
-from src.context.context_analyzer import (
-    ContextRelevanceAnalyzer,
-)  # Import ContextRelevanceAnalyzer
-from src.exceptions import TokenBudgetExceededError  # Import specific exceptions
+from src.context.context_analyzer import ContextRelevanceAnalyzer
+
+# Import FocusedMetricsCollector
+from src.exceptions import TokenBudgetExceededError
 
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
-from src.llm_provider import (
-    GeminiProvider,
-)  # Assuming GeminiProvider is in src/llm_provider.py
+from src.llm_provider import GeminiProvider
+
+# Import ContextRelevanceAnalyzer
+# Import specific exceptions
 from src.models import (
     CritiqueOutput,
     GeneralOutput,
     PersonaConfig,  # Import PersonaConfig
     SelfImprovementAnalysisOutputV1,
-)  # Import specific models
+)
+
+# Assuming GeminiProvider is in src/llm_provider.py
 from src.persona_manager import PersonaManager  # Import PersonaManager
-from src.self_improvement.metrics_collector import (
-    FocusedMetricsCollector,
-)  # Import FocusedMetricsCollector
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
-from src.utils.reporting.output_parser import LLMOutputParser  # Import LLMOutputParser
+from src.utils.output_parser import LLMOutputParser  # Import LLMOutputParser
+from src.llm.orchestrator import LLMOrchestrator # ADD THIS LINE
+
+# --- CONSTANTS FOR PLR2004 FIXES ---
+EXPECTED_DEBATE_TURNS_3 = 3
+EXPECTED_RETRY_COUNT_2 = 2
+# --- END CONSTANTS ---
 
 
 @pytest.fixture
@@ -304,6 +312,20 @@ def mock_metrics_collector():
     collector.file_analysis_cache = {}  # Ensure this attribute exists
     return collector
 
+# ADD THIS FIXTURE
+@pytest.fixture
+def mock_llm_orchestrator():
+    """Provides a mock LLMOrchestrator instance."""
+    orchestrator = MagicMock(spec=LLMOrchestrator)
+    orchestrator.call_llm.return_value = {
+        "text": '{"general_output": "Mock LLM output from orchestrator"}',
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        "is_truncated": False,
+    }
+    orchestrator.close.return_value = None
+    return orchestrator
+# END ADD THIS FIXTURE
+
 
 @pytest.fixture
 def socratic_debate_instance(  # noqa: F811
@@ -316,6 +338,7 @@ def socratic_debate_instance(  # noqa: F811
     mock_conflict_manager,
     mock_metrics_collector,
     mock_summarizer_pipeline,  # NEW: Add mock_summarizer_pipeline
+    mock_llm_orchestrator, # ADD THIS LINE
 ):
     """Provides a SocraticDebate instance with mocked dependencies."""
     with (
@@ -329,6 +352,11 @@ def socratic_debate_instance(  # noqa: F811
         patch(
             "core.PromptOptimizer"
         ) as MockPromptOptimizer,  # MODIFIED: Patch the class directly
+        # NEW: Patch additional injected dependencies
+        patch("core.CritiqueEngine") as MockCritiqueEngine,
+        patch("core.ImprovementApplicator") as MockImprovementApplicator,
+        patch("core.ContentAlignmentValidator") as MockContentAlignmentValidator,
+        patch("core.LLMOrchestrator", return_value=mock_llm_orchestrator), # ADD THIS LINE
     ):
         # Mock the PromptOptimizer constructor to return a mock instance
         MockPromptOptimizer.return_value = (
@@ -351,10 +379,20 @@ def socratic_debate_instance(  # noqa: F811
             lambda template_name, context: template_name
         )  # Mock generate_prompt
 
+        # NEW: Mock the injected dependencies
+        mock_critique_engine = MockCritiqueEngine.return_value
+        mock_improvement_applicator = MockImprovementApplicator.return_value
+        mock_content_alignment_validator = MockContentAlignmentValidator.return_value
+        mock_content_alignment_validator.validate.return_value = (
+            True,
+            "Content aligned.",
+            {},
+        )
+
         debate = SocraticDebate(
             initial_prompt="Test prompt",
             api_key="AIza_mock-key-for-testing-purposes-1234567890",  # FIX: Long enough API key
-            model_name="gemini-2.5-flash-lite",  # Use a light model for tests
+            model_name="gemini-2.5-flash-lite-preview-09-2025",  # Use a light model for tests
             domain="General",  # Use 'General' for simple questions
             persona_manager=mock_persona_manager,  # Pass the persona manager
             context_analyzer=mock_context_analyzer,  # Pass the mock context analyzer
@@ -365,6 +403,12 @@ def socratic_debate_instance(  # noqa: F811
             status_callback=MagicMock(),  # FIX: Ensure status_callback is a callable MagicMock
             rich_console=MagicMock(),
             summarizer_pipeline_instance=mock_summarizer_pipeline,  # NEW: Pass the mock summarizer
+            # NEW: Pass the mocked injected dependencies
+            prompt_optimizer=MockPromptOptimizer.return_value,
+            critique_engine=mock_critique_engine,
+            improvement_applicator=mock_improvement_applicator,
+            content_validator=mock_content_alignment_validator,
+            llm_orchestrator=mock_llm_orchestrator, # ADD THIS LINE
         )
         # Ensure the conflict manager mock is assigned to the instance
         debate.conflict_manager = mock_conflict_manager
@@ -379,19 +423,23 @@ def test_socratic_debate_initialization(socratic_debate_instance):  # noqa: F811
     """Tests that the SocraticDebate initializes correctly."""
     assert socratic_debate_instance is not None
     assert socratic_debate_instance.initial_prompt == "Test prompt"  # noqa: F841
-    assert socratic_debate_instance.model_name == "gemini-2.5-flash-lite"
+    assert (
+        socratic_debate_instance.model_name
+        == "gemini-2.5-flash-lite-preview-09-2025" # Corrected model name
+    )
     assert socratic_debate_instance.llm_provider is not None
     assert socratic_debate_instance.persona_manager is not None
     assert socratic_debate_instance.token_tracker is not None
     assert socratic_debate_instance.context_analyzer is not None
     assert socratic_debate_instance.settings is not None
+    assert socratic_debate_instance.llm_orchestrator is not None # ADD THIS ASSERTION
     assert (
         socratic_debate_instance.output_parser is not None
     )  # FIX: Assert output_parser is set
 
 
 def test_socratic_debate_run_debate_success(  # noqa: F811
-    socratic_debate_instance, mock_gemini_provider, mock_output_parser
+    socratic_debate_instance, mock_gemini_provider, mock_output_parser, mock_llm_orchestrator # ADD mock_llm_orchestrator
 ):
     """Tests a successful end-to-end debate run."""
     # Reset mock_output_parser.parse_and_validate for this specific test
@@ -409,10 +457,23 @@ def test_socratic_debate_run_debate_success(  # noqa: F811
             "malformed_blocks": [],
         },  # Impartial_Arbitrator
     ]
-    mock_gemini_provider.generate.side_effect = [
-        ('{"general_output": "Visionary idea"}', 100, 50, False),  # Visionary_Generator
-        ('{"general_output": "Skeptical idea"}', 100, 50, False),  # Skeptical_Generator
-        ('{"general_output": "Final Answer"}', 100, 50, False),  # Impartial_Arbitrator
+    # The mock_llm_orchestrator.call_llm will be called instead of mock_gemini_provider.generate directly
+    mock_llm_orchestrator.call_llm.side_effect = [
+        {
+            "text": '{"general_output": "Visionary idea"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # Visionary_Generator
+        {
+            "text": '{"general_output": "Skeptical idea"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # Skeptical_Generator
+        {
+            "text": '{"general_output": "Final Answer"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # Impartial_Arbitrator
     ]
 
     final_answer, intermediate_steps = socratic_debate_instance.run_debate()
@@ -420,41 +481,47 @@ def test_socratic_debate_run_debate_success(  # noqa: F811
     assert final_answer["general_output"] == "Final Answer"  # noqa: F841
     assert "Total_Tokens_Used" in intermediate_steps
     assert "Total_Estimated_Cost_USD" in intermediate_steps
-    assert mock_gemini_provider.generate.call_count == 3  # 3 personas in sequence
-    assert mock_output_parser.parse_and_validate.call_count == 3
+    assert (
+        mock_llm_orchestrator.call_llm.call_count == EXPECTED_DEBATE_TURNS_3 # MODIFIED: Check orchestrator call count
+    )
+    assert (
+        mock_output_parser.parse_and_validate.call_count == EXPECTED_DEBATE_TURNS_3
+    )  # FIX: PLR2004 (3)
 
 
 def test_socratic_debate_malformed_output_triggers_conflict_manager(  # noqa: F811
-    socratic_debate_instance, mock_gemini_provider, mock_conflict_manager
+    socratic_debate_instance, mock_gemini_provider, mock_conflict_manager, mock_llm_orchestrator # ADD mock_llm_orchestrator
 ):
     """Tests that malformed output triggers the conflict manager and that resolution is handled."""
-    socratic_debate_instance.persona_router.determine_persona_sequence.return_value = [
+    socratic_debate_instance.persona_manager.persona_router.determine_persona_sequence.return_value = [
         "Visionary_Generator",
         "Constructive_Critic",
         "Impartial_Arbitrator",
     ]
 
-    # Mock the Constructive_Critic to return malformed output
-    mock_gemini_provider.generate.side_effect = [
+    # The mock_llm_orchestrator.call_llm will be called instead of mock_gemini_provider.generate directly
+    mock_llm_orchestrator.call_llm.side_effect = [
         # Visionary_Generator (valid)
-        ('{"general_output": "Visionary idea"}', 100, 50, False),
+        {
+            "text": '{"general_output": "Visionary idea"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },
         # Constructive_Critic (malformed)
-        (
-            '{"CRITIQUE_SUMMARY": "Malformed output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}',
-            150,
-            70,
-            False,
-        ),
+        {
+            "text": '{"CRITIQUE_SUMMARY": "Malformed output", "malformed_blocks": [{"type": "SCHEMA_VALIDATION_ERROR"}]}',
+            "usage": {"prompt_tokens": 150, "completion_tokens": 70, "total_tokens": 220},
+            "is_truncated": False,
+        },
         # Impartial_Arbitrator (will receive resolved output from conflict manager)
-        (
-            '{"general_output": "Final synthesis from resolved conflict"}',
-            200,
-            100,
-            False,
-        ),
+        {
+            "text": '{"general_output": "Final synthesis from resolved conflict"}',
+            "usage": {"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
+            "is_truncated": False,
+        },
     ]
 
-    # Mock the parser to return malformed for the critic, then valid for others
+    # Mock the parser to return malformed for the critic, then conflict report, then final answer
     socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
         {"general_output": "Visionary idea", "malformed_blocks": []},  # Visionary
         {
@@ -499,26 +566,24 @@ def test_socratic_debate_malformed_output_triggers_conflict_manager(  # noqa: F8
 
 
 def test_socratic_debate_token_budget_exceeded(  # noqa: F811
-    socratic_debate_instance, mock_gemini_provider, mock_token_tracker
+    socratic_debate_instance, mock_gemini_provider, mock_token_tracker, mock_llm_orchestrator # ADD mock_llm_orchestrator
 ):
     """Tests that a TokenBudgetExceededError is raised when budget is exceeded."""
     mock_token_tracker.current_usage = 990000  # Near budget limit
     mock_token_tracker.budget = 1000000
-    mock_gemini_provider.generate.return_value = (
-        '{"general_output": "Exceeded"}',
-        50000,
-        10000,
-        False,
-    )  # This will exceed budget
+    # Mock the orchestrator to return a response that exceeds the budget
+    mock_llm_orchestrator.call_llm.side_effect = TokenBudgetExceededError(
+        current_tokens=990000, budget=1000000, details={"phase": "debate", "step_name": "TestPersona", "tokens_needed": 50000}
+    )
 
     with pytest.raises(TokenBudgetExceededError):
         socratic_debate_instance.run_debate()
-    # Ensure generate was called at least once before the budget was exceeded
-    assert mock_gemini_provider.generate.call_count >= 1
+    # Ensure orchestrator was called at least once before the budget was exceeded
+    assert mock_llm_orchestrator.call_llm.call_count >= 1
 
 
 def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
-    socratic_debate_instance, mock_gemini_provider
+    socratic_debate_instance, mock_gemini_provider, mock_llm_orchestrator # ADD mock_llm_orchestrator
 ):
     """Tests that _execute_llm_turn retries on SchemaValidationError."""
     persona_name = "Constructive_Critic"
@@ -528,20 +593,18 @@ def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
         )
     )
 
-    # Mock LLM to first return invalid, then valid JSON
-    mock_gemini_provider.generate.side_effect = [
-        (
-            '{"invalid_field": "Malformed output"}',
-            100,
-            50,
-            False,
-        ),  # First attempt: invalid
-        (
-            '{"CRITIQUE_SUMMARY": "Valid critique", "CRITIQUE_POINTS": [], "SUGGESTIONS": []}',
-            120,
-            60,
-            False,
-        ),  # Second attempt: valid
+    # Mock orchestrator to first return invalid, then valid JSON
+    mock_llm_orchestrator.call_llm.side_effect = [
+        {
+            "text": '{"invalid_field": "Malformed output"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # First attempt: invalid
+        {
+            "text": '{"CRITIQUE_SUMMARY": "Valid critique", "CRITIQUE_POINTS": [], "SUGGESTIONS": []}',
+            "usage": {"prompt_tokens": 120, "completion_tokens": 60, "total_tokens": 180},
+            "is_truncated": False,
+        },  # Second attempt: valid
     ]
 
     # Mock parser to first fail, then succeed
@@ -564,8 +627,13 @@ def test_execute_llm_turn_schema_validation_retry(  # noqa: F811
         persona_name, "Test prompt for critic", "debate", persona_config.max_tokens
     )
 
-    assert mock_gemini_provider.generate.call_count == 2
-    assert socratic_debate_instance.output_parser.parse_and_validate.call_count == 2
+    assert (
+        mock_llm_orchestrator.call_llm.call_count == EXPECTED_RETRY_COUNT_2 # MODIFIED: Check orchestrator call count
+    )
+    assert (
+        socratic_debate_instance.output_parser.parse_and_validate.call_count
+        == EXPECTED_RETRY_COUNT_2
+    )  # FIX: PLR2004 (2)
     # Assert that the final output is the valid one
     assert output["CRITIQUE_SUMMARY"] == "Valid critique"
     # Assert that a malformed block for retry was recorded (if applicable, depends on mock behavior)
@@ -582,6 +650,7 @@ def test_socratic_debate_self_analysis_flow(  # noqa: F811
     mock_gemini_provider,
     mock_persona_manager,
     mock_metrics_collector,
+    mock_llm_orchestrator, # ADD mock_llm_orchestrator
 ):
     """Tests the Self-Improvement Analyst flow, ensuring metrics are collected and passed."""
     mock_metrics_collector.collect_all_metrics.return_value = {
@@ -597,12 +666,11 @@ def test_socratic_debate_self_analysis_flow(  # noqa: F811
     ]
 
     # Mock LLM response for Self_Improvement_Analyst
-    mock_gemini_provider.generate.return_value = (
-        """{"ANALYSIS_SUMMARY": "Self-analysis complete.", "IMPACTFUL_SUGGESTIONS": []}""",
-        200,
-        100,
-        False,
-    )
+    mock_llm_orchestrator.call_llm.return_value = {
+        "text": """{"ANALYSIS_SUMMARY": "Self-analysis complete.", "IMPACTFUL_SUGGESTIONS": []}""",
+        "usage": {"prompt_tokens": 200, "completion_tokens": 100, "total_tokens": 300},
+        "is_truncated": False,
+    }
     socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
         # Self_Improvement_Analyst (final synthesis)
         (
@@ -625,7 +693,7 @@ def test_socratic_debate_self_analysis_flow(  # noqa: F811
 
 
 def test_socratic_debate_context_aware_assistant_turn(  # noqa: F811
-    socratic_debate_instance, mock_gemini_provider, mock_context_analyzer
+    socratic_debate_instance, mock_gemini_provider, mock_context_analyzer, mock_llm_orchestrator # ADD mock_llm_orchestrator
 ):
     """Tests the Context_Aware_Assistant turn when present in the sequence, ensuring context is passed."""
     socratic_debate_instance.persona_router.determine_persona_sequence.return_value = [
@@ -633,19 +701,17 @@ def test_socratic_debate_context_aware_assistant_turn(  # noqa: F811
         "Impartial_Arbitrator",
     ]
 
-    mock_gemini_provider.generate.side_effect = [
-        (
-            '{"general_overview": "Context analysis output"}',
-            100,
-            50,
-            False,
-        ),  # Context_Aware_Assistant
-        (
-            '{"general_output": "Final answer from arbitrator"}',
-            100,
-            50,
-            False,
-        ),  # Impartial_Arbitrator
+    mock_llm_orchestrator.call_llm.side_effect = [
+        {
+            "text": '{"general_overview": "Context analysis output"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # Context_Aware_Assistant
+        {
+            "text": '{"general_output": "Final answer from arbitrator"}',
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            "is_truncated": False,
+        },  # Impartial_Arbitrator
     ]
     socratic_debate_instance.output_parser.parse_and_validate.side_effect = [
         {"general_overview": "Context analysis output", "malformed_blocks": []},

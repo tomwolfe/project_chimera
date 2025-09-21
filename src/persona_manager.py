@@ -2,7 +2,7 @@
 import copy
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import yaml
 from pydantic import ValidationError
@@ -24,24 +24,30 @@ class PersonaManager:
     TRUNCATION_FAILURE_RATE_THRESHOLD = 0.2
     GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = 0.7
 
+    # PLR2004 Fixes: Constants for performance adjustment thresholds and steps
+    SCHEMA_FAILURE_HIGH_THRESHOLD = 0.2
+    SCHEMA_FAILURE_LOW_THRESHOLD = 0.05
+    TEMP_DECREASE_STEP = 0.15
+    TEMP_INCREASE_STEP = 0.05
+
     # REMOVED: The hardcoded PERSONA_OUTPUT_SCHEMAS dictionary.
     # Schemas will now be dynamically retrieved from PersonaConfig.output_schema.
 
     def __init__(
         self,
-        domain_keywords: Dict[str, List[str]],
+        domain_keywords: dict[str, list[str]],
         token_tracker: Optional[TokenUsageTracker] = None,
         settings: Optional[ChimeraSettings] = None,
         prompt_optimizer: Optional[PromptOptimizer] = None,
     ):
-        self.all_personas: Dict[str, PersonaConfig] = {}
-        self.persona_sets: Dict[str, List[str]] = {}
-        self.available_domains: List[str] = []
-        self.all_custom_frameworks_data: Dict[str, Any] = {}
+        self.all_personas: dict[str, PersonaConfig] = {}
+        self.persona_sets: dict[str, list[str]] = {}
+        self.available_domains: list[str] = []
+        self.all_custom_frameworks_data: dict[str, Any] = {}
         self.default_persona_set_name: str = "General"
-        self._original_personas: Dict[str, PersonaConfig] = {}
+        self._original_personas: dict[str, PersonaConfig] = {}
 
-        self.persona_performance_metrics: Dict[str, Dict[str, Any]] = {}
+        self.persona_performance_metrics: dict[str, dict[str, Any]] = {}
         self.adjustment_cooldown_seconds = 300
         self.min_turns_for_adjustment = 5
 
@@ -71,7 +77,7 @@ class PersonaManager:
 
     def _load_initial_data(
         self, file_path: str = DEFAULT_PERSONAS_FILE
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, Optional[str]]:
         """Loads the default personas and persona sets from a YAML file."""
         try:
             with open(file_path) as f:
@@ -184,7 +190,7 @@ class PersonaManager:
                 self.available_domains = sorted(list(set(self.available_domains)))
         logger.info(f"Loaded {len(saved_names)} custom frameworks.")
 
-    def _load_original_personas(self) -> Tuple[bool, Optional[str]]:
+    def _load_original_personas(self) -> tuple[bool, Optional[str]]:
         """Loads the original default personas from the YAML file and stores them."""
         try:
             with open(DEFAULT_PERSONAS_FILE) as f:
@@ -212,7 +218,7 @@ class PersonaManager:
 
     def _initialize_performance_metrics(self):
         """Initializes performance metrics for all loaded personas."""
-        for p_name in self.all_personas.keys():
+        for p_name in self.all_personas:
             self.persona_performance_metrics[p_name] = {
                 "total_turns": 0,
                 "schema_failures": 0,
@@ -228,9 +234,9 @@ class PersonaManager:
         self,
         name: str,
         current_persona_set_name: str,
-        current_active_personas: Dict[str, PersonaConfig],
+        current_active_personas: dict[str, PersonaConfig],
         description: str = "",
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """Saves the current framework configuration (including persona edits) as a custom framework."""
         if not name:
             return False, "Please enter a name for the framework before saving."
@@ -279,7 +285,7 @@ class PersonaManager:
 
     def load_framework_into_session(
         self, framework_name: str
-    ) -> Tuple[bool, str, Dict[str, PersonaConfig], Dict[str, List[str]], str]:
+    ) -> tuple[bool, str, dict[str, PersonaConfig], dict[str, list[str]], str]:
         """Loads a framework's personas and sets, returning them for session state update."""
         loaded_config_data = (
             self.config_persistence._load_custom_framework_config_from_file(
@@ -340,7 +346,7 @@ class PersonaManager:
         else:
             return False, f"Framework '{framework_name}' not found.", {}, {}, ""
 
-    def get_persona_sequence_for_framework(self, framework_name: str) -> List[str]:
+    def get_persona_sequence_for_framework(self, framework_name: str) -> list[str]:
         """Retrieves the persona sequence for a given framework name from persona_sets."""
         if framework_name in self.persona_sets:
             return self.persona_sets[framework_name]
@@ -452,7 +458,7 @@ class PersonaManager:
 
     def export_framework_for_sharing(
         self, framework_name: str
-    ) -> Tuple[bool, str, Optional[str]]:
+    ) -> tuple[bool, str, Optional[str]]:
         """Exports a framework configuration as YAML for sharing using ConfigPersistence."""
         exported_content = self.config_persistence.export_framework_for_sharing(
             framework_name
@@ -469,7 +475,7 @@ class PersonaManager:
             None,
         )
 
-    def import_framework(self, file_content: str, filename: str) -> Tuple[bool, str]:
+    def import_framework(self, file_content: str, filename: str) -> tuple[bool, str]:
         """Imports a framework from file content using ConfigPersistence."""
         success, message, loaded_config_data = (
             self.config_persistence.import_framework_from_file(file_content, filename)
@@ -528,10 +534,10 @@ class PersonaManager:
         if self.prompt_optimizer and adjusted_config.system_prompt_template:
             try:
                 # BUG FIX: Pass the persona's base name (converted to snake_case) as the template key.
-                # The system_prompt_template field in PersonaConfig now holds the template content,
-                # but the prompt_optimizer expects the template's file name (key) to retrieve it.
+                # The system_prompt_template field in PersonaConfig now holds the template *name*.
+                # The prompt_optimizer expects the template's file name (key) to retrieve it.
                 rendered_prompt = self.prompt_optimizer.generate_prompt(
-                    base_persona_name.lower(),  # Use the persona name (snake_case) as the template key
+                    adjusted_config.system_prompt_template,  # Use the template name from config
                     context={"persona_name": base_persona_name},
                 )
                 # Temporarily store the rendered prompt in a new attribute for optimization
@@ -594,17 +600,21 @@ class PersonaManager:
             metrics["truncation_failures"] / metrics["total_turns"]
         )
 
-        if schema_failure_rate > 0.2:
-            adjusted_config.temperature = max(0.1, adjusted_config.temperature - 0.15)
+        # PLR2004 Fixes applied here:
+        if schema_failure_rate > self.SCHEMA_FAILURE_HIGH_THRESHOLD:
+            adjusted_config.temperature = max(
+                0.1, adjusted_config.temperature - self.TEMP_DECREASE_STEP
+            )
             logger.info(
                 f"Adjusted {base_persona_name} temperature to {adjusted_config.temperature:.2f} due to high schema failure rate ({schema_failure_rate:.2f})."
             )
         elif (
-            schema_failure_rate < 0.05
+            schema_failure_rate < self.SCHEMA_FAILURE_LOW_THRESHOLD
             and adjusted_config.temperature < base_config.temperature
         ):
             adjusted_config.temperature = min(
-                base_config.temperature, adjusted_config.temperature + 0.05
+                base_config.temperature,
+                adjusted_config.temperature + self.TEMP_INCREASE_STEP,
             )
             logger.info(
                 f"Reverted {base_persona_name} temperature to {adjusted_config.temperature:.2f} due to improved schema adherence."
@@ -663,6 +673,7 @@ class PersonaManager:
         schema_validation_failed: bool = False,
         token_budget_exceeded: bool = False,
         tokens_used_in_turn: int = 0,  # ADDED: For token efficiency score calculation
+        is_successful_turn: bool = True,  # NEW: Added is_successful_turn
     ):
         """Record performance metrics for a persona's turn."""
         base_persona_name = persona_name.replace("_TRUNCATED", "")
@@ -679,16 +690,17 @@ class PersonaManager:
                 is_aligned
                 and not schema_validation_failed
                 and not token_budget_exceeded
+                and is_successful_turn  # NEW: Use is_successful_turn
             ):
                 metrics["successful_outputs"] += 1  # ADDED
 
             logger.debug(
-                f"Recorded performance for {persona_name}: Turn={turn_number}, IsAligned={is_aligned}, IsTruncated={is_truncated}, SchemaFailed={schema_validation_failed}, TokenBudgetExceeded={token_budget_exceeded}, TokensUsed={tokens_used_in_turn}, ValidationMessage='{validation_message}'"
+                f"Recorded performance for {persona_name}: Turn={turn_number}, IsAligned={is_aligned}, IsTruncated={is_truncated}, SchemaFailed={schema_validation_failed}, TokenBudgetExceeded={token_budget_exceeded}, TokensUsed={tokens_used_in_turn}, IsSuccessfulTurn={is_successful_turn}, ValidationMessage='{validation_message}'"
             )
 
     def get_token_optimized_persona_sequence(
-        self, persona_sequence: List[str]
-    ) -> List[str]:
+        self, persona_sequence: list[str]
+    ) -> list[str]:
         """Optimizes the persona sequence by potentially replacing personas with their
         '_TRUNCATED' versions if historical performance indicates high truncation rates
         or if the overall token budget is becoming constrained.
@@ -728,7 +740,7 @@ class PersonaManager:
 
         return optimized_sequence
 
-    def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
+    def _analyze_prompt_complexity(self, prompt: str) -> dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
         return self.prompt_analyzer.analyze_complexity(prompt)
 

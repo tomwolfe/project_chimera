@@ -2,7 +2,6 @@
 """Gemini-specific tokenizer implementation."""
 
 import logging
-from functools import lru_cache
 from typing import Any
 
 from .base import Tokenizer  # This import is relative, so it remains the same
@@ -23,7 +22,6 @@ class GeminiTokenizer(Tokenizer):
         Args:
             model_name: The Gemini model name to use for token counting.
             genai_client: An initialized google.genai.Client instance.
-
         """
         if genai_client is None:
             raise ValueError(
@@ -33,6 +31,7 @@ class GeminiTokenizer(Tokenizer):
         self.genai_client = genai_client
         self.model_name = model_name
         self._max_output_tokens: int = 65536  # Default, updated to 65k output tokens
+        self._token_cache: dict[str, int] = {}  # Manual cache for instance methods
 
     @property
     def max_output_tokens(self) -> int:
@@ -43,11 +42,15 @@ class GeminiTokenizer(Tokenizer):
     def max_output_tokens(self, value: int):
         self._max_output_tokens = value
 
-    @lru_cache(maxsize=512)
+    # @lru_cache(maxsize=512) # Removed decorator to fix B019
     def count_tokens(self, text: str) -> int:
         """Counts tokens in the given text using the Gemini API, with caching."""
         if not text:
             return 0
+
+        if text in self._token_cache:
+            logger.debug("Token count retrieved from instance cache.")
+            return self._token_cache[text]
 
         try:
             # Ensure text is properly encoded for the API call
@@ -69,6 +72,7 @@ class GeminiTokenizer(Tokenizer):
             )
             tokens = response.total_tokens
             logger.debug(f"Token count for text is {tokens}. Stored in cache.")
+            self._token_cache[text] = tokens  # Store result
             return tokens
 
         except Exception as e:
@@ -98,6 +102,7 @@ class GeminiTokenizer(Tokenizer):
             logger.warning(
                 f"Falling back to improved token approximation ({approx_tokens}) due to error: {str(e)}"
             )
+            self._token_cache[text] = approx_tokens  # Store approximation
             return approx_tokens
 
     def estimate_tokens_for_context(self, context_str: str, prompt: str) -> int:
@@ -108,7 +113,8 @@ class GeminiTokenizer(Tokenizer):
     def truncate_to_token_limit(  # Renamed from trim_text_to_tokens
         self, text: str, max_tokens: int, truncation_indicator: str = ""
     ) -> str:
-        """Trim text to fit within the specified token limit.
+        """
+        Trim text to fit within the specified token limit.
         Uses a binary search approach for efficiency.
         """
         if max_tokens < 1:
@@ -132,10 +138,7 @@ class GeminiTokenizer(Tokenizer):
 
         while low <= high:
             mid = (low + high) // 2
-            if mid == 0:
-                current_tokens_at_mid = 0
-            else:
-                current_tokens_at_mid = self.count_tokens(text[:mid])
+            current_tokens_at_mid = 0 if mid == 0 else self.count_tokens(text[:mid])
 
             if current_tokens_at_mid <= effective_max_tokens:
                 best_char_limit = mid

@@ -3,32 +3,33 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# NEW: Import for SocraticDebate init
 from transformers import pipeline  # NEW: Import pipeline for summarization
 
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
-from core import (
-    SocraticDebate,
-)  # SocraticDebate is in the project root, so direct import
+from core import SocraticDebate
 from src.config.settings import ChimeraSettings  # NEW: Import ChimeraSettings
-from src.conflict_resolution import (
-    ConflictResolutionManager,
-)  # NEW: Import for SocraticDebate init
-from src.context.context_analyzer import (
-    CodebaseScanner,
-    ContextRelevanceAnalyzer,
-)  # NEW: Import for SocraticDebate init
-from src.llm_provider import (
-    GeminiProvider,
-)  # Assuming GeminiProvider is in src/llm_provider.py
+
+# NEW: Import for SocraticDebate init
+from src.conflict_resolution import ConflictResolutionManager
+from src.context.context_analyzer import CodebaseScanner, ContextRelevanceAnalyzer
+
+# SocraticDebate is in the project root, so direct import
+from src.llm_provider import GeminiProvider
+
+# Assuming GeminiProvider is in src/llm_provider.py
 from src.persona_manager import PersonaManager  # Import PersonaManager
-from src.self_improvement.metrics_collector import (
-    FocusedMetricsCollector,
-)  # NEW: Import for SocraticDebate init
+
+# NEW: Import for SocraticDebate init
+from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
-from src.utils.reporting.output_parser import (
-    LLMOutputParser,
-)  # NEW: Import for SocraticDebate init
+
+# NEW: Import for SocraticDebate init
+from src.utils.output_parser import LLMOutputParser
+
+# NEW: Import for SocraticDebate init
 
 
 @pytest.mark.integration
@@ -43,7 +44,7 @@ def test_reasoning_engine_integration():
         )
 
     user_input = "What is the capital of France?"
-    context = {"country": "France"}
+    _context = {"country": "France"}  # FIX: F841 - Renamed unused variable to _context
 
     # Mock DOMAIN_KEYWORDS for PersonaManager initialization
     mock_domain_keywords = {
@@ -113,7 +114,7 @@ def test_reasoning_engine_integration():
             engine = SocraticDebate(
                 initial_prompt=user_input,
                 api_key=api_key,
-                model_name="gemini-2.5-flash-lite",  # Use a light model for tests
+                model_name="gemini-2.5-flash-lite-preview-09-2025",  # Use a light model for tests
                 domain="General",  # Use 'General' for simple questions
                 persona_manager=persona_manager_instance,  # Pass the persona manager
                 structured_codebase_context={},  # NEW: Add structured_codebase_context

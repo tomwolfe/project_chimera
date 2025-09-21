@@ -7,8 +7,6 @@ from pathlib import Path
 # Add src to Python path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.token_tracker import TokenUsageTracker
-
 
 def generate_report():
     # This script is meant to be run after a pytest run that might have used TokenUsageTracker.
@@ -32,7 +30,7 @@ def generate_report():
     dummy_token_log_path = Path("token_usage_log.json")
     if dummy_token_log_path.exists():
         try:
-            with open(dummy_token_log_path, "r") as f:
+            with open(dummy_token_log_path) as f:
                 logged_data = json.load(f)
             report_data["total_tokens_simulated"] = logged_data.get(
                 "total_tokens", report_data["total_tokens_simulated"]

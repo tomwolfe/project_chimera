@@ -1,6 +1,6 @@
 # src/database/db_operations.py
 import sqlite3
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 # Placeholder for a database connection function
@@ -13,7 +13,7 @@ def get_db_connection():
     return conn
 
 
-def get_user_data(user_id: int) -> Optional[Dict[str, Any]]:
+def get_user_data(user_id: int) -> Optional[dict[str, Any]]:
     """Retrieves user data from the database using parameterized queries."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -25,7 +25,7 @@ def get_user_data(user_id: int) -> Optional[Dict[str, Any]]:
     return dict(user_data) if user_data else None
 
 
-def update_user_profile(user_id: int, profile_data: Dict[str, Any]):
+def update_user_profile(user_id: int, profile_data: dict[str, Any]):
     """Updates user profile information using parameterized queries."""
     conn = get_db_connection()
     cursor = conn.cursor()

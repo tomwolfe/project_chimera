@@ -1,13 +1,13 @@
 # src/utils/domain_recommender.py
 import re  # Import re for regex
-from typing import Dict, List, Optional
+from typing import Optional
 
 # Import NEGATION_PATTERNS and define proximity
 from src.constants import NEGATION_PATTERNS
 
 
 def recommend_domain_from_keywords(
-    user_prompt: str, domain_keywords: Dict[str, List[str]]
+    user_prompt: str, domain_keywords: dict[str, list[str]]
 ) -> Optional[str]:
     """Recommends a domain/framework based on keywords in the user prompt,
     incorporating negation awareness and proximity scoring.
@@ -61,15 +61,15 @@ def recommend_domain_from_keywords(
                     score += DEFAULT_KEYWORD_WEIGHT  # Add full weight if not negated
 
         # Additional context boost for technical terms in code contexts (from LLM's suggestion)
-        if domain == "Software Engineering":
-            if any(
+        if (
+            domain == "Software Engineering"
+            and any(
                 term in prompt_lower
                 for term in ["implement", "endpoint", "api", "function"]
-            ):
-                if "error handling" in prompt_lower or "validation" in prompt_lower:
-                    score += (
-                        2.0  # Significant boost for complete implementation requests
-                    )
+            )
+            and ("error handling" in prompt_lower or "validation" in prompt_lower)
+        ):
+            score += 2.0  # Significant boost for complete implementation requests
 
         if score > highest_score:
             highest_score = score

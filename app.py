@@ -1,41 +1,35 @@
 # app.py
 
-import os
-import sys
-
-import streamlit as st
-
 # Set TOKENIZERS_PARALLELISM to false at the very top to avoid deadlocks on fork
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# NEW: Imports for self-improvement components (kept for clarity, though some might be unused in app.py directly)
+# --- Standard Library Imports ---
 import contextlib
 import datetime
 import difflib
 import gc
 import html
-
-# REMOVED: from src.self_improvement.improvement_applicator import ImprovementApplicator
 import io
 import json
 import logging
+import os
 import re
+import sys
 import time
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import (  # Updated imports to use modern types where possible, but keeping necessary typing imports for complex structures
+    Any,
+    Optional,
+)
 
+# --- Third-Party Imports ---
+import streamlit as st
 from rich.console import Console
-
-# NEW IMPORT for PromptOptimizer
-# NEW IMPORT: For the summarization pipeline
 from transformers import pipeline
 
+# --- Local/Project Imports ---
 from core import SocraticDebate
 from src.config.settings import ChimeraSettings
-
-# NEW IMPORTS FOR CODEBASE SCANNING AND GARBAGE COLLECTION
 from src.context.context_analyzer import CodebaseScanner, ContextRelevanceAnalyzer
 from src.exceptions import (
     ChimeraError,
@@ -46,16 +40,11 @@ from src.exceptions import (
 )
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimitExceededError
-from src.models import (
-    LLMOutput,  # Kept as it's used in the Self-Improvement domain display logic
-    PersonaConfig,
-)
+from src.models import LLMOutput, PersonaConfig
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.error_handler import (
     handle_exception as error_handling_handle_exception,
 )
-
-# NEW IMPORT: For error_handling.log_event and handle_exception
 from src.utils.core_helpers.error_handler import log_event
 from src.utils.core_helpers.path_utils import PROJECT_ROOT
 from src.utils.reporting.output_parser import LLMOutputParser
@@ -66,12 +55,9 @@ from src.utils.reporting.report_generator import (
 from src.utils.session.session_manager import (
     _initialize_session_state,
     check_session_expiration,
-    # SESSION_TIMEOUT_SECONDS, # Removed as per diff
     reset_app_state,
     update_activity_timestamp,
 )
-
-# CORRECTED IMPORT: Only import functions actually defined in ui_helpers.py
 from src.utils.session.ui_helpers import (
     display_key_status,
     on_api_key_change,
@@ -80,9 +66,22 @@ from src.utils.session.ui_helpers import (
 )
 from src.utils.validation.code_validator import validate_code_output_batch
 
+# --- Module Level Executable Code ---
+# This must come after all imports
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # --- Constants ---
 MAX_DEBATE_RETRIES = 3
 DEBATE_RETRY_DELAY_SECONDS = 5
+MAX_UPLOAD_FILES = 100
+MAX_SNIPPET_LENGTH = 500
+MAX_LOG_DISPLAY_LENGTH = 1000
+MAX_ISSUE_TYPES_DISPLAY = 5
+MAX_CONTENT_PREVIEW_LENGTH = 1500
+
+# PLR2004 Fix: Define constants for magic numbers used in retry logic
+HTTP_SERVER_ERROR_START = 500
+HTTP_SERVER_ERROR_END = 600
 
 # --- Configuration Loading ---
 try:
@@ -552,8 +551,8 @@ def main():
             st.markdown("---")
 
             model_options = [
-                "gemini-2.5-flash-lite",
-                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite-preview-09-2025",
+                "gemini-2.5-flash-preview-09-2025",
                 "gemini-2.5-pro",
             ]
             current_model_index = (
@@ -672,9 +671,7 @@ def main():
         st.progress(int(usage_percent), text=progress_text)
 
         if not is_allowed_check:
-            st.warning(
-                f"⏳ Rate limit exceeded. Please wait {time_to_wait:.1f} seconds."
-            )
+            st.warning(f"⏳ Rate limit exceeded. Please wait {time_to_wait:.1f} seconds.")
         elif (
             usage_percent
             >= st.session_state.session_rate_limiter_instance.warning_threshold * 100
@@ -685,17 +682,12 @@ def main():
         else:
             st.success("API usage is within limits.")
 
-        if (
-            st.session_state.debate_ran
-            or st.session_state.current_debate_tokens_used > 0
-        ):
+        if st.session_state.debate_ran or st.session_state.current_debate_tokens_used > 0:
             st.markdown("---")
             st.subheader("Current Debate Usage")
             col_tokens, col_cost = st.columns(2)
             with col_tokens:
-                st.metric(
-                    "Tokens Used", f"{st.session_state.current_debate_tokens_used:,}"
-                )
+                st.metric("Tokens Used", f"{st.session_state.current_debate_tokens_used:,}")
             with col_cost:
                 st.metric(
                     "Estimated Cost", f"${st.session_state.current_debate_cost_usd:.6f}"
@@ -955,28 +947,33 @@ def main():
     with col1:
         st.subheader("Reasoning Framework")
 
-        if st.session_state.selected_example_name == CUSTOM_PROMPT_KEY:
-            if user_prompt.strip():
-                recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
-                    user_prompt
-                )
-                if (
-                    recommended_domain
-                    and recommended_domain != st.session_state.selected_persona_set
-                ):
-                    st.info(
-                        f"💡 Based on your custom prompt, the **'{recommended_domain}'** framework might be appropriate."
-                    )
-                    if st.button(
-                        f"Apply '{recommended_domain}' Framework (Custom Prompt)",
-                        type="secondary",
-                        use_container_width=True,
-                        key=f"apply_suggested_framework_main_{recommended_domain.replace(' ', '_').lower()}",
-                        on_click=update_activity_timestamp,
-                    ):
-                        st.session_state.selected_persona_set = recommended_domain
-                        update_activity_timestamp()
-                        st.rerun()
+        # SIM102 Fix applied here: combined nested if statements
+        recommended_domain = None
+        if (
+            st.session_state.selected_example_name == CUSTOM_PROMPT_KEY
+            and user_prompt.strip()
+        ):
+            recommended_domain = st.session_state.persona_manager.prompt_analyzer.recommend_domain_from_keywords(
+                user_prompt
+            )
+
+        if (
+            recommended_domain
+            and recommended_domain != st.session_state.selected_persona_set
+        ):
+            st.info(
+                f"💡 Based on your custom prompt, the **'{recommended_domain}'** framework might be appropriate."
+            )
+            if st.button(
+                f"Apply '{recommended_domain}' Framework (Custom Prompt)",
+                type="secondary",
+                use_container_width=True,
+                key=f"apply_suggested_framework_main_{recommended_domain.replace(' ', '_').lower()}",
+                on_click=update_activity_timestamp,
+            ):
+                st.session_state.selected_persona_set = recommended_domain
+                update_activity_timestamp()
+                st.rerun()
 
         available_framework_options = st.session_state.persona_manager.available_domains
         unique_framework_options = sorted(list(set(available_framework_options)))
@@ -1165,32 +1162,30 @@ def main():
                     key="import_framework_uploader",
                     on_change=update_activity_timestamp,
                 )
-                if uploaded_framework_file is not None:
-                    if st.button(
-                        "Import Uploaded Framework",
-                        use_container_width=True,
-                        key="perform_import_framework_button",
-                        on_click=update_activity_timestamp,
-                    ):
-                        file_content = uploaded_framework_file.getvalue().decode(
-                            "utf-8"
+                # SIM102 Fix: Combined nested IF
+                if uploaded_framework_file is not None and st.button(
+                    "Import Uploaded Framework",
+                    use_container_width=True,
+                    key="perform_import_framework_button",
+                    on_click=update_activity_timestamp,
+                ):
+                    file_content = uploaded_framework_file.getvalue().decode("utf-8")
+                    success, message = (
+                        st.session_state.persona_manager.import_framework(
+                            file_content, uploaded_framework_file.name
                         )
-                        success, message = (
-                            st.session_state.persona_manager.import_framework(
-                                file_content, uploaded_framework_file.name
-                            )
-                        )
-                        if success:
-                            st.toast(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
+                    )
+                    if success:
+                        st.toast(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
 
     with col2:
         st.subheader("Codebase Context (Optional)")
         if st.session_state.selected_persona_set == "Software Engineering":
             st.file_uploader(
-                "Upload up to 100 relevant files",
+                f"Upload up to {MAX_UPLOAD_FILES} relevant files",  # PLR2004 Fix
                 accept_multiple_files=True,
                 type=[
                     "py",
@@ -1223,11 +1218,11 @@ def main():
                     current_uploaded_file_names
                     and not st.session_state.raw_file_contents
                 ):
-                    if len(uploaded_files) > 100:
+                    if len(uploaded_files) > MAX_UPLOAD_FILES:  # PLR2004 Fix
                         st.warning(
-                            "Please upload a maximum of 100 files. Truncating to the first 100."
+                            f"Please upload a maximum of {MAX_UPLOAD_FILES} files. Truncating to the first {MAX_UPLOAD_FILES}."
                         )
-                        uploaded_files = uploaded_files[:100]
+                        uploaded_files = uploaded_files[:MAX_UPLOAD_FILES]
 
                     temp_raw_file_contents = {}
                     for file in uploaded_files:
@@ -1293,6 +1288,7 @@ def main():
                     st.session_state.selected_persona_set
                 )
             )
+            # SIM102 Fix: Combined nested IFs
             for p_name in current_framework_persona_names:
                 persona: PersonaConfig = (
                     st.session_state.persona_manager.all_personas.get(p_name)
@@ -1301,15 +1297,18 @@ def main():
                     st.session_state.persona_manager._original_personas.get(p_name)
                 )
 
-                if persona and original_persona_config:
-                    if (
+                if (
+                    persona
+                    and original_persona_config
+                    and (
                         persona.system_prompt_template
                         != original_persona_config.system_prompt_template
                         or persona.temperature != original_persona_config.temperature
                         or persona.max_tokens != original_persona_config.max_tokens
-                    ):
-                        st.session_state.persona_changes_detected = True
-                        break
+                    )
+                ):
+                    st.session_state.persona_changes_detected = True
+                    break
 
         if st.session_state.persona_changes_detected:
             st.warning(
@@ -1427,7 +1426,7 @@ def main():
     with reset_col:
         st.button(
             "🔄 Reset All",
-            on_click=lambda: reset_app_state(settings_instance, EXAMPLE_PROMPTS),
+            on_click=lambda: reset_app_state(settings_instance, EXAMPLE_PROMPTS),  # type: ignore
             use_container_width=True,
         )
 
@@ -1436,6 +1435,8 @@ def main():
         debate_instance: Optional[SocraticDebate] = None
 
         request_id = str(uuid.uuid4())[:8]
+
+        should_abort = False  # NEW: Status flag for early exit
 
         is_self_analysis_prompt_detected = (
             st.session_state.persona_manager.prompt_analyzer.is_self_analysis_prompt(
@@ -1490,7 +1491,10 @@ def main():
                     f"❌ Error loading Project Chimera's codebase for self-analysis: {e}"
                 )
                 logger.error(f"Failed to load own codebase context: {e}", exc_info=True)
-                return  # Exit early if codebase loading fails
+                should_abort = True
+
+        if should_abort:
+            return
 
         logger.info(
             "Starting Socratic Debate process.",
@@ -1506,7 +1510,7 @@ def main():
                 "API key missing, debate process aborted.",
                 extra={"request_id": request_id},
             )
-            return
+            should_abort = True
         elif not st.session_state.api_key_functional:
             st.error(
                 "Your Gemini API Key is not functional. Please test it in the sidebar."
@@ -1515,13 +1519,16 @@ def main():
                 "API key not functional, debate process aborted.",
                 extra={"request_id": request_id},
             )
-            return
+            should_abort = True
         elif not user_prompt.strip():
             st.error("Please enter a prompt.")
             logger.warning(
                 "User prompt is empty, debate process aborted.",
                 extra={"request_id": request_id},
             )
+            should_abort = True
+
+        if should_abort:
             return
 
         try:
@@ -1867,7 +1874,9 @@ def main():
                 provider_error_code = e.details.get("provider_error_code")
                 if (
                     isinstance(provider_error_code, int)
-                    and 500 <= provider_error_code < 600
+                    and HTTP_SERVER_ERROR_START
+                    <= provider_error_code
+                    < HTTP_SERVER_ERROR_END
                 ):
                     if attempt < MAX_DEBATE_RETRIES - 1:
                         wait_time = DEBATE_RETRY_DELAY_SECONDS * (attempt + 1)
@@ -1931,7 +1940,7 @@ def main():
 
         if actual_debate_domain == "Software Engineering":
             st.subheader("Structured Summary")
-            parsed_llm_output_dict: Dict[str, Any]
+            parsed_llm_output_dict: dict  # UP006 Fix
             malformed_blocks_from_parser = []
 
             raw_output_data = st.session_state.final_answer_output
@@ -1956,7 +1965,9 @@ def main():
                             {
                                 "type": "UI_PARSING_ERROR",
                                 "message": str(e),
-                                "raw_string_snippet": str(raw_output_data)[:500],
+                                "raw_string_snippet": str(raw_output_data)[
+                                    :MAX_SNIPPET_LENGTH
+                                ],  # PLR2004 Fix
                             }
                         ],
                     }
@@ -1980,7 +1991,9 @@ def main():
                             {
                                 "type": "UI_PARSING_ERROR",
                                 "message": str(e),
-                                "raw_string_snippet": str(raw_output_data)[:500],
+                                "raw_string_snippet": str(raw_output_data)[
+                                    :MAX_SNIPPET_LENGTH
+                                ],  # PLR2004 Fix
                             }
                         ],
                     }
@@ -1996,7 +2009,9 @@ def main():
                         {
                             "type": "UI_PARSING_ERROR",
                             "message": f"Final answer was not a dictionary or list. Type: {type(raw_output_data).__name__}",
-                            "raw_string_snippet": str(raw_output_data)[:500],
+                            "raw_string_snippet": str(raw_output_data)[
+                                :MAX_SNIPPET_LENGTH
+                            ],  # PLR2004 Fix
                         }
                     ],
                 }
@@ -2066,8 +2081,12 @@ def main():
                                 if not raw_snippet:
                                     st.code("<No content available>", language="text")
                                 else:
-                                    display_content = raw_snippet[:1000]
-                                    if len(raw_snippet) > 1000:
+                                    display_content = raw_snippet[
+                                        :MAX_LOG_DISPLAY_LENGTH
+                                    ]  # PLR2004 Fix
+                                    if (
+                                        len(raw_snippet) > MAX_LOG_DISPLAY_LENGTH
+                                    ):  # PLR2004 Fix
                                         display_content += "..."
                                     st.code(display_content, language="text")
                                 st.markdown("---")
@@ -2089,7 +2108,7 @@ def main():
 
                             for issue_type, type_issues in sorted(
                                 issues_by_type.items()
-                            )[:5]:  # Limit to top 5 issue types
+                            )[:MAX_ISSUE_TYPES_DISPLAY]:  # PLR2004 Fix
                                 with st.expander(
                                     f"**{issue_type}** ({len(type_issues)} issues)",
                                     expanded=False,
@@ -2104,10 +2123,11 @@ def main():
                                             f"- **{issue.get('code', '')}**: {issue['message']}{line_info}"
                                         )
                                     if (
-                                        len(type_issues) > 5
-                                    ):  # If more than 5 issues of a type, add a summary
+                                        len(type_issues)
+                                        > MAX_ISSUE_TYPES_DISPLAY  # PLR2004 Fix
+                                    ):
                                         st.info(
-                                            f"And {len(type_issues) - 5} more issues of type '{issue_type}'."
+                                            f"And {len(type_issues) - MAX_ISSUE_TYPES_DISPLAY} more issues of type '{issue_type}'."
                                         )
 
             st.subheader("Proposed Code Changes")
@@ -2156,8 +2176,12 @@ def main():
                         else:
                             st.write("**Content:**")
                             display_content = (
-                                change.get("FULL_CONTENT", "")[:1500] + "..."
-                                if len(change.get("FULL_CONTENT", "")) > 1500
+                                change.get("FULL_CONTENT", "")[
+                                    :MAX_CONTENT_PREVIEW_LENGTH
+                                ]
+                                + "..."  # PLR2004 Fix
+                                if len(change.get("FULL_CONTENT", ""))
+                                > MAX_CONTENT_PREVIEW_LENGTH  # PLR2004 Fix
                                 else change.get("FULL_CONTENT", "")
                             )
                             st.code(display_content, language="python")
@@ -2204,7 +2228,9 @@ def main():
                         {
                             "type": "UNEXPECTED_VERSION_OR_STRUCTURE",
                             "message": analysis_summary,
-                            "raw_string_snippet": str(final_analysis_output)[:500],
+                            "raw_string_snippet": str(final_analysis_output)[
+                                :MAX_SNIPPET_LENGTH
+                            ],  # PLR2004 Fix
                         }
                     )
             else:
@@ -2216,7 +2242,9 @@ def main():
                     {
                         "type": "UI_PARSING_ERROR",
                         "message": analysis_summary,
-                        "raw_string_snippet": str(final_analysis_output)[:500],
+                        "raw_string_snippet": str(final_analysis_output)[
+                            :MAX_SNIPPET_LENGTH
+                        ],  # PLR2004 Fix
                     }
                 )
 
@@ -2288,10 +2316,12 @@ def main():
                                         elif change.get("FULL_CONTENT"):
                                             st.write("**Content:**")
                                             display_content = (
-                                                change.get("FULL_CONTENT", "")[:1500]
+                                                change.get("FULL_CONTENT", "")[
+                                                    :MAX_CONTENT_PREVIEW_LENGTH
+                                                ]  # PLR2004 Fix
                                                 + "..."
                                                 if len(change.get("FULL_CONTENT", ""))
-                                                > 1500
+                                                > MAX_CONTENT_PREVIEW_LENGTH  # PLR2004 Fix
                                                 else change.get("FULL_CONTENT", "")
                                             )
                                             st.code(display_content, language="python")
@@ -2346,11 +2376,15 @@ def main():
                 display_steps = {
                     k: v
                     for k, v in st.session_state.intermediate_steps_output.items()
-                    if not k.endswith("_Tokens_Used")
-                    and not k.endswith("_Estimated_Cost_USD")
-                    and k != "Total_Tokens_Used"
-                    and k != "Total_Estimated_Cost_USD"
-                    and k != "debate_history"
+                    if not k.endswith(
+                        ("_Tokens_Used", "_Estimated_Cost_USD")
+                    )  # FIX PLR1714
+                    and k
+                    not in (
+                        "Total_Tokens_Used",
+                        "Total_Estimated_Cost_USD",
+                        "debate_history",
+                    )  # FIX PLR1714
                     and not k.startswith("malformed_blocks")
                 }
                 sorted_step_keys = sorted(
