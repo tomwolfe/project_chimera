@@ -31,6 +31,16 @@
             "description": "Expected benefits of implementing the solution.",
             "type": "string"
           },
+          "PARETO_SCORE": {
+            "description": "80/20 Pareto principle score (impact/effort ratio).",
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "VALIDATION_METHOD": {
+            "description": "How to validate the improvement.",
+            "type": "string"
+          },
           "CODE_CHANGES_SUGGESTED": {
             "description": "Details of suggested code modifications.",
             "type": "array",
@@ -47,7 +57,7 @@
             }
           }
         },
-        "required": ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT", "CODE_CHANGES_SUGGESTED"]
+        "required": ["AREA", "PROBLEM", "PROPOSED_SOLUTION", "EXPECTED_IMPACT", "PARETO_SCORE", "VALIDATION_METHOD", "CODE_CHANGES_SUGGESTED"]
       }
     }
   },

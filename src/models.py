@@ -1,3 +1,4 @@
+# src/models.py
 import re
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
@@ -263,11 +264,17 @@ class CodeChange(BaseModel):
         """Validates that diff_content, if present, looks like a unified diff."""
         if v is None:
             return v
-        if not re.search(r"^--- a/.*?\n\+\+\+ b/.*?\n", v, re.MULTILINE):
+        if not v.strip():
+            return v  # Allow empty string to pass if no diff is intended
+        if not re.search(r"^--- a/.*$\n\+\+\+ b/.*$\n", v, re.MULTILINE):
             raise ValueError(
                 "DIFF_CONTENT does not appear to be in a standard unified diff format (missing '--- a/' and '+++ b/' headers)."
             )
-        if not re.search(r"^[ +-@].*$", v, re.MULTILINE):
+        if not re.search(r"^@@ .* @@", v, re.MULTILINE):
+            raise ValueError(
+                "DIFF_CONTENT is missing a valid hunk header (e.g., '@@ -1,1 +1,1 @@')."
+            )
+        if not re.search(r"^([ +-]).*$", v.splitlines()[-1], re.MULTILINE):
             raise ValueError(
                 "DIFF_CONTENT does not contain typical diff line prefixes ('+', '-', ' ', '@')."
             )
@@ -397,6 +404,16 @@ class SuggestionItem(BaseModel):
         ...,
         alias="EXPECTED_IMPACT",
         description="Expected benefits of implementing the solution.",
+    )
+    pareto_score: float = Field(
+        ...,
+        alias="PARETO_SCORE",
+        ge=0.0,
+        le=1.0,
+        description="80/20 Pareto principle score (impact/effort ratio).",
+    )
+    validation_method: str = Field(
+        ..., alias="VALIDATION_METHOD", description="How to validate the improvement."
     )
     code_changes_suggested: List[CodeChange] = Field(
         default_factory=list,

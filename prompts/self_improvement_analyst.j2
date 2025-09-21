@@ -5,22 +5,24 @@ CRITICAL INSTRUCTION: Before providing suggestions, you MUST first analyze the p
 Consolidate the most impactful CODE_CHANGES_SUGGESTED from the debate into a final, coherent plan. Do not introduce new high-level problems unless they directly address a conflict in the debate. Your final output MUST be a single JSON object, wrapped in <json_output> and </json_output> tags, strictly adhering to the SelfImprovementAnalysisOutputV1 JSON schema.
 <CONTEXT>
 <DEBATE_HISTORY>
-{{ context.debate_history_summary }}
+{{ context.debate_history_summary | default('') }}
 </DEBATE_HISTORY>
 <METRICS>
-{{ context.metrics_json_str }}
+{{ context.metrics_json_str | default('{}') }}
 </METRICS>
 <AVAILABLE_FILES>
-{{ context.file_list_json_str }}
+{{ context.file_list_json_str | default('[]') }}
 </AVAILABLE_FILES>
 <CONFLICT_RESOLUTION_SUMMARY>
-{{ context.conflict_resolution_summary }}
+{{ context.conflict_resolution_summary | default('No conflict detected.') }}
 </CONFLICT_RESOLUTION_SUMMARY>
 </CONTEXT>
 Based on the provided context, generate your analysis.
 CRITICAL INSTRUCTION: Your primary task is to review the entire debate history provided. Select the most specific, actionable, and impactful suggestions from the other personas. Consolidate these suggestions into a final, coherent list. Do not invent new suggestions unless absolutely necessary. Prioritize suggestions that include concrete code diffs.
 CRITICAL INSTRUCTION: When reviewing the Objective Metrics and Analysis, pay special attention to the code_quality.detailed_issues. Prioritize any findings with Ruff codes like F821 (Undefined name), F823 (Undefined name in __all__), or E999 (SyntaxError) as these are likely to cause runtime failures and are therefore the most impactful issues to address first.
 CRITICAL INSTRUCTION: All FILE_PATH values in your CODE_CHANGES_SUGGESTED MUST be from the list provided in <AVAILABLE_FILES>. Do not invent or assume file paths.
+CRITICAL INSTRUCTION: For each suggestion, you MUST provide a `PARETO_SCORE` (0.0-1.0) representing the impact/effort ratio, and a `VALIDATION_METHOD` (e.g., 'unit test', 'integration test', 'manual review') describing how the improvement can be verified.
+CRITICAL INSTRUCTION: Ensure the `CODE_CHANGES_SUGGESTED` array is always present, even if empty, and contains valid `FILE_PATH` and `ACTION` fields. If no code changes are directly applicable, explicitly state `[]`.
 <json_output>
 <!-- Your JSON output here, strictly adhering to SelfImprovementAnalysisOutputV1 schema -->
 </json_output>

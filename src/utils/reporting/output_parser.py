@@ -1,4 +1,4 @@
-# src/utils/output_parser.py
+# src/utils/reporting/output_parser.py
 
 import json
 import logging
@@ -53,6 +53,8 @@ class LLMOutputParser:
         or if paths start with a leading slash. This version processes line by line
         to avoid complex regex issues.
         """
+        if not diff_content or not diff_content.strip():
+            return diff_content
 
         def _fix_line(line: str, prefix_char: str) -> str:
             # Check if the line already has the correct 'a/' or 'b/' prefix
@@ -744,6 +746,13 @@ class LLMOutputParser:
                 elif field_path == ("conflict_found",):
                     corrected_output["conflict_found"] = False
                     correction_made = True
+                # For SuggestionItem (new fields)
+                elif field_path == ("PARETO_SCORE",):
+                    corrected_output["PARETO_SCORE"] = 0.0
+                    correction_made = True
+                elif field_path == ("VALIDATION_METHOD",):
+                    corrected_output["VALIDATION_METHOD"] = "N/A"
+                    correction_made = True
 
         if correction_made:
             self.logger.info(
@@ -900,6 +909,8 @@ class LLMOutputParser:
                                     PROBLEM=item_str,
                                     PROPOSED_SOLUTION="N/A",
                                     EXPECTED_IMPACT="N/A",
+                                    PARETO_SCORE=0.0,
+                                    VALIDATION_METHOD="N/A",
                                 ).model_dump(by_alias=True)
                             )
                     data_to_validate = {
@@ -1368,6 +1379,8 @@ class LLMOutputParser:
                                 "PROBLEM": "Malformed suggestion",
                                 "PROPOSED_SOLUTION": str(item)[:100],
                                 "EXPECTED_IMPACT": "N/A",
+                                "PARETO_SCORE": 0.0,
+                                "VALIDATION_METHOD": "N/A",
                                 "CODE_CHANGES_SUGGESTED": [
                                     {"FILE_PATH": "N/A", "ACTION": "NONE"}
                                 ],  # Ensure code_changes_suggested is a list of dicts
@@ -1380,6 +1393,8 @@ class LLMOutputParser:
                             "PROBLEM": "Malformed suggestion",
                             "PROPOSED_SOLUTION": str(item)[:100],
                             "EXPECTED_IMPACT": "N/A",
+                            "PARETO_SCORE": 0.0,
+                            "VALIDATION_METHOD": "N/A",
                             "CODE_CHANGES_SUGGESTED": [
                                 {"FILE_PATH": "N/A", "ACTION": "NONE"}
                             ],  # Ensure code_changes_suggested is a list of dicts
@@ -1480,6 +1495,10 @@ class LLMOutputParser:
                             minimal_fallback_data[prop] = False
                         elif details.get("type") == "number":
                             minimal_fallback_data[prop] = 0.0
+                        elif (
+                            details.get("type") == "object"
+                        ):  # NEW: Handle object types in fallback
+                            minimal_fallback_data[prop] = {}
                     minimal_fallback_data["malformed_blocks"] = (
                         current_malformed_blocks
                         + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
