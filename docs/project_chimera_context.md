@@ -1,4 +1,3 @@
-# File: project_chimera_context.md
 # Project Chimera Codebase Context
 
 This document outlines the necessary structure and files required for effective self-improvement analysis.

@@ -1,32 +1,52 @@
-# .github/workflows/ci.yml
 name: CI Pipeline
 
-on: [push, pull_request] # Corrected 'on:' syntax
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule: # NEW: Add weekly schedule for comprehensive checks
+    - cron: '0 0 * * 0' # Run weekly on Sundays at midnight
 
 jobs:
-  build:
+  test: # Renamed 'build' job to 'test' as per suggested changes
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v4 # Updated to v4 as suggested
-      with: { python-version: '3.11' } # Corrected 'with:' syntax for single item
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip' # Cache pip dependencies
 
-    - name: Install dependencies and Test Tools
-      shell: bash
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt # Install all dependencies including dev/test tools
+      - name: Install dependencies and Test Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt # Install all dependencies including dev/test tools
 
-    - name: Lint with Ruff
-      run: |
-        ruff check . --output-format=github --exit-non-zero-on-fix
-        ruff format --check . --diff
+      - name: Lint with Ruff
+        run: |
+          ruff check . --output-format=github --exit-non-zero-on-fix
+          ruff format --check . --diff
 
-    - name: Run Unit and Integration Tests with Coverage Check
-      shell: bash
-      run: |
-        pytest --cov=src --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=80
+      - name: Run Unit and Integration Tests with Coverage Check
+        run: |
+          pytest --cov=src --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=80
+
+      # NEW: Run prompt engineering tests (already covered by pytest tests/)
+      # The suggested change had `python tests/prompt_testing.py` but our tests are pytest fixtures.
+      # So, `pytest tests/` already covers `tests/test_prompt_engineering.py`.
+      # No separate step needed for `prompt_testing.py` if it's a pytest file.
+
+      # NEW: Run token usage report (assuming a script exists)
+      - name: Generate Token Usage Report
+        run: python scripts/generate_token_usage_report.py > token_usage_report.json
+      - name: Upload Token Usage Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: token-usage-report
+          path: token_usage_report.json
 
     - name: Publish Test Report
       uses: EnricoMi/publish-unit-test-result-action@v2
@@ -39,5 +59,3 @@ jobs:
       with:
         name: coverage-report
         path: coverage.xml
-
-    # You could add more steps here, e.g., for deployment, etc.

@@ -94,9 +94,6 @@ def validate_and_resolve_file_path_for_action(
         return False, resolved_path, action, error_message
 
 
-# REMOVED: _run_pycodestyle function as it's redundant with Ruff.
-
-
 def _run_ruff(content: str, filename: str) -> List[Dict[str, Any]]:
     """Runs Ruff (linter and formatter check) on the given content via subprocess."""
     issues = []
@@ -927,7 +924,7 @@ def validate_code_output_batch(
                     "message": f"Change item at index {i} missing FILE_PATH or ACTION.",
                 }
             )
-            continue
+            continue  # Skip further validation for this invalid entry
 
         is_valid, resolved_path, suggested_action, error_msg = (
             validate_and_resolve_file_path_for_action(

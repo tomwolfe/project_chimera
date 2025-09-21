@@ -49,9 +49,9 @@ from src.rag_system import KnowledgeRetriever, RagOrchestrator  # New Import for
 from src.self_improvement import (
     ContentAlignmentValidator,
     CritiqueEngine,
-    FocusedMetricsCollector,
     ImprovementApplicator,
     StrategyManager,
+    FocusedMetricsCollector,
 )  # NEW: Import from modularized self_improvement package
 from src.token_tracker import TokenUsageTracker
 
@@ -89,6 +89,14 @@ class SocraticDebate:
         is_self_analysis: bool = False,
         persona_manager: Optional[PersonaManager] = None,
         content_validator: Optional[ContentAlignmentValidator] = None,
+        # NEW: Add explicit optional dependencies for full injection
+        prompt_optimizer: Optional[PromptOptimizer] = None,
+        critique_engine: Optional[CritiqueEngine] = None,
+        improvement_applicator: Optional[ImprovementApplicator] = None,
+        conflict_resolution_manager: Optional[
+            ConflictResolutionManager
+        ] = None,  # NEW: Inject ConflictResolutionManager
+        model_registry: Optional[ModelRegistry] = None,  # NEW: Inject ModelRegistry
         token_tracker: Optional[TokenUsageTracker] = None,
         codebase_scanner: Optional[CodebaseScanner] = None,
         summarizer_pipeline_instance: Any = None,
@@ -161,12 +169,15 @@ class SocraticDebate:
             self.rag_orchestrator = RagOrchestrator(self.knowledge_retriever, None)
 
         # Initialize PromptOptimizer first, as it's a dependency for GeminiProvider and PersonaManager
-        self.prompt_optimizer = PromptOptimizer(
-            tokenizer=None,  # Will be set after GeminiProvider init
-            settings=self.settings,
-            summarizer_pipeline=summarizer_pipeline_instance,
-            persona_manager=persona_manager,
-            token_tracker=self.token_tracker,
+        self.prompt_optimizer = (
+            prompt_optimizer
+            or PromptOptimizer(  # Use injected or instantiate
+                tokenizer=None,  # Will be set after GeminiProvider init
+                settings=self.settings,
+                summarizer_pipeline=summarizer_pipeline_instance,
+                persona_manager=persona_manager,  # Pass persona_manager to PromptOptimizer
+                token_tracker=self.token_tracker,
+            )
         )
 
         try:
@@ -212,10 +223,6 @@ class SocraticDebate:
             self.logger.warning(
                 "PersonaManager instance not provided to SocraticDebate. Initializing a new one. This might affect state persistence in UI."
             )
-            # NEW: Initialize StrategyManager, CritiqueEngine, ImprovementApplicator
-            self.strategy_manager = StrategyManager()
-            self.critique_engine = CritiqueEngine()
-            self.improvement_applicator = ImprovementApplicator()
             self.persona_manager = PersonaManager(
                 self.settings.domain_keywords,
                 token_tracker=self.token_tracker,
@@ -300,22 +307,29 @@ class SocraticDebate:
                         f"Error computing context embeddings: {e}", original_exception=e
                     ) from e
 
-        self.content_validator = content_validator
-        if not self.content_validator:
-            self.content_validator = ContentAlignmentValidator(
-                original_prompt=self.initial_prompt, debate_domain=self.domain
-            )
+        self.content_validator = content_validator or ContentAlignmentValidator(
+            original_prompt=self.initial_prompt, debate_domain=self.domain
+        )
 
         # NEW: Initialize StrategyManager, CritiqueEngine, ImprovementApplicator if not already passed
         self.strategy_manager = StrategyManager()
-        self.critique_engine = CritiqueEngine()
-        self.improvement_applicator = ImprovementApplicator()
+        self.critique_engine = (
+            critique_engine or CritiqueEngine()
+        )  # Use injected or instantiate
+        self.improvement_applicator = (
+            improvement_applicator or ImprovementApplicator()
+        )  # Use injected or instantiate
 
         self._calculate_token_budgets()
-        self.conflict_manager = ConflictResolutionManager(
-            llm_provider=self.llm_provider, persona_manager=self.persona_manager
+        self.conflict_manager = (
+            conflict_resolution_manager
+            or ConflictResolutionManager(  # Use injected or instantiate
+                llm_provider=self.llm_provider, persona_manager=self.persona_manager
+            )
         )
-        self.model_registry = ModelRegistry()
+        self.model_registry = (
+            model_registry or ModelRegistry()
+        )  # Use injected or instantiate
 
         self.model_name = self._determine_optimal_model(model_name)
 
