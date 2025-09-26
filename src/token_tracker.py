@@ -44,7 +44,13 @@ class TokenUsageTracker:
         self.low_value_tokens = 0
         self._current_stage = None  # To be set by the orchestrator (e.g., core.py) to indicate the current phase (e.g., 'intermediate_reasoning', 'final_synthesis')
 
-    def record_usage(self, prompt_tokens: int, completion_tokens: int, persona: Optional[str] = None, is_successful_turn: bool = True):
+    def record_usage(
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        persona: Optional[str] = None,
+        is_successful_turn: bool = True,
+    ):
         """Records token usage, optionally attributing it to a persona.
         Also applies semantic token weighting based on the current stage.
 

@@ -32,7 +32,7 @@ jobs:
 
       - name: Run Unit and Integration Tests with Coverage Check
         run: |
-          pytest --cov=src --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=80
+          python -m pytest --cov=src --cov-report=term-missing --cov-report=xml --junitxml=report.xml --cov-fail-under=80
 
       # NEW: Run prompt engineering tests (already covered by pytest tests/)
       # The suggested change had `python tests/prompt_testing.py` but our tests are pytest fixtures.

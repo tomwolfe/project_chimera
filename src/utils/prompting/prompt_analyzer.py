@@ -1,10 +1,10 @@
 # File: src/utils/prompt_analyzer.py
-import re
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional
 
 # Removed lru_cache import as it is no longer used on methods/functions
-from src.constants import SELF_ANALYSIS_KEYWORDS, NEGATION_PATTERNS, THRESHOLD
+from src.constants import NEGATION_PATTERNS, SELF_ANALYSIS_KEYWORDS, THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,8 @@ class PromptAnalyzer:
         )
 
         complexity_score = min(
-            1.0, word_count / WORD_COUNT_DIVISOR + sentence_count / SENTENCE_COUNT_DIVISOR
+            1.0,
+            word_count / WORD_COUNT_DIVISOR + sentence_count / SENTENCE_COUNT_DIVISOR,
         )
 
         reasoning_indicators = {
@@ -86,7 +87,8 @@ class PromptAnalyzer:
             REASONING_SCORE_COMPONENT * reasoning_indicators["contains_80_20_language"]
             + REASONING_SCORE_COMPONENT * reasoning_indicators["explicit_focus_areas"]
             + REASONING_SCORE_COMPONENT * reasoning_indicators["token_usage_warning"]
-            + REASONING_SCORE_COMPONENT * reasoning_indicators["structured_output_request"]
+            + REASONING_SCORE_COMPONENT
+            * reasoning_indicators["structured_output_request"]
         )
 
         return {
@@ -125,7 +127,9 @@ class PromptAnalyzer:
 
     @staticmethod
     def is_self_analysis_prompt(
-        prompt: str, threshold: float = THRESHOLD, negation_proximity: int = DEFAULT_NEGATION_PROXIMITY
+        prompt: str,
+        threshold: float = THRESHOLD,
+        negation_proximity: int = DEFAULT_NEGATION_PROXIMITY,
     ) -> bool:
         """
         Checks if a prompt indicates a self-analysis task based on weighted keywords,
@@ -148,17 +152,9 @@ class PromptAnalyzer:
         for keyword, weight in SELF_ANALYSIS_KEYWORDS.items():
             keyword_pos = prompt_lower.find(keyword)
             if keyword_pos != -1:
-                positional_boost = (
-                    POSITIONAL_BOOST_BASE
-                    + (
-                        POSITIONAL_BOOST_FACTOR
-                        * (
-                            1.0
-                            - min(
-                                keyword_pos / POSITIONAL_BOOST_MAX_DIST, 1.0
-                            )
-                        )
-                    )
+                positional_boost = POSITIONAL_BOOST_BASE + (
+                    POSITIONAL_BOOST_FACTOR
+                    * (1.0 - min(keyword_pos / POSITIONAL_BOOST_MAX_DIST, 1.0))
                 )
                 negated_weight_multiplier = 1.0
 

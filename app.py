@@ -1,5 +1,3 @@
-# app.py
-
 # Set TOKENIZERS_PARALLELISM to false at the very top to avoid deadlocks on fork
 # --- Standard Library Imports ---
 import contextlib
@@ -671,7 +669,9 @@ def main():
         st.progress(int(usage_percent), text=progress_text)
 
         if not is_allowed_check:
-            st.warning(f"⏳ Rate limit exceeded. Please wait {time_to_wait:.1f} seconds.")
+            st.warning(
+                f"⏳ Rate limit exceeded. Please wait {time_to_wait:.1f} seconds."
+            )
         elif (
             usage_percent
             >= st.session_state.session_rate_limiter_instance.warning_threshold * 100
@@ -682,12 +682,17 @@ def main():
         else:
             st.success("API usage is within limits.")
 
-        if st.session_state.debate_ran or st.session_state.current_debate_tokens_used > 0:
+        if (
+            st.session_state.debate_ran
+            or st.session_state.current_debate_tokens_used > 0
+        ):
             st.markdown("---")
             st.subheader("Current Debate Usage")
             col_tokens, col_cost = st.columns(2)
             with col_tokens:
-                st.metric("Tokens Used", f"{st.session_state.current_debate_tokens_used:,}")
+                st.metric(
+                    "Tokens Used", f"{st.session_state.current_debate_tokens_used:,}"
+                )
             with col_cost:
                 st.metric(
                     "Estimated Cost", f"${st.session_state.current_debate_cost_usd:.6f}"

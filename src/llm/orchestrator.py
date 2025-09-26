@@ -3,15 +3,20 @@ import logging
 from typing import Any, Optional, Type
 
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config.settings import ChimeraSettings
 from src.exceptions import (
+    CircuitBreakerError,
     LLMProviderRequestError,
     LLMProviderResponseError,
-    TokenBudgetExceededError,
-    CircuitBreakerError,
     SchemaValidationError,
+    TokenBudgetExceededError,
 )
 from src.llm_provider import GeminiProvider
 from src.resilience.circuit_breaker import CircuitBreaker
@@ -19,11 +24,13 @@ from src.token_tracker import TokenUsageTracker
 
 logger = logging.getLogger(__name__)
 
+
 class LLMOrchestrator:
     """
     Orchestrates LLM calls, applying resilience patterns like retries and circuit breaking,
     and handling token tracking and response formatting.
     """
+
     def __init__(
         self,
         llm_provider: GeminiProvider,
@@ -39,18 +46,17 @@ class LLMOrchestrator:
 
         # Initialize CircuitBreaker
         self.circuit_breaker = CircuitBreaker(
-            failure_threshold=self.settings.max_retries, # Use settings for threshold
-            recovery_timeout=self.settings.max_backoff_seconds, # Use settings for timeout
+            failure_threshold=self.settings.max_retries,  # Use settings for threshold
+            recovery_timeout=self.settings.max_backoff_seconds,  # Use settings for timeout
             expected_exception=(
                 LLMProviderRequestError,
                 LLMProviderResponseError,
                 TokenBudgetExceededError,
-                SchemaValidationError, # Schema validation failures can also open the circuit
+                SchemaValidationError,  # Schema validation failures can also open the circuit
             ),
         )
         logger.info(
-            "LLMOrchestrator initialized with CircuitBreaker.",
-            extra=self._log_extra
+            "LLMOrchestrator initialized with CircuitBreaker.", extra=self._log_extra
         )
 
     def _log_with_context(self, level: str, message: str, **kwargs):
@@ -64,10 +70,17 @@ class LLMOrchestrator:
             logger_method(message, extra=log_data)
 
     @retry(
-        wait=wait_exponential(multiplier=1, min=4, max=10), # Exponential backoff
-        stop=stop_after_attempt(5), # Max 5 attempts (initial + 4 retries)
-        retry=retry_if_exception_type((LLMProviderRequestError, LLMProviderResponseError, TokenBudgetExceededError, SchemaValidationError)),
-        reraise=True, # Re-raise the last exception if all retries fail
+        wait=wait_exponential(multiplier=1, min=4, max=10),  # Exponential backoff
+        stop=stop_after_attempt(5),  # Max 5 attempts (initial + 4 retries)
+        retry=retry_if_exception_type(
+            (
+                LLMProviderRequestError,
+                LLMProviderResponseError,
+                TokenBudgetExceededError,
+                SchemaValidationError,
+            )
+        ),
+        reraise=True,  # Re-raise the last exception if all retries fail
     )
     def _call_llm_with_resilience(
         self,
@@ -91,20 +104,27 @@ class LLMOrchestrator:
             context=context,
         )
 
+        # FIX: Set the current stage for semantic token tracking (Efficiency improvement)
+        self.token_tracker.set_current_stage(context)
+
         # The llm_provider.generate method itself is now a thin wrapper around the API call,
         # without its own retry/circuit breaker.
-        generated_text, input_tokens, output_tokens, is_truncated = self.llm_provider.generate(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            output_schema=output_schema,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            persona_config=persona_config,
-            requested_model_name=requested_model_name,
+        generated_text, input_tokens, output_tokens, is_truncated = (
+            self.llm_provider.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                output_schema=output_schema,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                persona_config=persona_config,
+                requested_model_name=requested_model_name,
+            )
         )
 
         # Record token usage after a successful generation
-        self.token_tracker.record_usage(input_tokens, output_tokens, persona=persona_config.name)
+        self.token_tracker.record_usage(
+            input_tokens, output_tokens, persona=persona_config.name
+        )
 
         return {
             "text": generated_text,
@@ -118,8 +138,10 @@ class LLMOrchestrator:
 
     def call_llm(
         self,
-        template_name: str, # This parameter is not used here, but kept for compatibility with core.py's call
-        prompt_params: dict[str, Any], # This parameter is not used here, but kept for compatibility with core.py's call
+        template_name: str,  # This parameter is not used here, but kept for compatibility with core.py's call
+        prompt_params: dict[
+            str, Any
+        ],  # This parameter is not used here, but kept for compatibility with core.py's call
         system_prompt: str,
         output_schema: Type[BaseModel],
         temperature: float,
@@ -145,7 +167,9 @@ class LLMOrchestrator:
         try:
             # Call the internal method with retry logic
             response = self._call_llm_with_resilience(
-                prompt=prompt_params["prompt"], # Extract actual prompt from prompt_params
+                prompt=prompt_params[
+                    "prompt"
+                ],  # Extract actual prompt from prompt_params
                 system_prompt=system_prompt,
                 output_schema=output_schema,
                 temperature=temperature,
@@ -156,7 +180,12 @@ class LLMOrchestrator:
             )
             self.circuit_breaker.record_success()
             return response
-        except (LLMProviderRequestError, LLMProviderResponseError, TokenBudgetExceededError, SchemaValidationError) as e:
+        except (
+            LLMProviderRequestError,
+            LLMProviderResponseError,
+            TokenBudgetExceededError,
+            SchemaValidationError,
+        ) as e:
             self.circuit_breaker.record_failure()
             self._log_with_context(
                 "error",
@@ -165,7 +194,7 @@ class LLMOrchestrator:
                 context=context,
                 exc_info=True,
             )
-            raise e # Re-raise the exception for core.py to handle
+            raise e  # Re-raise the exception for core.py to handle
         except Exception as e:
             # Catch any other unexpected exceptions and record as failure
             self.circuit_breaker.record_failure()

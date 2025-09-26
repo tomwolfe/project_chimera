@@ -4,15 +4,14 @@ Dynamic persona routing system that selects appropriate personas
 based on prompt analysis and intermediate results.
 """
 
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Set, Optional, Any, Tuple, TYPE_CHECKING
-import re
-import logging
-from functools import lru_cache
 
-from src.models import PersonaConfig
 from src.constants import SELF_ANALYSIS_PERSONA_SEQUENCE
+from src.models import PersonaConfig
 from src.utils.prompting.prompt_analyzer import PromptAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -282,7 +281,10 @@ class PersonaRouter:
                 )
 
             # Fixed PLR2004 (0.7) and SIM102 (nested if)
-            if avg_code_quality < CODE_QUALITY_THRESHOLD or avg_complexity > CODE_QUALITY_THRESHOLD:
+            if (
+                avg_code_quality < CODE_QUALITY_THRESHOLD
+                or avg_complexity > CODE_QUALITY_THRESHOLD
+            ):
                 self._insert_persona_before_arbitrator(sequence, "Code_Architect")
                 logger.info(
                     "Prioritized Code_Architect due to low code quality/maintainability or high complexity from context analysis."
@@ -354,7 +356,7 @@ class PersonaRouter:
                 and software_count == 0
             ):
                 logger.warning(
-                    f"Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
+                    "Misclassification detected: Building architecture prompt likely triggered Code_Architect. Removing it."
                 )
                 if "Code_Architect" in sequence:
                     sequence.remove("Code_Architect")
@@ -544,14 +546,15 @@ class PersonaRouter:
                     # append Arbitrator at the end.
                     base_sequence.append("Impartial_Arbitrator")
 
-
             if "Devils_Advocate" in base_sequence:
                 base_sequence.remove("Devils_Advocate")
 
             insert_pos_for_advocate = len(base_sequence)
             if "Impartial_Arbitrator" in base_sequence:
                 insert_pos_for_advocate = base_sequence.index("Impartial_Arbitrator")
-            elif "Self_Improvement_Analyst" in base_sequence:  # Standardized to snake_case
+            elif (
+                "Self_Improvement_Analyst" in base_sequence
+            ):  # Standardized to snake_case
                 insert_pos_for_advocate = base_sequence.index(
                     "Self_Improvement_Analyst"  # Standardized to snake_case
                 )
@@ -649,7 +652,10 @@ class PersonaRouter:
             )
 
             # Fixed PLR2004 (3)
-            if test_file_count > TEST_FILE_THRESHOLD and "Test_Engineer" not in final_sequence:
+            if (
+                test_file_count > TEST_FILE_THRESHOLD
+                and "Test_Engineer" not in final_sequence
+            ):
                 self._insert_persona_before_arbitrator(final_sequence, "Test_Engineer")
 
             # Fixed PLR2004 (5)

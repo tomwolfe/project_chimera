@@ -386,11 +386,17 @@ class SocraticDebate:
 
         if hasattr(self, "llm_orchestrator") and self.llm_orchestrator:
             try:
-                if hasattr(self.llm_orchestrator, "close") and callable(self.llm_orchestrator.close):
+                if hasattr(self.llm_orchestrator, "close") and callable(
+                    self.llm_orchestrator.close
+                ):
                     self.llm_orchestrator.close()
-                    self._log_with_context("debug", "LLM Orchestrator resources closed.")
+                    self._log_with_context(
+                        "debug", "LLM Orchestrator resources closed."
+                    )
             except Exception as e:
-                self._log_with_context("error", f"Error closing LLM Orchestrator: {e}", exc_info=True)
+                self._log_with_context(
+                    "error", f"Error closing LLM Orchestrator: {e}", exc_info=True
+                )
 
         if hasattr(self, "file_analysis_cache"):
             self.file_analysis_cache = {}
@@ -625,7 +631,9 @@ class SocraticDebate:
         self.token_tracker.set_current_stage(phase)
         # The record_usage in TokenUsageTracker now expects prompt_tokens and completion_tokens separately, plus success status
         # For non-LLM usage, we can treat all tokens as 'prompt' tokens for simplicity or adjust as needed.
-        self.token_tracker.record_usage(tokens, 0, persona=persona_name, is_successful_turn=True)
+        self.token_tracker.record_usage(
+            tokens, 0, persona=persona_name, is_successful_turn=True
+        )
         cost = self.llm_provider.calculate_usd_cost(
             tokens, 0
         )  # This cost calculation is for non-LLM tokens
