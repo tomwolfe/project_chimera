@@ -39,6 +39,7 @@ from src.exceptions import (
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimitExceededError
 from src.models import LLMOutput, PersonaConfig
+from src.monitoring.dashboard import display_monitoring_dashboard
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.error_handler import (
     handle_exception as error_handling_handle_exception,
@@ -1942,6 +1943,10 @@ def main():
             )
 
         actual_debate_domain = st.session_state.last_config_params.get("domain")
+
+        # NEW: Monitoring Dashboard Section
+        with st.expander("📊 System Monitoring Dashboard", expanded=False):
+            display_monitoring_dashboard()
 
         if actual_debate_domain == "Software Engineering":
             st.subheader("Structured Summary")

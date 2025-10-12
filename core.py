@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from collections import defaultdict
+from datetime import datetime
 from functools import lru_cache
 from typing import Any, Callable, Optional, Union
 
@@ -44,6 +45,10 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,  # Added for _handle_codebase_access_error
 )
+from src.monitoring.performance_logger import get_performance_logger
+
+# NEW: Import monitoring components
+from src.monitoring.system_monitor import get_system_monitor
 from src.persona.routing import PersonaRouter
 from src.persona_manager import PersonaManager
 from src.rag_system import KnowledgeRetriever, RagOrchestrator  # New Import for RAG
@@ -126,6 +131,10 @@ class SocraticDebate:
         self.rich_console = rich_console or Console(stderr=True)
         self.request_id = str(uuid.uuid4())[:8]
         self._log_extra = {"request_id": self.request_id or "N/A"}
+
+        # NEW: Initialize monitoring system
+        self.system_monitor = get_system_monitor()
+        self.debate_start_time = None
 
         self.initial_prompt = initial_prompt
         self.intermediate_steps = {}
@@ -935,6 +944,7 @@ class SocraticDebate:
         """Executes a single LLM turn for a given persona, handles API calls,
         parsing, validation, and token tracking, with retry logic for validation failures.
         """
+        turn_start_time = datetime.now()
         self._log_with_context(
             "debug",
             f"Executing LLM turn for {persona_name} in {phase} phase.",
@@ -947,6 +957,7 @@ class SocraticDebate:
         current_prompt_for_retry = prompt_for_llm
         tokens_used_in_turn = 0
         # is_successful_turn = False # Track if the turn was ultimately successful (F841 fix: removed unused variable)
+        turn_success = False
 
         # Aggressive token optimization logic is now handled internally by PromptOptimizer
         # No need for aggressive_optimization_flag here.
@@ -1024,6 +1035,7 @@ class SocraticDebate:
 
                 if not has_schema_error_after_processing:
                     # is_successful_turn = True # F841 fix: removed unused assignment
+                    turn_success = True
                     break  # Exit retry loop on success
 
                 if attempt < max_retries:
@@ -1129,6 +1141,9 @@ class SocraticDebate:
                     tokens_used_in_turn=tokens_used_in_turn,
                     is_successful_turn=False,
                 )
+                self.system_monitor.record_error(
+                    type(e).__name__, str(e), self.request_id
+                )
                 raise e
 
             except TokenBudgetExceededError as e:
@@ -1151,6 +1166,9 @@ class SocraticDebate:
                     token_budget_exceeded=True,
                     tokens_used_in_turn=tokens_used_in_turn,
                     is_successful_turn=False,
+                )
+                self.system_monitor.record_error(
+                    "TokenBudgetExceeded", str(e), self.request_id
                 )
                 raise e
 
@@ -1175,6 +1193,9 @@ class SocraticDebate:
                     tokens_used_in_turn=tokens_used_in_turn,
                     is_successful_turn=False,
                 )
+                self.system_monitor.record_error(
+                    type(e).__name__, str(e), self.request_id
+                )
                 raise ChimeraError(
                     f"Unexpected error in LLM turn for {persona_name}: {e}",
                     original_exception=e,
@@ -1186,6 +1207,18 @@ class SocraticDebate:
             self.llm_provider.calculate_usd_cost(input_tokens, output_tokens)
         )
 
+        # Calculate turn duration
+        turn_duration = (datetime.now() - turn_start_time).total_seconds()
+
+        # Record persona performance metrics
+        self.system_monitor.record_persona_performance(
+            persona_name,
+            turn_success,
+            tokens_used_in_turn,
+            turn_duration,
+            self.request_id,
+        )
+
         self._log_with_context(
             "info",
             f"LLM turn for {persona_name} completed successfully.",
@@ -1194,6 +1227,17 @@ class SocraticDebate:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens_for_turn=tokens_used_in_turn,
+            turn_duration=turn_duration,
+        )
+
+        # NEW: Log performance metrics using enhanced logger
+        perf_logger = get_performance_logger()
+        perf_logger.log_persona_performance(
+            persona_name,
+            turn_success,
+            turn_duration,
+            tokens_used_in_turn,
+            self.request_id,
         )
 
         return parsed_output
@@ -1270,6 +1314,12 @@ class SocraticDebate:
 
             self.check_budget("context", estimated_tokens, "Context Analysis Summary")
             self.track_token_usage("context", estimated_tokens)
+
+            # NEW: Log token usage for 80/20 analysis
+            perf_logger = get_performance_logger()
+            perf_logger.log_token_usage(
+                estimated_tokens, self.max_total_tokens_budget, self.request_id
+            )
 
             context_analysis_output = {
                 "relevant_files": relevant_files,
@@ -1438,6 +1488,12 @@ class SocraticDebate:
             self.tokenizer.count_tokens(prompt) + max_output_tokens_for_turn
         )
         self.check_budget("debate", estimated_tokens, "Context_Aware_Assistant")
+
+        # NEW: Log token usage for 80/20 analysis
+        perf_logger = get_performance_logger()
+        perf_logger.log_token_usage(
+            estimated_tokens, self.max_total_tokens_budget, self.request_id
+        )
 
         try:
             output = self._execute_llm_turn(
@@ -2555,6 +2611,12 @@ class SocraticDebate:
             "synthesis", estimated_tokens_for_turn, synthesis_persona_name
         )
 
+        # NEW: Log token usage for 80/20 analysis
+        perf_logger = get_performance_logger()
+        perf_logger.log_token_usage(
+            estimated_tokens_for_turn, self.max_total_tokens_budget, self.request_id
+        )
+
         synthesis_output = self._execute_llm_turn(
             synthesis_persona_name,
             final_synthesis_prompt,
@@ -2700,6 +2762,9 @@ class SocraticDebate:
         """Orchestrates the full Socratic debate process by calling phase-specific methods.
         Returns the final synthesized answer and a dictionary of intermediate steps.
         """
+        self.debate_start_time = datetime.now()
+        debate_success = True
+
         try:
             self._initialize_debate_state()
 
@@ -2832,8 +2897,33 @@ class SocraticDebate:
 
             return final_answer, intermediate_steps
         except CodebaseAccessError as e:
+            debate_success = False
             return self._handle_codebase_access_error(e)
+        except Exception as e:
+            debate_success = False
+            self.system_monitor.record_error(type(e).__name__, str(e), self.request_id)
+            raise
         finally:
+            # Record final debate metrics
+            if self.debate_start_time:
+                duration = (datetime.now() - self.debate_start_time).total_seconds()
+                self.system_monitor.record_debate_timing(duration, self.request_id)
+                self.system_monitor.record_metric(
+                    "performance",
+                    "debate_total_tokens",
+                    self.token_tracker.current_usage if self.token_tracker else 0,
+                    context={"debate_id": self.request_id},
+                )
+                # Record success/failure status
+                self.system_monitor.record_metric(
+                    "performance",
+                    "debate_success",
+                    1.0 if debate_success else 0.0,
+                    context={
+                        "debate_id": self.request_id,
+                        "status": "success" if debate_success else "failed",
+                    },
+                )
             self.close()
 
     def _generate_unified_diff(
