@@ -212,43 +212,84 @@ class ParetoAnalyzer:
             "priority_improvements": [],
             "resource_optimizations": [],
             "error_reduction_opportunities": [],
+            "cost_optimizations": [],
         }
 
         # Analyze performance bottlenecks
         bottlenecks = analysis["pareto_analysis"]["performance_bottlenecks"]
-        for bottleneck in bottlenecks[:2]:  # Top 2 bottlenecks (20% causing 80% issues)
+        for bottleneck in bottlenecks[:3]:  # Top 3 bottlenecks (20% causing 80% issues)
+            # Calculate potential improvement percentage
+            avg_duration = bottleneck.get('avg_duration', 0)
+            potential_improvement = min(0.5, avg_duration * 0.1)  # Conservative 10% improvement estimate
+
             recommendations["priority_improvements"].append(
                 {
                     "component": bottleneck["persona"],
-                    "issue": f"High average duration: {bottleneck['avg_duration']:.2f}s",
-                    "impact": "Reducing this could improve overall system performance by 20-80%",
-                    "suggestion": f"Optimize {bottleneck['persona']} persona logic or reduce its complexity",
+                    "issue": f"High average duration: {avg_duration:.2f}s",
+                    "impact": f"Improving this could save {potential_improvement:.1f}s per call and significantly boost overall performance",
+                    "suggestion": f"Optimize {bottleneck['persona']} persona logic, reduce its complexity, or decrease its response length",
+                    "priority": "high" if avg_duration > 5 else "medium",  # High priority if avg duration > 5 seconds
+                    "estimated_effort": "medium",  # Estimated effort to implement
                 }
             )
 
         # Analyze token inefficiencies
         token_efficiency = analysis["pareto_analysis"]["token_efficiency"]
         inefficient_personas = token_efficiency.get("most_inefficient_personas", [])
-        for persona_info in inefficient_personas[:2]:  # Top 2 inefficient personas
+        for persona_info in inefficient_personas[:3]:  # Top 3 inefficient personas
+            # Calculate potential cost savings
+            avg_tokens_per_call = persona_info.get('avg_tokens_per_call', 0)
+            potential_savings = avg_tokens_per_call * 0.3  # Conservative 30% reduction estimate
+
             recommendations["resource_optimizations"].append(
                 {
                     "component": persona_info["persona"],
-                    "issue": f"High token consumption: {persona_info['total_tokens']:,} tokens",
-                    "impact": f"Optimizing this could reduce token costs by {persona_info['avg_tokens_per_call']:.0f} tokens per call",
-                    "suggestion": f"Implement more efficient prompts or reduce output length for {persona_info['persona']}",
+                    "issue": f"High token consumption: {persona_info['total_tokens']:,} tokens total, {avg_tokens_per_call:.0f} avg per call",
+                    "impact": f"Optimizing this could save ~{potential_savings:.0f} tokens per call on average",
+                    "suggestion": f"Implement more efficient prompts, reduce output length, or add token budget constraints for {persona_info['persona']}",
+                    "priority": "high" if avg_tokens_per_call > 5000 else "medium",
+                    "estimated_effort": "low",  # Usually easier to optimize prompts
+                }
+            )
+
+            # Add to cost optimizations as well
+            recommendations["cost_optimizations"].append(
+                {
+                    "component": persona_info["persona"],
+                    "issue": f"High token usage contributing to costs: {persona_info['total_tokens']:,} tokens used",
+                    "potential_savings_usd": f"~${potential_savings * 0.000015:.4f}",  # Estimated cost savings (Google's pricing)
+                    "suggestion": f"Optimize token usage for {persona_info['persona']} to reduce API costs",
+                    "priority": "medium" if avg_tokens_per_call > 3000 else "low",
                 }
             )
 
         # Analyze error patterns
         error_patterns = analysis["pareto_analysis"]["error_patterns"]
         top_errors = error_patterns.get("top_errors", [])
-        for error in top_errors[:2]:  # Top 2 error types
+        for error in top_errors[:3]:  # Top 3 error types
             recommendations["error_reduction_opportunities"].append(
                 {
                     "error_type": error["error_type"],
                     "frequency": error["count"],
-                    "impact": f"Fixing this could eliminate {error['count']} error instances",
-                    "suggestion": f"Implement better error handling or validation for {error['error_type']} errors",
+                    "percentage_of_total": f"{error['count']/sum([e['count'] for e in top_errors]) * 100:.1f}%",
+                    "impact": f"Fixing this could eliminate {error['count']} error instances and improve success rate",
+                    "suggestion": f"Implement better error handling, validation, or retry logic for {error['error_type']} errors",
+                    "priority": "high" if error["count"] > 5 else "medium",
+                    "estimated_effort": "low" if error["count"] > 10 else "medium",
+                }
+            )
+
+        # Add specific recommendations for debate performance improvements
+        debate_stats = analysis.get("pareto_analysis", {}).get("debate_stats", {})
+        if debate_stats and 'avg_duration' in debate_stats and debate_stats['avg_duration'] > 30:  # If avg > 30 seconds
+            recommendations["priority_improvements"].append(
+                {
+                    "component": "overall_debate_process",
+                    "issue": f"Long average debate duration: {debate_stats['avg_duration']:.2f}s",
+                    "impact": "Reducing debate duration could improve user experience and throughput",
+                    "suggestion": "Consider parallelizing persona turns where possible or reducing the number of personas in the sequence",
+                    "priority": "high",
+                    "estimated_effort": "high",
                 }
             )
 
@@ -256,6 +297,7 @@ class ParetoAnalyzer:
             "timestamp": datetime.now().isoformat(),
             "recommendations": recommendations,
             "analysis_summary": analysis,
+            "pareto_principle_applied": True,
         }
 
 

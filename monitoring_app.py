@@ -6,6 +6,7 @@ Provides real-time metrics and dashboards following the 80/20 Pareto principle.
 import streamlit as st
 
 from src.monitoring.dashboard import display_monitoring_dashboard
+from src.monitoring.pareto_optimizer import get_pareto_optimizer
 from src.monitoring.system_monitor import get_system_monitor
 
 # Set page config
@@ -31,6 +32,41 @@ that drive 80% of system performance and efficiency gains.
 # Display the monitoring dashboard
 display_monitoring_dashboard()
 
+# Add optimization report section
+st.header("🎯 80/20 Optimization Report")
+try:
+    optimizer = get_pareto_optimizer()
+    report = optimizer.get_optimization_report()
+
+    if report["summary"]["total_recommendations"] > 0:
+        col1, col2, col3, col4 = st.columns(4)
+        summary = report["summary"]
+
+        with col1:
+            st.metric("Total Recommendations", summary["total_recommendations"])
+        with col2:
+            st.metric("High Priority Items", summary["high_priority_recommendations"])
+        with col3:
+            st.metric("Time Savings Potential", summary["potential_time_savings_per_debate"])
+        with col4:
+            st.metric("Cost Savings Potential", summary["potential_cost_savings_usd"])
+
+        # Show top recommendations
+        if report["recommendations"]:
+            st.subheader("Top Optimization Recommendations")
+            for rec in report["recommendations"][:5]:  # Show top 5
+                with st.expander(f"**{rec['title']}** - {rec['priority'].upper()}", expanded=False):
+                    st.write(f"**Component:** {rec['component']}")
+                    st.write(f"**Impact:** {rec['impact_percentage']:.0f}%")
+                    st.write(f"**Effort:** {rec['effort_level'].capitalize()}")
+                    st.write(f"**Timeline:** {rec['expected_timeline'].capitalize()}")
+                    st.write(f"**Confidence:** {rec['confidence_level']:.0%}")
+                    st.write(f"**Description:** {rec['description']}")
+    else:
+        st.info("Run some debates to generate optimization recommendations based on actual performance data.")
+except Exception as e:
+    st.error(f"Error loading optimization report: {str(e)}")
+
 # Add some additional monitoring controls
 with st.sidebar:
     st.header("Monitoring Controls")
@@ -48,6 +84,13 @@ with st.sidebar:
     if st.button("Reset Metrics"):
         monitor.reset_metrics()
         st.success("Metrics reset!")
+
+    # Optimization controls
+    st.subheader("Optimization")
+    optimizer = get_pareto_optimizer()
+    if st.button("Refresh Optimizations"):
+        optimizer.generate_optimizations(force_refresh=True)
+        st.success("Optimizations refreshed!")
 
     # Show current monitoring status
     st.subheader("Status")

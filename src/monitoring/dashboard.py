@@ -8,8 +8,10 @@ from typing import Any, Dict
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
+from src.monitoring.pareto_optimizer import get_pareto_optimizer
 from src.monitoring.system_monitor import MetricType, get_system_monitor
 
 
@@ -49,47 +51,6 @@ def display_monitoring_dashboard():
     # Auto-refresh option
     if st.checkbox("Auto-refresh every 30 seconds"):
         st.experimental_rerun()
-
-
-def display_system_overview(summary: Dict[str, Any], pareto_analysis: Dict[str, Any]):
-    """Display the system overview with key summary metrics."""
-    st.subheader("System Overview")
-
-    # Create summary metrics
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(label="Total Debates", value=summary["debate_stats"]["total_debates"])
-
-    with col2:
-        avg_duration = summary["debate_stats"]["avg_duration"]
-        st.metric(label="Avg Duration (s)", value=f"{avg_duration:.2f}")
-
-    with col3:
-        avg_success_rate = summary["persona_stats"]["avg_success_rate"]
-        st.metric(label="Success Rate", value=f"{avg_success_rate:.1%}")
-
-    with col4:
-        total_errors = summary["error_stats"]["total_errors"]
-        st.metric(label="Total Errors", value=total_errors)
-
-    # Display Pareto analysis findings
-    st.subheader("80/20 Analysis Findings")
-
-    # Performance bottlenecks
-    bottlenecks = pareto_analysis.get("performance_bottlenecks", [])
-    if bottlenecks:
-        st.markdown("### Top Performance Bottlenecks (20% causing 80% of delays)")
-        bottleneck_df = pd.DataFrame(bottlenecks)
-        st.dataframe(bottleneck_df, use_container_width=True)
-
-    # Most inefficient personas
-    token_analysis = pareto_analysis.get("token_efficiency", {})
-    inefficient_personas = token_analysis.get("most_inefficient_personas", [])
-    if inefficient_personas:
-        st.markdown("### Most Token-Inefficient Personas (20% using 80% of tokens)")
-        token_df = pd.DataFrame(inefficient_personas)
-        st.dataframe(token_df, use_container_width=True)
 
 
 def display_performance_metrics(monitor, pareto_analysis: Dict[str, Any]):
@@ -334,6 +295,220 @@ def display_resource_metrics(monitor, pareto_analysis: Dict[str, Any]):
                 )
                 fig.update_layout(yaxis_title="Memory (MB)")
                 st.plotly_chart(fig, use_container_width=True)
+
+
+def display_optimization_recommendations():
+    """Display optimization recommendations based on 80/20 analysis."""
+    st.subheader("💡 Optimization Recommendations (80/20 Focus)")
+
+    try:
+        optimizer = get_pareto_optimizer()
+        recommendations = optimizer.generate_optimizations()
+
+        if recommendations:
+            # Group recommendations by priority
+            high_priority = [r for r in recommendations if r.priority in ["critical", "high"]]
+            medium_priority = [r for r in recommendations if r.priority == "medium"]
+
+            # Display high priority recommendations first
+            if high_priority:
+                st.markdown("#### 🔥 High Priority Optimizations")
+                for rec in high_priority[:5]:  # Show top 5
+                    with st.expander(f"**{rec.title}** (Impact: {rec.impact_percentage:.0f}%)", expanded=False):
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.write(f"**Component:** {rec.component}")
+                            st.write(f"**Description:** {rec.description}")
+                            st.write(f"**Effort Level:** {rec.effort_level.capitalize()}")
+                        with col2:
+                            st.metric("Impact", f"{rec.impact_percentage:.0f}%")
+                            st.metric("Timeline", rec.expected_timeline.capitalize())
+
+                        if rec.estimated_savings:
+                            st.write("**Estimated Savings:**")
+                            savings_items = []
+                            for key, value in rec.estimated_savings.items():
+                                if key != "cost_usd" and isinstance(value, (int, float)):
+                                    savings_items.append(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value:,}")
+                                elif key == "cost_usd" and isinstance(value, float):
+                                    savings_items.append(f"Cost: ${value:.4f}")
+                            if savings_items:
+                                st.write(", ".join(savings_items))
+
+                        st.write("**Implementation Steps:**")
+                        for step in rec.implementation_steps[:3]:  # Show first 3 steps
+                            st.write(f"- {step}")
+
+            # Medium priority
+            if medium_priority:
+                st.markdown("#### ⚡ Medium Priority Optimizations")
+                for rec in medium_priority[:5]:  # Show top 5
+                    with st.expander(f"{rec.title} (Impact: {rec.impact_percentage:.0f}%)", expanded=False):
+                        st.write(f"**Component:** {rec.component}")
+                        st.write(f"Description: {rec.description}")
+                        st.write(f"Effort Level: {rec.effort_level.capitalize()}")
+
+            # Summary statistics
+            if recommendations:
+                st.markdown("#### 📊 Optimization Summary")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Recommendations", len(recommendations))
+                with col2:
+                    st.metric("High Priority", len(high_priority))
+                with col3:
+                    total_potential_time = sum(
+                        rec.estimated_savings.get("time", 0) for rec in recommendations
+                    )
+                    st.metric("Potential Time Savings", f"{total_potential_time:.1f}s")
+                with col4:
+                    total_potential_cost = sum(
+                        rec.estimated_savings.get("cost_usd", 0) for rec in recommendations
+                    )
+                    st.metric("Potential Cost Savings", f"${total_potential_cost:.4f}")
+        else:
+            st.info("No optimization recommendations available. Run a few debates to gather performance data.")
+
+    except Exception as e:
+        st.error(f"Error loading optimization recommendations: {str(e)}")
+
+
+def display_pareto_charts(pareto_analysis: Dict[str, Any]):
+    """Display Pareto charts to visualize the 80/20 principle."""
+    st.subheader("📊 80/20 Pareto Analysis Charts")
+
+    # Performance bottlenecks chart
+    bottlenecks = pareto_analysis.get("performance_bottlenecks", [])
+    if bottlenecks:
+        st.markdown("### Top Performance Bottlenecks (20% causing 80% of delays)")
+        bottleneck_df = pd.DataFrame(bottlenecks)
+        if not bottleneck_df.empty:
+            # Create a Pareto chart for performance bottlenecks
+            bottleneck_df = bottleneck_df.sort_values('avg_duration', ascending=False)
+            bottleneck_df['cumulative_percentage'] = (bottleneck_df['avg_duration'].cumsum() /
+                                                     bottleneck_df['avg_duration'].sum()) * 100
+
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=bottleneck_df['persona'],
+                y=bottleneck_df['avg_duration'],
+                name='Avg Duration',
+                marker_color='red'
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=bottleneck_df['persona'],
+                y=bottleneck_df['cumulative_percentage'],
+                mode='lines+markers',
+                name='Cumulative %',
+                yaxis='y2',
+                line=dict(color='blue', dash='dash'),
+                marker=dict(color='blue')
+            ))
+
+            fig.update_layout(
+                title="Performance Bottlenecks - Pareto Analysis",
+                xaxis_title="Persona",
+                yaxis_title="Avg Duration (s)",
+                yaxis2=dict(
+                    title="Cumulative %",
+                    overlaying='y',
+                    side='right'
+                ),
+                showlegend=True
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Token inefficiency chart
+    token_analysis_pareto = pareto_analysis.get("token_efficiency", {})
+    inefficient_personas = token_analysis_pareto.get("most_inefficient_personas", [])
+    if inefficient_personas:
+        st.markdown("### Most Token-Inefficient Personas (20% using 80% of tokens)")
+        token_df = pd.DataFrame(inefficient_personas)
+        if not token_df.empty:
+            # Create a Pareto chart for token inefficiency
+            token_df = token_df.sort_values('total_tokens', ascending=False)
+            token_df['cumulative_percentage'] = (token_df['total_tokens'].cumsum() /
+                                               token_df['total_tokens'].sum()) * 100
+
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=token_df['persona'],
+                y=token_df['total_tokens'],
+                name='Total Tokens',
+                marker_color='orange'
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=token_df['persona'],
+                y=token_df['cumulative_percentage'],
+                mode='lines+markers',
+                name='Cumulative %',
+                yaxis='y2',
+                line=dict(color='blue', dash='dash'),
+                marker=dict(color='blue')
+            ))
+
+            fig.update_layout(
+                title="Token Usage - Pareto Analysis",
+                xaxis_title="Persona",
+                yaxis_title="Total Tokens",
+                yaxis2=dict(
+                    title="Cumulative %",
+                    overlaying='y',
+                    side='right'
+                ),
+                showlegend=True
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def display_system_overview(summary: Dict[str, Any], pareto_analysis: Dict[str, Any]):
+    """Display the system overview with key summary metrics."""
+
+    st.subheader("System Overview")
+
+    # Create summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(label="Total Debates", value=summary["debate_stats"]["total_debates"])
+
+    with col2:
+        avg_duration = summary["debate_stats"]["avg_duration"]
+        st.metric(label="Avg Duration (s)", value=f"{avg_duration:.2f}")
+
+    with col3:
+        avg_success_rate = summary["persona_stats"]["avg_success_rate"]
+        st.metric(label="Success Rate", value=f"{avg_success_rate:.1%}")
+
+    with col4:
+        total_errors = summary["error_stats"]["total_errors"]
+        st.metric(label="Total Errors", value=total_errors)
+
+    # Display Pareto analysis findings
+    st.subheader("80/20 Analysis Findings")
+
+    # Performance bottlenecks
+    bottlenecks = pareto_analysis.get("performance_bottlenecks", [])
+    if bottlenecks:
+        st.markdown("### Top Performance Bottlenecks (20% causing 80% of delays)")
+        bottleneck_df = pd.DataFrame(bottlenecks)
+        st.dataframe(bottleneck_df, use_container_width=True)
+
+    # Most inefficient personas
+    token_analysis = pareto_analysis.get("token_efficiency", {})
+    inefficient_personas = token_analysis.get("most_inefficient_personas", [])
+    if inefficient_personas:
+        st.markdown("### Most Token-Inefficient Personas (20% using 80% of tokens)")
+        token_df = pd.DataFrame(inefficient_personas)
+        st.dataframe(token_df, use_container_width=True)
+
+    # Add the interactive Pareto charts
+    display_pareto_charts(pareto_analysis)
+
+    # Add optimization recommendations
+    display_optimization_recommendations()
 
 
 def add_monitoring_to_debate_process():

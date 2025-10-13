@@ -245,20 +245,25 @@ class SystemMonitor:
                 avg_persona_tokens = sum(p["tokens_used"] for p in performances) / len(
                     performances
                 )
+                total_tokens = sum(p["tokens_used"] for p in performances)
+                success_count = sum(1 for p in performances if p["success"])
+                success_rate = success_count / len(performances)
 
                 slow_personas.append(
                     {
                         "persona": persona,
                         "avg_duration": avg_persona_duration,
                         "avg_tokens": avg_persona_tokens,
+                        "total_tokens": total_tokens,
                         "call_count": len(performances),
-                        "success_rate": sum(1 for p in performances if p["success"])
-                        / len(performances),
+                        "success_rate": success_rate,
+                        "efficiency_ratio": avg_persona_duration / max(avg_persona_tokens, 1),  # Duration per token
+                        "impact_score": avg_persona_duration * (1 - success_rate) if success_rate < 1 else avg_persona_duration,  # Higher impact for low success rate
                     }
                 )
 
-        # Sort by duration and return top 20% (or top 3, whichever is greater)
-        slow_personas.sort(key=lambda x: x["avg_duration"], reverse=True)
+        # Sort by impact score (duration weighted by success rate issues) and return top 20% (or top 3, whichever is greater)
+        slow_personas.sort(key=lambda x: x["impact_score"], reverse=True)
         top_count = max(1, len(slow_personas) // 5)  # Top 20%
         return slow_personas[:top_count]
 
@@ -269,6 +274,7 @@ class SystemMonitor:
             "avg_tokens_per_debate": 0,
             "tokens_per_second": 0,
             "most_inefficient_personas": [],
+            "best_efficiency_personas": [],  # Track best performers too
         }
 
         # Aggregate token usage across all personas
@@ -276,6 +282,8 @@ class SystemMonitor:
         total_calls = 0
         persona_tokens = defaultdict(int)
         persona_calls = defaultdict(int)
+        persona_durations = defaultdict(list)
+        persona_successes = defaultdict(list)
 
         for persona, performances in self.persona_performance.items():
             persona_total = sum(p["tokens_used"] for p in performances)
@@ -283,6 +291,11 @@ class SystemMonitor:
             persona_calls[persona] = len(performances)
             total_tokens += persona_total
             total_calls += len(performances)
+
+            # Collect durations and success rates for efficiency calculation
+            for p in performances:
+                persona_durations[persona].append(p["duration"])
+                persona_successes[persona].append(p["success"])
 
         token_efficiency["total_tokens_used"] = total_tokens
 
@@ -294,30 +307,44 @@ class SystemMonitor:
                 total_tokens / sum(self.debate_timings) if self.debate_timings else 0
             )
 
-        # Identify most token-intensive personas (top 20%)
-        sorted_personas = sorted(
-            persona_tokens.items(), key=lambda x: x[1], reverse=True
-        )
-        top_token_personas = sorted_personas[
-            : max(1, len(sorted_personas) // 5)
-        ]  # Top 20%
+        # Calculate efficiency metrics for each persona
+        persona_efficiencies = []
+        for persona in persona_tokens:
+            if persona_calls[persona] > 0:
+                avg_tokens_per_call = persona_tokens[persona] / persona_calls[persona]
+                avg_duration_per_call = sum(persona_durations[persona]) / len(persona_durations[persona])
+                success_rate = sum(persona_successes[persona]) / len(persona_successes[persona])
 
-        token_efficiency["most_inefficient_personas"] = [
-            {
-                "persona": persona,
-                "total_tokens": tokens,
-                "call_count": persona_calls[persona],
-                "avg_tokens_per_call": tokens / persona_calls[persona],
-            }
-            for persona, tokens in top_token_personas
-        ]
+                # Efficiency score: lower tokens and duration with higher success rate is better
+                # Lower score is better (more efficient)
+                efficiency_score = (avg_tokens_per_call * avg_duration_per_call) / max(success_rate, 0.1)  # Avoid division by zero
+
+                persona_efficiencies.append({
+                    "persona": persona,
+                    "total_tokens": persona_tokens[persona],
+                    "call_count": persona_calls[persona],
+                    "avg_tokens_per_call": avg_tokens_per_call,
+                    "avg_duration_per_call": avg_duration_per_call,
+                    "success_rate": success_rate,
+                    "efficiency_score": efficiency_score,
+                    "cost_impact": persona_tokens[persona] * 0.000015,  # Estimated cost impact
+                })
+
+        # Identify least efficient personas (top 20% - highest inefficiency scores)
+        persona_efficiencies.sort(key=lambda x: x["efficiency_score"], reverse=True)
+        top_count = max(1, len(persona_efficiencies) // 5)  # Top 20%
+        token_efficiency["most_inefficient_personas"] = persona_efficiencies[:top_count]
+
+        # Also track the most efficient personas (top 20% - best scores)
+        persona_efficiencies.sort(key=lambda x: x["efficiency_score"])  # Best first
+        token_efficiency["best_efficiency_personas"] = persona_efficiencies[:top_count]
 
         return token_efficiency
 
     def _analyze_error_patterns(self) -> Dict[str, Any]:
         """Analyze error patterns to identify the most common issues."""
         if not self.error_counts:
-            return {"error_counts": {}, "top_errors": []}
+            return {"error_counts": {}, "top_errors": [], "error_impact_analysis": {}}
 
         # Sort errors by frequency (top 20% or top 3, whichever is greater)
         sorted_errors = sorted(
@@ -325,12 +352,25 @@ class SystemMonitor:
         )
         top_count = max(1, len(sorted_errors) // 5)  # Top 20%
 
+        # Calculate percentage impact of top errors
+        total_errors = sum(self.error_counts.values())
+        error_impact_analysis = {
+            "total_errors": total_errors,
+            "top_errors_percentage": sum([err[1] for err in sorted_errors[:top_count]]) / max(total_errors, 1) * 100,
+            "top_error_types": [err[0] for err in sorted_errors[:top_count]]
+        }
+
         return {
             "error_counts": dict(self.error_counts),
             "top_errors": [
-                {"error_type": err[0], "count": err[1]}
+                {
+                    "error_type": err[0],
+                    "count": err[1],
+                    "percentage": (err[1] / max(total_errors, 1)) * 100
+                }
                 for err in sorted_errors[:top_count]
             ],
+            "error_impact_analysis": error_impact_analysis,
         }
 
     def _analyze_resource_usage(self) -> Dict[str, Any]:
@@ -356,26 +396,55 @@ class SystemMonitor:
                 avg_cpu = sum(
                     m.value for m in cpu_metrics[-MIN_METRICS_FOR_AVERAGE:]
                 ) / len(cpu_metrics[-MIN_METRICS_FOR_AVERAGE:])  # Last 20 readings
+                max_cpu = max([m.value for m in cpu_metrics[-MIN_METRICS_FOR_AVERAGE:]])
+                min_cpu = min([m.value for m in cpu_metrics[-MIN_METRICS_FOR_AVERAGE:]])
             else:
                 avg_cpu = current_cpu
+                max_cpu = current_cpu
+                min_cpu = current_cpu
 
             if memory_metrics:
                 avg_memory = sum(
                     m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]
                 ) / len(memory_metrics[-MIN_METRICS_FOR_AVERAGE:])  # Last 20 readings
+                max_memory = max([m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]])
+                min_memory = min([m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]])
             else:
                 avg_memory = current_memory_mb
+                max_memory = current_memory_mb
+                min_memory = current_memory_mb
+
+            # Calculate resource usage efficiency
+            resource_efficiency_score = (100 - avg_cpu) * (1024 / max(avg_memory, 100))  # Higher is better
+
+            # Detect trends and potential issues
+            cpu_trend = "stable"
+            if len(cpu_metrics) >= MIN_MEMORY_METRICS_FOR_TREND:
+                if cpu_metrics[-1].value > cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2:  # 20% increase
+                    cpu_trend = "increasing"
+                elif cpu_metrics[-1].value < cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8:  # 20% decrease
+                    cpu_trend = "decreasing"
+
+            memory_trend = "stable"
+            if len(memory_metrics) >= MIN_MEMORY_METRICS_FOR_TREND:
+                if memory_metrics[-1].value > memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2:  # 20% increase
+                    memory_trend = "increasing"
+                elif memory_metrics[-1].value < memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8:  # 20% decrease
+                    memory_trend = "decreasing"
 
             return {
                 "current_cpu_percent": current_cpu,
                 "current_memory_mb": current_memory_mb,
                 "avg_cpu_percent": avg_cpu,
                 "avg_memory_mb": avg_memory,
-                "memory_trend": "increasing"
-                if len(memory_metrics) >= MIN_MEMORY_METRICS_FOR_TREND
-                and memory_metrics[-1].value
-                > memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value
-                else "stable",
+                "max_cpu_percent": max_cpu,
+                "max_memory_mb": max_memory,
+                "min_cpu_percent": min_cpu,
+                "min_memory_mb": min_memory,
+                "cpu_trend": cpu_trend,
+                "memory_trend": memory_trend,
+                "resource_efficiency_score": resource_efficiency_score,
+                "resource_pressure_level": "high" if current_cpu > 80 or current_memory_mb > 1024 else "medium" if current_cpu > 50 or current_memory_mb > 512 else "low",  # High if >80% CPU or >1GB memory
             }
         except Exception:
             return {"error": "Could not collect resource metrics"}
