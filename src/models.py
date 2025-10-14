@@ -234,6 +234,15 @@ class CodeChange(BaseModel):
     @classmethod
     def validate_file_path(cls, v):
         """Validates and sanitizes the file path."""
+        if not v or not isinstance(v, str):
+            raise ValueError(f"FILE_PATH must be a non-empty string, got: {v}")
+
+        # Basic security check to prevent directory traversal
+        if ".." in v or v.startswith("/") or ":/" in v:
+            raise ValueError(
+                f"FILE_PATH contains invalid characters preventing directory traversal: {v}"
+            )
+
         try:
             from src.utils.core_helpers.path_utils import (
                 sanitize_and_validate_file_path,
@@ -323,11 +332,34 @@ class CodeChange(BaseModel):
 
 
 class LLMOutput(BaseModel):
-    commit_message: str = Field(alias="COMMIT_MESSAGE")
-    rationale: str = Field(alias="RATIONALE")
-    code_changes: list[CodeChange] = Field(alias="CODE_CHANGES")
-    conflict_resolution: Optional[str] = Field(None, alias="CONFLICT_RESOLUTION")
-    unresolved_conflict: Optional[str] = Field(None, alias="UNRESOLVED_CONFLICT")
+    commit_message: str = Field(
+        ...,
+        alias="COMMIT_MESSAGE",
+        min_length=1,
+        description="Brief description of the changes made",
+    )
+    rationale: str = Field(
+        ...,
+        alias="RATIONALE",
+        min_length=1,
+        description="Explanation for the changes made",
+    )
+    code_changes: list[CodeChange] = Field(
+        ...,
+        alias="CODE_CHANGES",
+        min_length=0,
+        description="List of code changes to be applied",
+    )
+    conflict_resolution: Optional[str] = Field(
+        None,
+        alias="CONFLICT_RESOLUTION",
+        description="Explanation of how conflicts were resolved",
+    )
+    unresolved_conflict: Optional[str] = Field(
+        None,
+        alias="UNRESOLVED_CONFLICT",
+        description="Description of any unresolved conflicts",
+    )
     malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
     )
@@ -392,17 +424,22 @@ class SuggestionItem(BaseModel):
     area: str = Field(
         ...,
         alias="AREA",
+        min_length=1,
         description="Category of the suggestion (e.g., Reasoning Quality, Robustness).",
     )
-    problem: str = Field(..., alias="PROBLEM", description="Specific issue identified.")
+    problem: str = Field(
+        ..., alias="PROBLEM", min_length=1, description="Specific issue identified."
+    )
     proposed_solution: str = Field(
         ...,
         alias="PROPOSED_SOLUTION",
+        min_length=1,
         description="Concrete solution to the identified problem.",
     )
     expected_impact: str = Field(
         ...,
         alias="EXPECTED_IMPACT",
+        min_length=1,
         description="Expected benefits of implementing the solution.",
     )
     pareto_score: float = Field(
@@ -413,7 +450,10 @@ class SuggestionItem(BaseModel):
         description="80/20 Pareto principle score (impact/effort ratio).",
     )
     validation_method: str = Field(
-        ..., alias="VALIDATION_METHOD", description="How to validate the improvement."
+        ...,
+        alias="VALIDATION_METHOD",
+        min_length=1,
+        description="How to validate the improvement.",
     )
     code_changes_suggested: list[CodeChange] = Field(
         default_factory=list,
@@ -428,7 +468,10 @@ class SuggestionItem(BaseModel):
 # NEW: Pydantic model for general critique output
 class CritiqueOutput(BaseModel):
     critique_summary: str = Field(
-        ..., alias="CRITIQUE_SUMMARY", description="A concise summary of the critique."
+        ...,
+        alias="CRITIQUE_SUMMARY",
+        min_length=1,
+        description="A concise summary of the critique.",
     )
     critique_points: list[dict[str, Any]] = Field(
         ..., alias="CRITIQUE_POINTS", description="Detailed points of critique."
@@ -446,7 +489,10 @@ class CritiqueOutput(BaseModel):
 # NEW: Pydantic model for General_Synthesizer's output
 class GeneralOutput(BaseModel):
     general_output: str = Field(
-        ..., alias="general_output", description="The synthesized general output."
+        ...,
+        alias="general_output",
+        min_length=1,
+        description="The synthesized general output.",
     )
     malformed_blocks: list[dict[str, Any]] = Field(
         default_factory=list, alias="malformed_blocks"
@@ -496,7 +542,9 @@ class ConflictReport(BaseModel):
         "SECURITY_VS_PERFORMANCE",
         "NO_CONFLICT",
     ] = Field(..., description="Type of conflict identified.")
-    summary: str = Field(..., description="A concise summary of the conflict.")
+    summary: str = Field(
+        ..., min_length=1, description="A concise summary of the conflict."
+    )
     involved_personas: list[str] = Field(
         ..., description="Names of personas whose outputs are in conflict."
     )
@@ -523,6 +571,7 @@ class SelfImprovementAnalysisOutputV1(BaseModel):
     analysis_summary: str = Field(
         ...,
         alias="ANALYSIS_SUMMARY",
+        min_length=1,
         description="Overall summary of the self-improvement analysis.",
     )
     # MODIFIED: Changed impactful_suggestions to be a list of SuggestionItem objects

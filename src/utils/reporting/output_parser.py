@@ -20,6 +20,14 @@ from src.models import (
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
 )
+from src.utils.validation import (
+    attempt_schema_correction as validation_attempt_schema_correction,
+)
+from src.utils.validation import clean_llm_output as validation_clean_llm_output
+from src.utils.validation import (
+    force_close_truncated_json as validation_force_close_truncated_json,
+)
+from src.utils.validation import repair_json_string as validation_repair_json_string
 
 logger = logging.getLogger(__name__)
 
@@ -275,17 +283,8 @@ class LLMOutputParser:
         return None
 
     def _repair_json_string(self, json_str: str) -> tuple[str, list[dict[str, str]]]:
-        """Applies common JSON repair heuristics and logs repairs."""
-        repair_log = []
-        original_str = json_str
-
-        # Heuristic 1: Remove trailing commas
-        temp_str = re.sub(r",\s*([\}\]])", r"\1", json_str)
-        if temp_str != json_str:
-            repair_log.append(
-                {"action": "initial_repair", "details": "Removed trailing commas."}
-            )
-            json_str = temp_str
+        """Applies common JSON repair heuristics using the shared validation utility."""
+        return validation_repair_json_string(json_str)
 
         # Heuristic 2: Add missing closing braces/brackets
         open_braces = json_str.count("{")
@@ -452,30 +451,7 @@ class LLMOutputParser:
 
     def _force_close_truncated_json(self, json_str: str) -> str:
         """Attempts to heuristically force-close a JSON string that appears to be truncated."""
-        cleaned_str = json_str.strip()
-        if not cleaned_str:
-            return ""
-
-        if not (cleaned_str.startswith("{") or cleaned_str.startswith("[")):
-            return cleaned_str
-
-        open_braces = cleaned_str.count("{")
-        close_braces = cleaned_str.count("}")
-        open_brackets = cleaned_str.count("[")
-        close_brackets = cleaned_str.count("]")
-
-        if open_braces > close_braces and not cleaned_str.endswith("}"):
-            self.logger.debug(
-                f"Force-closing with {open_braces - close_braces} braces."
-            )
-            cleaned_str += "}" * (open_braces - close_braces)
-        if open_brackets > close_brackets and not cleaned_str.endswith("]"):
-            self.logger.debug(
-                f"Force-closing with {open_brackets - close_brackets} brackets."
-            )
-            cleaned_str += "]" * (open_brackets - close_brackets)
-
-        return cleaned_str
+        return validation_force_close_truncated_json(json_str)
 
     def _parse_with_incremental_repair(
         self, json_str: str
@@ -663,8 +639,10 @@ class LLMOutputParser:
         if json_start != -1 and json_end != -1 and json_end > json_start:
             cleaned = cleaned[json_start:json_end]
 
+        # Use the shared validation utility for cleaning
+        cleaned = validation_clean_llm_output(raw_output)
         self.logger.debug(f"Cleaned LLM output: {cleaned[:DEFAULT_SNIPPET_LENGTH]}...")
-        return cleaned.strip()
+        return cleaned
 
     def _detect_potential_suggestion_item(self, text: str) -> Optional[dict]:
         """Detects if the text contains what looks like a single 'IMPACTFUL_SUGGESTIONS' item
@@ -696,90 +674,16 @@ class LLMOutputParser:
         return None
 
     def _attempt_schema_correction(
-        self, output: dict[str, Any], error: ValidationError
+        self, output: dict[str, Any], error: ValidationError, schema_model=None
     ) -> Optional[dict[str, Any]]:
         """Attempts automatic correction of common schema validation failures by adding default values."""
-        corrected_output = output.copy()
-        correction_made = False
+        # Use the provided schema_model, or try to infer from the context
+        actual_schema = schema_model
+        if actual_schema is None:
+            from src.models import GeneralOutput
 
-        for err in error.errors():
-            field_path = err["loc"]
-            error_msg = err["msg"]
-
-            if "missing required field" in error_msg.lower():
-                # For SelfImprovementAnalysisOutputV1
-                if field_path == ("ANALYSIS_SUMMARY",):
-                    corrected_output["ANALYSIS_SUMMARY"] = (
-                        "Analysis summary not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                elif field_path == ("IMPACTFUL_SUGGESTIONS",):
-                    corrected_output["IMPACTFUL_SUGGESTIONS"] = []
-                    correction_made = True
-                # For CritiqueOutput
-                elif field_path == ("CRITIQUE_SUMMARY",):
-                    corrected_output["CRITIQUE_SUMMARY"] = (
-                        "Critique summary not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                elif field_path == ("CRITIQUE_POINTS",):
-                    corrected_output["CRITIQUE_POINTS"] = []
-                    correction_made = True
-                elif field_path == ("SUGGESTIONS",):
-                    corrected_output["SUGGESTIONS"] = []
-                    correction_made = True
-                # For LLMOutput
-                elif field_path == ("COMMIT_MESSAGE",):
-                    corrected_output["COMMIT_MESSAGE"] = (
-                        "Commit message not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                elif field_path == ("RATIONALE",):
-                    corrected_output["RATIONALE"] = (
-                        "Rationale not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                elif field_path == ("CODE_CHANGES",):
-                    corrected_output["CODE_CHANGES"] = []
-                    correction_made = True
-                # For GeneralOutput
-                elif field_path == ("general_output",):
-                    corrected_output["general_output"] = (
-                        "General output not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                # For ConflictReport
-                elif field_path == ("conflict_type",):
-                    corrected_output["conflict_type"] = "NO_CONFLICT"
-                    correction_made = True
-                elif field_path == ("summary",):
-                    corrected_output["summary"] = (
-                        "Conflict summary not provided by LLM, auto-filled."
-                    )
-                    correction_made = True
-                elif field_path == ("involved_personas",):
-                    corrected_output["involved_personas"] = []
-                    correction_made = True
-                elif field_path == ("conflicting_outputs_snippet",):
-                    corrected_output["conflicting_outputs_snippet"] = ""
-                    correction_made = True
-                elif field_path == ("conflict_found",):
-                    corrected_output["conflict_found"] = False
-                    correction_made = True
-                # For SuggestionItem (new fields)
-                elif field_path == ("PARETO_SCORE",):
-                    corrected_output["PARETO_SCORE"] = 0.0
-                    correction_made = True
-                elif field_path == ("VALIDATION_METHOD",):
-                    corrected_output["VALIDATION_METHOD"] = "N/A"
-                    correction_made = True
-
-        if correction_made:
-            self.logger.info(
-                f"Attempted schema correction: {error_msg}. Corrected output: {corrected_output}"
-            )
-            return corrected_output
-        return None
+            actual_schema = GeneralOutput
+        return validation_attempt_schema_correction(output, error, actual_schema)
 
     def parse_and_validate(
         self, raw_output: str, schema_model: type[BaseModel]
@@ -1156,7 +1060,7 @@ class LLMOutputParser:
                 f"Initial schema validation failed. Attempting auto-correction: {validation_e}"
             )
             corrected_data = self._attempt_schema_correction(
-                data_to_validate, validation_e
+                data_to_validate, validation_e, schema_model
             )
 
             if corrected_data:
