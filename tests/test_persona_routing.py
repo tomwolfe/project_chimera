@@ -17,51 +17,59 @@ def mock_persona_manager():
     pm.all_personas = {
         "Analyst": PersonaConfig(
             name="Analyst",
-            system_prompt="You are an analyst.",
+            system_prompt_template="You are an analyst.",
             temperature=0.5,
             max_tokens=1024,
+            description="Analyst persona",
         ),
         "Critic": PersonaConfig(
             name="Critic",
-            system_prompt="You are a critic.",
+            system_prompt_template="You are a critic.",
             temperature=0.5,
             max_tokens=1024,
+            description="Critic persona",
         ),
         "Self_Improvement_Analyst": PersonaConfig(  # Standardized to snake_case
             name="Self_Improvement_Analyst",  # Standardized to snake_case
-            system_prompt="You are a self-improvement analyst.",
+            system_prompt_template="You are a self-improvement analyst.",
             temperature=0.5,
             max_tokens=1024,
+            description="Self-improvement analyst persona",
         ),
         "Security_Auditor": PersonaConfig(
             name="Security_Auditor",
-            system_prompt="You are a security auditor.",
+            system_prompt_template="You are a security auditor.",
             temperature=0.5,
             max_tokens=1024,
+            description="Security auditor persona",
         ),
         "Code_Architect": PersonaConfig(
             name="Code_Architect",
-            system_prompt="You are a code architect.",
+            system_prompt_template="You are a code architect.",
             temperature=0.5,
             max_tokens=1024,
+            description="Code architect persona",
         ),
         "Devils_Advocate": PersonaConfig(
             name="Devils_Advocate",
-            system_prompt="You are a devils advocate.",
+            system_prompt_template="You are a devils advocate.",
             temperature=0.5,
             max_tokens=1024,
+            description="Devils advocate persona",
         ),
         "Test_Engineer": PersonaConfig(
             name="Test_Engineer",
-            system_prompt="You are a test engineer.",
+            system_prompt_template="You are a test engineer.",
             temperature=0.5,
             max_tokens=1024,
+            description="Test engineer persona",
         ),  # Added Test_Engineer
         "Impartial_Arbitrator": PersonaConfig(
             name="Impartial_Arbitrator",
-            system_prompt="You are an impartial arbitrator.",
+            system_prompt_template="You are an impartial arbitrator.",
             temperature=0.5,
             max_tokens=1024,
+            description="Impartial arbitrator persona",
         ),  # Added Impartial_Arbitrator
     }
     pm.persona_sets = {

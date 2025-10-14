@@ -28,7 +28,7 @@ from src.models import (
 from src.persona_manager import PersonaManager  # Import PersonaManager
 from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
-from src.utils.output_parser import LLMOutputParser  # Import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser  # Import LLMOutputParser
 
 # --- CONSTANTS FOR PLR2004 FIXES ---
 EXPECTED_DEBATE_TURNS_3 = 3

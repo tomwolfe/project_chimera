@@ -4,7 +4,7 @@ Provides visualizations for the most impactful metrics.
 """
 
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 import plotly.express as px
@@ -53,7 +53,7 @@ def display_monitoring_dashboard():
         st.experimental_rerun()
 
 
-def display_performance_metrics(monitor, pareto_analysis: Dict[str, Any]):
+def display_performance_metrics(monitor, pareto_analysis: dict[str, Any]):
     """Display performance-specific metrics and visualizations."""
     st.subheader("Performance Metrics")
 
@@ -117,7 +117,7 @@ def display_performance_metrics(monitor, pareto_analysis: Dict[str, Any]):
                 st.plotly_chart(fig, use_container_width=True)
 
 
-def display_token_metrics(monitor, pareto_analysis: Dict[str, Any]):
+def display_token_metrics(monitor, pareto_analysis: dict[str, Any]):
     """Display token usage metrics and visualizations."""
     st.subheader("Token Usage Metrics")
 
@@ -173,7 +173,7 @@ def display_token_metrics(monitor, pareto_analysis: Dict[str, Any]):
             st.plotly_chart(fig, use_container_width=True)
 
 
-def display_error_metrics(monitor, pareto_analysis: Dict[str, Any]):
+def display_error_metrics(monitor, pareto_analysis: dict[str, Any]):
     """Display error metrics and visualizations."""
     st.subheader("Error Metrics")
 
@@ -222,7 +222,7 @@ def display_error_metrics(monitor, pareto_analysis: Dict[str, Any]):
             st.plotly_chart(fig, use_container_width=True)
 
 
-def display_resource_metrics(monitor, pareto_analysis: Dict[str, Any]):
+def display_resource_metrics(monitor, pareto_analysis: dict[str, Any]):
     """Display resource usage metrics."""
     st.subheader("Resource Usage")
 
@@ -307,19 +307,26 @@ def display_optimization_recommendations():
 
         if recommendations:
             # Group recommendations by priority
-            high_priority = [r for r in recommendations if r.priority in ["critical", "high"]]
+            high_priority = [
+                r for r in recommendations if r.priority in ["critical", "high"]
+            ]
             medium_priority = [r for r in recommendations if r.priority == "medium"]
 
             # Display high priority recommendations first
             if high_priority:
                 st.markdown("#### 🔥 High Priority Optimizations")
                 for rec in high_priority[:5]:  # Show top 5
-                    with st.expander(f"**{rec.title}** (Impact: {rec.impact_percentage:.0f}%)", expanded=False):
+                    with st.expander(
+                        f"**{rec.title}** (Impact: {rec.impact_percentage:.0f}%)",
+                        expanded=False,
+                    ):
                         col1, col2 = st.columns([2, 1])
                         with col1:
                             st.write(f"**Component:** {rec.component}")
                             st.write(f"**Description:** {rec.description}")
-                            st.write(f"**Effort Level:** {rec.effort_level.capitalize()}")
+                            st.write(
+                                f"**Effort Level:** {rec.effort_level.capitalize()}"
+                            )
                         with col2:
                             st.metric("Impact", f"{rec.impact_percentage:.0f}%")
                             st.metric("Timeline", rec.expected_timeline.capitalize())
@@ -328,8 +335,14 @@ def display_optimization_recommendations():
                             st.write("**Estimated Savings:**")
                             savings_items = []
                             for key, value in rec.estimated_savings.items():
-                                if key != "cost_usd" and isinstance(value, (int, float)):
-                                    savings_items.append(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value:,}")
+                                if key != "cost_usd" and isinstance(
+                                    value, (int, float)
+                                ):
+                                    savings_items.append(
+                                        f"{key}: {value:.2f}"
+                                        if isinstance(value, float)
+                                        else f"{key}: {value:,}"
+                                    )
                                 elif key == "cost_usd" and isinstance(value, float):
                                     savings_items.append(f"Cost: ${value:.4f}")
                             if savings_items:
@@ -343,7 +356,10 @@ def display_optimization_recommendations():
             if medium_priority:
                 st.markdown("#### ⚡ Medium Priority Optimizations")
                 for rec in medium_priority[:5]:  # Show top 5
-                    with st.expander(f"{rec.title} (Impact: {rec.impact_percentage:.0f}%)", expanded=False):
+                    with st.expander(
+                        f"{rec.title} (Impact: {rec.impact_percentage:.0f}%)",
+                        expanded=False,
+                    ):
                         st.write(f"**Component:** {rec.component}")
                         st.write(f"Description: {rec.description}")
                         st.write(f"Effort Level: {rec.effort_level.capitalize()}")
@@ -363,17 +379,20 @@ def display_optimization_recommendations():
                     st.metric("Potential Time Savings", f"{total_potential_time:.1f}s")
                 with col4:
                     total_potential_cost = sum(
-                        rec.estimated_savings.get("cost_usd", 0) for rec in recommendations
+                        rec.estimated_savings.get("cost_usd", 0)
+                        for rec in recommendations
                     )
                     st.metric("Potential Cost Savings", f"${total_potential_cost:.4f}")
         else:
-            st.info("No optimization recommendations available. Run a few debates to gather performance data.")
+            st.info(
+                "No optimization recommendations available. Run a few debates to gather performance data."
+            )
 
     except Exception as e:
         st.error(f"Error loading optimization recommendations: {str(e)}")
 
 
-def display_pareto_charts(pareto_analysis: Dict[str, Any]):
+def display_pareto_charts(pareto_analysis: dict[str, Any]):
     """Display Pareto charts to visualize the 80/20 principle."""
     st.subheader("📊 80/20 Pareto Analysis Charts")
 
@@ -384,38 +403,40 @@ def display_pareto_charts(pareto_analysis: Dict[str, Any]):
         bottleneck_df = pd.DataFrame(bottlenecks)
         if not bottleneck_df.empty:
             # Create a Pareto chart for performance bottlenecks
-            bottleneck_df = bottleneck_df.sort_values('avg_duration', ascending=False)
-            bottleneck_df['cumulative_percentage'] = (bottleneck_df['avg_duration'].cumsum() /
-                                                     bottleneck_df['avg_duration'].sum()) * 100
+            bottleneck_df = bottleneck_df.sort_values("avg_duration", ascending=False)
+            bottleneck_df["cumulative_percentage"] = (
+                bottleneck_df["avg_duration"].cumsum()
+                / bottleneck_df["avg_duration"].sum()
+            ) * 100
 
             fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=bottleneck_df['persona'],
-                y=bottleneck_df['avg_duration'],
-                name='Avg Duration',
-                marker_color='red'
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=bottleneck_df["persona"],
+                    y=bottleneck_df["avg_duration"],
+                    name="Avg Duration",
+                    marker_color="red",
+                )
+            )
 
-            fig.add_trace(go.Scatter(
-                x=bottleneck_df['persona'],
-                y=bottleneck_df['cumulative_percentage'],
-                mode='lines+markers',
-                name='Cumulative %',
-                yaxis='y2',
-                line=dict(color='blue', dash='dash'),
-                marker=dict(color='blue')
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=bottleneck_df["persona"],
+                    y=bottleneck_df["cumulative_percentage"],
+                    mode="lines+markers",
+                    name="Cumulative %",
+                    yaxis="y2",
+                    line=dict(color="blue", dash="dash"),
+                    marker=dict(color="blue"),
+                )
+            )
 
             fig.update_layout(
                 title="Performance Bottlenecks - Pareto Analysis",
                 xaxis_title="Persona",
                 yaxis_title="Avg Duration (s)",
-                yaxis2=dict(
-                    title="Cumulative %",
-                    overlaying='y',
-                    side='right'
-                ),
-                showlegend=True
+                yaxis2=dict(title="Cumulative %", overlaying="y", side="right"),
+                showlegend=True,
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -427,43 +448,44 @@ def display_pareto_charts(pareto_analysis: Dict[str, Any]):
         token_df = pd.DataFrame(inefficient_personas)
         if not token_df.empty:
             # Create a Pareto chart for token inefficiency
-            token_df = token_df.sort_values('total_tokens', ascending=False)
-            token_df['cumulative_percentage'] = (token_df['total_tokens'].cumsum() /
-                                               token_df['total_tokens'].sum()) * 100
+            token_df = token_df.sort_values("total_tokens", ascending=False)
+            token_df["cumulative_percentage"] = (
+                token_df["total_tokens"].cumsum() / token_df["total_tokens"].sum()
+            ) * 100
 
             fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=token_df['persona'],
-                y=token_df['total_tokens'],
-                name='Total Tokens',
-                marker_color='orange'
-            ))
+            fig.add_trace(
+                go.Bar(
+                    x=token_df["persona"],
+                    y=token_df["total_tokens"],
+                    name="Total Tokens",
+                    marker_color="orange",
+                )
+            )
 
-            fig.add_trace(go.Scatter(
-                x=token_df['persona'],
-                y=token_df['cumulative_percentage'],
-                mode='lines+markers',
-                name='Cumulative %',
-                yaxis='y2',
-                line=dict(color='blue', dash='dash'),
-                marker=dict(color='blue')
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=token_df["persona"],
+                    y=token_df["cumulative_percentage"],
+                    mode="lines+markers",
+                    name="Cumulative %",
+                    yaxis="y2",
+                    line=dict(color="blue", dash="dash"),
+                    marker=dict(color="blue"),
+                )
+            )
 
             fig.update_layout(
                 title="Token Usage - Pareto Analysis",
                 xaxis_title="Persona",
                 yaxis_title="Total Tokens",
-                yaxis2=dict(
-                    title="Cumulative %",
-                    overlaying='y',
-                    side='right'
-                ),
-                showlegend=True
+                yaxis2=dict(title="Cumulative %", overlaying="y", side="right"),
+                showlegend=True,
             )
             st.plotly_chart(fig, use_container_width=True)
 
 
-def display_system_overview(summary: Dict[str, Any], pareto_analysis: Dict[str, Any]):
+def display_system_overview(summary: dict[str, Any], pareto_analysis: dict[str, Any]):
     """Display the system overview with key summary metrics."""
 
     st.subheader("System Overview")

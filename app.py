@@ -39,7 +39,16 @@ from src.exceptions import (
 from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimitExceededError
 from src.models import LLMOutput, PersonaConfig
-from src.monitoring.dashboard import display_monitoring_dashboard
+
+try:
+    from src.monitoring.dashboard import display_monitoring_dashboard
+except ImportError:
+    # Handle the case where plotly or other dependencies are missing
+    def display_monitoring_dashboard():
+        print(f"Monitoring dashboard not available: {e}")
+        print("Install required dependencies with: pip install plotly pandas streamlit")
+
+
 from src.utils.core_helpers.command_executor import execute_command_safely
 from src.utils.core_helpers.error_handler import (
     handle_exception as error_handling_handle_exception,
@@ -222,11 +231,11 @@ def calculate_token_count(text: str, tokenizer) -> int:
     """Robustly counts tokens using available tokenizer methods.
     This helper is for UI display or other direct token counting needs in app.py.
     """
-    if hasattr(tokenizer, "count_tokens"):
+    if hasattr(tokenizer, "count_tokens") and tokenizer.count_tokens is not None:
         return tokenizer.count_tokens(text)
-    elif hasattr(tokenizer, "encode"):
+    elif hasattr(tokenizer, "encode") and tokenizer.encode is not None:
         return len(tokenizer.encode(text))
-    elif hasattr(tokenizer, "tokenize"):
+    elif hasattr(tokenizer, "tokenize") and tokenizer.tokenize is not None:
         return len(tokenizer.tokenize(text))
     else:
         logger.warning(
@@ -245,6 +254,7 @@ def sanitize_user_input(prompt: str) -> str:
     processed_prompt = prompt
 
     injection_patterns = [
+        (r"(?i)ignore\s+previous", "IGNORE_PREVIOUS"),
         (
             r"(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b",
             "INSTRUCTION_OVERRIDE",

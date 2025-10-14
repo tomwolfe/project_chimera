@@ -5,7 +5,7 @@ based on prompt analysis and intermediate results.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -73,8 +73,8 @@ class PersonaRouter:
 
     def __init__(
         self,
-        all_personas: Dict[str, PersonaConfig],
-        persona_sets: Dict[str, List[str]],
+        all_personas: dict[str, PersonaConfig],
+        persona_sets: dict[str, list[str]],
         prompt_analyzer: PromptAnalyzer,
         # NEW: Add persona_manager parameter with Optional type hint
         persona_manager: Optional["PersonaManager"] = None,
@@ -189,7 +189,7 @@ class PersonaRouter:
             ],
         }
 
-    def _generate_persona_embeddings(self) -> Dict[str, Any]:
+    def _generate_persona_embeddings(self) -> dict[str, Any]:
         """Generates embeddings for all persona descriptions for semantic routing."""
         embeddings = {}
         for name, config in self.all_personas.items():
@@ -200,7 +200,7 @@ class PersonaRouter:
     def _should_include_test_engineer(
         self,
         prompt_lower: str,
-        context_analysis_results: Optional[Dict[str, Any]],
+        context_analysis_results: Optional[dict[str, Any]],
         domain: str,
     ) -> bool:
         """
@@ -247,12 +247,12 @@ class PersonaRouter:
 
     def _apply_dynamic_adjustment(
         self,
-        sequence: List[str],
-        intermediate_results: Optional[Dict[str, Any]],
+        sequence: list[str],
+        intermediate_results: Optional[dict[str, Any]],
         prompt_lower: str,
         domain: str,
-        context_analysis_results: Optional[Dict[str, Any]],
-    ) -> List[str]:
+        context_analysis_results: Optional[dict[str, Any]],
+    ) -> list[str]:
         """Apply dynamic adjustments to persona sequence based on intermediate results quality metrics."""
         if not intermediate_results:
             intermediate_results = {}
@@ -368,7 +368,7 @@ class PersonaRouter:
 
         adjusted_sequence = sequence.copy()
 
-        if domain == "Software Engineering" or domain == "Self-Improvement":
+        if domain in {"Software Engineering", "Self-Improvement"}:
             if (
                 "Test_Engineer" in adjusted_sequence
                 and not self._should_include_test_engineer(
@@ -424,7 +424,7 @@ class PersonaRouter:
 
         return adjusted_sequence
 
-    def _insert_persona_before_arbitrator(self, sequence: List[str], persona: str):
+    def _insert_persona_before_arbitrator(self, sequence: list[str], persona: str):
         """Insert persona before the Impartial_Arbitrator in the sequence if not already present."""
         if persona in sequence:
             return
@@ -448,9 +448,9 @@ class PersonaRouter:
         self,
         prompt: str,
         domain: str,
-        intermediate_results: Optional[Dict[str, Any]] = None,
-        context_analysis_results: Optional[Dict[str, Any]] = None,
-    ) -> List[str]:
+        intermediate_results: Optional[dict[str, Any]] = None,
+        context_analysis_results: Optional[dict[str, Any]] = None,
+    ) -> list[str]:
         """
         Determine the optimal sequence of personas for processing the prompt.
         """
@@ -678,6 +678,6 @@ class PersonaRouter:
 
         return unique_sequence
 
-    def _analyze_prompt_complexity(self, prompt: str) -> Dict[str, Any]:
+    def _analyze_prompt_complexity(self, prompt: str) -> dict[str, Any]:
         """Analyze prompt complexity with domain-specific weighting."""
         return self.prompt_analyzer.analyze_complexity(prompt)

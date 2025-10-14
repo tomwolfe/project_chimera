@@ -1,6 +1,6 @@
 # src/llm/orchestrator.py
 import logging
-from typing import Any, Optional, Type
+from typing import Any, Optional
 
 from pydantic import BaseModel
 from tenacity import (
@@ -86,7 +86,7 @@ class LLMOrchestrator:
         self,
         prompt: str,
         system_prompt: str,
-        output_schema: Type[BaseModel],
+        output_schema: type[BaseModel],
         temperature: float,
         max_tokens: int,
         persona_config: Any,
@@ -143,7 +143,7 @@ class LLMOrchestrator:
             str, Any
         ],  # This parameter is not used here, but kept for compatibility with core.py's call
         system_prompt: str,
-        output_schema: Type[BaseModel],
+        output_schema: type[BaseModel],
         temperature: float,
         max_tokens: int,
         persona_config: Any,

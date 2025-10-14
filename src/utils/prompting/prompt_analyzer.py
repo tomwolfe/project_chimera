@@ -1,7 +1,7 @@
 # File: src/utils/prompt_analyzer.py
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 # Removed lru_cache import as it is no longer used on methods/functions
 from src.constants import NEGATION_PATTERNS, SELF_ANALYSIS_KEYWORDS, THRESHOLD
@@ -27,7 +27,7 @@ DOMAIN_SCORE_THRESHOLD = 1.0
 
 
 class PromptAnalyzer:
-    def __init__(self, domain_keywords: Dict[str, List[str]]):
+    def __init__(self, domain_keywords: dict[str, list[str]]):
         """
         Initializes the PromptAnalyzer with domain-specific keywords.
 
@@ -36,7 +36,7 @@ class PromptAnalyzer:
         """
         self.domain_keywords = domain_keywords
 
-    def analyze_complexity(self, prompt: str) -> Dict[str, Any]:
+    def analyze_complexity(self, prompt: str) -> dict[str, Any]:
         """
         Analyzes prompt complexity, including word count, sentence count,
         and domain-specific keyword scores.
@@ -107,8 +107,8 @@ class PromptAnalyzer:
         }
 
     def _generate_reasoning_quality_suggestions(
-        self, indicators: Dict[str, bool]
-    ) -> List[str]:
+        self, indicators: dict[str, bool]
+    ) -> list[str]:
         """Generates suggestions for improving reasoning quality based on indicators."""
         suggestions = []
         if not indicators["contains_80_20_language"]:
@@ -250,13 +250,15 @@ class PromptAnalyzer:
                     if not negated:
                         score += DEFAULT_KEYWORD_WEIGHT
 
-            if domain == "Software Engineering":
-                if any(
+            if (
+                domain == "Software Engineering"
+                and any(
                     term in prompt_lower
                     for term in ["implement", "endpoint", "api", "function"]
-                ):
-                    if "error handling" in prompt_lower or "validation" in prompt_lower:
-                        score += SE_DOMAIN_BOOST
+                )
+                and ("error handling" in prompt_lower or "validation" in prompt_lower)
+            ):
+                score += SE_DOMAIN_BOOST
 
             if score > highest_score:
                 highest_score = score

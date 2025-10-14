@@ -62,8 +62,15 @@ def mock_token_tracker():
     tracker = MagicMock(spec=TokenUsageTracker)
     tracker.current_usage = 0
     tracker.budget = 1000000
-    tracker.record_usage.side_effect = lambda tokens, persona=None: setattr(
-        tracker, "current_usage", tracker.current_usage + tokens
+    tracker.record_usage.side_effect = (
+        lambda prompt_tokens=0,
+        completion_tokens=0,
+        persona=None,
+        is_successful_turn=True: setattr(
+            tracker,
+            "current_usage",
+            tracker.current_usage + prompt_tokens + completion_tokens,
+        )
     )
     tracker.get_consumption_rate.return_value = 0.1
     tracker.reset.return_value = None

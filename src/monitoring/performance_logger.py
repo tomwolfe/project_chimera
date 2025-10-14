@@ -10,7 +10,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from pythonjsonlogger import jsonlogger
 
@@ -39,7 +39,7 @@ class LogEntry:
     module: str
     function: str
     line: int
-    extra: Dict[str, Any]
+    extra: dict[str, Any]
     request_id: Optional[str] = None
     duration: Optional[float] = None
     tokens_used: Optional[int] = None
@@ -106,7 +106,9 @@ class PerformanceLogger:
                 MetricType.PERFORMANCE, "operation_duration", duration, context=extra
             )
 
-    def log_token_usage(self, tokens_used: int, tokens_budget: int, **kwargs):
+    def log_token_usage(
+        self, tokens_used: int, tokens_budget: int, request_id: str = None, **kwargs
+    ):
         """Log token usage metrics."""
         usage_percentage = (
             (tokens_used / tokens_budget) * 100 if tokens_budget > 0 else 0
@@ -119,6 +121,7 @@ class PerformanceLogger:
             "tokens_used": tokens_used,
             "tokens_budget": tokens_budget,
             "usage_percentage": usage_percentage,
+            "request_id": request_id,
             "log_type": "token_usage",
         }
         extra.update(kwargs)
@@ -129,7 +132,7 @@ class PerformanceLogger:
         from src.monitoring.system_monitor import MetricType
 
         monitor = get_system_monitor()
-        if "request_id" in extra:
+        if request_id:
             monitor.record_metric(
                 MetricType.TOKEN_USAGE,
                 "token_utilization",
@@ -191,7 +194,7 @@ class ParetoAnalyzer:
         self.error_data = []
         self.token_data = []
 
-    def analyze_performance_logs(self) -> Dict[str, Any]:
+    def analyze_performance_logs(self) -> dict[str, Any]:
         """Analyze performance logs to find 80/20 optimization opportunities."""
         # This would typically analyze logs from a log file or database
         # For now, we'll use the system monitor data
@@ -204,7 +207,7 @@ class ParetoAnalyzer:
             "findings": analysis,
         }
 
-    def generate_optimization_recommendations(self) -> Dict[str, Any]:
+    def generate_optimization_recommendations(self) -> dict[str, Any]:
         """Generate optimization recommendations based on 80/20 analysis."""
         analysis = self.analyze_performance_logs()
 
@@ -219,8 +222,10 @@ class ParetoAnalyzer:
         bottlenecks = analysis["pareto_analysis"]["performance_bottlenecks"]
         for bottleneck in bottlenecks[:3]:  # Top 3 bottlenecks (20% causing 80% issues)
             # Calculate potential improvement percentage
-            avg_duration = bottleneck.get('avg_duration', 0)
-            potential_improvement = min(0.5, avg_duration * 0.1)  # Conservative 10% improvement estimate
+            avg_duration = bottleneck.get("avg_duration", 0)
+            potential_improvement = min(
+                0.5, avg_duration * 0.1
+            )  # Conservative 10% improvement estimate
 
             recommendations["priority_improvements"].append(
                 {
@@ -228,7 +233,9 @@ class ParetoAnalyzer:
                     "issue": f"High average duration: {avg_duration:.2f}s",
                     "impact": f"Improving this could save {potential_improvement:.1f}s per call and significantly boost overall performance",
                     "suggestion": f"Optimize {bottleneck['persona']} persona logic, reduce its complexity, or decrease its response length",
-                    "priority": "high" if avg_duration > 5 else "medium",  # High priority if avg duration > 5 seconds
+                    "priority": "high"
+                    if avg_duration > 5
+                    else "medium",  # High priority if avg duration > 5 seconds
                     "estimated_effort": "medium",  # Estimated effort to implement
                 }
             )
@@ -238,8 +245,10 @@ class ParetoAnalyzer:
         inefficient_personas = token_efficiency.get("most_inefficient_personas", [])
         for persona_info in inefficient_personas[:3]:  # Top 3 inefficient personas
             # Calculate potential cost savings
-            avg_tokens_per_call = persona_info.get('avg_tokens_per_call', 0)
-            potential_savings = avg_tokens_per_call * 0.3  # Conservative 30% reduction estimate
+            avg_tokens_per_call = persona_info.get("avg_tokens_per_call", 0)
+            potential_savings = (
+                avg_tokens_per_call * 0.3
+            )  # Conservative 30% reduction estimate
 
             recommendations["resource_optimizations"].append(
                 {
@@ -271,7 +280,7 @@ class ParetoAnalyzer:
                 {
                     "error_type": error["error_type"],
                     "frequency": error["count"],
-                    "percentage_of_total": f"{error['count']/sum([e['count'] for e in top_errors]) * 100:.1f}%",
+                    "percentage_of_total": f"{error['count'] / sum([e['count'] for e in top_errors]) * 100:.1f}%",
                     "impact": f"Fixing this could eliminate {error['count']} error instances and improve success rate",
                     "suggestion": f"Implement better error handling, validation, or retry logic for {error['error_type']} errors",
                     "priority": "high" if error["count"] > 5 else "medium",
@@ -281,7 +290,11 @@ class ParetoAnalyzer:
 
         # Add specific recommendations for debate performance improvements
         debate_stats = analysis.get("pareto_analysis", {}).get("debate_stats", {})
-        if debate_stats and 'avg_duration' in debate_stats and debate_stats['avg_duration'] > 30:  # If avg > 30 seconds
+        if (
+            debate_stats
+            and "avg_duration" in debate_stats
+            and debate_stats["avg_duration"] > 30
+        ):  # If avg > 30 seconds
             recommendations["priority_improvements"].append(
                 {
                     "component": "overall_debate_process",

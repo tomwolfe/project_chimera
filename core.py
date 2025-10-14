@@ -48,7 +48,7 @@ from src.models import (
 from src.monitoring.performance_logger import get_performance_logger
 
 # NEW: Import monitoring components
-from src.monitoring.system_monitor import get_system_monitor
+from src.monitoring.system_monitor import MetricType, get_system_monitor
 from src.persona.routing import PersonaRouter
 from src.persona_manager import PersonaManager
 from src.rag_system import KnowledgeRetriever, RagOrchestrator  # New Import for RAG
@@ -2909,14 +2909,14 @@ class SocraticDebate:
                 duration = (datetime.now() - self.debate_start_time).total_seconds()
                 self.system_monitor.record_debate_timing(duration, self.request_id)
                 self.system_monitor.record_metric(
-                    "performance",
+                    MetricType.PERFORMANCE,
                     "debate_total_tokens",
                     self.token_tracker.current_usage if self.token_tracker else 0,
                     context={"debate_id": self.request_id},
                 )
                 # Record success/failure status
                 self.system_monitor.record_metric(
-                    "performance",
+                    MetricType.PERFORMANCE,
                     "debate_success",
                     1.0 if debate_success else 0.0,
                     context={

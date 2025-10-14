@@ -203,13 +203,14 @@ class TokenBudgetExceededError(ChimeraError):
         details: Optional[dict[str, Any]] = None,
         original_exception: Optional[Exception] = None,
     ):
+        details = details or {}
         error_details = {
             "current_tokens": current_tokens,
             "budget": budget,
             "phase": details.get("phase", "N/A"),
             "step_name": details.get("step_name", "N/A"),
             "tokens_needed": details.get("tokens_needed", "N/A"),
-            **(details or {}),
+            **details,
         }
         message = f"Token budget exceeded: {current_tokens}/{budget} tokens used. Phase: {error_details['phase']}, Step: {error_details['step_name']}"
         super().__init__(

@@ -47,7 +47,9 @@ try:
         with col2:
             st.metric("High Priority Items", summary["high_priority_recommendations"])
         with col3:
-            st.metric("Time Savings Potential", summary["potential_time_savings_per_debate"])
+            st.metric(
+                "Time Savings Potential", summary["potential_time_savings_per_debate"]
+            )
         with col4:
             st.metric("Cost Savings Potential", summary["potential_cost_savings_usd"])
 
@@ -55,7 +57,9 @@ try:
         if report["recommendations"]:
             st.subheader("Top Optimization Recommendations")
             for rec in report["recommendations"][:5]:  # Show top 5
-                with st.expander(f"**{rec['title']}** - {rec['priority'].upper()}", expanded=False):
+                with st.expander(
+                    f"**{rec['title']}** - {rec['priority'].upper()}", expanded=False
+                ):
                     st.write(f"**Component:** {rec['component']}")
                     st.write(f"**Impact:** {rec['impact_percentage']:.0f}%")
                     st.write(f"**Effort:** {rec['effort_level'].capitalize()}")
@@ -63,7 +67,9 @@ try:
                     st.write(f"**Confidence:** {rec['confidence_level']:.0%}")
                     st.write(f"**Description:** {rec['description']}")
     else:
-        st.info("Run some debates to generate optimization recommendations based on actual performance data.")
+        st.info(
+            "Run some debates to generate optimization recommendations based on actual performance data."
+        )
 except Exception as e:
     st.error(f"Error loading optimization report: {str(e)}")
 

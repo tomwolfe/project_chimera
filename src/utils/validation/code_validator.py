@@ -21,6 +21,267 @@ from src.utils.core_helpers.path_utils import (
 logger = logging.getLogger(__name__)
 
 
+class SecurityValidator:
+    """Validator for security issues in code."""
+
+    def validate(self, code: str) -> list[dict[str, Any]]:
+        """Validate code for security issues."""
+        content_lines = code.splitlines()
+        issues = []
+
+        try:
+            tree = ast.parse(code)
+
+            class SecurityVisitor(ast.NodeVisitor):
+                def __init__(self):
+                    self.issues = []
+
+                def visit_Call(self, node):
+                    # Check for dangerous functions
+                    if isinstance(node.func, ast.Name):
+                        if node.func.id in ["eval", "exec", "compile"]:
+                            snippet = _get_code_snippet(
+                                content_lines, node.lineno, context_lines=3
+                            )
+                            self.issues.append(
+                                {
+                                    "type": "Security Issue",
+                                    "line": node.lineno,
+                                    "message": f"Use of potentially dangerous function: {node.func.id}",
+                                    "code_snippet": snippet,
+                                }
+                            )
+                        elif node.func.id == "input":
+                            snippet = _get_code_snippet(
+                                content_lines, node.lineno, context_lines=3
+                            )
+                            self.issues.append(
+                                {
+                                    "type": "Security Issue",
+                                    "line": node.lineno,
+                                    "message": "Use of input() function - consider input sanitization",
+                                    "code_snippet": snippet,
+                                }
+                            )
+
+                    # Check for subprocess with shell=True
+                    if (
+                        isinstance(node.func, ast.Attribute)
+                        and hasattr(node.func, "attr")
+                        and node.func.attr == "run"
+                        and hasattr(node.func, "value")
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "subprocess"
+                    ):
+                        for keyword in node.keywords:
+                            if (
+                                keyword.arg == "shell"
+                                and isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value is True
+                            ):
+                                snippet = _get_code_snippet(
+                                    content_lines, node.lineno, context_lines=3
+                                )
+                                self.issues.append(
+                                    {
+                                        "type": "Security Issue",
+                                        "line": node.lineno,
+                                        "message": "subprocess.run() with shell=True is dangerous",
+                                        "code_snippet": snippet,
+                                    }
+                                )
+
+                    self.generic_visit(node)
+
+            visitor = SecurityVisitor()
+            visitor.visit(tree)
+            issues.extend(visitor.issues)
+
+        except SyntaxError as e:
+            issues.append(
+                {
+                    "type": "Syntax Error",
+                    "line": e.lineno,
+                    "message": f"Syntax error: {str(e)}",
+                    "code_snippet": _get_code_snippet(
+                        content_lines, e.lineno, context_lines=3
+                    )
+                    if e.lineno
+                    else None,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error during security validation: {e}")
+            issues.append(
+                {
+                    "type": "Validation Error",
+                    "message": f"Error during security validation: {str(e)}",
+                }
+            )
+
+        return issues
+
+
+class CodeQualityValidator:
+    """Validator for code quality issues."""
+
+    def __init__(self, max_line_length: int = 88, require_docstrings: bool = True):
+        self.max_line_length = max_line_length
+        self.require_docstrings = require_docstrings
+
+    def validate(self, code: str) -> list[dict[str, Any]]:
+        """Validate code for quality issues."""
+        lines = code.splitlines()
+        issues = []
+
+        # Check line length
+        for i, line in enumerate(lines, start=1):
+            if len(line) > self.max_line_length:
+                issues.append(
+                    {
+                        "type": "Code Quality Issue",
+                        "line": i,
+                        "message": f"Line too long ({len(line)} > {self.max_line_length} characters)",
+                        "code_snippet": line[:100] + ("..." if len(line) > 100 else ""),
+                    }
+                )
+
+        # Check for docstrings if required
+        if self.require_docstrings:
+            try:
+                tree = ast.parse(code)
+
+                class DocstringVisitor(ast.NodeVisitor):
+                    def __init__(self, lines):
+                        self.lines = lines
+                        self.issues = []
+
+                    def visit_FunctionDef(self, node):
+                        if not ast.get_docstring(node):
+                            snippet = _get_code_snippet(
+                                self.lines, node.lineno, context_lines=3
+                            )
+                            self.issues.append(
+                                {
+                                    "type": "Code Quality Issue",
+                                    "line": node.lineno,
+                                    "message": f"Function '{node.name}' missing docstring",
+                                    "code_snippet": snippet,
+                                }
+                            )
+                        self.generic_visit(node)
+
+                    def visit_ClassDef(self, node):
+                        if not ast.get_docstring(node):
+                            snippet = _get_code_snippet(
+                                self.lines, node.lineno, context_lines=3
+                            )
+                            self.issues.append(
+                                {
+                                    "type": "Code Quality Issue",
+                                    "line": node.lineno,
+                                    "message": f"Class '{node.name}' missing docstring",
+                                    "code_snippet": snippet,
+                                }
+                            )
+                        self.generic_visit(node)
+
+                visitor = DocstringVisitor(lines)
+                visitor.visit(tree)
+                issues.extend(visitor.issues)
+
+            except SyntaxError:
+                # Skip docstring check if syntax is invalid
+                pass
+            except Exception as e:
+                logger.error(f"Error during quality validation: {e}")
+
+        return issues
+
+
+class ComplexityValidator:
+    """Validator for code complexity issues."""
+
+    def __init__(
+        self,
+        max_function_length: int = 50,
+        max_nesting_level: int = 5,
+        max_cognitive_complexity: int = 10,
+    ):
+        self.max_function_length = max_function_length
+        self.max_nesting_level = max_nesting_level
+        self.max_cognitive_complexity = max_cognitive_complexity
+
+    def validate(self, code: str) -> list[dict[str, Any]]:
+        """Validate code for complexity issues."""
+        issues = []
+        try:
+            tree = ast.parse(code)
+
+            class ComplexityVisitor(ast.NodeVisitor):
+                def __init__(
+                    self,
+                    max_function_length,
+                    max_nesting_level,
+                    max_cognitive_complexity,
+                ):
+                    self.max_function_length = max_function_length
+                    self.max_nesting_level = max_nesting_level
+                    self.max_cognitive_complexity = max_cognitive_complexity
+                    self.issues = []
+                    self.current_function_start = 0
+                    self.current_function_end = 0
+
+                def visit_FunctionDef(self, node):
+                    # Calculate function length based on line numbers
+                    if hasattr(node, "body") and node.body:
+                        start_line = node.lineno
+                        end_line = node.body[-1].lineno if node.body else start_line
+                        func_length = end_line - start_line + 1
+
+                        if func_length > self.max_function_length:
+                            self.issues.append(
+                                {
+                                    "type": "Complexity Issue",
+                                    "line": start_line,
+                                    "message": f"Function '{node.name}' is too long ({func_length} lines > {self.max_function_length})",
+                                }
+                            )
+
+                    self.generic_visit(node)
+
+            visitor = ComplexityVisitor(
+                self.max_function_length,
+                self.max_nesting_level,
+                self.max_cognitive_complexity,
+            )
+            visitor.visit(tree)
+            issues.extend(visitor.issues)
+
+        except SyntaxError as e:
+            issues.append(
+                {
+                    "type": "Syntax Error",
+                    "line": e.lineno,
+                    "message": f"Syntax error: {str(e)}",
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error during complexity validation: {e}")
+            issues.append(
+                {
+                    "type": "Validation Error",
+                    "message": f"Error during complexity validation: {str(e)}",
+                }
+            )
+
+        return issues
+
+    def check_complexity(self, code: str) -> list[dict[str, Any]]:
+        """Alias for validate method to maintain compatibility."""
+        return self.validate(code)
+
+
 class CodeValidationError(Exception):
     """Custom exception for code validation errors."""
 
@@ -991,3 +1252,75 @@ def validate_code_output_batch(
 
     # Final return (Single exit point for PLR0911 compliance)
     return all_validation_results
+
+
+def validate_and_improve_code(
+    code: str,
+    validate_security: bool = True,
+    validate_quality: bool = True,
+    validate_complexity: bool = True,
+) -> tuple[bool, str, list[dict[str, Any]]]:
+    """
+    Validates and potentially improves code based on various criteria.
+
+    Args:
+        code: The code string to validate and improve
+        validate_security: Whether to run security validation
+        validate_quality: Whether to run quality validation
+        validate_complexity: Whether to run complexity validation
+
+    Returns:
+        Tuple of (is_valid, improved_code, issues_found)
+    """
+    issues = []
+
+    if validate_security:
+        security_validator = SecurityValidator()
+        security_issues = security_validator.validate(code)
+        issues.extend(security_issues)
+
+    if validate_quality:
+        quality_validator = CodeQualityValidator()
+        quality_issues = quality_validator.validate(code)
+        issues.extend(quality_issues)
+
+    if validate_complexity:
+        complexity_validator = ComplexityValidator()
+        complexity_issues = complexity_validator.validate(code)
+        issues.extend(complexity_issues)
+
+    # For now, return the original code since we're not actually improving it
+    # In a real implementation, you might make changes here
+    is_valid = len(issues) == 0
+
+    return is_valid, code, issues
+
+
+def validate_file_content(file_path: str) -> tuple[bool, list[dict[str, Any]], str]:
+    """
+    Validates content of a file and returns validation results.
+
+    Args:
+        file_path: Path to the file to validate
+
+    Returns:
+        Tuple of (is_valid, issues_found, improved_content)
+    """
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            content = f.read()
+
+        is_valid, improved_content, issues = validate_and_improve_code(content)
+
+        return is_valid, issues, improved_content
+    except FileNotFoundError:
+        issues = [{"type": "File Error", "message": f"File not found: {file_path}"}]
+        return False, issues, ""
+    except Exception as e:
+        issues = [
+            {
+                "type": "Validation Error",
+                "message": f"Error reading file {file_path}: {str(e)}",
+            }
+        ]
+        return False, issues, ""

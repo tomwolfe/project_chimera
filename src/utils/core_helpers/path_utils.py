@@ -135,3 +135,28 @@ def can_create_file(file_path: str) -> bool:
         return False
 
     return True
+
+
+def can_create_directory(dir_path: str) -> bool:
+    """Check if a directory can be created at the specified path."""
+    directory = os.path.dirname(dir_path)
+    if not directory:
+        return os.access(PROJECT_ROOT, os.W_OK)
+
+    if os.path.exists(directory):
+        return os.access(directory, os.W_OK)
+
+    # Check if we can create the parent directory
+    parent_dirs = []
+    current = directory
+    while current and current != "." and not os.path.exists(current):
+        parent_dirs.append(current)
+        current = os.path.dirname(current)
+
+    if not os.path.exists(current) or not os.access(current, os.W_OK):
+        logger.debug(
+            f"Cannot create directory: Parent directory '{current}' is not writable or does not exist."
+        )
+        return False
+
+    return True

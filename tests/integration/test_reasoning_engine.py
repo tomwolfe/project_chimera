@@ -27,7 +27,7 @@ from src.self_improvement.metrics_collector import FocusedMetricsCollector
 from src.token_tracker import TokenUsageTracker  # Import TokenUsageTracker
 
 # NEW: Import for SocraticDebate init
-from src.utils.output_parser import LLMOutputParser
+from src.utils.reporting.output_parser import LLMOutputParser
 
 # NEW: Import for SocraticDebate init
 

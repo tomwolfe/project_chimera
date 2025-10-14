@@ -22,32 +22,34 @@ def run_80_20_analysis(output_format="console"):
     print("🔍 Running 80/20 Pareto Analysis for Project Chimera...")
 
     # Get system monitor and optimizer
-    monitor = get_system_monitor()
+    get_system_monitor()
     optimizer = get_pareto_optimizer()
 
     # Generate recommendations
-    recommendations = optimizer.generate_optimizations(force_refresh=True)
+    optimizer.generate_optimizations(force_refresh=True)
 
     # Get full report
     report = optimizer.get_optimization_report()
 
     if output_format == "console":
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("📊 PROJECT CHIMERA - 80/20 PARETO ANALYSIS REPORT")
-        print("="*80)
+        print("=" * 80)
 
         print(f"\n📋 Report Generated: {report['timestamp']}")
         print(f"🎯 Focus: {report['focus_area']}")
 
         print("\n📈 SUMMARY STATISTICS:")
-        summary = report['summary']
+        summary = report["summary"]
         print(f"   • Total Recommendations: {summary['total_recommendations']}")
         print(f"   • High Priority Items: {summary['high_priority_recommendations']}")
-        print(f"   • Potential Time Savings: {summary['potential_time_savings_per_debate']}")
+        print(
+            f"   • Potential Time Savings: {summary['potential_time_savings_per_debate']}"
+        )
         print(f"   • Potential Cost Savings: {summary['potential_cost_savings_usd']}")
 
         print("\n💡 TOP RECOMMENDATIONS (80/20 Focus):")
-        for i, rec in enumerate(report['recommendations'][:5], 1):
+        for i, rec in enumerate(report["recommendations"][:5], 1):
             print(f"\n   {i}. {rec['title']}")
             print(f"      Component: {rec['component']}")
             print(f"      Priority: {rec['priority'].upper()}")
@@ -56,12 +58,12 @@ def run_80_20_analysis(output_format="console"):
             print(f"      Timeline: {rec['expected_timeline'].capitalize()}")
             print(f"      Description: {rec['description']}")
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("💡 IMPLEMENTATION SUGGESTIONS:")
         print("   1. Focus on HIGH priority items first for maximum impact")
         print("   2. Start with LOW effort items for quick wins")
         print("   3. Monitor metrics after each optimization to measure impact")
-        print("="*80)
+        print("=" * 80)
 
     elif output_format == "json":
         # Output in JSON format
@@ -71,25 +73,25 @@ def run_80_20_analysis(output_format="console"):
         # Output in Markdown format
         md_output = f"""# Project Chimera - 80/20 Pareto Analysis Report
 
-Generated: {report['timestamp']}
+Generated: {report["timestamp"]}
 
 ## Summary
-- Total Recommendations: {summary['total_recommendations']}
-- High Priority Items: {summary['high_priority_recommendations']}
-- Potential Time Savings: {summary['potential_time_savings_per_debate']}
-- Potential Cost Savings: {summary['potential_cost_savings_usd']}
+- Total Recommendations: {summary["total_recommendations"]}
+- High Priority Items: {summary["high_priority_recommendations"]}
+- Potential Time Savings: {summary["potential_time_savings_per_debate"]}
+- Potential Cost Savings: {summary["potential_cost_savings_usd"]}
 
 ## Top Recommendations (80/20 Focus)
 
 """
-        for i, rec in enumerate(report['recommendations'][:5], 1):
-            md_output += f"""### {i}. {rec['title']}
-- **Component**: {rec['component']}
-- **Priority**: {rec['priority'].upper()}
-- **Impact**: {rec['impact_percentage']:.0f}%
-- **Effort**: {rec['effort_level'].capitalize()}
-- **Timeline**: {rec['expected_timeline'].capitalize()}
-- **Description**: {rec['description']}
+        for i, rec in enumerate(report["recommendations"][:5], 1):
+            md_output += f"""### {i}. {rec["title"]}
+- **Component**: {rec["component"]}
+- **Priority**: {rec["priority"].upper()}
+- **Impact**: {rec["impact_percentage"]:.0f}%
+- **Effort**: {rec["effort_level"].capitalize()}
+- **Timeline**: {rec["expected_timeline"].capitalize()}
+- **Description**: {rec["description"]}
 
 """
 
@@ -111,12 +113,10 @@ def main():
         "--format",
         choices=["console", "json", "markdown"],
         default="console",
-        help="Output format (default: console)"
+        help="Output format (default: console)",
     )
     parser.add_argument(
-        "--output-file",
-        type=str,
-        help="File to save the report (optional)"
+        "--output-file", type=str, help="File to save the report (optional)"
     )
 
     args = parser.parse_args()
@@ -126,7 +126,7 @@ def main():
 
     # Save to file if requested
     if args.output_file:
-        with open(args.output_file, 'w', encoding='utf-8') as f:
+        with open(args.output_file, "w", encoding="utf-8") as f:
             if args.format == "json":
                 json.dump(report, f, indent=2)
             else:

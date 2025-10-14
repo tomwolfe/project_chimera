@@ -97,7 +97,7 @@ def test_can_create_file_in_existing_dir():
     test_dir.mkdir(exist_ok=True)
     try:
         test_file_path = str(test_dir / "new_file.py")
-        from src.utils.path_utils import can_create_file
+        from src.utils.core_helpers.path_utils import can_create_file
 
         assert can_create_file(test_file_path) is True
     finally:
@@ -107,7 +107,7 @@ def test_can_create_file_in_existing_dir():
 def test_can_create_file_in_non_existent_dir():
     """Test can_create_file for a file in a non-existent directory."""
     test_file_path = str(Path(PROJECT_ROOT) / "non_existent_dir" / "new_file.py")
-    from src.utils.path_utils import can_create_file
+    from src.utils.core_helpers.path_utils import can_create_file
 
     assert can_create_file(test_file_path) is False  # Parent dir doesn't exist
 
@@ -115,7 +115,7 @@ def test_can_create_file_in_non_existent_dir():
 def test_can_create_file_root_level():
     """Test can_create_file for a file at the project root."""
     test_file_path = str(Path(PROJECT_ROOT) / "new_root_file.py")
-    from src.utils.path_utils import can_create_file
+    from src.utils.core_helpers.path_utils import can_create_file
 
     assert can_create_file(test_file_path) is True
 
@@ -126,7 +126,7 @@ def test_can_create_directory_in_existing_dir():
     test_parent_dir.mkdir(exist_ok=True)
     try:
         test_new_dir_path = str(test_parent_dir / "new_subdir")
-        from src.utils.path_utils import can_create_file
+        from src.utils.core_helpers.path_utils import can_create_file
 
         assert can_create_file(test_new_dir_path) is True
     finally:
@@ -136,6 +136,6 @@ def test_can_create_directory_in_existing_dir():
 def test_can_create_directory_nested_non_existent():
     """Test can_create_file for a nested non-existent directory."""
     test_path = str(Path(PROJECT_ROOT) / "non_existent_parent" / "new_nested_dir")
-    from src.utils.path_utils import can_create_file
+    from src.utils.core_helpers.path_utils import can_create_file
 
     assert can_create_file(test_path) is False  # Intermediate parent doesn't exist

@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import psutil
 
@@ -39,8 +39,8 @@ class SystemMetric:
     metric_name: str
     value: float
     timestamp: datetime
-    context: Dict[str, Any] = field(default_factory=dict)
-    tags: List[str] = field(default_factory=list)
+    context: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
 
 
 class SystemMonitor:
@@ -49,7 +49,7 @@ class SystemMonitor:
     def __init__(self, max_history: int = 1000):
         self.max_history = max_history
         self.metrics_history: deque[SystemMetric] = deque(maxlen=max_history)
-        self.current_metrics: Dict[str, SystemMetric] = {}
+        self.current_metrics: dict[str, SystemMetric] = {}
         self.token_tracker: Optional[TokenUsageTracker] = None
 
         # Performance tracking
@@ -130,8 +130,8 @@ class SystemMonitor:
         metric_type: MetricType,
         metric_name: str,
         value: float,
-        context: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None,
+        context: Optional[dict[str, Any]] = None,
+        tags: Optional[list[str]] = None,
     ):
         """Record a single metric."""
         metric = SystemMetric(
@@ -220,7 +220,7 @@ class SystemMonitor:
         """Register a callback to be called whenever a metric is recorded."""
         self.callbacks.append(callback)
 
-    def get_pareto_analysis(self) -> Dict[str, Any]:
+    def get_pareto_analysis(self) -> dict[str, Any]:
         """Perform 80/20 analysis of system metrics."""
         analysis = {
             "performance_bottlenecks": self._analyze_performance_bottlenecks(),
@@ -230,7 +230,7 @@ class SystemMonitor:
         }
         return analysis
 
-    def _analyze_performance_bottlenecks(self) -> List[Dict[str, Any]]:
+    def _analyze_performance_bottlenecks(self) -> list[dict[str, Any]]:
         """Analyze which components are causing the most performance issues."""
         if not self.debate_timings:
             return []
@@ -257,8 +257,11 @@ class SystemMonitor:
                         "total_tokens": total_tokens,
                         "call_count": len(performances),
                         "success_rate": success_rate,
-                        "efficiency_ratio": avg_persona_duration / max(avg_persona_tokens, 1),  # Duration per token
-                        "impact_score": avg_persona_duration * (1 - success_rate) if success_rate < 1 else avg_persona_duration,  # Higher impact for low success rate
+                        "efficiency_ratio": avg_persona_duration
+                        / max(avg_persona_tokens, 1),  # Duration per token
+                        "impact_score": avg_persona_duration * (1 - success_rate)
+                        if success_rate < 1
+                        else avg_persona_duration,  # Higher impact for low success rate
                     }
                 )
 
@@ -267,7 +270,7 @@ class SystemMonitor:
         top_count = max(1, len(slow_personas) // 5)  # Top 20%
         return slow_personas[:top_count]
 
-    def _analyze_token_efficiency(self) -> Dict[str, Any]:
+    def _analyze_token_efficiency(self) -> dict[str, Any]:
         """Analyze token usage patterns to identify inefficiencies."""
         token_efficiency = {
             "total_tokens_used": 0,
@@ -312,23 +315,32 @@ class SystemMonitor:
         for persona in persona_tokens:
             if persona_calls[persona] > 0:
                 avg_tokens_per_call = persona_tokens[persona] / persona_calls[persona]
-                avg_duration_per_call = sum(persona_durations[persona]) / len(persona_durations[persona])
-                success_rate = sum(persona_successes[persona]) / len(persona_successes[persona])
+                avg_duration_per_call = sum(persona_durations[persona]) / len(
+                    persona_durations[persona]
+                )
+                success_rate = sum(persona_successes[persona]) / len(
+                    persona_successes[persona]
+                )
 
                 # Efficiency score: lower tokens and duration with higher success rate is better
                 # Lower score is better (more efficient)
-                efficiency_score = (avg_tokens_per_call * avg_duration_per_call) / max(success_rate, 0.1)  # Avoid division by zero
+                efficiency_score = (avg_tokens_per_call * avg_duration_per_call) / max(
+                    success_rate, 0.1
+                )  # Avoid division by zero
 
-                persona_efficiencies.append({
-                    "persona": persona,
-                    "total_tokens": persona_tokens[persona],
-                    "call_count": persona_calls[persona],
-                    "avg_tokens_per_call": avg_tokens_per_call,
-                    "avg_duration_per_call": avg_duration_per_call,
-                    "success_rate": success_rate,
-                    "efficiency_score": efficiency_score,
-                    "cost_impact": persona_tokens[persona] * 0.000015,  # Estimated cost impact
-                })
+                persona_efficiencies.append(
+                    {
+                        "persona": persona,
+                        "total_tokens": persona_tokens[persona],
+                        "call_count": persona_calls[persona],
+                        "avg_tokens_per_call": avg_tokens_per_call,
+                        "avg_duration_per_call": avg_duration_per_call,
+                        "success_rate": success_rate,
+                        "efficiency_score": efficiency_score,
+                        "cost_impact": persona_tokens[persona]
+                        * 0.000015,  # Estimated cost impact
+                    }
+                )
 
         # Identify least efficient personas (top 20% - highest inefficiency scores)
         persona_efficiencies.sort(key=lambda x: x["efficiency_score"], reverse=True)
@@ -341,7 +353,7 @@ class SystemMonitor:
 
         return token_efficiency
 
-    def _analyze_error_patterns(self) -> Dict[str, Any]:
+    def _analyze_error_patterns(self) -> dict[str, Any]:
         """Analyze error patterns to identify the most common issues."""
         if not self.error_counts:
             return {"error_counts": {}, "top_errors": [], "error_impact_analysis": {}}
@@ -356,8 +368,10 @@ class SystemMonitor:
         total_errors = sum(self.error_counts.values())
         error_impact_analysis = {
             "total_errors": total_errors,
-            "top_errors_percentage": sum([err[1] for err in sorted_errors[:top_count]]) / max(total_errors, 1) * 100,
-            "top_error_types": [err[0] for err in sorted_errors[:top_count]]
+            "top_errors_percentage": sum([err[1] for err in sorted_errors[:top_count]])
+            / max(total_errors, 1)
+            * 100,
+            "top_error_types": [err[0] for err in sorted_errors[:top_count]],
         }
 
         return {
@@ -366,14 +380,14 @@ class SystemMonitor:
                 {
                     "error_type": err[0],
                     "count": err[1],
-                    "percentage": (err[1] / max(total_errors, 1)) * 100
+                    "percentage": (err[1] / max(total_errors, 1)) * 100,
                 }
                 for err in sorted_errors[:top_count]
             ],
             "error_impact_analysis": error_impact_analysis,
         }
 
-    def _analyze_resource_usage(self) -> Dict[str, Any]:
+    def _analyze_resource_usage(self) -> dict[str, Any]:
         """Analyze resource usage patterns."""
         try:
             # Get current resource usage
@@ -407,29 +421,47 @@ class SystemMonitor:
                 avg_memory = sum(
                     m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]
                 ) / len(memory_metrics[-MIN_METRICS_FOR_AVERAGE:])  # Last 20 readings
-                max_memory = max([m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]])
-                min_memory = min([m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]])
+                max_memory = max(
+                    [m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]]
+                )
+                min_memory = min(
+                    [m.value for m in memory_metrics[-MIN_METRICS_FOR_AVERAGE:]]
+                )
             else:
                 avg_memory = current_memory_mb
                 max_memory = current_memory_mb
                 min_memory = current_memory_mb
 
             # Calculate resource usage efficiency
-            resource_efficiency_score = (100 - avg_cpu) * (1024 / max(avg_memory, 100))  # Higher is better
+            resource_efficiency_score = (100 - avg_cpu) * (
+                1024 / max(avg_memory, 100)
+            )  # Higher is better
 
             # Detect trends and potential issues
             cpu_trend = "stable"
             if len(cpu_metrics) >= MIN_MEMORY_METRICS_FOR_TREND:
-                if cpu_metrics[-1].value > cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2:  # 20% increase
+                if (
+                    cpu_metrics[-1].value
+                    > cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2
+                ):  # 20% increase
                     cpu_trend = "increasing"
-                elif cpu_metrics[-1].value < cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8:  # 20% decrease
+                elif (
+                    cpu_metrics[-1].value
+                    < cpu_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8
+                ):  # 20% decrease
                     cpu_trend = "decreasing"
 
             memory_trend = "stable"
             if len(memory_metrics) >= MIN_MEMORY_METRICS_FOR_TREND:
-                if memory_metrics[-1].value > memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2:  # 20% increase
+                if (
+                    memory_metrics[-1].value
+                    > memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 1.2
+                ):  # 20% increase
                     memory_trend = "increasing"
-                elif memory_metrics[-1].value < memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8:  # 20% decrease
+                elif (
+                    memory_metrics[-1].value
+                    < memory_metrics[-MIN_MEMORY_METRICS_FOR_TREND].value * 0.8
+                ):  # 20% decrease
                     memory_trend = "decreasing"
 
             return {
@@ -444,12 +476,16 @@ class SystemMonitor:
                 "cpu_trend": cpu_trend,
                 "memory_trend": memory_trend,
                 "resource_efficiency_score": resource_efficiency_score,
-                "resource_pressure_level": "high" if current_cpu > 80 or current_memory_mb > 1024 else "medium" if current_cpu > 50 or current_memory_mb > 512 else "low",  # High if >80% CPU or >1GB memory
+                "resource_pressure_level": "high"
+                if current_cpu > 80 or current_memory_mb > 1024
+                else "medium"
+                if current_cpu > 50 or current_memory_mb > 512
+                else "low",  # High if >80% CPU or >1GB memory
             }
         except Exception:
             return {"error": "Could not collect resource metrics"}
 
-    def get_summary_report(self) -> Dict[str, Any]:
+    def get_summary_report(self) -> dict[str, Any]:
         """Generate a summary report of the most important metrics."""
         return {
             "timestamp": datetime.now().isoformat(),
