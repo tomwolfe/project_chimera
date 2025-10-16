@@ -48,6 +48,8 @@ DEFAULT_MAX_CHARS = 1000
 DEFAULT_MIN_LENGTH_35 = 35
 HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
+
+# --- NEW: Import modular parsing components ---
 DEFAULT_FALLBACK_SIZE = 500
 # -----------------------------------
 

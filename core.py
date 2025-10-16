@@ -24,6 +24,9 @@ from src.constants import CRITICAL_FILES_FOR_SELF_ANALYSIS, SHARED_JSON_INSTRUCT
 # --- IMPORT MODIFICATIONS ---
 # NEW IMPORT FOR CODEBASE SCANNING
 from src.context.context_analyzer import CodebaseScanner, ContextRelevanceAnalyzer
+
+# NEW: Import monitoring components
+# --- NEW: Separate modules for complex logic ---
 from src.exceptions import (
     ChimeraError,
     CircuitBreakerError,
@@ -46,8 +49,6 @@ from src.models import (
     SuggestionItem,  # Added for _handle_codebase_access_error
 )
 from src.monitoring.performance_logger import get_performance_logger
-
-# NEW: Import monitoring components
 from src.monitoring.system_monitor import MetricType, get_system_monitor
 from src.persona.routing import PersonaRouter
 from src.persona_manager import PersonaManager

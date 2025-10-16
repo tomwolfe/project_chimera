@@ -40,12 +40,15 @@ from src.logging_config import setup_structured_logging
 from src.middleware.rate_limiter import RateLimitExceededError
 from src.models import LLMOutput, PersonaConfig
 
+# --- Module Level Executable Code ---
+# Initialize global settings and logging if needed
+
 try:
     from src.monitoring.dashboard import display_monitoring_dashboard
 except ImportError:
     # Handle the case where plotly or other dependencies are missing
     def display_monitoring_dashboard():
-        print(f"Monitoring dashboard not available: {e}")
+        print("Monitoring dashboard not available: e")
         print("Install required dependencies with: pip install plotly pandas streamlit")
 
 
