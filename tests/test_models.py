@@ -13,6 +13,7 @@ from src.models import (
     GeneralOutput,
     LLMOutput,
     PersonaConfig,
+    PreCommitHook,
     SelfImprovementAnalysisOutput,
     SelfImprovementAnalysisOutputV1,
     SuggestionItem,
@@ -448,7 +449,6 @@ class TestConfigurationAnalysisOutput:
 
     def test_config_analysis_output_with_data(self):
         """Test ConfigurationAnalysisOutput with configuration data."""
-        from src.models import PreCommitHook
 
         hook = PreCommitHook(
             repo="https://github.com/psf/black", rev="22.0.0", id="black"

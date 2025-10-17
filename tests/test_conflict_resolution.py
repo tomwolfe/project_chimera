@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 from src.conflict_resolution import ConflictResolutionManager
+from src.models import GeneralOutput
 
 
 class TestConflictResolutionManager:
@@ -176,7 +177,6 @@ class TestConflictResolutionManagerWithMocking:
         }
         mock_output_parser_instance._clean_llm_output.return_value = "clean output"
         # Mock the _get_schema_class_from_name method to return a proper class
-        from src.models import GeneralOutput
 
         mock_output_parser_instance._get_schema_class_from_name.return_value = (
             GeneralOutput
@@ -230,7 +230,6 @@ class TestConflictResolutionManagerWithMocking:
         }
         mock_output_parser_instance._clean_llm_output.return_value = "clean output"
         # Mock the _get_schema_class_from_name method to return a proper class
-        from src.models import GeneralOutput
 
         mock_output_parser_instance._get_schema_class_from_name.return_value = (
             GeneralOutput

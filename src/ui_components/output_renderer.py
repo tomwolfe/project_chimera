@@ -2,6 +2,7 @@
 Output Renderer for Project Chimera
 Separated from app.py to reduce complexity
 """
+
 from typing import Any
 
 import streamlit as st

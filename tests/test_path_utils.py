@@ -13,63 +13,48 @@ from src.utils.core_helpers.path_utils import (
 
 
 class TestPathUtils:
-    def test_sanitize_and_validate_file_path_safe_path(self):
+    def test_sanitize_and_validate_file_path_safe_path(self, monkeypatch):
         """Test sanitizing and validating a safe file path."""
         # Create a temporary directory for testing
         with tempfile.TemporaryDirectory() as temp_dir:
             os.path.join(temp_dir, "test_file.py")
 
             # Mock PROJECT_ROOT to be the temp directory
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            result = sanitize_and_validate_file_path("test_file.py")
+            # The result should be the path relative to the project root
+            expected = "test_file.py"
+            assert result == expected
 
-            try:
-                result = sanitize_and_validate_file_path("test_file.py")
-                # The result should be properly joined with the project root
-                expected = os.path.normpath(os.path.join(temp_dir, "test_file.py"))
-                assert result == expected
-            finally:
-                # Restore original PROJECT_ROOT if it existed
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
-
-    def test_sanitize_and_validate_file_path_with_subdir(self):
+    def test_sanitize_and_validate_file_path_with_subdir(self, monkeypatch):
         """Test sanitizing and validating a file path with subdirectory."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            result = sanitize_and_validate_file_path("src/test_file.py")
+            expected = os.path.normpath(os.path.join("src", "test_file.py"))
+            assert result == expected
 
-            try:
-                result = sanitize_and_validate_file_path("src/test_file.py")
-                expected = os.path.normpath(
-                    os.path.join(temp_dir, "src", "test_file.py")
-                )
-                assert result == expected
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
-
-    def test_sanitize_and_validate_file_path_path_traversal_attempt(self):
+    def test_sanitize_and_validate_file_path_path_traversal_attempt(self, monkeypatch):
         """Test that path traversal attempts are blocked."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
-
-            try:
-                # This should raise ValueError
-                with pytest.raises(
-                    ValueError, match="outside the allowed project directory"
-                ):
-                    sanitize_and_validate_file_path("../../forbidden_file.py")
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
+            # This should raise ValueError
+            with pytest.raises(
+                ValueError, match="outside the allowed project directory"
+            ):
+                sanitize_and_validate_file_path("../../forbidden_file.py")
 
     def test_map_incorrect_file_path_common_hallucinations(self):
         """Test mapping common LLM hallucinated paths to correct ones."""
@@ -96,101 +81,77 @@ class TestPathUtils:
             _map_incorrect_file_path("tests/test_example.py") == "tests/test_example.py"
         )
 
-    def test_can_create_file_in_existing_dir(self):
+    def test_can_create_file_in_existing_dir(self, monkeypatch):
         """Test can_create_file for a file in an existing directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            test_file_path = str(Path(temp_dir) / "existing_dir" / "new_file.py")
+            # Create the parent directory first
+            Path(temp_dir, "existing_dir").mkdir(exist_ok=True)
 
-            try:
-                test_file_path = str(Path(temp_dir) / "existing_dir" / "new_file.py")
-                # Create the parent directory first
-                Path(temp_dir, "existing_dir").mkdir(exist_ok=True)
+            result = can_create_file(test_file_path)
+            assert result is True  # Should be able to create file in existing dir
 
-                result = can_create_file(test_file_path)
-                assert result is True  # Should be able to create file in existing dir
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
-
-    def test_can_create_file_root_level(self):
+    def test_can_create_file_root_level(self, monkeypatch):
         """Test can_create_file for a file at the root level."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            test_file_path = str(Path(temp_dir) / "new_root_file.py")
 
-            try:
-                test_file_path = str(Path(temp_dir) / "new_root_file.py")
+            result = can_create_file(test_file_path)
+            assert result is True  # Should be able to create file at root
 
-                result = can_create_file(test_file_path)
-                assert result is True  # Should be able to create file at root
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
-
-    def test_can_create_directory_in_existing_dir(self):
+    def test_can_create_directory_in_existing_dir(self, monkeypatch):
         """Test can_create_directory for a directory in an existing directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            test_dir_path = str(Path(temp_dir) / "existing_dir" / "new_dir")
+            # Create the parent directory first
+            Path(temp_dir, "existing_dir").mkdir(exist_ok=True)
 
-            try:
-                test_dir_path = str(Path(temp_dir) / "existing_dir" / "new_dir")
-                # Create the parent directory first
-                Path(temp_dir, "existing_dir").mkdir(exist_ok=True)
-
-                result = can_create_directory(test_dir_path)
-                assert (
-                    result is True
-                )  # Should be able to create directory in existing dir
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
+            result = can_create_directory(test_dir_path)
+            assert result is True  # Should be able to create directory in existing dir
 
 
 # Additional tests for path utils that might not have been covered
 class TestPathUtilsAdditional:
-    def test_sanitize_and_validate_file_path_absolute_path_handling(self):
+    def test_sanitize_and_validate_file_path_absolute_path_handling(self, monkeypatch):
         """Test handling of absolute paths."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
+            # Test with an absolute path inside the project
+            abs_path = os.path.join(temp_dir, "test.py")
+            result = sanitize_and_validate_file_path(abs_path)
+            expected = "test.py"
+            assert result == expected
 
-            try:
-                # Test with an absolute path inside the project
-                abs_path = os.path.join(temp_dir, "test.py")
-                result = sanitize_and_validate_file_path(abs_path)
-                expected = os.path.normpath(abs_path)
-                assert result == expected
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
-
-    def test_sanitize_and_validate_file_path_special_characters(self):
+    def test_sanitize_and_validate_file_path_special_characters(self, monkeypatch):
         """Test handling of paths with special characters."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            import src.utils.core_helpers.path_utils as path_utils_module
+            monkeypatch.setattr(
+                "src.utils.core_helpers.path_utils.PROJECT_ROOT",
+                Path(temp_dir).resolve(),
+            )
 
-            original_project_root = getattr(path_utils_module, "PROJECT_ROOT", None)
-            path_utils_module.PROJECT_ROOT = temp_dir
-
-            try:
-                result = sanitize_and_validate_file_path("test_with_underscore.py")
-                expected = os.path.normpath(
-                    os.path.join(temp_dir, "test_with_underscore.py")
-                )
-                assert result == expected
-            finally:
-                if original_project_root is not None:
-                    path_utils_module.PROJECT_ROOT = original_project_root
+            result = sanitize_and_validate_file_path("test_with_underscore.py")
+            expected = "test_with_underscore.py"
+            assert result == expected
 
     def test_map_incorrect_file_path_variations(self):
         """Test mapping for various common hallucinations."""

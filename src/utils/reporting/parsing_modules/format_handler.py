@@ -2,6 +2,7 @@
 Format Handler Module for Output Parser
 Separated from output_parser.py to reduce complexity
 """
+
 from typing import Any
 
 
@@ -9,6 +10,7 @@ class FormatHandler:
     """
     Handles format processing logic that was previously in output_parser.py
     """
+
     def __init__(self):
         pass
 
@@ -17,9 +19,9 @@ class FormatHandler:
         Detect the format of the content
         """
         # Simplified format detection that was extracted from output_parser.py
-        if content.strip().startswith('{') and content.strip().endswith('}'):
+        if content.strip().startswith("{") and content.strip().endswith("}"):
             return "JSON"
-        elif content.strip().startswith('<') and content.strip().endswith('>'):
+        elif content.strip().startswith("<") and content.strip().endswith(">"):
             return "XML"
         else:
             return "TEXT"

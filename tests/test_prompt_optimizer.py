@@ -68,9 +68,9 @@ def test_optimize_prompt_no_truncation_needed(prompt_optimizer_instance):
     """Tests optimize_prompt when the prompt is within limits."""
     user_prompt = "This is a short prompt."
     # NEW: Pass a mock PersonaConfig object
-    persona_config = MagicMock(
-        spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
-    )
+    persona_config = MagicMock(spec=PersonaConfig)
+    persona_config.name = "TestPersona"
+    persona_config.token_efficiency_score = 0.8
     max_output_tokens = 500
     system_message = "You are a helpful assistant."
 
@@ -90,9 +90,9 @@ def test_optimize_prompt_with_truncation(prompt_optimizer_instance, mock_tokeniz
         * 5
     )
     # NEW: Pass a mock PersonaConfig object
-    persona_config = MagicMock(
-        spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
-    )
+    persona_config = MagicMock(spec=PersonaConfig)
+    persona_config.name = "TestPersona"
+    persona_config.token_efficiency_score = 0.8
     max_output_tokens = 500
     system_message = "You are a helpful assistant."
 

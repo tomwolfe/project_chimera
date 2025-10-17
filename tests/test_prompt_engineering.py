@@ -45,6 +45,24 @@ def mock_summarizer_pipeline():
 
 
 @pytest.fixture
+def mock_token_tracker():
+    """Provides a mock token tracker instance."""
+    tracker = MagicMock()
+    # Mock methods that are used in the test to track state change
+    tracker._total_usage = 0
+
+    def mock_add_usage(tokens):
+        tracker._total_usage += tokens
+
+    def mock_get_total_usage():
+        return tracker._total_usage
+
+    tracker.add_usage = mock_add_usage
+    tracker.get_total_usage = mock_get_total_usage
+    return tracker
+
+
+@pytest.fixture
 def prompt_optimizer_instance(mock_tokenizer, mock_settings, mock_summarizer_pipeline):
     """Provides a PromptOptimizer instance with mocked dependencies."""
     return PromptOptimizer(
@@ -67,9 +85,9 @@ class TestPromptEngineering:
     ):  # NEW: Add fixtures
         original_prompt = "Explain the concept of gravity in simple terms"
         # NEW: Create a mock PersonaConfig for the optimize_prompt signature
-        persona_config = MagicMock(
-            spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
-        )
+        persona_config = MagicMock(spec=PersonaConfig)
+        persona_config.name = "TestPersona"
+        persona_config.token_efficiency_score = 0.8
         system_message = "You are a helpful assistant."
         max_output_tokens = 500
 
@@ -113,9 +131,9 @@ class TestPromptEngineering:
 
         original_prompt = "Explain the concept of gravity in simple terms"
         # NEW: Create a mock PersonaConfig for the optimize_prompt signature
-        persona_config = MagicMock(
-            spec=PersonaConfig, name="TestPersona", token_efficiency_score=0.8
-        )
+        persona_config = MagicMock(spec=PersonaConfig)
+        persona_config.name = "TestPersona"
+        persona_config.token_efficiency_score = 0.8
         system_message = "You are a helpful assistant."
         max_output_tokens = 500
 

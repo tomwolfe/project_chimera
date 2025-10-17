@@ -163,7 +163,9 @@ class TestHandleDebateErrors:
         """Test handling of token budget exceeded error."""
         from src.exceptions import TokenBudgetExceededError
 
-        error = TokenBudgetExceededError("Token budget exceeded")
+        error = TokenBudgetExceededError(
+            current_tokens=1500, budget=1000, details={"phase": "test"}
+        )
 
         try:
             with patch("app.st.error"):
@@ -176,7 +178,7 @@ class TestHandleDebateErrors:
         """Test handling of schema validation error."""
         from src.exceptions import SchemaValidationError
 
-        error = SchemaValidationError("Schema validation failed")
+        error = SchemaValidationError(error_type="test_error", field_path="test_field")
 
         try:
             with patch("app.st.error"):

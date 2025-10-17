@@ -460,6 +460,8 @@ class PersonaManager:
         self, framework_name: str
     ) -> tuple[bool, str, Optional[str]]:
         """Exports a framework configuration as YAML for sharing using ConfigPersistence."""
+
+        # 1. Try to load from custom frameworks (via persistence layer)
         exported_content = self.config_persistence.export_framework_for_sharing(
             framework_name
         )
@@ -469,6 +471,33 @@ class PersonaManager:
                 f"Framework '{framework_name}' exported successfully.",
                 exported_content,
             )
+
+        # 2. Handle default frameworks (construct from memory)
+        if framework_name in self.persona_sets:
+            persona_names = self.persona_sets[framework_name]
+            personas_to_export = {
+                name: self.all_personas[name].model_dump()
+                for name in persona_names
+                if name in self.all_personas
+            }
+
+            framework_data = {
+                "framework_name": framework_name,
+                "description": f"Default framework: {framework_name}",
+                "personas": personas_to_export,
+                "persona_sets": {framework_name: persona_names},
+                "version": 1,
+            }
+
+            # Export as YAML
+            exported_content = yaml.dump(framework_data, sort_keys=False)
+            return (
+                True,
+                f"Default framework '{framework_name}' exported successfully from memory.",
+                exported_content,
+            )
+
+        # 3. Fallback for not found
         return (
             False,
             f"Framework '{framework_name}' not found or could not be exported.",

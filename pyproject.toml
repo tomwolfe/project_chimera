@@ -20,6 +20,7 @@ ignore = [
     "ANN101", # Allow missing type annotation for self
     "ANN002", # Allow missing type annotation for *args
     "ANN003", # Allow missing type annotation for **kwargs
+    "PLR2004", # Ignore magic value in comparison, common in tests
 ]
 
 [tool.ruff.format]

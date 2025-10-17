@@ -1,6 +1,8 @@
 """Tests for the command executor module."""
 
+import inspect
 import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -152,7 +154,6 @@ class TestExecuteCommandSafely:
     @patch("subprocess.run")
     def test_execute_command_safely_python_tool_prepending(self, mock_run):
         """Test that Python tools are prepended with sys.executable -m."""
-        import sys
 
         # Mock successful command execution
         mock_result = MagicMock()
@@ -179,7 +180,6 @@ class TestExecuteCommandSafely:
     @patch("subprocess.run")
     def test_execute_command_safely_ruff_tool_prepending(self, mock_run):
         """Test that ruff tool is prepended with sys.executable -m."""
-        import sys
 
         # Mock successful command execution
         mock_result = MagicMock()
@@ -206,7 +206,6 @@ class TestExecuteCommandSafely:
     @patch("subprocess.run")
     def test_execute_command_safely_bandit_tool_prepending(self, mock_run):
         """Test that bandit tool is prepended with sys.executable -m."""
-        import sys
 
         # Mock successful command execution
         mock_result = MagicMock()
@@ -237,7 +236,6 @@ class TestExecuteCommandSafely:
         # We can't easily mock this due to the import issue, but we can at least
         # verify that the function signature and parameter handling works as expected
         # by checking the function exists and has the right signature
-        import inspect
 
         sig = inspect.signature(execute_command_safely)
         params = list(sig.parameters.keys())

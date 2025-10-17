@@ -2,6 +2,7 @@
 Modular Persona Router for Project Chimera
 Separated from core.py to reduce complexity
 """
+
 from typing import Any
 
 from src.models import PersonaConfig
@@ -11,6 +12,7 @@ class PersonaRouter:
     """
     Handles persona routing logic that was previously in core.py
     """
+
     def __init__(self, persona_configs: dict[str, PersonaConfig]):
         self.persona_configs = persona_configs or {}
 

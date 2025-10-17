@@ -38,6 +38,8 @@ def mock_socratic_debate_instance():
     mock_settings.max_tokens_per_persona = {}  # Empty for this mock
 
     mock_persona_manager = MagicMock(spec=PersonaManager)
+    # Add prompt_analyzer as a mock attribute
+    mock_persona_manager.prompt_analyzer = MagicMock()
     mock_persona_manager.prompt_analyzer.is_self_analysis_prompt.return_value = False
     mock_persona_manager.prompt_analyzer.analyze_complexity.return_value = {
         "complexity_score": 0.5

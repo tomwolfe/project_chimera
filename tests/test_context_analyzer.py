@@ -1,3 +1,4 @@
+import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -14,7 +15,6 @@ class TestCodebaseScanner:
 
     def teardown_method(self):
         """Clean up after tests."""
-        import shutil
 
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
@@ -140,7 +140,6 @@ class TestContextRelevanceAnalyzer:
 
     def teardown_method(self):
         """Clean up after tests."""
-        import shutil
 
         shutil.rmtree(self.test_dir, ignore_errors=True)
         shutil.rmtree(self.cache_dir, ignore_errors=True)

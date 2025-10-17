@@ -1,0 +1,31 @@
+{
+  "framework_name": "MyCustomFramework",
+  "description": "A test framework",
+  "personas": {
+    "Analyst": {
+      "name": "Analyst",
+      "description": "Analyzes.",
+      "system_prompt_template": "You are an Analyst.",
+      "output_schema": "GeneralOutput",
+      "temperature": 0.5,
+      "max_tokens": 1024,
+      "token_efficiency_score": null
+    },
+    "Critic": {
+      "name": "Critic",
+      "description": "Critiques.",
+      "system_prompt_template": "You are a Critic.",
+      "output_schema": "GeneralOutput",
+      "temperature": 0.5,
+      "max_tokens": 1024,
+      "token_efficiency_score": null
+    }
+  },
+  "persona_sets": {
+    "MyCustomFramework": [
+      "Analyst",
+      "Critic"
+    ]
+  },
+  "version": 9
+}

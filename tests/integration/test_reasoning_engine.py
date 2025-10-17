@@ -5,8 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # NEW: Import for SocraticDebate init
-from transformers import pipeline  # NEW: Import pipeline for summarization
-
 # Assuming these imports are correct based on your project structure
 # Adjust if your core.py or llm_provider.py are in different locations
 from core import SocraticDebate
@@ -91,8 +89,9 @@ def test_reasoning_engine_integration():
     mock_metrics_collector.analyze_historical_effectiveness.return_value = {}
     mock_metrics_collector.file_analysis_cache = {}
 
-    mock_summarizer_pipeline = MagicMock(spec=pipeline)
+    mock_summarizer_pipeline = MagicMock()
     mock_summarizer_pipeline.return_value = [{"summary_text": "Mock summary."}]
+    mock_summarizer_pipeline.tokenizer = MagicMock()
     mock_summarizer_pipeline.tokenizer.model_max_length = 1024
 
     try:

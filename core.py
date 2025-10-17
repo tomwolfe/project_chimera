@@ -795,8 +795,13 @@ class SocraticDebate:
         output_schema_class = self.output_parser._get_schema_class_from_name(
             schema_name
         )
+
+        # Get the schema class name safely, handling mock objects
+        schema_class_name = getattr(
+            output_schema_class, "__name__", str(output_schema_class)
+        )
         self._log_with_context(
-            "info", f"Using schema {output_schema_class.__name__} for {persona_name}."
+            "info", f"Using schema {schema_class_name} for {persona_name}."
         )
 
         # Render system prompt from template
@@ -813,7 +818,7 @@ class SocraticDebate:
         full_system_prompt_parts = [final_system_prompt_base]
         full_system_prompt_parts.append(SHARED_JSON_INSTRUCTIONS)
         full_system_prompt_parts.append(
-            f"**JSON Schema for {output_schema_class.__name__}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"
+            f"**JSON Schema for {schema_class_name}:**\n```json\n{json.dumps(output_schema_class.model_json_schema(), indent=2)}\n```"
         )
         final_system_prompt = "\n\n".join(full_system_prompt_parts)
 

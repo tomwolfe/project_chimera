@@ -2,6 +2,7 @@
 Token Tracker Module for Output Parser
 Separated from output_parser.py to reduce complexity
 """
+
 import re
 from typing import Any
 
@@ -10,6 +11,7 @@ class TokenTracker:
     """
     Handles token tracking logic that was previously in output_parser.py
     """
+
     def __init__(self):
         pass
 
@@ -22,7 +24,7 @@ class TokenTracker:
             return 0
         # This is a simplified version - in reality, it would contain
         # the complex token counting logic from the original output_parser.py
-        return len(re.findall(r'\b\w+\b', text))
+        return len(re.findall(r"\b\w+\b", text))
 
     def track_usage(self, response_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -32,5 +34,5 @@ class TokenTracker:
         return {
             "input_tokens": self.count_tokens(response_data.get("input", "")),
             "output_tokens": self.count_tokens(response_data.get("output", "")),
-            "total_tokens": 0
+            "total_tokens": 0,
         }

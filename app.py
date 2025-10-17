@@ -259,7 +259,7 @@ def sanitize_user_input(prompt: str) -> str:
     injection_patterns = [
         (r"(?i)ignore\s+previous", "IGNORE_PREVIOUS"),
         (
-            r"(?i)\b(ignore|disregard|forget|cancel|override)\s+(previous|all)\s+(instructions|commands|context)\b",
+            r"(?i)\b(ignore|disregard|forget|cancel|override)\s+(all\s+)?(previous|all)\s+(instructions|commands|context)\b",
             "INSTRUCTION_OVERRIDE",
         ),
         (
@@ -290,7 +290,7 @@ def sanitize_user_input(prompt: str) -> str:
         (r"(?i)(open\s+the\s+pod\s+bay\s+doors)", "LLM_ESCAPE_REFERENCE"),
         (r"(?i)^\s*#", "COMMENT_INJECTION"),
         (
-            r'(?i)\b(api_key|secret|password|token|credential)\b[:=]?\s*[\'"]?[\w-]+[\'"]?',
+            r'(?i)\b(api_key|secret|password|token|credential)\b(?:[:=]?\s*[\'"]?[\w-]+[\'"]?)?',
             "SENSITIVE_DATA_PROBE",
         ),
     ]

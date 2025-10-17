@@ -1421,29 +1421,39 @@ class LLMOutputParser:
                 }
             else:
                 try:
-                    minimal_fallback_data = schema_model.model_json_schema().get(
+                    schema_properties = schema_model.model_json_schema().get(
                         "properties", {}
                     )
-                    for prop, details in minimal_fallback_data.items():
+                    minimal_fallback_data = {}
+                    for prop, details in schema_properties.items():
                         if "default" in details:
                             minimal_fallback_data[prop] = details["default"]
                         elif details.get("type") == "string":
                             minimal_fallback_data[prop] = (
-                                f"CRITICAL PARSING ERROR: {str(e)}"
+                                f"CRITICAL PARSING ERROR: Fallback for {schema_model.__name__} is invalid. {str(e)}"
                             )
                         elif details.get("type") == "array":
                             minimal_fallback_data[prop] = []
                         elif details.get("type") == "boolean":
                             minimal_fallback_data[prop] = False
-                        elif details.get("type") == "number":
-                            minimal_fallback_data[prop] = 0.0
+                        elif (
+                            details.get("type") == "integer"
+                            or details.get("type") == "number"
+                        ):
+                            minimal_fallback_data[prop] = 0
                         elif (
                             details.get("type") == "object"
-                        ):  # NEW: Handle object types in fallback
+                        ):  # Handle object types in fallback
                             minimal_fallback_data[prop] = {}
+                        else:
+                            # For any other types, provide a sensible default based on the field info
+                            minimal_fallback_data[prop] = (
+                                f"Value for {prop} - CRITICAL PARSING ERROR: {str(e)}"
+                            )
+                    # Add malformed_blocks with proper handling
                     minimal_fallback_data["malformed_blocks"] = (
                         current_malformed_blocks
-                        + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}],
+                        + [{"type": "CRITICAL_FALLBACK_ERROR", "message": str(e)}]
                     )
                     return schema_model.model_validate(
                         minimal_fallback_data

@@ -6,8 +6,15 @@ import pytest
 from core import SocraticDebate
 from src.config.settings import ChimeraSettings
 from src.context.context_analyzer import ContextRelevanceAnalyzer
+from src.exceptions import TokenBudgetExceededError  # NEW: Import missing exception
 from src.llm_provider import GeminiProvider
-from src.models import CritiqueOutput, GeneralOutput, PersonaConfig
+from src.models import (
+    ConflictReport,  # Added for mock_output_parser fixture
+    CritiqueOutput,
+    GeneralOutput,
+    PersonaConfig,
+    SelfImprovementAnalysisOutputV1,
+)
 from src.persona_manager import PersonaManager
 
 # NEW IMPORTS for full dependency injection
@@ -96,6 +103,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Visionary_Generator": PersonaConfig(
             name="Visionary_Generator",
             system_prompt_template="Visionary",  # Changed to template
+            output_schema="GeneralOutput",
             temperature=0.7,
             max_tokens=1024,
             description="Visionary persona",  # Added description
@@ -103,6 +111,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Skeptical_Generator": PersonaConfig(
             name="Skeptical_Generator",
             system_prompt_template="Skeptical",  # Changed to template
+            output_schema="GeneralOutput",
             temperature=0.3,
             max_tokens=1024,
             description="Skeptical persona",  # Added description
@@ -110,6 +119,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Constructive_Critic": PersonaConfig(
             name="Constructive_Critic",
             system_prompt_template="Critic",  # Changed to template
+            output_schema="CritiqueOutput",
             temperature=0.15,
             max_tokens=8192,
             description="Constructive Critic persona",  # Added description
@@ -117,6 +127,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Impartial_Arbitrator": PersonaConfig(
             name="Impartial_Arbitrator",
             system_prompt_template="Arbitrator",  # Changed to template
+            output_schema="GeneralOutput",
             temperature=0.1,
             max_tokens=4096,
             description="Impartial Arbitrator persona",  # Added description
@@ -124,6 +135,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Devils_Advocate": PersonaConfig(
             name="Devils_Advocate",
             system_prompt_template="Devils Advocate",  # Changed to template
+            output_schema="ConflictReport",
             temperature=0.1,
             max_tokens=4096,
             description="Devils Advocate persona",  # Added description
@@ -131,6 +143,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Self_Improvement_Analyst": PersonaConfig(
             name="Self_Improvement_Analyst",
             system_prompt_template="Self-Improvement Analyst",  # Changed to template
+            output_schema="SelfImprovementAnalysisOutputV1",
             temperature=0.1,
             max_tokens=8192,
             description="Self-Improvement Analyst persona",  # Added description
@@ -138,6 +151,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
         "Context_Aware_Assistant": PersonaConfig(
             name="Context_Aware_Assistant",
             system_prompt_template="Context Assistant",  # Changed to template
+            output_schema="GeneralOutput",
             temperature=0.1,
             max_tokens=3072,
             description="Context Aware Assistant persona",  # Added description
@@ -166,6 +180,7 @@ def mock_persona_manager(mock_token_tracker, mock_settings):
             spec=PersonaConfig,
             name=name,  # Ensure mock PersonaConfig has a name attribute
             system_prompt_template="Fallback",  # Changed to template
+            output_schema="GeneralOutput",  # Added output_schema
             temperature=0.5,
             max_tokens=1024,
             description="Fallback persona",  # Added description
@@ -226,6 +241,15 @@ def mock_output_parser():
         "general_output": "Fallback output",
         "malformed_blocks": [{"type": "FALLBACK_TRIGGERED"}],
     }
+    # Mock the _get_schema_class_from_name method to return actual schema classes
+    # which have the model_json_schema method that returns a serializable dict
+
+    parser._get_schema_class_from_name.side_effect = lambda schema_name: {
+        "GeneralOutput": GeneralOutput,
+        "CritiqueOutput": CritiqueOutput,
+        "ConflictReport": ConflictReport,
+        "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
+    }.get(schema_name, GeneralOutput)
     return parser
 
 
@@ -399,8 +423,7 @@ def test_socratic_debate_initialization(socratic_debate_instance):  # noqa: F811
     assert socratic_debate_instance is not None
     assert socratic_debate_instance.initial_prompt == "Test prompt"  # noqa: F841
     assert (
-        socratic_debate_instance.model_name
-        == "gemini-2.5-flash-lite-lite-preview-09-2025"
+        socratic_debate_instance.model_name == "gemini-2.5-flash-lite-preview-09-2025"
     )
     assert socratic_debate_instance.llm_provider is not None
     assert socratic_debate_instance.persona_manager is not None

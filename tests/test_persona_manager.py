@@ -27,21 +27,21 @@ class TestPersonaManager(unittest.TestCase):
             "personas": [
                 {
                     "name": "Analyst",
-                    "system_prompt": "You are an Analyst.",
+                    "system_prompt_template": "You are an Analyst.",
                     "temperature": 0.5,
                     "max_tokens": 1024,
                     "description": "Analyzes.",
                 },
                 {
                     "name": "Critic",
-                    "system_prompt": "You are a Critic.",
+                    "system_prompt_template": "You are a Critic.",
                     "temperature": 0.5,
                     "max_tokens": 1024,
                     "description": "Critiques.",
                 },
                 {
                     "name": "TestPersona",
-                    "system_prompt": "Test system prompt",
+                    "system_prompt_template": "Test system prompt",
                     "temperature": 0.5,
                     "max_tokens": 1024,
                     "description": "A persona for testing metrics.",
@@ -79,13 +79,30 @@ class TestPersonaManager(unittest.TestCase):
             "Analyst": 1024,
             "Critic": 1024,
         }
+        # Mock new token optimization constants
+        self.mock_settings.GLOBAL_TOKEN_CONSUMPTION_THRESHOLD = 0.7
+        self.mock_settings.TOKEN_EFFICIENCY_SCORE_THRESHOLD = 0.7
 
         # Instantiate PersonaManager with mocks
-        self.persona_manager = PersonaManager(
-            domain_keywords={"General": ["general"]},
-            token_tracker=self.mock_token_tracker,
-            settings=self.mock_settings,
-        )
+        with patch.object(
+            PersonaManager, "_load_initial_data", return_value=(True, None)
+        ):
+            self.persona_manager = PersonaManager(
+                domain_keywords={"General": ["general"]},
+                token_tracker=self.mock_token_tracker,
+                settings=self.mock_settings,
+            )
+
+        # Manually inject mock data since _load_initial_data was patched out
+        mock_data = self.mock_config_persistence.load_personas_config.return_value
+        self.persona_manager.all_personas = {
+            p["name"]: PersonaConfig(**p) for p in mock_data["personas"]
+        }
+        # Manually set _original_personas to fix KeyError in reset/update tests
+        self.persona_manager._original_personas = {
+            p["name"]: PersonaConfig(**p) for p in mock_data["personas"]
+        }
+        self.persona_manager.persona_sets = mock_data["persona_sets"]
         # Manually set the mock prompt_analyzer as it's used by PersonaRouter internally
         self.persona_manager.prompt_analyzer = self.mock_prompt_analyzer
         if self.persona_manager.persona_router:
@@ -93,30 +110,39 @@ class TestPersonaManager(unittest.TestCase):
                 self.mock_prompt_analyzer
             )
 
-        # Ensure TestPersona is in all_personas for metrics tracking
-        if "TestPersona" not in self.persona_manager.all_personas:
-            self.persona_manager.all_personas["TestPersona"] = PersonaConfig(
-                name="TestPersona",
-                system_prompt="Test system prompt",
-                temperature=0.5,
-                max_tokens=1024,
-                description="A persona for testing metrics.",
-            )
         self.persona_manager._initialize_performance_metrics()  # Re-initialize to ensure TestPersona is in metrics
 
-    def test_get_persona_success(self):
+    def test_get_persona_success(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test retrieving an existing persona."""
         persona = self.persona_manager.all_personas.get("Analyst")
         self.assertIsNotNone(persona)
         self.assertEqual(persona.name, "Analyst")
-        self.assertEqual(persona.system_prompt, "You are an Analyst.")
+        self.assertEqual(persona.system_prompt_template, "You are an Analyst.")
 
-    def test_get_persona_not_found(self):
+    def test_get_persona_not_found(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test retrieving a non-existent persona."""
         persona = self.persona_manager.all_personas.get("NonExistent")
         self.assertIsNone(persona)
 
-    def test_get_all_personas(self):
+    def test_get_all_personas(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test retrieving all personas."""
         personas = self.persona_manager.all_personas
         self.assertEqual(len(personas), 3)  # Analyst, Critic, TestPersona
@@ -124,12 +150,24 @@ class TestPersonaManager(unittest.TestCase):
         self.assertIn("Critic", personas)
         self.assertIn("TestPersona", personas)
 
-    def test_get_persona_sequence_for_framework(self):
+    def test_get_persona_sequence_for_framework(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test getting persona sequence for a specific framework."""
         sequence = self.persona_manager.get_persona_sequence_for_framework("General")
         self.assertEqual(sequence, ["Analyst", "Critic"])
 
-    def test_update_persona_config(self):
+    def test_update_persona_config(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test updating a persona's configuration."""
         original_temp = self.persona_manager.all_personas["Analyst"].temperature
         new_temp = 0.8
@@ -146,12 +184,18 @@ class TestPersonaManager(unittest.TestCase):
             original_temp,
         )
 
-    def test_reset_persona_to_default(self):
+    def test_reset_persona_to_default(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test resetting a persona to its default configuration."""
         # First, modify a persona
         self.persona_manager.update_persona_config("Analyst", "temperature", 0.9)
         self.persona_manager.update_persona_config(
-            "Analyst", "system_prompt", "New prompt"
+            "Analyst", "system_prompt_template", "New prompt"
         )
 
         # Then, reset it
@@ -163,11 +207,17 @@ class TestPersonaManager(unittest.TestCase):
             self.persona_manager._original_personas["Analyst"].temperature,
         )
         self.assertEqual(
-            self.persona_manager.all_personas["Analyst"].system_prompt,
-            self.persona_manager._original_personas["Analyst"].system_prompt,
+            self.persona_manager.all_personas["Analyst"].system_prompt_template,
+            self.persona_manager._original_personas["Analyst"].system_prompt_template,
         )
 
-    def test_reset_all_personas_for_current_framework(self):
+    def test_reset_all_personas_for_current_framework(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test resetting all personas in a framework to default."""
         # Modify a persona in the "General" framework
         self.persona_manager.update_persona_config("Analyst", "temperature", 0.9)
@@ -183,7 +233,13 @@ class TestPersonaManager(unittest.TestCase):
             self.persona_manager._original_personas["Analyst"].temperature,
         )
 
-    def test_save_framework(self):
+    def test_save_framework(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test saving a custom framework."""
         framework_name = "MyCustomFramework"
         description = "A test framework"
@@ -198,11 +254,17 @@ class TestPersonaManager(unittest.TestCase):
             framework_name, "General", current_active_personas, description
         )
         self.assertTrue(success)
-        self.assertIn("Framework saved.", message)
+        self.assertIn("saved successfully", message)
         self.mock_config_persistence.save_user_framework.assert_called_once()
         self.assertIn(framework_name, self.persona_manager.available_domains)
 
-    def test_load_framework_into_session_custom(self):
+    def test_load_framework_into_session_custom(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test loading a custom framework into the session."""
         custom_framework_data = {
             "framework_name": "LoadedCustom",
@@ -230,7 +292,13 @@ class TestPersonaManager(unittest.TestCase):
         self.assertIn("LoadedCustom", self.persona_manager.persona_sets)
         self.assertEqual(new_framework_name, "LoadedCustom")
 
-    def test_export_framework_for_sharing(self):
+    def test_export_framework_for_sharing(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test exporting a framework."""
         self.mock_config_persistence.export_framework_for_sharing.return_value = (
             "exported_yaml_content"
@@ -246,7 +314,13 @@ class TestPersonaManager(unittest.TestCase):
             "General"
         )
 
-    def test_import_framework(self):
+    def test_import_framework(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test importing a framework."""
         self.mock_config_persistence.import_framework_from_file.return_value = (
             True,
@@ -268,7 +342,13 @@ class TestPersonaManager(unittest.TestCase):
         )
         self.assertIn("ImportedFramework", self.persona_manager.available_domains)
 
-    def test_get_adjusted_persona_config_truncated(self):
+    def test_get_adjusted_persona_config_truncated(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test getting a truncated persona config."""
         truncated_config = self.persona_manager.get_adjusted_persona_config(
             "Analyst_TRUNCATED"
@@ -279,9 +359,17 @@ class TestPersonaManager(unittest.TestCase):
             truncated_config.max_tokens,
             self.persona_manager.all_personas["Analyst"].max_tokens,
         )
-        self.assertIn("CRITICAL: Be extremely concise", truncated_config.system_prompt)
+        self.assertIn(
+            "CRITICAL: Be extremely concise", truncated_config.system_prompt_template
+        )
 
-    def test_record_persona_performance(self):
+    def test_record_persona_performance(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test recording persona performance metrics."""
         pm = self.persona_manager
         # Record a successful turn
@@ -321,7 +409,13 @@ class TestPersonaManager(unittest.TestCase):
         self.assertEqual(metrics["total_turns"], 3)
         self.assertEqual(metrics["truncation_failures"], 1)
 
-    def test_get_token_optimized_persona_sequence_global_high_consumption(self):
+    def test_get_token_optimized_persona_sequence_global_high_consumption(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test token optimization when global consumption is high."""
         self.mock_token_tracker.get_consumption_rate.return_value = (
             0.8  # Simulate high global token consumption rate
@@ -335,7 +429,13 @@ class TestPersonaManager(unittest.TestCase):
         self.assertIn("Analyst_TRUNCATED", optimized_sequence)
         self.assertIn("Critic_TRUNCATED", optimized_sequence)
 
-    def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(self):
+    def test_get_token_optimized_persona_sequence_persona_prone_to_truncation(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test token optimization when a specific persona is prone to truncation."""
         self.mock_token_tracker.get_consumption_rate.return_value = (
             0.1  # Simulate low global token consumption
@@ -359,7 +459,13 @@ class TestPersonaManager(unittest.TestCase):
         self.assertIn("Analyst_TRUNCATED", optimized_sequence)
         self.assertIn("Critic", optimized_sequence)  # Critic should not be truncated
 
-    def test_get_adjusted_persona_config_adaptive_temperature(self):
+    def test_get_adjusted_persona_config_adaptive_temperature(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test adaptive temperature adjustment based on schema failures."""
         pm = self.persona_manager
         original_temp = pm.all_personas["TestPersona"].temperature
@@ -377,7 +483,13 @@ class TestPersonaManager(unittest.TestCase):
         self.assertEqual(metrics["last_adjusted_temp"], adjusted_config.temperature)
         self.assertEqual(metrics["total_turns"], 0)  # Should reset after adjustment
 
-    def test_get_adjusted_persona_config_adaptive_max_tokens(self):
+    def test_get_adjusted_persona_config_adaptive_max_tokens(
+        self,
+        mock_settings,
+        mock_token_tracker,
+        mock_prompt_analyzer,
+        mock_config_persistence,
+    ):
         """Test adaptive max_tokens adjustment based on truncation failures."""
         pm = self.persona_manager
         original_max_tokens = pm.all_personas["TestPersona"].max_tokens

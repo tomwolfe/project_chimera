@@ -18,6 +18,7 @@ from src.llm_provider import GeminiProvider
 # Import ContextRelevanceAnalyzer
 # Import specific exceptions
 from src.models import (
+    ConflictReport,  # Added for mock_output_parser fixture
     CritiqueOutput,
     GeneralOutput,
     PersonaConfig,  # Import PersonaConfig
@@ -77,8 +78,15 @@ def mock_token_tracker():
     tracker = MagicMock(spec=TokenUsageTracker)
     tracker.current_usage = 0
     tracker.budget = 1000000
-    tracker.record_usage.side_effect = lambda tokens, persona=None: setattr(
-        tracker, "current_usage", tracker.current_usage + tokens
+    tracker.record_usage.side_effect = (
+        lambda prompt_tokens,
+        completion_tokens,
+        persona=None,
+        is_successful_turn=True: setattr(
+            tracker,
+            "current_usage",
+            tracker.current_usage + prompt_tokens + completion_tokens,
+        )
     )
     tracker.get_consumption_rate.return_value = 0.1
     tracker.reset.return_value = None
@@ -225,6 +233,7 @@ def mock_gemini_provider(mock_settings):
 @pytest.fixture
 def mock_output_parser():
     """Provides a mock LLMOutputParser instance."""
+
     parser = MagicMock(spec=LLMOutputParser)
     parser.parse_and_validate.return_value = {
         "general_output": "Parsed output",
@@ -234,6 +243,14 @@ def mock_output_parser():
         "general_output": "Fallback output",
         "malformed_blocks": [{"type": "FALLBACK_TRIGGERED"}],
     }
+    # Mock the _get_schema_class_from_name method to return actual schema classes
+    # which have the model_json_schema method that returns a serializable dict
+    parser._get_schema_class_from_name.side_effect = lambda schema_name: {
+        "GeneralOutput": GeneralOutput,
+        "CritiqueOutput": CritiqueOutput,
+        "ConflictReport": ConflictReport,
+        "SelfImprovementAnalysisOutputV1": SelfImprovementAnalysisOutputV1,
+    }.get(schema_name, GeneralOutput)
     return parser
 
 
