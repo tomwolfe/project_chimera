@@ -5,8 +5,8 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  schedule: # NEW: Add weekly schedule for comprehensive checks
-    - cron: '0 0 * * 0' # Run weekly on Sundays at midnight
+#  schedule: # NEW: Add weekly schedule for comprehensive checks
+#    - cron: '0 0 * * 0' # Run weekly on Sundays at midnight
 
 jobs:
   test: # Renamed 'build' job to 'test' as per suggested changes
